@@ -39,6 +39,10 @@ namespace :vendor do
     require_vendor!
     FileUtils.cd(PICORUBY_SRC) do
       sh "git submodule update --init --depth 1 #{HOST_SUBMODULES.map(&:shellescape).join(' ')}"
+      SUBMODULE_PINS.each do |path, sha|
+        sh "git -C #{path.shellescape} fetch --depth 1 origin #{sha}"
+        sh "git -C #{path.shellescape} checkout --detach #{sha}"
+      end
     end
   end
 

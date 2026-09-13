@@ -33,6 +33,22 @@ HOST_SUBMODULES = %w[
   mrbgems/picoruby-littlefs/lib/littlefs
 ].freeze
 
+# upstream の pin から外して固定する submodule。`rake setup` / `refresh` が
+# submodule を取ったあとにここへ checkout し直す。
+#
+# picoruby 4fe6e254 ("upgrade submodules") 以降の mruby-compiler は Prism の
+# arena allocator を持ち、compiler context ごとに 64KB を mrb_malloc する
+# (MRC_PRISM_ARENA_BLOCK、build_config からは変えられない)。heap 396KB の
+# Pico 2 W では起動時の "Loading /etc/init.d/r2p2..." で止まり、CDC ごと固まる。
+# 1つ前の pin では同じ board・同じ FS で shell まで上がる (docs/spec.md §6)。
+# mruby 5a7aa02a1 がブロックの大きさを変えられるようにしたので、それが
+# picoruby に降りてきたら外す。
+SUBMODULE_PINS = {
+  "mrbgems/picoruby-mruby/lib/mruby" => "b05a7bfda8ac192ab33f4f192d972c2794d2b170",
+  "mrbgems/mruby-compiler"           => "db0aea5c1773c50244b6ee44f43170e45ad2253e",
+  "mrbgems/mruby-bin-mrbc"           => "fa77fbde4ac20c00a2df2ddb2479e6ba2996f347"
+}.freeze
+
 def vendor_ready?
   File.directory?(File.join(PICORUBY_SRC, ".git"))
 end

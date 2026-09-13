@@ -19,10 +19,10 @@ namespace :rp2040 do
   task :build do
     require_vendor!
     ensure_overlay!
+    invalidate_stale_firmware_build
     # firmware の CMake は <picoruby>/bin/mrbc (ホストの mrbc) で mrblib を compile する。
     # それを置くのはホスト VM の build なので、無ければ先に建てる。
     build_host_vm unless File.executable?(File.join(PICORUBY_SRC, "bin", "mrbc"))
-    invalidate_stale_firmware_build
     with_firmware_patches { vendor_rake({}, "r2p2:picoruby:#{BOARD}:prod") }
     uf2 = latest_uf2
     raise "no .uf2 came out of the build" unless uf2
@@ -251,6 +251,10 @@ FIRMWARE_INPUT_GLOBS = %w[
 def firmware_stamp
   sha = File.directory?(File.join(PICORUBY_SRC, ".git")) ? `git -C #{PICORUBY_SRC.shellescape} rev-parse HEAD`.strip : ""
   inputs = [sha]
+  # submodule の checkout は HEAD を動かさないので、固定した pin も入力に数える。
+  SUBMODULE_PINS.each_key do |path|
+    inputs << `git -C #{File.join(PICORUBY_SRC, path).shellescape} rev-parse HEAD 2>/dev/null`.strip
+  end
   inputs << Digest::SHA256.file(File.join(HARNESS_ROOT, "build_config", "rp2040-pico2_w.rb")).hexdigest
   Dir[File.join(HARNESS_ROOT, "firmware-patches", "*.patch")].sort.each do |patch|
     inputs << Digest::SHA256.file(patch).hexdigest
@@ -275,7 +279,10 @@ end
 def invalidate_stale_firmware_build
   want = firmware_stamp
   stamp = firmware_stamp_path
+  # build/host も捨てる。mrblib を compile する bin/mrbc がそこに居て、
+  # compiler の pin が変わったら作り直さないと古い bytecode が firmware に入る。
   lib_dirs = [
+    File.join(PICORUBY_SRC, "build", "host"),
     File.join(PICORUBY_SRC, "build", "r2p2-picoruby-pico2_w"),
     firmware_build_dir
   ]
