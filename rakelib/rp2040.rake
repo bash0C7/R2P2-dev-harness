@@ -2,6 +2,8 @@
 #
 # 本 repo の完了条件は実機まで通って green (docs/spec.md §5) なので、
 # build 以外はまだ「無い」ことを明示的に言う。黙って通ったふりはしない。
+require "open3"
+
 namespace :rp2040 do
   BOARD = "pico2_w".freeze
 
@@ -107,23 +109,43 @@ end
 # picotool reboot -f -u は使えない: R2P2 は VID 0x16c0 で reset interface も無く、
 # picotool は動作中の board を列挙すらしない。BOOTSEL 中は ROM なので見える。
 #
-# patch の無い firmware が載っている時 (初回、または patch 無しを焼いた後) は
-# script が NoMethodError で終わるだけなので、人手の BOOTSEL へ回す。
+# BOOTSEL に来なかった時、原因で頼む操作が違うので分けて言う。
+#   - shell が NoMethodError を返した → patch 無し firmware。BOOTSEL を押せば直る
+#   - 何も返らない / 転送が失敗した → wedge か転送失敗。BOOTSEL では直らず、USB 抜き差し
+# timeout だけでは両者を区別できない。
 def enter_bootsel!
   # 中断した run は board を BOOTSEL に置き去りにする。その時 shell は居ない。
   return if bootsel?
-  if r2p2_ports.any?
-    # wedge した board への serial open は macOS で返らないので、壁時計で切る。
-    bounded_device_tool 60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "usbboot_app.rb"), "/home/usbboot.rb"
-    # 実行中に CDC が落ちるので失敗扱いで返ってくる。正常。
-    bounded_device_tool 40, "rsh.rb", "/home/usbboot.rb", "5"
-    return if wait_until(30) { bootsel? }
+
+  if r2p2_ports.empty?
+    ask_for_bootsel "No R2P2 board on USB and picotool sees no BOOTSEL device."
+    return
   end
+
+  # wedge した board への serial open は macOS で返らないので、壁時計で切る。
+  uploaded, = bounded_device_tool 60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "usbboot_app.rb"), "/home/usbboot.rb"
+  # 効いた時は実行中に CDC が落ちるので失敗扱いで返ってくる。正常。
+  _, shell_output = bounded_device_tool 40, "rsh.rb", "/home/usbboot.rb", "5" if uploaded
+  return if wait_until(30) { bootsel? }
+
+  if shell_output.to_s.match?(/NoMethodError|undefined method/)
+    ask_for_bootsel "The firmware on the board has no Machine.usb_boot (first flash, or a build without firmware-patches/)."
+    return
+  end
+
+  raise <<~MSG
+    The board did not reach BOOTSEL and the shell did not report why.
+    #{uploaded ? 'usbboot.rb was copied and run, but the shell printed no NoMethodError.' : 'Copying usbboot.rb over PicoModem failed.'}
+    shell_ok.rb says: #{shell_answers? ? 'the shell answers' : 'the shell does not answer (wedged)'}
+
+    If it is wedged, pressing BOOTSEL will not help. Unplug and replug USB, then re-run.
+  MSG
+end
+
+def ask_for_bootsel(reason)
   puts <<~ASK
+    #{reason}
     Put the board into BOOTSEL: unplug USB, hold BOOTSEL, plug in, release.
-    (Needed only while the board runs firmware without Machine.usb_boot: the
-     first flash, or after flashing a build without firmware-patches/.
-     If the board is wedged (enumerated but silent), a replug is needed too.)
   ASK
   wait_until(300) { bootsel? } or raise "the board never reached BOOTSEL"
 end
@@ -151,14 +173,15 @@ def wait_until(seconds)
   false
 end
 
-# device_tool を tmo.rb 越しに回す。失敗しても raise せず真偽を返す。
+# device_tool を tmo.rb 越しに回す。失敗しても raise せず [成否, 出力] を返す。
 def bounded_device_tool(seconds, name, *args)
   tools = File.join(HARNESS_ROOT, "tools", "pico2w")
-  ruby = RbConfig.ruby.shellescape
-  command = [ruby, File.join(tools, "tmo.rb").shellescape, seconds.to_s,
-             ruby, File.join(tools, name).shellescape, *args.map { |a| a.to_s.shellescape }].join(" ")
-  puts command
-  system(command)
+  command = [RbConfig.ruby, File.join(tools, "tmo.rb"), seconds.to_s,
+             RbConfig.ruby, File.join(tools, name), *args.map(&:to_s)]
+  puts command.shelljoin
+  output, status = Open3.capture2e(*command)
+  puts output
+  [status.success?, output]
 end
 
 # firmware-patches/*.patch を vendor/picoruby に当てて build し、終わったら戻す。

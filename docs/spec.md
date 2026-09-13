@@ -258,7 +258,10 @@ patch の中身は firmware の stamp に入る。
 1. `picotool info` が通れば既に BOOTSEL なので 2 を飛ばす (中断した run は board を BOOTSEL に置き去りにする)
 2. R2P2 の port が居れば `tools/pico2w/usbboot_app.rb` を `/home/usbboot.rb` へ PicoModem で置き、shell で実行する。
    port が落ちるのは正常。`picotool info` を最大 30 秒 poll する
-3. BOOTSEL に来なければ人手の BOOTSEL を頼む (patch 無しの firmware が載っている)
+3. BOOTSEL に来なければ原因で分ける。timeout だけでは区別できない
+   - shell が `NoMethodError` を返した → patch 無しの firmware。人手の BOOTSEL を頼んで待つ
+   - 転送が失敗した / 何も返らない → wedge か転送失敗。BOOTSEL では直らないので、USB 抜き差しを促して落ちる
+   - R2P2 が USB に居ない → 人手の BOOTSEL を頼んで待つ
 4. `picotool load -x <uf2>`
 5. `tools/pico2w/shell_ok.rb` で shell が応答するまで最大 90 秒待つ
 
