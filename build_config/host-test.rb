@@ -15,4 +15,5 @@ load "#{MRUBY_ROOT}/build_config/picoruby-test.rb"
 MRuby.each_target do |conf|
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-cdc-midi"
+  conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-hid-mouse"
 end

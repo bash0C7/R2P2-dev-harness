@@ -15,4 +15,5 @@ MRuby.each_target do |conf|
   next unless conf.name.start_with?("r2p2-picoruby-pico2_w")
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-cdc-midi"
+  conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-hid-mouse"
 end

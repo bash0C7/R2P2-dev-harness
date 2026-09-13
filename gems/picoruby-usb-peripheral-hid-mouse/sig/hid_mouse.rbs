@@ -1,0 +1,31 @@
+module USB
+  class Peripheral
+    class HIDMouse < Peripheral
+      type button_t = :left | :right | :middle
+
+      interface _MouseReport
+        def mouse_move: (Integer x, Integer y, Integer wheel, Integer buttons) -> bool
+      end
+
+      BUTTONS: Hash[button_t, Integer]
+      RELEASE_ATTEMPTS: Integer
+
+      @hid: _MouseReport
+      @held: Array[button_t]
+
+      attr_reader hid: _MouseReport
+
+      def initialize: (?idle_ms: Integer, ?connect_poll_ms: Integer, ?reconnect: bool,
+                       ?hid: _MouseReport?) -> void
+      def connected?: () -> bool
+      def held: () -> Array[button_t]
+      def press: (button_t button) -> bool
+      def release: (button_t button) -> bool
+      def move: (Integer dx, Integer dy) -> bool
+      def restore_host_state: () -> void
+      private def send_report: (Integer dx, Integer dy, Array[button_t] buttons) -> bool
+      private def mask_of: (button_t button) -> Integer
+      private def default_hid: () -> _MouseReport
+    end
+  end
+end
