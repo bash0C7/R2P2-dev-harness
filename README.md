@@ -54,15 +54,16 @@ rake -T      # 何ができるか
 | `examples/rp2040/midi_scale.rb` | example 第1号。`rake test:examples` で compile を確認 |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
-| `rake rp2040:flash` / `upload` / `run` / `reboot` | 実装済み。flash は BOOTSEL ボタン不要 (patch 入り firmware が載っていれば)。**本 repo から実機で未検証** (macOS の `ioreg` と `serialport` gem が要る) |
+| `rake rp2040:flash` | 実装済み。**Pico 2 W 実機で BOOTSEL ボタンなしに通した** (patch 入り firmware が載っていれば) |
+| `rake rp2040:upload` / `run` / `reboot` | 実装済み。task そのものは実機で未実行 (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
-| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。本 repo から実機で未検証 |
+| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。flash が使う `pmput` / `rsh` / `shell_ok` / `tmo` は実機で通った |
 | `firmware-patches/` | build の間だけ vendor/picoruby に当てる patch。`Machine.usb_boot` を足す |
 
 ハーネスの gem は rp2040 の firmware に実際に入っている
 (`picogem_init.c` に `usb/peripheral` と `usb/peripheral/cdc_midi` が並ぶ)。
 
-**それでも実機検証は1つも通っていない。** 完了の線引きは実機まで
+実機へは BOOTSEL ボタンなしで焼けるが、**CDC-MIDI の実機検証はまだ通っていない。** 完了の線引きは実機まで
 ([docs/spec.md](docs/spec.md) §5) なので、積荷1 はまだ「done」ではない。
-焼く・走らせるところまで道具は揃ったが、Mac 側で結果を判定する相手役が無い。
+Mac 側で結果を判定する相手役が無い。
 実機側の作業は [docs/handoff-to-mac.md](docs/handoff-to-mac.md)。

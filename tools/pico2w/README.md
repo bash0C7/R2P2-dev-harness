@@ -2,8 +2,8 @@
 
 `bash0C7/picoruby-ble-verify` の `pico2w/scripts/` から、BLE 検証に依らない
 device helper だけを持ってきたもの。あちらでは Pico 2 W で動いている。
-**本 repo からはまだ実機で動かしていない。**
-実機が要るので、動かすのは Mac 側のセッション ([../../docs/handoff-to-mac.md](../../docs/handoff-to-mac.md))。
+本 repo からは `rake rp2040:flash` 経由で `pmput.rb` / `rsh.rb` / `shell_ok.rb` / `tmo.rb` を実機で通した。
+`runapp.rb` と `reboot_app.rb` はまだ。
 
 | file | 何をするか |
 |---|---|
@@ -15,7 +15,7 @@ device helper だけを持ってきたもの。あちらでは Pico 2 W で動�
 | `usbboot_app.rb` | board に置いて実行すると BOOTSEL へ落ちる。`Machine.usb_boot` 入りの firmware が要る |
 | `term.rb` | 行エディタの端末問い合わせ (`\e[6n` / `\e[5n`) に答える。`rsh.rb` / `runapp.rb` が使う |
 | `tmo.rb` | コマンドに壁時計の上限を掛け、process group ごと SIGKILL する |
-| `shell_ok.rb` | 呼び出し元を固まらせずに shell の生存を確かめる。`OK` / `DEAD` |
+| `shell_ok.rb` | 呼び出し元を固まらせずに shell の生存を確かめる。`$>` プロンプトが返れば `OK`、それ以外は `DEAD` |
 
 `serialport` gem が要る。
 

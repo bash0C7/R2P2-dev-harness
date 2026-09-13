@@ -3,27 +3,23 @@
 web session (Claude Code on web) からは実機も Mac も触れない。
 ここは **Mac ローカルの Claude session に渡す作業**の一覧。
 
-## 1. `rake rp2040:*` を本 repo から実機で通す
+## 1. `rake rp2040:upload` / `run` / `reboot` を実機で通す
 
-無人化 G1 (`Machine.usb_boot` で BOOTSEL へ落とす) は本 repo に入っている。
-方式・手順・落とし穴は [spec.md](spec.md) §6。patch と helper は `bash0C7/picoruby-ble-verify` で
-Pico 2 W を相手に確認済みだが、**本 repo の rake からは1度も動かしていない。**
+`rake rp2040:build` と `rake rp2040:flash` は Pico 2 W 実機で通った。flash は BOOTSEL 押下なし
+([spec.md](spec.md) §6)。task として残っているのは次の3つ:
 
 ```sh
-rake setup && rake rp2040:setup
-rake rp2040:build                          # firmware-patches/ を当てて build し、戻す
-rake rp2040:flash                          # 初回だけ BOOTSEL は人間、以後は無人
 rake rp2040:upload[app.rb,/home/app.rb]
 rake rp2040:run[examples/rp2040/midi_scale.rb,20]
 rake rp2040:reboot
 ```
 
-確かめること:
+`run` は `runapp.rb`、`reboot` は `rsh.rb` を blocking open で呼ぶ。wedge した board で止まらないよう
+`tmo.rb` を掛けるかは、通してみてから決める。
 
-- 初回: patch 無し firmware の board で flash が人手 BOOTSEL を頼み、焼けて shell が応答する
-- 2回目以降: board に触らずに flash が完走する
-- build の後に vendor/picoruby に patch が残っていない (`git -C vendor/picoruby status`)
-- Claude Code の sandbox 内から picotool と serial が USB に触れるか。触れなければ sandbox 外で回す
+compiler の submodule を旧 pin に固定している ([spec.md](spec.md) §6)。
+picoruby の `mrbgems/mruby-compiler` の pin が `MRC_PRISM_ARENA_BLOCK` の `#ifndef` を含んだら、
+固定を外して `MRC_PRISM_ARENA_BLOCK=4096` の define に切り替える。
 
 ## 2. ハング復旧 (G2) の機材選定
 

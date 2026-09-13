@@ -147,9 +147,9 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake test` | 上の2つ。**board 無しで確かめられるのはここまで** | 実装済み |
 | `rake clean` | build 生成物を捨てる (vendor は残す) | 実装済み |
 | `rake <target>:setup` | そのターゲットにだけ要る重い submodule を取る | rp2040 実装済み |
-| `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る |
+| `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る。compiler の submodule は固定 (§6) |
 | `rake <target>:stamp` | 前回の build が今の入力に対してまだ有効か | rp2040 実装済み |
-| `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み (実機未検証)。BOOTSEL は patch 無し firmware の時だけ人間 |
+| `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み。**Pico 2 W 実機で BOOTSEL 押下なしに通した**。BOOTSEL は patch 無し firmware の時だけ人間 |
 | `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み (実機未検証) |
 | `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み (実機未検証) |
 | `rake <target>:reboot` | board をリブートする | rp2040 実装済み (実機未検証) |
@@ -216,8 +216,9 @@ CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙される�
 取り込み済みのもの: `tools/pico2w/` の device helper と board 上に置く script、
 `firmware-patches/machine-usb-boot.patch`。
 BLE 検証に依る `stages/` は持ってきていない (あちらの repo のもの)。
-`rake rp2040:upload` / `run` / `reboot` / `flash` がこれらを呼ぶ。
-**本 repo からはまだ実機で動かしていない。** macOS の `ioreg` と `serialport` gem が要る。
+`rake rp2040:upload` / `run` / `reboot` / `flash` がこれらを呼ぶ。macOS の `ioreg` と `serialport` gem が要る。
+本 repo から Pico 2 W 実機で通したのは `rp2040:build` と `rp2040:flash` (中で `pmput.rb` / `rsh.rb` / `shell_ok.rb` を使う)。
+`upload` / `run` / `reboot` の task そのものはまだ走らせていない。
 
 ### いま人間にしか頼めない3つ
 
@@ -230,7 +231,7 @@ BLE 検証に依る `stages/` は持ってきていない (あちらの repo の
 
 | 段階 | 内容 | 人間の関与 |
 |---|---|---|
-| G0 | 現状。`picotool load -x` で焼く | 毎回 BOOTSEL |
+| G0 | `picotool load -x` で焼くだけ | 毎回 BOOTSEL |
 | G1 | firmware に `Machine.usb_boot` を足し、shell から BOOTSEL へ落とす | **初回だけ** BOOTSEL |
 | G2 | ハング時の電源サイクル | 未決 (機材依存) |
 
@@ -263,7 +264,7 @@ patch の中身は firmware の stamp に入る。
    - 転送が失敗した / 何も返らない → wedge か転送失敗。BOOTSEL では直らないので、USB 抜き差しを促して落ちる
    - R2P2 が USB に居ない → 人手の BOOTSEL を頼んで待つ
 4. `picotool load -x <uf2>`
-5. `tools/pico2w/shell_ok.rb` で shell が応答するまで最大 90 秒待つ
+5. `tools/pico2w/shell_ok.rb` で `$>` プロンプトが返るまで最大 90 秒待つ。起動バナーだけでは応答と見なさない
 
 serial を開く helper は `tools/pico2w/tmo.rb` で壁時計の上限を掛けて回す。
 
@@ -273,7 +274,31 @@ wedge した board (CDC は列挙されるが無音) には命令が届かない
 
 **実証** — `bash0C7/picoruby-ble-verify` で Pico 2 W (RP2350) を相手に確認済み。
 `Machine.usb_boot` から BOOTSEL まで約2秒。BLE の回帰を役ごとに焼き直しながら、BOOTSEL の押下ゼロで完走した。
-本 repo の rake からは未実行。Claude Code の sandbox 内から picotool と serial が USB に触れるかも未確認。
+本 repo でも、空の build dir からの `rake rp2040:build` → `rake rp2040:flash` を Pico 2 W 実機で通した。
+flash は BOOTSEL 押下なしで約40秒、焼き直し後に `$>` プロンプトが返る。
+Claude Code の Bash tool から、sandbox を外さずに picotool と serial に触れた。
+
+### compiler の submodule を固定する
+
+picoruby `4fe6e254` ("upgrade submodules") 以降の `mrbgems/mruby-compiler` は Prism の arena allocator を持ち、
+compiler context ごとに 64KB を `mrb_malloc` する (`MRC_PRISM_ARENA_BLOCK`、固定値)。
+起動時の context は VM の全期間生きる。heap 396KB の Pico 2 W では
+`Loading /etc/init.d/r2p2...` で毎 boot 止まり、CDC は列挙されたまま open が返らなくなる。
+同じ board・同じ FS で、次の3つだけを1つ前の pin に戻すと shell まで約1秒で上がる:
+
+| submodule | 固定する pin | upstream master の pin |
+|---|---|---|
+| `mrbgems/picoruby-mruby/lib/mruby` | `b05a7bfd` | `fbcb3dce` |
+| `mrbgems/mruby-compiler` | `db0aea5c` | `6d88acf1` |
+| `mrbgems/mruby-bin-mrbc` | `fa77fbde` | `6210c2c0` |
+
+`Rakefile` の `SUBMODULE_PINS` に持ち、`rake setup` / `refresh` が submodule を取るたびに checkout し直す。
+pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/mrbc` が居る) も作り直す。
+3つは同期して動くので混ぜない。
+
+外す条件: mruby `5a7aa02a1` が `MRC_PRISM_ARENA_BLOCK` を `#ifndef` で上書き可能にした
+(`picoruby/mruby-compiler2` では `beb0107` から)。picoruby の `mrbgems/mruby-compiler` の pin がそれを含んだら、
+固定を外し、`build_config/rp2040-pico2_w.rb` で `MRC_PRISM_ARENA_BLOCK=4096` を define する。
 
 ### 取り込むときに落とさない知見
 
@@ -291,6 +316,13 @@ wedge した board (CDC は列挙されるが無音) には命令が届かない
   shell に打つ helper は `tools/pico2w/term.rb` で `\e[1;1R` と `\e[0n` を返す
 - **wedge した board への blocking な serial open は macOS で返らず、SIGTERM も効かない。**
   `tmo.rb` で process group ごと SIGKILL する。生存確認は `shell_ok.rb` が fork した子で O_NONBLOCK で開く
+- **shell の生存を「何か bytes が返った」で判定しない。** 起動時に固まる board も起動バナーは出す。
+  `$>` プロンプトが返ったかで見る
+- **R2P2 は起動時に app を自動実行する。** `/etc/init.d/r2p2` が `$HOME/app.mrb` → `$HOME/app.rb` →
+  `DFU::BootManager.resolve` の順に探して load し、wifi 設定があれば `/bin/wifi_connect` も走らせる。
+  FS 領域は `picotool load` を跨いで残るので、固まる app を置くと焼き直しても毎 boot 固まる
+- **firmware の CMake は `<picoruby>/bin/mrbc` で mrblib を compile する。** それを置くのはホスト VM の build なので、
+  空の vendor では `rp2040:build` が先に建てる
 - **マスストレージはマウントされない。** ファイル転送は PicoModem のみ
 - `stackchan-picoruby` の `Deploy::Picomodem.upload` をそのまま呼んではいけない。
   RP2350 は DTR/RTS でリセットされないので起動バナー待ちでタイムアウトする
@@ -299,9 +331,9 @@ wedge した board (CDC は列挙されるが無音) には命令が届かない
 
 1. **器を立てる** — 実機を除いて一通り立った。`gems/picoruby-usb-peripheral` の
    setup/tick/teardown、`rake setup` / `test` / `rp2040:build`、CDC-MIDI の example 1本。
-   ホストのテスト 44 件と example の compile が green、firmware も build できる。
-   **残っているのは実機。** `rp2040:verify` が無いので、まだ done ではない
-2. **無人化 G1** — `rp2040:flash` から BOOTSEL の人手を外した (§6)。**残っているのは本 repo からの実機での実行**
+   ホストのテストと example の compile が green、firmware も build でき、実機へ焼ける。
+   **残っているのは CDC-MIDI の実機での判定。** `rp2040:verify` が無いので、まだ done ではない
+2. **無人化 G1** — `rp2040:flash` から BOOTSEL の人手を外し、本 repo から Pico 2 W 実機で通した (§6)
 3. (v1 外) ESP32、USB HID ゲームパッド、darwin 版の USB 機器
 
 ## 8. 未決
