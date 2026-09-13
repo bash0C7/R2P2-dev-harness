@@ -1,9 +1,16 @@
 # USB マウスとして、Pico 2 W の BOOTSEL ボタンを左クリックにする。
+# 押している間は基板の LED を点ける。
 #
 #   rake rp2040:run[examples/rp2040/bootsel_click.rb,30]
 #
 # 押している間に抜けても、器がボタンを離すので host に押しっぱなしを残さない。
 require "usb/peripheral/hid_mouse"
+require "cyw43"
+
+# Pico 2 W の LED は RP2350 ではなく無線チップ CYW43 の GPIO に繋がっている。
+CYW43.init unless CYW43.initialized?
+led = CYW43::GPIO.new(CYW43::GPIO::LED_PIN)
+led.write(0)
 
 USB::Peripheral::HIDMouse.new(idle_ms: 0).run do |dev|
   dev.setup do
@@ -15,14 +22,21 @@ USB::Peripheral::HIDMouse.new(idle_ms: 0).run do |dev|
     down = d.held.include?(:left)
     # 送れなかったら次の tick でもう一度。held は送れた時だけ変わる。
     if pressed && !down
-      puts "press" if d.press(:left)
+      if d.press(:left)
+        led.write(1)
+        puts "press"
+      end
     elsif !pressed && down
-      puts "release" if d.release(:left)
+      if d.release(:left)
+        led.write(0)
+        puts "release"
+      end
     end
     d.wait(10)
   end
 
   dev.teardown do
+    led.write(0)
     puts "USB mouse gone"
   end
 end
