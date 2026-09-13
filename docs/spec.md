@@ -115,7 +115,14 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
    `rake setup` / `rake refresh` が `vendor/picoruby/build_config/` にその名前の
    **shim を生成**し、upstream の原本は `*.upstream.rb` として隣に退避する。
    vendor を書き換えるのはこの1点だけで、何を書き換えたかは
-   `rakelib/vendor.rake` の `vendor:overlay` に書いてある
+   `rakelib/vendor.rake` の `vendor:overlay` に書いてある。
+
+   shim は tracked file を書き換えるので、**`refresh` は checkout の前に必ず戻す**。
+   戻さないと、upstream がその file を変えた瞬間に
+   "local changes would be overwritten" で止まる。そして overlay は
+   「もう張ってある」で早戻りしない。早戻りすると HEAD が動いたあとも
+   `*.upstream.rb` が前の commit のままになり、build が古い build_config を
+   読み続ける — 落ちずに間違う
 
 ## 4. rake の共通インタフェース
 
@@ -153,8 +160,9 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 ことを言えない。それは完了の線引きとしては使えない。
 
 `build/<target>/` の stale 化は R2P2-darwin と同じ方法で防ぐ:
-`vendor/picoruby` の SHA、build_config の digest、**ハーネスの gem の中身の digest** を
-stamp に記録し、
+`vendor/picoruby` の SHA、build_config の digest、**ハーネスの gem のうち
+firmware に入る file の path と digest** (`mrbgem.rake` `mrblib/` `src/` `ports/`
+`include/`。`test/` と `sig/` は build に効かないので見ない) を stamp に記録し、
 一致しなければ dir ごと捨てて再 build する。mruby の compile rule は `.c` の mtime しか
 見ないので、取得し直した tree の方が既存 `.o` より古いと何も再 compile されず、
 成功したと言いながら前の archive を stage する。
