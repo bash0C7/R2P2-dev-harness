@@ -9,7 +9,7 @@ PicoRuby を **USB 周辺機器**にするためのライブラリと、その�
 - 設計と決定事項: [docs/spec.md](docs/spec.md) が single source of truth
 - 調べて分かった事実: [docs/research/picoruby-usb-survey.md](docs/research/picoruby-usb-survey.md)
 - v1 でやらないと決めたこと: [docs/issues/gamepad.md](docs/issues/gamepad.md)
-- Mac 側に渡す作業: [docs/handoff-to-mac.md](docs/handoff-to-mac.md)
+- 残っている作業: [GitHub issues](https://github.com/bash0C7/R2P2-dev-harness/issues)
 
 ## v1 のスコープ
 
@@ -43,6 +43,20 @@ rake -T      # 何ができるか
 `rake setup` は host build に要る submodule だけを取る。firmware を作るなら
 `rake rp2040:setup` で pico-sdk を足してから `rake rp2040:build`。
 
+Pico 2 W 実機 (Mac に USB で接続):
+
+```sh
+rake rp2040:build                                  # firmware-patches/ を当てて build し、戻す
+rake rp2040:flash                                  # 動作中の board を自分で BOOTSEL へ落として焼く
+rake rp2040:run[examples/rp2040/bootsel_click.rb,60]   # 転送して走らせ、ログを取る
+rake rp2040:reboot
+```
+
+- `rp2040:flash` は `Machine.usb_boot` 入りの firmware が載っていればボタン不要。
+  初めて焼くときだけ、BOOTSEL を押したまま USB を挿す
+- picoruby の compiler 3つは `Rakefile` の `SUBMODULE_PINS` に固定している。
+  upstream の pin では Pico 2 W が起動時に固まる ([docs/spec.md](docs/spec.md) §6)
+
 ## 状態
 
 積荷1 (器) まで。
@@ -69,4 +83,4 @@ rake -T      # 何ができるか
 **CDC-MIDI の実機検証はまだ通っていない。** 完了の線引きは実機まで
 ([docs/spec.md](docs/spec.md) §5) なので、積荷1 はまだ「done」ではない。
 Mac 側で CDC-MIDI の結果を判定する相手役が無い。
-実機側の作業は [docs/handoff-to-mac.md](docs/handoff-to-mac.md)。
+残っている作業は [GitHub issues](https://github.com/bash0C7/R2P2-dev-harness/issues) にある。

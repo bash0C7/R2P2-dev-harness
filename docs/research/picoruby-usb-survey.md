@@ -113,10 +113,9 @@ firmware を焼くところまで。
 人間にしか頼めない操作は3つだけ:
 BOOTSEL 書き込み / ハング復旧の USB 抜き差し / Mac の Bluetooth 許可ダイアログ。
 
-**現行 firmware には reset interface が無く `picotool reboot` が効かない。
-1200-baud touch も効かない。** これが無人化の最大の障害だったが、
-**対処の方式は Mac ローカルの Claude session で既に確立している。**
-改修は Mac 側で行う — [../handoff-to-mac.md](../handoff-to-mac.md)。
+**R2P2 firmware には reset interface が無く `picotool reboot` が効かない。
+1200-baud touch も効かない。** 本 repo は firmware に `Machine.usb_boot` を足す patch で
+BOOTSEL へ落とす — [../spec.md](../spec.md) §6 の G1。
 
 ## 関連する外部の記録
 

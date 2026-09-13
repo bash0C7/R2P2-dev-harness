@@ -102,7 +102,6 @@ end
 
 # 実機を触る helper は tools/pico2w/ に居る。serialport gem と、
 # USB 製品名からポートを引くための macOS の ioreg が要る。
-# どれもまだ実機で検証していない (docs/handoff-to-mac.md)。
 def device_tool(name, *args)
   script = File.join(HARNESS_ROOT, "tools", "pico2w", name)
   raise "#{script} is missing" unless File.file?(script)
