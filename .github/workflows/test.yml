@@ -1,0 +1,25 @@
+# ホスト層のテスト。実機は回せないので、ここが green でも完了ではない
+# (完了の線引きは docs/spec.md §5)。
+name: test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Fetch picoruby
+        run: rake setup
+
+      - name: Run the harness gems' picotest on the host
+        run: rake test:host

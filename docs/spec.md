@@ -129,9 +129,11 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake clean` | build 生成物を捨てる (vendor は残す) | 実装済み |
 | `rake <target>:setup` | そのターゲットにだけ要る重い submodule を取る | rp2040 実装済み |
 | `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み (実機未検証) |
-| `rake <target>:flash` | 実機へ焼く (§6) | 未実装。呼ぶと理由を言って落ちる |
-| `rake <target>:run[app]` | 実機でアプリを走らせ、ログを取る | 未実装。同上 |
-| `rake <target>:verify` | build → flash → run → 判定。**これが green で完了** | 未実装。同上 |
+| `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み (実機未検証)。BOOTSEL は人間 |
+| `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み (実機未検証) |
+| `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み (実機未検証) |
+| `rake <target>:reboot` | board をリブートする | rp2040 実装済み (実機未検証) |
+| `rake <target>:verify` | build → flash → run → **判定**。これが green で完了 | 未実装。判定が無い |
 
 `<target>` は v1 では `rp2040` と `darwin`。darwin はまだ何も無い (積荷3)。
 
@@ -141,6 +143,11 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 **未実装のタスクは、黙って通ったふりをせずに落とす。** 何が無くて、代わりに
 今は何をするのかを message に書く。実機まで通って初めて完了 (§5) という線引きは、
 「実機の task が無い」を「実機は要らない」に読み替えられた瞬間に消える。
+
+`verify` だけが最後まで残っているのは、**判定する相手役がまだ無い**から。
+焼いて走らせるところまでは道具が揃っても、Mac 側で「MIDI デバイスとして列挙されたか」
+「送った event を受け取れたか」を見る口が無ければ、verify は「落ちなかった」以上の
+ことを言えない。それは完了の線引きとしては使えない。
 
 `build/<target>/` の stale 化は R2P2-darwin と同じ方法で防ぐ:
 `vendor/picoruby` の SHA、build_config の digest、**ハーネスの gem の中身の digest** を
@@ -182,6 +189,11 @@ CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙される�
 既存の資産は private repo `bash0C7/picoruby-ble-verify` の `pico2w/` にある
 (picomodem / pmput / rsh / runapp / stages)。**これを本 repo に取り込む。**
 そのうえで、いま人間に頼っている操作を減らす。
+
+取り込み済みのもの: `tools/pico2w/` に device helper 4本 + reboot script。
+BLE 検証に依る `stages/` は持ってきていない (あちらの repo のもの)。
+`rake rp2040:upload` / `run` / `reboot` / `flash` がこれらを呼ぶ。
+**どれもまだ実機で動かしていない。** macOS の `ioreg` と `serialport` gem が要る。
 
 ### いま人間にしか頼めない3つ
 
@@ -234,10 +246,13 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
 無人化 G1 はここに無い。方式が確定済みで、実装が Mac 側にあるため
 ([handoff-to-mac.md](handoff-to-mac.md))。
 
+`rake test:host` の runner の実装量も、もう未決ではない。upstream の
+`Picotest::Runner` をそのまま require して使えるので、ハーネスが持つのは
+「temp ではない build_config で host VM を建てて、gem ごとに Runner を回す」
+30 行ほど。`collect_gems` の代わりは要らなかった。
+
 - **ハング復旧 (G2) の機材。** USB hub の電源制御 (`uhubctl`) が Mac 側で効く hub があるか、
   外部リレーを足すか、firmware の watchdog で代替するか
-- **`rake test:host` の runner の実装量。** upstream の `run_picotest_runner` 相当を
-  どこまで自前で持つか。upstream の tasks を load して使い回せるかは未検証
 - **darwin ターゲットで USB 周辺機器の何を検証するのか。** Mac は host 側なので、
   「相手役」としての役割 (MIDI 受信、HID 列挙の確認) に限るのか、
   R2P2-darwin のように Mac 上で PicoRuby を走らせる側も持つのか

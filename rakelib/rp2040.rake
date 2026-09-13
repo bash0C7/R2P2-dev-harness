@@ -32,39 +32,78 @@ namespace :rp2040 do
     puts uf2
   end
 
-  desc "Flash the firmware onto a Pico 2 W (not implemented yet)"
-  task :flash do
-    raise <<~MSG
-      rake rp2040:flash is not implemented yet.
+desc "Flash the firmware onto a Pico 2 W in BOOTSEL mode (unverified)"
+task :flash do
+  uf2 = latest_uf2
+  raise "no firmware built yet. Run `rake rp2040:build`." unless uf2
+  require_picotool!
+  puts <<~ASK
+    Put the board into BOOTSEL: unplug USB, hold BOOTSEL, plug in, release.
+    (Until the firmware gains a way back into BOOTSEL, this is a human step.
+     See docs/handoff-to-mac.md.)
+  ASK
+  # picotool は mount を待つ。/Volumes/RP2350 への cp は mount 完了前に走ると
+  # Device not configured で落ちる。ボリュームは見えているのに、である。
+  sh "picotool load -x #{uf2.shellescape}"
+end
 
-      Flashing needs a board on a USB port and, until the firmware gains a way
-      back into BOOTSEL, a human to hold the button. The approach is settled in
-      the Mac-local session; see docs/handoff-to-mac.md.
+desc "Copy a local .rb onto the board over PicoModem (unverified)"
+task :upload, [:src, :dst] do |_t, args|
+  src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
+  dst = args[:dst] || "/home/#{File.basename(src)}"
+  device_tool "pmput.rb", src, dst
+end
 
-      For now: `rake rp2040:build`, then `picotool load -x <uf2>` on the Mac.
-      Do not `cp` to /Volumes/RP2350 — it fails before the mount completes.
-    MSG
-  end
+desc "Run an app on the board and capture its log (unverified)"
+task :run, [:app, :seconds] do |_t, args|
+  app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
+  seconds = args[:seconds] || "20"
+  remote = "/home/#{File.basename(app)}"
+  device_tool "pmput.rb", app, remote
+  device_tool "runapp.rb", remote, seconds
+end
 
-  desc "Run an app on the board and capture the log (not implemented yet)"
-  task :run, [:app] do |_t, _args|
-    raise <<~MSG
-      rake rp2040:run is not implemented yet.
+desc "Reboot the board (unverified)"
+task :reboot do
+  # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
+  # 打っても何も起きない。script を置いて実行する。
+  device_tool "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb"
+  # 実行中に CDC が落ちるので ENXIO が出る。正常。
+  device_tool "rsh.rb", "/home/reboot.rb", "4"
+end
 
-      It needs the PicoModem helpers (pmput / rsh / runapp) out of
-      bash0C7/picoruby-ble-verify, and those can only be ported with a board in
-      hand. See docs/handoff-to-mac.md §2.
-    MSG
-  end
+desc "build -> flash -> run -> judge (not implemented yet)"
+task :verify do
+  raise <<~MSG
+    rake rp2040:verify is not implemented yet.
 
-  desc "build -> flash -> run -> judge (not implemented yet)"
-  task :verify do
-    raise <<~MSG
-      rake rp2040:verify is not implemented yet: it depends on rp2040:flash and
-      rp2040:run. Until it exists, a change is not done — the host tests
-      (`rake test:host`) are necessary, never sufficient. See docs/spec.md §5.
-    MSG
-  end
+    build / flash / run は揃ったが、**判定が無い**。CDC-MIDI なら
+    「Mac が MIDI デバイスとして列挙したか」「送った event を受け取れたか」
+    「teardown のあとに stuck note が残っていないか」を Mac 側で見る必要がある
+    (docs/spec.md §5)。その相手役はまだ書いていない。
+
+    判定が無いまま verify が通ると、完了の線引きが消える。だから落とす。
+  MSG
+end
+end
+
+# 実機を触る helper は tools/pico2w/ に居る。serialport gem と、
+# USB 製品名からポートを引くための macOS の ioreg が要る。
+# どれもまだ実機で検証していない (docs/handoff-to-mac.md)。
+def device_tool(name, *args)
+  script = File.join(HARNESS_ROOT, "tools", "pico2w", name)
+  raise "#{script} is missing" unless File.file?(script)
+  sh "#{RbConfig.ruby.shellescape} #{script.shellescape} #{args.map { |a| a.to_s.shellescape }.join(' ')}"
+end
+
+def require_picotool!
+  return if system("which picotool > /dev/null 2>&1")
+  raise <<~MSG
+    picotool is not on PATH.
+
+    The firmware exposes no mass storage and no reset interface, so picotool is
+    the only way in. `cp` to /Volumes/RP2350 is not a substitute.
+  MSG
 end
 
 def firmware_build_dir

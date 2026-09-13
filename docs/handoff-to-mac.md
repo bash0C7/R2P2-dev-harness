@@ -22,18 +22,33 @@ web 側はこれらを前提として扱い、再設計しない。
 - [spec.md](spec.md) §6 の段取り表の G1 行を、人間の関与「初回だけ BOOTSEL」で確定させる
 - 確立した方式の実体 (どこに何を足したか) を [spec.md](spec.md) §6 に1節として記録する
 
-## 2. `picoruby-ble-verify` からの資産移植
+## 2. `tools/pico2w/` を実機で通す
 
-`bash0C7/picoruby-ble-verify` の `pico2w/scripts/` (picomodem / pmput / rsh / runapp /
-stages) を本 repo へ持ってくる。実機で動かしながらでないと移植の正しさが確認できないので
-Mac 側の作業。落としてはいけない知見は [spec.md](spec.md) §6 に転記済み。
+`bash0C7/picoruby-ble-verify` の `pico2w/scripts/` から device helper 4本
+(`picomodem.rb` / `pmput.rb` / `rsh.rb` / `runapp.rb`) と reboot script は
+**もう `tools/pico2w/` に入っている**。rake からも呼べる:
+
+```sh
+rake rp2040:flash                          # BOOTSEL は人間、そのあと picotool
+rake rp2040:upload[app.rb,/home/app.rb]
+rake rp2040:run[examples/rp2040/midi_scale.rb,20]
+rake rp2040:reboot
+```
+
+**どれも実機で1度も動かしていない。** 残っているのはそこ。`serialport` gem と
+macOS の `ioreg` が要る。BLE 検証に依る `stages/` は持ってきていないので、
+必要なら向こうの repo から。落としてはいけない知見は
+[spec.md](spec.md) §6 と `tools/pico2w/README.md` にある。
 
 ## 3. ハング復旧 (G2) の機材選定
 
 USB hub の電源制御 (`uhubctl`) が手元の hub で効くか、外部リレーを足すか、
 firmware の watchdog で代替するか。**手元の機材を見ないと決まらない。**
 
-## 4. 実機での完了判定
+## 4. 判定する相手役 (verify に要る)
+
+`rake rp2040:verify` だけがまだ落ちるようにしてある。焼いて走らせる道具は揃ったが、
+**Mac 側で判定する口が無い**から。これが書けると verify が閉じる。
 
 [spec.md](spec.md) §5 のとおり、完了条件は実機まで通って green。
 CDC-MIDI の判定材料:
