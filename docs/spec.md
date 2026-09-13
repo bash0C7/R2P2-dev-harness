@@ -155,7 +155,8 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake <target>:reboot` | board をリブートする | rp2040 実装済み (実機未検証) |
 | `rake <target>:verify` | build → flash → run → **判定**。これが green で完了 | 未実装。判定が無い |
 
-`<target>` は v1 では `rp2040` と `darwin`。darwin はまだ何も無い (積荷3)。
+`<target>` は v1 では `rp2040` だけ。**darwin 版の USB 機器は対象外**にした。
+Mac は USB 機器になる側ではなく、**相手役と開発機**として使う。
 
 環境変数は `PICORUBY_REPO` / `PICORUBY_REF` (取得元と ref) と `SKIP_BUILD`
 (`test:host` で再 build を飛ばす)。
@@ -262,8 +263,7 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
    ホストのテスト 44 件と example の compile が green、firmware も build できる。
    **残っているのは実機。** `rp2040:verify` が無いので、まだ done ではない
 2. **無人化 G1** — Mac 側の改修が入ったら、`rp2040:flash` から BOOTSEL の人手を外す
-3. **darwin ターゲット** — Mac 側を同じ rake インタフェースに載せる
-4. (v1 外) ESP32、USB HID ゲームパッド
+3. (v1 外) ESP32、USB HID ゲームパッド、darwin 版の USB 機器
 
 ## 8. 未決
 
@@ -277,6 +277,3 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
 
 - **ハング復旧 (G2) の機材。** USB hub の電源制御 (`uhubctl`) が Mac 側で効く hub があるか、
   外部リレーを足すか、firmware の watchdog で代替するか
-- **darwin ターゲットで USB 周辺機器の何を検証するのか。** Mac は host 側なので、
-  「相手役」としての役割 (MIDI 受信、HID 列挙の確認) に限るのか、
-  R2P2-darwin のように Mac 上で PicoRuby を走らせる側も持つのか

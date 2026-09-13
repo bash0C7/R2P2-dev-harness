@@ -15,14 +15,15 @@ PicoRuby を **USB 周辺機器**にするためのライブラリと、その�
 
 | 項目 | 決定 |
 |---|---|
-| 対象プラットフォーム | rp2040 (Raspberry Pi Pico 2 W) + darwin (Mac が相手役) |
+| 対象プラットフォーム | rp2040 (Raspberry Pi Pico 2 W) のみ |
+| Mac の役 | **相手役と開発機**。USB 機器になるのは board 側。darwin 版の USB 機器は対象外 |
 | 第1積荷 | USB CDC-MIDI。**器 (ライブラリの形と rake の共通インタフェース) を先に固める** |
 | USB descriptor | **v1 では変えない。** C 固定の制約をそのまま受け入れる |
 | 新しい gem の置き場所 | `gems/` 配下。`build_config` から `conf.gem gemdir:` で指す |
 | 完了の線引き | **実機検証まで通って green。** ホストのテストだけでは完了としない |
 | 無人化 | 焼き込みと検証の無人化は本 repo の**目玉スコープ**。[docs/spec.md](docs/spec.md) の §6 |
 
-ESP32 は2番目の積荷。iPhone / Apple Watch は v1 のスコープ外。
+ESP32 は2番目の積荷。darwin 版の USB 機器、iPhone / Apple Watch は v1 のスコープ外。
 
 ## 守る制約
 
