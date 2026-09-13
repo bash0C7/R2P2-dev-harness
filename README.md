@@ -31,6 +31,30 @@ ESP32 は2番目の積荷。iPhone / Apple Watch は v1 のスコープ外。
   必要とするならそこで初期化する
 - **既にあるライブラリは活かす。** 置き換えではなく上に載せる
 
+## 使う
+
+```sh
+rake setup        # vendor/picoruby を取得する
+rake test:host    # ハーネスの gem の picotest をホストで回す
+rake -T           # 何ができるか
+```
+
+`rake setup` は host build に要る submodule だけを取る。firmware を作るなら
+`rake rp2040:setup` で pico-sdk を足してから `rake rp2040:build`。
+
 ## 状態
 
-設計中。実装は未着手。
+積荷1 (器) まで。
+
+| | |
+|---|---|
+| `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト 16 件 green |
+| `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト 19 件 green |
+| `examples/rp2040/midi_scale.rb` | example 第1号 |
+| `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
+| `rake rp2040:setup` / `rp2040:build` | 実装済み。**実機でもホストでも未検証** (arm-none-eabi が要る) |
+| `rake rp2040:flash` / `run` / `verify` | 未実装。呼ぶと理由を言って落ちる |
+
+**実機検証はまだ1つも通っていない。** 完了の線引きは実機まで
+([docs/spec.md](docs/spec.md) §5) なので、積荷1 はまだ「done」ではない。
+実機側の作業は [docs/handoff-to-mac.md](docs/handoff-to-mac.md)。

@@ -22,37 +22,46 @@ C に触らずに固め、中身は後から差し替える。
 USB 制御としての共通的なことはライブラリ内にカプセル化する。
 
 ```ruby
-require "usb/peripheral"
+require "usb/peripheral/cdc_midi"
 
-USB::Peripheral::CDCMIDI.new(name: "r2p2-midi").run do |dev|
+USB::Peripheral::CDCMIDI.new(idle_ms: 0).run do |dev|
+  note = 60
+
   dev.setup do
-    @note = 60
+    puts "USB MIDI connected"
   end
 
-  dev.tick do
-    dev.putevent(:note_on, 0, @note, 100)
-    sleep_ms 180
-    dev.putevent(:note_off, 0, @note, 0)
-    @note = @note < 72 ? @note + 1 : 60
+  dev.tick do |d|
+    d.note_on(0, note, 100)
+    d.idle(180)
+    d.note_off(0, note)
+    note = 72 <= note ? 60 : note + 1
   end
 
   dev.teardown do
-    # 既定の後始末 (下記) の後に呼ばれる
+    # 既定の後始末 (下記) のあとに呼ばれる
   end
 end
 ```
+
+ブロックは device を引数に受け取り、状態は呼び出し側の local 変数に置く。
+`instance_eval` はしない — device の ivar とアプリの状態が同じ名前空間に同居すると、
+ライブラリが ivar を1つ足しただけでアプリが壊れる。
 
 ### ライブラリがカプセル化するもの
 
 アプリ側に書かせないもの。ここが「つど作らなくてよい」の実体になる。
 
-| 項目 | 中身 |
-|---|---|
-| 接続待ち | `connected?` が真になるまで待つ。`sleep_ms` の刻みはライブラリの都合 |
-| USB task の駆動 | `Machine.tud_task` を回す責任をループが持つ |
-| 切断の検出 | ループ中に `connected?` が偽になったら tick を止め、再接続を待つ |
-| 例外の扱い | tick が raise しても teardown を必ず通す |
-| 後始末 | 下記 |
+| 項目 | 中身 | 実体 |
+|---|---|---|
+| 接続待ち | `connected?` が真になるまで待つ。刻みは `connect_poll_ms` | `#wait_for_connection` |
+| USB task の駆動 | `Machine.tud_task` を回す責任をループが持つ | `#pump` |
+| 切断の検出 | ループ中に `connected?` が偽になったら tick を止め、再接続を待つ | `#session` |
+| 例外の扱い | tick が raise しても後始末と teardown を必ず通してから投げ直す | `#session` の `ensure` |
+| 後始末 | 下記 | `#restore_host_state` |
+
+subclass が実装するのは `#connected?` と `#restore_host_state` の2つだけ。
+`#pump` と `#idle` は下回りで、テストではここを差し替える。
 
 ### 片付け (teardown) は要る
 
@@ -71,44 +80,71 @@ stuck note / stuck key は起きない、が既定の挙動。
 ## 3. 置き場所と取り込ませ方
 
 ```
-gems/picoruby-usb-peripheral/   本 repo が持つ新しい gem
+gems/picoruby-usb-peripheral/            器。pure Ruby、依存なし
+gems/picoruby-usb-peripheral-cdc-midi/   CDC-MIDI の結線。器 + usb-cdc-midi に依存
   mrbgem.rake
   mrblib/
-  test/                         picotest
+  test/                                  picotest
   sig/
-build_config/                   gemdir: で gems/ を指す build_config
-vendor/picoruby/                rake が取得する。commit しない
-examples/                       example アプリ (.rb)
+build_config/                            gemdir: で gems/ を指す build_config
+rakelib/                                 rake タスク
+examples/rp2040/                         example アプリ (.rb)
+vendor/picoruby/                         rake が取得する。commit しない
 ```
 
-build_config から `conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"` で指す。
+**器と結線は別の gem に分ける。** `picoruby-usb-peripheral` は USB の具体を何も知らず、
+依存も持たない。MIDI の結線が要る build にだけ
+`picoruby-usb-peripheral-cdc-midi` が入る。器の側に MIDI 依存を持たせると、
+HID しか使わない build にまで MIDI が付いてくる。
+
+build_config から `conf.gem gemdir: "#{HARNESS_ROOT}/gems/<name>"` で指す。
 mruby の build system は `gemdir:` を受け付ける (upstream の `build_config/picoruby-wasm.rb` に前例)。
 
-**この選択の代償**: upstream の `rake test:gems:picoruby` は
-`MRUBY_ROOT/mrbgems/picoruby-*` しか glob しない (`tasks/picoruby/test.rake` の `collect_gems`)。
-`gemdir:` で外から差した gem は build には乗るが**テストには拾われない**。
-よって §5 のとおり、ホストテストの runner は本 repo が自前で持つ。
+**build_config は upstream のものを複製しない。** ハーネスの build_config は
+upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を足すだけにする。
+複製すると upstream の変更に追従できず、静かに古くなる。
+
+**代償が2つある。**
+
+1. upstream の `rake test:gems:picoruby` は `MRUBY_ROOT/mrbgems/picoruby-*` しか
+   glob しない (`tasks/picoruby/test.rake` の `collect_gems`)。`gemdir:` で外から差した
+   gem は build には乗るが**テストには拾われない**。ホストテストの runner は本 repo が
+   自前で持つ (§5)
+2. upstream の r2p2 firmware task は build_config の path を
+   `build_config/r2p2-<vm>-<board>.rb` と決め打つので、ハーネスの build_config を渡す口が無い。
+   `rake setup` / `rake refresh` が `vendor/picoruby/build_config/` にその名前の
+   **shim を生成**し、upstream の原本は `*.upstream.rb` として隣に退避する。
+   vendor を書き換えるのはこの1点だけで、何を書き換えたかは
+   `rakelib/vendor.rake` の `vendor:overlay` に書いてある
 
 ## 4. rake の共通インタフェース
 
 ターゲットが増えても同じ名前で同じことが起きる、を満たす最小集合。
 
-| タスク | 意味 |
-|---|---|
-| `rake setup` | `vendor/picoruby` を取得する (env: `PICORUBY_REPO` / `PICORUBY_REF`) |
-| `rake refresh` | 既存の `vendor/picoruby` を取得し直す |
-| `rake test:host` | ホストで picotest を回す。実機不要 |
-| `rake <target>:build` | firmware / 実行ファイルを作る |
-| `rake <target>:flash` | 実機へ焼く (§6) |
-| `rake <target>:run[app]` | 実機でアプリを走らせ、ログを取る |
-| `rake <target>:verify` | build → flash → run → 判定。**これが green で完了** |
-| `rake verify` | 全ターゲットの verify |
-| `rake clean` | build 生成物を捨てる |
+| タスク | 意味 | 状態 |
+|---|---|---|
+| `rake setup` | `vendor/picoruby` を取得し、submodule と overlay を張る | 実装済み |
+| `rake refresh` | 既存の `vendor/picoruby` を取得し直す | 実装済み |
+| `rake test:host` | ホストで picotest を回す。実機不要 | 実装済み |
+| `rake clean` | build 生成物を捨てる (vendor は残す) | 実装済み |
+| `rake <target>:setup` | そのターゲットにだけ要る重い submodule を取る | rp2040 実装済み |
+| `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み (実機未検証) |
+| `rake <target>:flash` | 実機へ焼く (§6) | 未実装。呼ぶと理由を言って落ちる |
+| `rake <target>:run[app]` | 実機でアプリを走らせ、ログを取る | 未実装。同上 |
+| `rake <target>:verify` | build → flash → run → 判定。**これが green で完了** | 未実装。同上 |
 
-`<target>` は v1 では `rp2040` と `darwin`。
+`<target>` は v1 では `rp2040` と `darwin`。darwin はまだ何も無い (積荷3)。
+
+環境変数は `PICORUBY_REPO` / `PICORUBY_REF` (取得元と ref) と `SKIP_BUILD`
+(`test:host` で再 build を飛ばす)。
+
+**未実装のタスクは、黙って通ったふりをせずに落とす。** 何が無くて、代わりに
+今は何をするのかを message に書く。実機まで通って初めて完了 (§5) という線引きは、
+「実機の task が無い」を「実機は要らない」に読み替えられた瞬間に消える。
 
 `build/<target>/` の stale 化は R2P2-darwin と同じ方法で防ぐ:
-`vendor/picoruby` の SHA と build_config の digest を stamp に記録し、
+`vendor/picoruby` の SHA、build_config の digest、**ハーネスの gem の中身の digest** を
+stamp に記録し、
 一致しなければ dir ごと捨てて再 build する。mruby の compile rule は `.c` の mtime しか
 見ないので、取得し直した tree の方が既存 `.o` より古いと何も再 compile されず、
 成功したと言いながら前の archive を stage する。
