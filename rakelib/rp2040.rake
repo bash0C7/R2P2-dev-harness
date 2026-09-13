@@ -74,13 +74,15 @@ namespace :rp2040 do
     device_tool "runapp.rb", remote, seconds
   end
 
-  desc "Reboot the board (unverified)"
+  desc "Reboot the board and wait for the shell"
   task :reboot do
     # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
     # 打っても何も起きない。script を置いて実行する。
     device_tool "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb"
-    # 実行中に CDC が落ちるので ENXIO が出る。正常。
-    device_tool "rsh.rb", "/home/reboot.rb", "4"
+    # 効いた時は実行中に CDC が落ちて rsh.rb が ENXIO で失敗する。それが reboot した印。
+    _, output = bounded_device_tool 40, "rsh.rb", "/home/reboot.rb", "4"
+    raise "the shell ran /home/reboot.rb but the board did not drop off USB" unless output.match?(/ENXIO|Device not configured/)
+    wait_until(90) { shell_answers? } or raise "rebooted, but the shell never answered"
   end
 
   desc "build -> flash -> run -> judge (not implemented yet)"
