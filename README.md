@@ -54,9 +54,10 @@ rake -T      # 何ができるか
 | `examples/rp2040/midi_scale.rb` | example 第1号。`rake test:examples` で compile を確認 |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
-| `rake rp2040:flash` / `upload` / `run` / `reboot` | 実装済み。**実機で未検証** (macOS の `ioreg` と `serialport` gem が要る) |
+| `rake rp2040:flash` / `upload` / `run` / `reboot` | 実装済み。flash は BOOTSEL ボタン不要 (patch 入り firmware が載っていれば)。**本 repo から実機で未検証** (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
-| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。実機で未検証 |
+| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。本 repo から実機で未検証 |
+| `firmware-patches/` | build の間だけ vendor/picoruby に当てる patch。`Machine.usb_boot` を足す |
 
 ハーネスの gem は rp2040 の firmware に実際に入っている
 (`picogem_init.c` に `usb/peripheral` と `usb/peripheral/cdc_midi` が並ぶ)。

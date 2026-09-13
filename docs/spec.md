@@ -149,7 +149,7 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake <target>:setup` | そのターゲットにだけ要る重い submodule を取る | rp2040 実装済み |
 | `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る |
 | `rake <target>:stamp` | 前回の build が今の入力に対してまだ有効か | rp2040 実装済み |
-| `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み (実機未検証)。BOOTSEL は人間 |
+| `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み (実機未検証)。BOOTSEL は patch 無し firmware の時だけ人間 |
 | `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み (実機未検証) |
 | `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み (実機未検証) |
 | `rake <target>:reboot` | board をリブートする | rp2040 実装済み (実機未検証) |
@@ -213,14 +213,16 @@ CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙される�
 (picomodem / pmput / rsh / runapp / stages)。**これを本 repo に取り込む。**
 そのうえで、いま人間に頼っている操作を減らす。
 
-取り込み済みのもの: `tools/pico2w/` に device helper 4本 + reboot script。
+取り込み済みのもの: `tools/pico2w/` の device helper と board 上に置く script、
+`firmware-patches/machine-usb-boot.patch`。
 BLE 検証に依る `stages/` は持ってきていない (あちらの repo のもの)。
 `rake rp2040:upload` / `run` / `reboot` / `flash` がこれらを呼ぶ。
-**どれもまだ実機で動かしていない。** macOS の `ioreg` と `serialport` gem が要る。
+**本 repo からはまだ実機で動かしていない。** macOS の `ioreg` と `serialport` gem が要る。
 
 ### いま人間にしか頼めない3つ
 
-1. **BOOTSEL 書き込み** — USB を抜き、BOOTSEL を押したまま挿し、離す
+1. **patch 無し firmware が載った board の BOOTSEL 書き込み** — USB を抜き、BOOTSEL を押したまま挿し、離す。
+   初回と、patch 無しの firmware を焼いた後だけ
 2. **ハング復旧の USB 抜き差し**
 3. **Mac の Bluetooth 許可ダイアログ** (BLE を使う検証のときだけ)
 
@@ -229,17 +231,46 @@ BLE 検証に依る `stages/` は持ってきていない (あちらの repo の
 | 段階 | 内容 | 人間の関与 |
 |---|---|---|
 | G0 | 現状。`picotool load -x` で焼く | 毎回 BOOTSEL |
-| G1 | firmware 側に「BOOTSEL モードへ落ちる」口を作る | **初回だけ** BOOTSEL |
+| G1 | firmware に `Machine.usb_boot` を足し、shell から BOOTSEL へ落とす | **初回だけ** BOOTSEL |
 | G2 | ハング時の電源サイクル | 未決 (機材依存) |
 
-**G1 の方式は Mac ローカルの Claude session で既に確立している。**
-本 repo ではそれを前提として扱い、**改修は Mac 側で行う**。
-web session から再設計・再検討はしない。申し送りは
-[handoff-to-mac.md](handoff-to-mac.md)。
+### G1: `Machine.usb_boot` で BOOTSEL へ落とす
 
-背景としての事実だけ残す: 現行 R2P2 firmware は reset interface を持たないので
-`picotool reboot` が効かず、1200-baud touch も効かない。
-R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の焼き直しは無人で回る。
+R2P2 firmware は VID 0x16c0 で `CFG_TUD_VENDOR 0`、つまり reset interface を持たない。
+picotool は Raspberry Pi の VID で絞るので、動作中の R2P2 を列挙すらせず、
+`picotool reboot -f -u` は効かない。1200-baud touch も効かない。
+BOOTSEL 中は ROM の bootloader なので picotool から普通に見える。
+そこで firmware 自身に ROM の USB bootloader へ落ちる口を足す。
+
+**firmware 側** — `firmware-patches/machine-usb-boot.patch`。picoruby-machine gem の3ファイルだけで、CMake の定義は足さない。
+
+- `include/machine.h` に `void Machine_usb_boot(void);`
+- `ports/rp2040/machine.c` で `pico/bootrom.h` を include し、`rom_reset_usb_boot(0, 0)` を呼ぶ
+- `src/mruby/machine.c` に `Machine.usb_boot` を登録。`PICORB_PLATFORM_RP2` の外では `NotImplementedError`
+
+mruby VM 側だけなので、femtoruby (mrubyc) firmware では使えない。
+vendor/picoruby は upstream の木なので patch は残さない。
+`rake rp2040:build` が build の間だけ `git apply` し、終わったら `git apply --reverse` で戻す。
+patch の中身は firmware の stamp に入る。
+
+**ホスト側** — `rake rp2040:flash` の手順:
+
+1. `picotool info` が通れば既に BOOTSEL なので 2 を飛ばす (中断した run は board を BOOTSEL に置き去りにする)
+2. R2P2 の port が居れば `tools/pico2w/usbboot_app.rb` を `/home/usbboot.rb` へ PicoModem で置き、shell で実行する。
+   port が落ちるのは正常。`picotool info` を最大 30 秒 poll する
+3. BOOTSEL に来なければ人手の BOOTSEL を頼む (patch 無しの firmware が載っている)
+4. `picotool load -x <uf2>`
+5. `tools/pico2w/shell_ok.rb` で shell が応答するまで最大 90 秒待つ
+
+serial を開く helper は `tools/pico2w/tmo.rb` で壁時計の上限を掛けて回す。
+
+**人間の関与** — patch 入りの firmware を最初に焼く1回だけ BOOTSEL が要る。
+以後は、焼く firmware が毎回 patch を含む限り無人で回る。patch 無しを焼くと口を失う。
+wedge した board (CDC は列挙されるが無音) には命令が届かないので、USB 抜き差しが要る (G2)。
+
+**実証** — `bash0C7/picoruby-ble-verify` で Pico 2 W (RP2350) を相手に確認済み。
+`Machine.usb_boot` から BOOTSEL まで約2秒。BLE の回帰を役ごとに焼き直しながら、BOOTSEL の押下ゼロで完走した。
+本 repo の rake からは未実行。Claude Code の sandbox 内から picotool と serial が USB に触れるかも未確認。
 
 ### 取り込むときに落とさない知見
 
@@ -252,6 +283,11 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
   必ず USB の製品名から引く (`ioreg -w 0 -r -n "R2P2" -l | grep IOCalloutDevice`)
 - **R2P2 shell は入力を Ruby として評価しない。** `Machine.reboot` と打っても何も起きない。
   スクリプトを `/home/` に置いて実行する
+- **R2P2 の行エディタは接続のたびに `\e[6n` と `\e[5n` を送り、応答まで打鍵を捨てる。**
+  答えないとコマンド行が黙って消え、プロンプトだけが返る。
+  shell に打つ helper は `tools/pico2w/term.rb` で `\e[1;1R` と `\e[0n` を返す
+- **wedge した board への blocking な serial open は macOS で返らず、SIGTERM も効かない。**
+  `tmo.rb` で process group ごと SIGKILL する。生存確認は `shell_ok.rb` が fork した子で O_NONBLOCK で開く
 - **マスストレージはマウントされない。** ファイル転送は PicoModem のみ
 - `stackchan-picoruby` の `Deploy::Picomodem.upload` をそのまま呼んではいけない。
   RP2350 は DTR/RTS でリセットされないので起動バナー待ちでタイムアウトする
@@ -262,18 +298,18 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
    setup/tick/teardown、`rake setup` / `test` / `rp2040:build`、CDC-MIDI の example 1本。
    ホストのテスト 44 件と example の compile が green、firmware も build できる。
    **残っているのは実機。** `rp2040:verify` が無いので、まだ done ではない
-2. **無人化 G1** — Mac 側の改修が入ったら、`rp2040:flash` から BOOTSEL の人手を外す
+2. **無人化 G1** — `rp2040:flash` から BOOTSEL の人手を外した (§6)。**残っているのは本 repo からの実機での実行**
 3. (v1 外) ESP32、USB HID ゲームパッド、darwin 版の USB 機器
 
 ## 8. 未決
 
-無人化 G1 はここに無い。方式が確定済みで、実装が Mac 側にあるため
-([handoff-to-mac.md](handoff-to-mac.md))。
-
-`rake test:host` の runner の実装量も、もう未決ではない。upstream の
+`rake test:host` の runner の実装量は未決ではない。upstream の
 `Picotest::Runner` をそのまま require して使えるので、ハーネスが持つのは
 「temp ではない build_config で host VM を建てて、gem ごとに Runner を回す」
 30 行ほど。`collect_gems` の代わりは要らなかった。
 
 - **ハング復旧 (G2) の機材。** USB hub の電源制御 (`uhubctl`) が Mac 側で効く hub があるか、
-  外部リレーを足すか、firmware の watchdog で代替するか
+  外部リレーを足すか、firmware の watchdog で代替するか。
+  `picoruby-ble-verify` での実績: app が固まる類は app 冒頭の `Watchdog.enable(8000)` と定期的な
+  `Watchdog.feed` で自動復帰した。CDC ごと固まった board は USB 抜き差ししか効かず、
+  Mac からは port ごとの給電制御ができなかった

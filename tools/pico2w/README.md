@@ -1,7 +1,8 @@
 # Pico 2 W を無人で触るための helper
 
 `bash0C7/picoruby-ble-verify` の `pico2w/scripts/` から、BLE 検証に依らない
-device helper だけを持ってきたもの。**まだ検証していない。**
+device helper だけを持ってきたもの。あちらでは Pico 2 W で動いている。
+**本 repo からはまだ実機で動かしていない。**
 実機が要るので、動かすのは Mac 側のセッション ([../../docs/handoff-to-mac.md](../../docs/handoff-to-mac.md))。
 
 | file | 何をするか |
@@ -11,6 +12,10 @@ device helper だけを持ってきたもの。**まだ検証していない。*
 | `rsh.rb` | R2P2 shell にコマンドを1つ打って N 秒読む |
 | `runapp.rb` | `/home/<name>.rb` を実行して N 秒キャプチャし、Ctrl-C で止める |
 | `reboot_app.rb` | board に置いて実行するとリブートする 2 行 |
+| `usbboot_app.rb` | board に置いて実行すると BOOTSEL へ落ちる。`Machine.usb_boot` 入りの firmware が要る |
+| `term.rb` | 行エディタの端末問い合わせ (`\e[6n` / `\e[5n`) に答える。`rsh.rb` / `runapp.rb` が使う |
+| `tmo.rb` | コマンドに壁時計の上限を掛け、process group ごと SIGKILL する |
+| `shell_ok.rb` | 呼び出し元を固まらせずに shell の生存を確かめる。`OK` / `DEAD` |
 
 `serialport` gem が要る。
 
@@ -26,6 +31,10 @@ device helper だけを持ってきたもの。**まだ検証していない。*
   `pmput.rb` はそのリセット手順を外してある
 - **R2P2 shell は入力を Ruby として評価しない。** プロンプトに `Machine.reboot` と
   打っても何も起きない。`reboot_app.rb` を `/home/` に置いて実行する
+- **行エディタは接続のたびに `\e[6n` と `\e[5n` を送り、応答まで打鍵を捨てる。**
+  答えないとコマンド行が黙って消える。port を開くたびに `Term.settle`、read ごとに `Term.answer`
+- **wedge した board への blocking な serial open は macOS で返らず、SIGTERM も効かない。**
+  serial を開くものは `tmo.rb` 越しに回すか、`shell_ok.rb` のように fork した子で O_NONBLOCK で開く
 - ハングしたら (CDC は列挙されているのに無音) 復旧は USB 抜き差しだけ。
   `picotool reboot` はこの firmware に reset interface が無いので効かず、
-  1200-baud touch も効かない
+  1200-baud touch も効かない。BOOTSEL へ落とすのは `usbboot_app.rb` (docs/spec.md §6 G1)
