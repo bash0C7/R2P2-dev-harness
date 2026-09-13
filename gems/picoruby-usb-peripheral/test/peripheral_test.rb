@@ -95,6 +95,27 @@ class USBPeripheralTest < Picotest::Test
     assert_equal 4, dev.pumps
   end
 
+  def test_wait_pumps_the_usb_task_while_it_sleeps
+    dev = build_device
+    dev.wait(3)
+    # 1ms 刻みで、眠るたびに pump が挟まる
+    assert_equal [1, 1, 1], dev.idles
+    assert_equal 3, dev.pumps
+  end
+
+  def test_wait_does_not_overshoot_the_last_slice
+    dev = build_device
+    dev.wait(1)
+    assert_equal [1], dev.idles
+  end
+
+  def test_wait_of_zero_does_nothing
+    dev = build_device
+    dev.wait(0)
+    assert_equal [], dev.idles
+    assert_equal 0, dev.pumps
+  end
+
   private def build_device(connect_delay: 0, ticks_per_session: 1, sessions: 1,
                            idle_ms: 1, connect_poll_ms: 50, reconnect: false)
     fake_peripheral_class.new(

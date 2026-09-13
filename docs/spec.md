@@ -59,9 +59,15 @@ end
 | 切断の検出 | ループ中に `connected?` が偽になったら tick を止め、再接続を待つ | `#session` |
 | 例外の扱い | tick が raise しても後始末と teardown を必ず通してから投げ直す | `#session` の `ensure` |
 | 後始末 | 下記 | `#restore_host_state` |
+| 待つ | USB task を回しながら待つ。アプリが待つときはこれ | `#wait` |
 
 subclass が実装するのは `#connected?` と `#restore_host_state` の2つだけ。
 `#pump` と `#idle` は下回りで、テストではここを差し替える。
+
+**アプリが待つときは `#idle` ではなく `#wait` を使う。** `#idle` は素の sleep で、
+長く止めるとその間 USB task が回らない。tick の中で「180ms 鳴らす」つもりで
+180ms 素で眠ると、host から見てデバイスが応答しない時間がそれだけ空く。
+`#wait` は 1ms 刻みで `#pump` を挟みながら待つ。
 
 ### 片付け (teardown) は要る
 

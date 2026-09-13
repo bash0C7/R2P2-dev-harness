@@ -10,6 +10,7 @@ module USB
 
     DEFAULT_IDLE_MS: Integer
     DEFAULT_CONNECT_POLL_MS: Integer
+    WAIT_SLICE_MS: Integer
 
     @idle_ms: Integer
     @connect_poll_ms: Integer
@@ -32,6 +33,7 @@ module USB
     def run: () ?{ (Peripheral) -> void } -> self
     def connected?: () -> bool
     def restore_host_state: () -> void
+    def wait: (Integer ms) -> void
     def pump: () -> void
     def idle: (Integer ms) -> void
     private def wait_for_connection: () -> void

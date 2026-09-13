@@ -17,6 +17,8 @@ module USB
 
     DEFAULT_IDLE_MS = 1
     DEFAULT_CONNECT_POLL_MS = 50
+    # #wait が USB task を回す刻み
+    WAIT_SLICE_MS = 1
 
     def initialize(idle_ms: DEFAULT_IDLE_MS,
                    connect_poll_ms: DEFAULT_CONNECT_POLL_MS,
@@ -86,6 +88,22 @@ module USB
     # host に残した状態を戻す。鳴りっぱなしの note、押しっぱなしのボタン。
     # USB を畳むためのものではない。
     def restore_host_state
+      nil
+    end
+
+    # USB task を回しながら ms 待つ。**アプリが待つときはこれを使う。**
+    #
+    # #idle を直に呼んで長く止まると、その間 USB task が回らない。
+    # tick の中で「180ms 鳴らす」つもりで 180ms 素で眠ると、host から見て
+    # デバイスが応答しない時間がそれだけ空く。
+    def wait(ms)
+      remaining = ms
+      while 0 < remaining
+        pump
+        step = WAIT_SLICE_MS < remaining ? WAIT_SLICE_MS : remaining
+        idle(step)
+        remaining -= step
+      end
       nil
     end
 

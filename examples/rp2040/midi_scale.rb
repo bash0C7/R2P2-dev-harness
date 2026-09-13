@@ -14,7 +14,7 @@ USB::Peripheral::CDCMIDI.new(idle_ms: 0).run do |dev|
 
   dev.tick do |d|
     d.note_on(0, note, 100)
-    d.idle(180)
+    d.wait(180)   # 素の idle で止めると、その間 USB task が回らない
     d.note_off(0, note)
     note = 72 <= note ? 60 : note + 1
   end

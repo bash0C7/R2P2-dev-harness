@@ -48,7 +48,7 @@ rake -T      # 何ができるか
 
 | | |
 |---|---|
-| `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト 16 件 green |
+| `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト 21 件 green |
 | `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト 23 件 green |
 | `examples/rp2040/midi_scale.rb` | example 第1号。`rake test:examples` で compile を確認 |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
