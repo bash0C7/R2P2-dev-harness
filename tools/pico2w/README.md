@@ -14,6 +14,7 @@ device helper だけを持ってきたもの。あちらでは Pico 2 W で動�
 | `usbboot_app.rb` | board に置いて実行すると BOOTSEL へ落ちる。`Machine.usb_boot` 入りの firmware が要る |
 | `term.rb` | 行エディタの端末問い合わせ (`\e[6n` / `\e[5n`) に答える。`rsh.rb` / `runapp.rb` が使う |
 | `tmo.rb` | コマンドに壁時計の上限を掛け、process group ごと SIGKILL する |
+| `interrupt.rb` | shell の port に Ctrl-C を送る。自動起動した `/home/app.rb` を止めて `$>` を出す |
 | `shell_ok.rb` | 呼び出し元を固まらせずに shell の生存を確かめる。`$>` プロンプトが返れば `OK`、それ以外は `DEAD` |
 
 `serialport` gem が要る。

@@ -54,6 +54,9 @@ rake rp2040:reboot
 
 - `rp2040:flash` は `Machine.usb_boot` 入りの firmware が載っていればボタン不要。
   初めて焼くときだけ、BOOTSEL を押したまま USB を挿す
+- USB を挿しただけで app を動かすには `/home/app.rb` として置く。起動時に自動実行される:
+  `rake rp2040:upload[examples/rp2040/bootsel_click.rb,/home/app.rb]`。
+  app が動いている間は rake の実機タスクが Ctrl-C で止めてから shell を使う
 - picoruby の compiler 3つは `Rakefile` の `SUBMODULE_PINS` に固定している。
   upstream の pin では Pico 2 W が起動時に固まる ([docs/spec.md](docs/spec.md) §6)
 
@@ -67,7 +70,7 @@ rake rp2040:reboot
 | `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト green |
 | `gems/picoruby-usb-peripheral-hid-mouse` | HID mouse の結線。ホストのテスト green |
 | `examples/rp2040/midi_scale.rb` | CDC-MIDI の example。`rake test:examples` で compile を確認。実機では未実行 |
-| `examples/rp2040/bootsel_click.rb` | BOOTSEL ボタンを USB マウスの左クリックにする。**Pico 2 W 実機で Mac に対してクリックが効いた** |
+| `examples/rp2040/bootsel_click.rb` | BOOTSEL ボタンを USB マウスの左クリックにし、押している間 LED を点ける。**Pico 2 W 実機で Mac に対してクリックが効き、LED が点いた。`/home/app.rb` として置くと USB を挿しただけで動く** |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
 | `rake rp2040:flash` | 実装済み。**Pico 2 W 実機で BOOTSEL ボタンなしに通した** (patch 入り firmware が載っていれば) |

@@ -329,7 +329,10 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `$>` プロンプトが返ったかで見る
 - **R2P2 は起動時に app を自動実行する。** `/etc/init.d/r2p2` が `$HOME/app.mrb` → `$HOME/app.rb` →
   `DFU::BootManager.resolve` の順に探して load し、wifi 設定があれば `/bin/wifi_connect` も走らせる。
-  FS 領域は `picotool load` を跨いで残るので、固まる app を置くと焼き直しても毎 boot 固まる
+  FS 領域は `picotool load` を跨いで残るので、固まる app を置くと焼き直しても毎 boot 固まる。
+  app が動いている間 shell は黙っていて、Ctrl-C で app が止まり `$>` が出る。
+  `rake rp2040:upload` / `run` / `reboot` / `flash` は prompt が返らなければ `tools/pico2w/interrupt.rb` で Ctrl-C を送る
+  (reboot / flash の後は 20 秒待ってから)。止めた app は USB の挿し直しか reboot でまた起動する
 - **firmware の CMake は `<picoruby>/bin/mrbc` で mrblib を compile する。** それを置くのはホスト VM の build なので、
   空の vendor では `rp2040:build` が先に建てる
 - **マスストレージはマウントされない。** ファイル転送は PicoModem のみ

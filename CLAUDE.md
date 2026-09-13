@@ -13,5 +13,6 @@ PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と、Pico 2 W �
   (sandbox を外さずに USB へ届く)。人に頼むのは物理操作 (初回の BOOTSEL、wedge 時の USB 抜き差し、ボタン押下) と
   画面の目視だけ
 - **serial を開くものは `tools/pico2w/tmo.rb` で時間を区切る。** wedge した board への open は macOS で返らない
+- **board には `/home/app.rb` が置いてあり、起動時に自動実行されることがある。** その間 shell は黙る。rake の実機タスクは Ctrl-C で止めてから shell を使う
 - **shell の生存は `tools/pico2w/shell_ok.rb` で見る。** `$>` プロンプトが返るかで判定し、bytes が返っただけでは生きていない
 - firmware の build は数分かかる。長い処理は `nohup ... & disown` で切り離し、ログを scratchpad に書く
