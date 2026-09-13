@@ -1,6 +1,7 @@
 # Send a line to the R2P2 shell and capture output for N seconds.
 #   ruby rsh.rb "<command>" [seconds] [port]
 require "serialport"
+require_relative "term"
 
 def default_port
   # Resolve the R2P2 board by USB product name. A bare /dev/cu.usbmodem* glob
@@ -19,9 +20,7 @@ secs = (ARGV[1] || "3").to_f
 port = ARGV[2] || default_port
 sp = SerialPort.new(port, 115200, 8, 1, SerialPort::NONE)
 sp.read_timeout = 100
-sp.write("\r\n")
-sleep 0.3
-sp.read rescue nil
+Term.settle(sp)
 unless cmd.empty?
   sp.write(cmd + "\r\n")
 end
@@ -29,7 +28,10 @@ buf = +""
 t0 = Time.now
 while Time.now - t0 < secs
   chunk = sp.read
-  buf << chunk if chunk && !chunk.empty?
+  if chunk && !chunk.empty?
+    buf << chunk
+    Term.answer(sp, chunk.dup)
+  end
   sleep 0.05
 end
 sp.close
