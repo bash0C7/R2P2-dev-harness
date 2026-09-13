@@ -193,8 +193,9 @@ C の向こう側 (`USB::CDC._midi_write` など) は picotest の stub / mock �
 upstream の `picoruby-usb-cdc-midi/test/midi_output_test.rb` が
 `write_bytes` を subclass で差し替える形を取っているので、これに倣う。
 
-runner は本 repo が持つ (§3 の代償)。temp build_config を作り、
-`picoruby-test` 相当のホストビルドを起こし、picotest を走らせる。
+runner は本 repo が持つ (§3 の代償)。といっても upstream の `Picotest::Runner` を
+そのまま require して使えるので、持つのは「`build_config/host-test.rb` で host VM を
+建てて、gem ごとに Runner を回す」30 行ほど。`collect_gems` の代わりは要らない。
 
 ### 実機層 (`rake <target>:verify`)
 
@@ -256,9 +257,11 @@ R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の
 
 ## 7. 積荷の順序
 
-1. **器を立てる** — `gems/picoruby-usb-peripheral` の setup/tick/teardown、
-   `rake setup` / `test:host` / `rp2040:verify`、CDC-MIDI の example 1本
-2. **無人化 G1** — Mac 側の改修を待って、それを使う `rp2040:flash` を本 repo に置く
+1. **器を立てる** — 実機を除いて一通り立った。`gems/picoruby-usb-peripheral` の
+   setup/tick/teardown、`rake setup` / `test` / `rp2040:build`、CDC-MIDI の example 1本。
+   ホストのテスト 44 件と example の compile が green、firmware も build できる。
+   **残っているのは実機。** `rp2040:verify` が無いので、まだ done ではない
+2. **無人化 G1** — Mac 側の改修が入ったら、`rp2040:flash` から BOOTSEL の人手を外す
 3. **darwin ターゲット** — Mac 側を同じ rake インタフェースに載せる
 4. (v1 外) ESP32、USB HID ゲームパッド
 
