@@ -34,9 +34,9 @@ ESP32 は2番目の積荷。iPhone / Apple Watch は v1 のスコープ外。
 ## 使う
 
 ```sh
-rake setup        # vendor/picoruby を取得する
-rake test:host    # ハーネスの gem の picotest をホストで回す
-rake -T           # 何ができるか
+rake setup   # vendor/picoruby を取得する
+rake test    # picotest (ホスト) + example の compile。board 無しではここまで
+rake -T      # 何ができるか
 ```
 
 `rake setup` は host build に要る submodule だけを取る。firmware を作るなら
@@ -49,8 +49,8 @@ rake -T           # 何ができるか
 | | |
 |---|---|
 | `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト 16 件 green |
-| `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト 19 件 green |
-| `examples/rp2040/midi_scale.rb` | example 第1号 |
+| `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト 23 件 green |
+| `examples/rp2040/midi_scale.rb` | example 第1号。`rake test:examples` で compile を確認 |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
 | `rake rp2040:flash` / `upload` / `run` / `reboot` | 実装済み。**実機で未検証** (macOS の `ioreg` と `serialport` gem が要る) |

@@ -85,6 +85,19 @@ class USBPeripheralCDCMIDITest < Picotest::Test
     assert_equal [[:note_on, 0, 60, 100], [:note_off, 0, 60, 0]], dev.output.events
   end
 
+# ここだけ fake を使わない。output を渡さない経路 —
+# USB::CDC::MIDIOutput を既定の write_timeout_ms で組むところ — は
+# fake を差している限りどのテストも通らないので、ここで踏んでおく。
+# ホストの picoruby では usb_cdc_midi_connected() の weak stub が false を返すので、
+# 「繋がっていない実物」として安定して見られる。
+def test_the_default_output_is_a_real_midi_output
+  dev = USB::Peripheral::CDCMIDI.new(reconnect: false)
+  assert_equal USB::CDC::MIDIOutput, dev.output.class
+  assert_equal false, dev.connected?
+  assert_equal false, dev.note_on(0, 60)
+  assert_equal [], dev.sounding
+end
+
   # ライフサイクルを回さない素の CDCMIDI
   private def build_device(connected: true)
     USB::Peripheral::CDCMIDI.new(output: fake_output(connected: connected), reconnect: false)

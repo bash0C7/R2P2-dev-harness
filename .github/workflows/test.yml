@@ -1,5 +1,9 @@
 # ホスト層のテスト。実機は回せないので、ここが green でも完了ではない
 # (完了の線引きは docs/spec.md §5)。
+#
+# 安くはない: picoruby と submodule の取得に加え、host build が gembox 経由で
+# picoruby-mbedtls を引くので pico-sdk の mbedtls submodule まで降りてくる。
+# 数百 MB と数分を見込む。
 name: test
 
 on:
@@ -11,6 +15,7 @@ on:
 jobs:
   host:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -21,5 +26,5 @@ jobs:
       - name: Fetch picoruby
         run: rake setup
 
-      - name: Run the harness gems' picotest on the host
-        run: rake test:host
+      - name: Run the harness gems' picotest and compile the examples
+        run: rake test

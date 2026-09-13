@@ -126,9 +126,12 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake setup` | `vendor/picoruby` を取得し、submodule と overlay を張る | 実装済み |
 | `rake refresh` | 既存の `vendor/picoruby` を取得し直す | 実装済み |
 | `rake test:host` | ホストで picotest を回す。実機不要 | 実装済み |
+| `rake test:examples` | example を picoruby の compiler に通す。実機不要 | 実装済み |
+| `rake test` | 上の2つ。**board 無しで確かめられるのはここまで** | 実装済み |
 | `rake clean` | build 生成物を捨てる (vendor は残す) | 実装済み |
 | `rake <target>:setup` | そのターゲットにだけ要る重い submodule を取る | rp2040 実装済み |
-| `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み (実機未検証) |
+| `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る |
+| `rake <target>:stamp` | 前回の build が今の入力に対してまだ有効か | rp2040 実装済み |
 | `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み (実機未検証)。BOOTSEL は人間 |
 | `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み (実機未検証) |
 | `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み (実機未検証) |

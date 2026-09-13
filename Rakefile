@@ -58,4 +58,7 @@ def vendor_rake(env, *args)
   end
 end
 
-task default: ["test:host"]
+desc "Everything that can be checked without a board"
+task test: ["test:host", "test:examples"]
+
+task default: [:test]

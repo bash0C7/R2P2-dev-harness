@@ -57,3 +57,24 @@ def require_name_of(gem_name)
   found = File.read(rake_file)[/require_name\s*=\s*['"]([^'"]+)['"]/, 1]
   found || gem_name.sub(/\Apicoruby-/, "")
 end
+
+namespace :test do
+  desc "Compile every example with picoruby's own compiler (catches parser-level typos)"
+  task :examples do
+    require_vendor!
+    mrbc = File.join(PICORUBY_SRC, "build", "host", "bin", "mrbc")
+    unless File.executable?(mrbc)
+      raise "mrbc is not built yet. Run `rake test:host` first (it builds the host tools)."
+    end
+    out_dir = File.join(BUILD_DIR, "examples")
+    FileUtils.mkdir_p out_dir
+    examples = Dir[File.join(HARNESS_ROOT, "examples", "**", "*.rb")].sort
+    raise "no examples found" if examples.empty?
+    examples.each do |path|
+      rel = path.sub("#{HARNESS_ROOT}/", "")
+      out = File.join(out_dir, File.basename(path, ".rb") + ".mrb")
+      sh "#{mrbc.shellescape} -o #{out.shellescape} #{path.shellescape}"
+      puts "ok #{rel}"
+    end
+  end
+end
