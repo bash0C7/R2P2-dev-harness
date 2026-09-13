@@ -41,8 +41,10 @@ HOST_SUBMODULES = %w[
 # (MRC_PRISM_ARENA_BLOCK、build_config からは変えられない)。heap 396KB の
 # Pico 2 W では起動時の "Loading /etc/init.d/r2p2..." で止まり、CDC ごと固まる。
 # 1つ前の pin では同じ board・同じ FS で shell まで上がる (docs/spec.md §6)。
-# mruby 5a7aa02a1 がブロックの大きさを変えられるようにしたので、それが
-# picoruby に降りてきたら外す。
+# 外す条件: mruby 5a7aa02a1 が MRC_PRISM_ARENA_BLOCK を #ifndef で上書き可能にした
+# (mruby-compiler2 では beb0107 から)。picoruby の mrbgems/mruby-compiler の pin が
+# それを含んだら、この固定を外し、build_config/rp2040-pico2_w.rb で
+# MRC_PRISM_ARENA_BLOCK=4096 を define する。3つは同期して動くので混ぜない。
 SUBMODULE_PINS = {
   "mrbgems/picoruby-mruby/lib/mruby" => "b05a7bfda8ac192ab33f4f192d972c2794d2b170",
   "mrbgems/mruby-compiler"           => "db0aea5c1773c50244b6ee44f43170e45ad2253e",
