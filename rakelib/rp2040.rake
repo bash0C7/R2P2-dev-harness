@@ -19,6 +19,9 @@ namespace :rp2040 do
   task :build do
     require_vendor!
     ensure_overlay!
+    # firmware の CMake は <picoruby>/bin/mrbc (ホストの mrbc) で mrblib を compile する。
+    # それを置くのはホスト VM の build なので、無ければ先に建てる。
+    build_host_vm unless File.executable?(File.join(PICORUBY_SRC, "bin", "mrbc"))
     invalidate_stale_firmware_build
     with_firmware_patches { vendor_rake({}, "r2p2:picoruby:#{BOARD}:prod") }
     uf2 = latest_uf2
