@@ -91,11 +91,12 @@ module USB
       nil
     end
 
-    # USB task を回しながら ms 待つ。**アプリが待つときはこれを使う。**
+    # 待つ。1ms 刻みで #pump を挟む。長く待つときの入口をここ1つに決めておく。
     #
-    # #idle を直に呼んで長く止まると、その間 USB task が回らない。
-    # tick の中で「180ms 鳴らす」つもりで 180ms 素で眠ると、host から見て
-    # デバイスが応答しない時間がそれだけ空く。
+    # **rp2040/R2P2 では、これは keep-alive ではない。** 素の sleep でも USB は
+    # 止まらない (#pump の注記を見よ)。ここで pump するのは、溜まった USB の
+    # イベントを 1 tick 待たずに掃き出すためと、所有者が違う port へ移したときに
+    # 待ちの実装を1箇所で直せるようにするため。
     def wait(ms)
       remaining = ms
       while 0 < remaining
@@ -109,6 +110,16 @@ module USB
 
     # --- 下回り。テストではここを差し替える ---
 
+    # USB stack を一度回す。
+    #
+    # **rp2040/R2P2 では、アプリがこれを呼ぶ義務は無い。** tud_task() は
+    # usb_pump_worker() が単独で所有し、1ms の alarm handler が毎回 pend し直す
+    # (picoruby-machine/ports/rp2040/machine.c)。VM が IO に触らず計算していても
+    # TinyUSB は服務される。Machine.tud_task は「いま同期で回す」kick で、
+    # 稼げるのは最大 1 tick ぶんの遅延だけ。
+    #
+    # それでも seam として置くのは、所有者が違う port へ移すときに
+    # ここだけを差し替えれば済むようにするため。
     def pump
       Machine.tud_task
     end

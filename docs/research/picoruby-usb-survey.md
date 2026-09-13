@@ -50,6 +50,23 @@
   そこで拾う。`_flush_reports` もその3本だけを見る。
   4本目を subclass から足す隙が無い
 
+## rp2040 では tud_task をアプリが回す必要は無い
+
+`mrbgems/picoruby-machine/ports/rp2040/machine.c`:
+
+- `tud_task()` の所有者は `usb_pump_worker()` ただ1つ。claim した spare user IRQ の
+  最低優先度で走る。USB IRQ も 1ms tick も thread も、`irq_set_pending()` で
+  **pump を要求するだけ**
+- 1ms の `alarm_handler()` が無条件に `usb_pump_request()` を呼ぶ。コメント曰く
+  「VM が IO に触らず計算していても TinyUSB の servicing を保証する backstop」
+- `Machine.tud_task` (`Machine_tud_task()`) は「いま同期で回す」kick。mutex が空いていれば
+  その場で `tud_task()`、埋まっていれば pump を pend するだけ
+
+**つまり `sleep_ms` で長く眠っても USB は止まらない。** upstream の
+`usb-cdc-midi` の example が `until output.connected?; sleep_ms 50; end` と
+素で書けているのはこのため。`write_bytes` が詰まったときに `Machine.tud_task` を
+呼ぶのは、その場で FIFO を空けて先へ進むためであって、keep-alive ではない。
+
 ## テストの仕組み
 
 `tasks/picoruby/test.rake`:

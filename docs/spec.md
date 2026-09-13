@@ -64,10 +64,14 @@ end
 subclass が実装するのは `#connected?` と `#restore_host_state` の2つだけ。
 `#pump` と `#idle` は下回りで、テストではここを差し替える。
 
-**アプリが待つときは `#idle` ではなく `#wait` を使う。** `#idle` は素の sleep で、
-長く止めるとその間 USB task が回らない。tick の中で「180ms 鳴らす」つもりで
-180ms 素で眠ると、host から見てデバイスが応答しない時間がそれだけ空く。
-`#wait` は 1ms 刻みで `#pump` を挟みながら待つ。
+**アプリが待つときは `#idle` ではなく `#wait` を使う。** `#wait` は 1ms 刻みで
+`#pump` を挟みながら待つ。
+
+ただし **rp2040/R2P2 ではこれは keep-alive ではない**。`tud_task()` は
+`usb_pump_worker()` が単独で所有し、1ms の alarm handler が毎回 pend し直すので、
+アプリが素で眠っていても TinyUSB は服務される。`#pump` で稼げるのは最大 1 tick ぶんの
+遅延だけ。`#wait` と `#pump` を置く理由は、長い待ちの入口を1つに決めることと、
+tud_task の所有者が違う port へ移すときにそこだけを直せばよくすること。
 
 ### 片付け (teardown) は要る
 
