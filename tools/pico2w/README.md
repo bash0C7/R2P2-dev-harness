@@ -2,8 +2,7 @@
 
 `bash0C7/picoruby-ble-verify` の `pico2w/scripts/` から、BLE 検証に依らない
 device helper だけを持ってきたもの。あちらでは Pico 2 W で動いている。
-本 repo からは `rake rp2040:flash` 経由で `pmput.rb` / `rsh.rb` / `shell_ok.rb` / `tmo.rb` を実機で通した。
-`runapp.rb` と `reboot_app.rb` はまだ。
+本 repo からは `rake rp2040:flash` / `upload` / `run` / `reboot` 経由で、どれも実機で通した。
 
 | file | 何をするか |
 |---|---|

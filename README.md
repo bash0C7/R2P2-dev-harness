@@ -49,21 +49,24 @@ rake -T      # 何ができるか
 
 | | |
 |---|---|
-| `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト 21 件 green |
-| `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト 23 件 green |
-| `examples/rp2040/midi_scale.rb` | example 第1号。`rake test:examples` で compile を確認 |
+| `gems/picoruby-usb-peripheral` | setup / tick / teardown の器。ホストのテスト green |
+| `gems/picoruby-usb-peripheral-cdc-midi` | CDC-MIDI の結線。ホストのテスト green |
+| `gems/picoruby-usb-peripheral-hid-mouse` | HID mouse の結線。ホストのテスト green |
+| `examples/rp2040/midi_scale.rb` | CDC-MIDI の example。`rake test:examples` で compile を確認。実機では未実行 |
+| `examples/rp2040/bootsel_click.rb` | BOOTSEL ボタンを USB マウスの左クリックにする。**Pico 2 W 実機で Mac に対してクリックが効いた** |
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
 | `rake rp2040:flash` | 実装済み。**Pico 2 W 実機で BOOTSEL ボタンなしに通した** (patch 入り firmware が載っていれば) |
-| `rake rp2040:upload` / `run` / `reboot` | 実装済み。task そのものは実機で未実行 (macOS の `ioreg` と `serialport` gem が要る) |
+| `rake rp2040:upload` / `run` / `reboot` | 実装済み。Pico 2 W 実機で通した (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
-| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。flash が使う `pmput` / `rsh` / `shell_ok` / `tmo` は実機で通った |
+| `tools/pico2w/` | 実機を触る helper。`picoruby-ble-verify` から。実機で通った |
 | `firmware-patches/` | build の間だけ vendor/picoruby に当てる patch。`Machine.usb_boot` を足す |
 
 ハーネスの gem は rp2040 の firmware に実際に入っている
-(`picogem_init.c` に `usb/peripheral` と `usb/peripheral/cdc_midi` が並ぶ)。
+(`picogem_init.c` に `usb/peripheral` / `usb/peripheral/cdc_midi` / `usb/peripheral/hid_mouse` が並ぶ)。
 
-実機へは BOOTSEL ボタンなしで焼けるが、**CDC-MIDI の実機検証はまだ通っていない。** 完了の線引きは実機まで
+実機へは BOOTSEL ボタンなしで焼け、HID mouse の example は USB マウスとして動いた。
+**CDC-MIDI の実機検証はまだ通っていない。** 完了の線引きは実機まで
 ([docs/spec.md](docs/spec.md) §5) なので、積荷1 はまだ「done」ではない。
-Mac 側で結果を判定する相手役が無い。
+Mac 側で CDC-MIDI の結果を判定する相手役が無い。
 実機側の作業は [docs/handoff-to-mac.md](docs/handoff-to-mac.md)。

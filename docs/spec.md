@@ -8,8 +8,10 @@ R2P2-dev-harness が v1 で作るものの仕様。決定済みの事項だけ�
 **PicoRuby を USB 周辺機器にするライブラリ**と、それを開発・検証するためのハーネス。
 
 第1積荷は USB CDC-MIDI。これは「MIDI がやりたい」からではなく、
-**descriptor の C 変更を伴わない唯一の USB 経路**だから選んでいる
+**descriptor の C 変更を伴わない USB 経路**だから選んでいる
 (根拠は [research/picoruby-usb-survey.md](research/picoruby-usb-survey.md))。
+R2P2 の descriptor に元から居る HID の keyboard / mouse / consumer も、そのままなら C に触らずに使える。
+USB 機器としての実機の動作実績は、そのうち mouse (`gems/picoruby-usb-peripheral-hid-mouse`) で先に作った。
 先に器 — ライブラリの形、rake の共通インタフェース、無人検証の経路 — を
 C に触らずに固め、中身は後から差し替える。
 
@@ -92,6 +94,7 @@ stuck note / stuck key は起きない、が既定の挙動。
 ```
 gems/picoruby-usb-peripheral/            器。pure Ruby、依存なし
 gems/picoruby-usb-peripheral-cdc-midi/   CDC-MIDI の結線。器 + usb-cdc-midi に依存
+gems/picoruby-usb-peripheral-hid-mouse/   HID mouse の結線。器に依存 (usb-hid は firmware 側が持つ)
   mrbgem.rake
   mrblib/
   test/                                  picotest
@@ -150,9 +153,9 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る。compiler の submodule は固定 (§6) |
 | `rake <target>:stamp` | 前回の build が今の入力に対してまだ有効か | rp2040 実装済み |
 | `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み。**Pico 2 W 実機で BOOTSEL 押下なしに通した**。BOOTSEL は patch 無し firmware の時だけ人間 |
-| `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み (実機未検証) |
-| `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み (実機未検証) |
-| `rake <target>:reboot` | board をリブートする | rp2040 実装済み (実機未検証) |
+| `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み。Pico 2 W 実機で通した |
+| `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み。Pico 2 W 実機で通した |
+| `rake <target>:reboot` | board をリブートし、shell が戻るまで待つ | rp2040 実装済み。Pico 2 W 実機で通した |
 | `rake <target>:verify` | build → flash → run → **判定**。これが green で完了 | 未実装。判定が無い |
 
 `<target>` は v1 では `rp2040` だけ。**darwin 版の USB 機器は対象外**にした。
@@ -166,8 +169,8 @@ Mac は USB 機器になる側ではなく、**相手役と開発機**として�
 「実機の task が無い」を「実機は要らない」に読み替えられた瞬間に消える。
 
 `verify` だけが最後まで残っているのは、**判定する相手役がまだ無い**から。
-焼いて走らせるところまでは道具が揃っても、Mac 側で「MIDI デバイスとして列挙されたか」
-「送った event を受け取れたか」を見る口が無ければ、verify は「落ちなかった」以上の
+焼いて走らせるところまでは道具が揃っても、Mac 側で「送った event を受け取れたか」を
+見る口が無ければ、verify は「落ちなかった」以上の
 ことを言えない。それは完了の線引きとしては使えない。
 
 `build/<target>/` の stale 化は R2P2-darwin と同じ方法で防ぐ:
@@ -204,8 +207,15 @@ Pico 2 W に焼き、Mac を相手役にして、両側のログで判定する�
 **実機の挙動は実機で実証するまで「動いた」と書かない。**
 実機が使えない環境 (CI、web session) では、その旨を1行報告して完了宣言を保留する。
 
-CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙されること、
-送った event が受信できること、teardown 後に stuck note が残らないこと。
+CDC-MIDI の判定材料: 送った event が受信できること、teardown 後に stuck note が残らないこと。
+CDC-MIDI は 3本目の CDC (シリアル) に MIDI のバイト列を流すので、Mac からは MIDI 機器ではなく
+シリアルポートとして見える (R2P2 は `CFG_TUD_MIDI 0`)。受信はそのポートを読む。
+
+HID mouse の判定は、BOOTSEL ボタンを人が押して、board のログに press / release が対で出ることと、
+Mac でクリックが効くことの目視。mouse インタフェースは app に関わらず常に列挙されているので、
+列挙は判定に使えない。`examples/rp2040/bootsel_click.rb` を `rake rp2040:run` で 60 秒回し、
+19 回の押下すべてで press / release が対で出てクリックが効いた。
+押し続けた間は board 側で最長5秒ボタンが押されたままだったが、Mac はそれを長押しとして扱わなかった (原因は追っていない)。
 
 ## 6. 無人の焼き込みと検証 (目玉)
 
@@ -217,8 +227,7 @@ CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙される�
 `firmware-patches/machine-usb-boot.patch`。
 BLE 検証に依る `stages/` は持ってきていない (あちらの repo のもの)。
 `rake rp2040:upload` / `run` / `reboot` / `flash` がこれらを呼ぶ。macOS の `ioreg` と `serialport` gem が要る。
-本 repo から Pico 2 W 実機で通したのは `rp2040:build` と `rp2040:flash` (中で `pmput.rb` / `rsh.rb` / `shell_ok.rb` を使う)。
-`upload` / `run` / `reboot` の task そのものはまだ走らせていない。
+本 repo から Pico 2 W 実機で `rp2040:build` / `flash` / `upload` / `run` / `reboot` を通した。
 
 ### いま人間にしか頼めない3つ
 
@@ -329,9 +338,9 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 
 ## 7. 積荷の順序
 
-1. **器を立てる** — 実機を除いて一通り立った。`gems/picoruby-usb-peripheral` の
-   setup/tick/teardown、`rake setup` / `test` / `rp2040:build`、CDC-MIDI の example 1本。
-   ホストのテストと example の compile が green、firmware も build でき、実機へ焼ける。
+1. **器を立てる** — `gems/picoruby-usb-peripheral` の setup/tick/teardown、`rake setup` / `test` /
+   `rp2040:*`、CDC-MIDI と HID mouse の結線と example が1本ずつ。
+   ホストのテストと example の compile が green。HID mouse の example は Pico 2 W 実機で USB マウスとして動いた (§5)。
    **残っているのは CDC-MIDI の実機での判定。** `rp2040:verify` が無いので、まだ done ではない
 2. **無人化 G1** — `rp2040:flash` から BOOTSEL の人手を外し、本 repo から Pico 2 W 実機で通した (§6)
 3. (v1 外) ESP32、USB HID ゲームパッド、darwin 版の USB 機器
