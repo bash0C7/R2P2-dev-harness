@@ -1,0 +1,40 @@
+module USB
+  class Peripheral
+    type block_t = ^(Peripheral) -> void
+
+    class Error < StandardError
+    end
+
+    class NotImplementedByPort < Error
+    end
+
+    DEFAULT_IDLE_MS: Integer
+    DEFAULT_CONNECT_POLL_MS: Integer
+
+    @idle_ms: Integer
+    @connect_poll_ms: Integer
+    @reconnect: bool
+    @setup_block: block_t?
+    @tick_block: block_t?
+    @teardown_block: block_t?
+    @stopped: bool
+
+    attr_reader idle_ms: Integer
+    attr_reader connect_poll_ms: Integer
+
+    def initialize: (?idle_ms: Integer, ?connect_poll_ms: Integer, ?reconnect: bool) -> void
+    def reconnect?: () -> bool
+    def setup: () { (Peripheral) -> void } -> self
+    def tick: () { (Peripheral) -> void } -> self
+    def teardown: () { (Peripheral) -> void } -> self
+    def stop: () -> self
+    def stopped?: () -> bool
+    def run: () ?{ (Peripheral) -> void } -> self
+    def connected?: () -> bool
+    def restore_host_state: () -> void
+    def pump: () -> void
+    def idle: (Integer ms) -> void
+    private def wait_for_connection: () -> void
+    private def session: () -> void
+  end
+end

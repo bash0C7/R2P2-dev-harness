@@ -35,14 +35,26 @@ def require_vendor!
   raise "vendor/picoruby is not there. Run `rake setup` first."
 end
 
-# vendor の中で rake を回す。`rake` が PATH に無い環境 (rbenv の shim が
-# 効いていない CI など) でも通るように、ruby 経由で叩く。
+# vendor の中で rake を回す。
+#
+# `rake` が PATH に無い環境 (rbenv の shim が効いていない CI など) でも通るように
+# ruby 経由で叩く。それだけでは足りない: upstream の r2p2 task は自分の中で
+# `sh "... rake"` と裸の rake を呼ぶので、**子プロセスの PATH にも rake が要る**。
+# rake の exe が居る dir を PATH の先頭に足して渡す。
 def vendor_rake(env, *args)
   require_vendor!
-  rake = Gem.bin_path("rake", "rake") rescue nil
+  rake = begin
+           Gem.bin_path("rake", "rake")
+         rescue StandardError
+           nil
+         end
   command = rake ? "#{RbConfig.ruby.shellescape} #{rake.shellescape}" : "rake"
+  child_env = env.dup
+  if rake
+    child_env["PATH"] = [File.dirname(rake), ENV["PATH"]].compact.join(File::PATH_SEPARATOR)
+  end
   FileUtils.cd(PICORUBY_SRC) do
-    sh env, "#{command} #{args.map(&:shellescape).join(' ')}"
+    sh child_env, "#{command} #{args.map(&:shellescape).join(' ')}"
   end
 end
 

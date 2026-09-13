@@ -1,0 +1,25 @@
+module USB
+  class Peripheral
+    class CDCMIDI < Peripheral
+      type note_t = [Integer, Integer]
+
+      DEFAULT_VELOCITY: Integer
+
+      @output: USB::CDC::MIDIOutput
+      @sounding: Array[note_t]
+
+      attr_reader output: USB::CDC::MIDIOutput
+
+      def initialize: (?idle_ms: Integer, ?connect_poll_ms: Integer, ?reconnect: bool,
+                       ?write_timeout_ms: Integer, ?output: USB::CDC::MIDIOutput?) -> void
+      def connected?: () -> bool
+      def sounding: () -> Array[note_t]
+      def note_on: (Integer channel, Integer note, ?Integer velocity) -> (Integer | false)
+      def note_off: (Integer channel, Integer note) -> (Integer | false)
+      def putevent: (Symbol command, *(Integer | String) values) -> (Integer | false)
+      def restore_host_state: () -> void
+      private def remember: (Integer channel, Integer note) -> void
+      private def forget: (Integer channel, Integer note) -> void
+    end
+  end
+end
