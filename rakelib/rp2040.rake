@@ -55,21 +55,23 @@ namespace :rp2040 do
     # picotool は mount を待つ。/Volumes/RP2350 への cp は mount 完了前に走ると
     # Device not configured で落ちる。ボリュームは見えているのに、である。
     sh "picotool load -x #{uf2.shellescape}"
-    wait_until(90) { shell_answers? } or raise "flashed, but the R2P2 shell never answered"
+    wait_for_booted_shell! "flashed"
   end
 
-  desc "Copy a local .rb onto the board over PicoModem (unverified)"
+  desc "Copy a local .rb onto the board over PicoModem (/home/app.rb autostarts at boot)"
   task :upload, [:src, :dst] do |_t, args|
     src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
     dst = args[:dst] || "/home/#{File.basename(src)}"
+    require_shell!
     device_tool "pmput.rb", src, dst
   end
 
-  desc "Run an app on the board and capture its log (unverified)"
+  desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
     app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
     seconds = args[:seconds] || "20"
     remote = "/home/#{File.basename(app)}"
+    require_shell!
     device_tool "pmput.rb", app, remote
     device_tool "runapp.rb", remote, seconds
   end
@@ -78,11 +80,12 @@ namespace :rp2040 do
   task :reboot do
     # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
     # 打っても何も起きない。script を置いて実行する。
+    require_shell!
     device_tool "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb"
     # 効いた時は実行中に CDC が落ちて rsh.rb が ENXIO で失敗する。それが reboot した印。
     _, output = bounded_device_tool 40, "rsh.rb", "/home/reboot.rb", "4"
     raise "the shell ran /home/reboot.rb but the board did not drop off USB" unless output.match?(/ENXIO|Device not configured/)
-    wait_until(90) { shell_answers? } or raise "rebooted, but the shell never answered"
+    wait_for_booted_shell! "rebooted"
   end
 
   desc "build -> flash -> run -> judge (not implemented yet)"
@@ -91,7 +94,7 @@ namespace :rp2040 do
       rake rp2040:verify is not implemented yet.
 
       build / flash / run は揃ったが、**判定が無い**。CDC-MIDI なら
-      「Mac が MIDI デバイスとして列挙したか」「送った event を受け取れたか」
+      「3本目の CDC で送った event を受け取れたか」
       「teardown のあとに stuck note が残っていないか」を Mac 側で見る必要がある
       (docs/spec.md §5)。その相手役はまだ書いていない。
 
@@ -126,6 +129,8 @@ def enter_bootsel!
     return
   end
 
+  # /home/app.rb が動いていると usbboot.rb を打てないので、先に止める。
+  ensure_shell
   # wedge した board への serial open は macOS で返らないので、壁時計で切る。
   uploaded, = bounded_device_tool 60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "usbboot_app.rb"), "/home/usbboot.rb"
   # 効いた時は実行中に CDC が落ちるので失敗扱いで返ってくる。正常。
@@ -152,6 +157,30 @@ def ask_for_bootsel(reason)
     Put the board into BOOTSEL: unplug USB, hold BOOTSEL, plug in, release.
   ASK
   wait_until(300) { bootsel? } or raise "the board never reached BOOTSEL"
+end
+
+# /home/app.rb は起動時に自動実行され、動いている間 shell は黙っている。
+# Ctrl-C で app を止めて "$>" を出す。止めた app は USB の挿し直しか reboot でまた起動する。
+def ensure_shell
+  return true if shell_answers?
+  return false if r2p2_ports.empty?
+  bounded_device_tool 10, "interrupt.rb"
+  wait_until(10) { shell_answers? }
+end
+
+def require_shell!
+  ensure_shell or raise <<~MSG
+    The R2P2 shell does not answer, even after Ctrl-C.
+    If the board is enumerated but silent it is wedged: unplug and replug USB, then re-run.
+  MSG
+end
+
+# boot 直後は shell が上がるまで数秒かかる。/home/app.rb が自動起動していると
+# shell は出ないので、しばらく待ってから Ctrl-C で app を止めて確かめる。
+def wait_for_booted_shell!(what)
+  return if wait_until(20) { shell_answers? }
+  return puts("#{what}; the shell answered only after Ctrl-C, so an autostarted app was stopped") if ensure_shell
+  raise "#{what}, but the R2P2 shell never answered, even after Ctrl-C"
 end
 
 def bootsel?
