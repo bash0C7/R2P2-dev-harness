@@ -1,6 +1,7 @@
 # R2P2-dev-harness
 
-PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と、Pico 2 W 実機で焼いて検証するハーネス (`rakelib/`, `tools/pico2w/`)。
+bash0C7 が個人で PicoRuby の装置を作るための知見と rake タスクを集約する repo。実機を焼いて検証する rake タスクは `rakelib/` と `tools/pico2w/`。
+PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`examples/`) は、その上に載せた実例のひとつ。
 
 - 設計と決定事項は [docs/spec.md](docs/spec.md) が single source of truth。実機の罠は §6 にまとめてある
 - 残っている作業は GitHub issues (`gh issue list`)

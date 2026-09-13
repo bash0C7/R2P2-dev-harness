@@ -5,9 +5,11 @@ R2P2-dev-harness が v1 で作るものの仕様。決定済みの事項だけ�
 
 ## 1. 何を作るのか
 
-**PicoRuby を USB 周辺機器にするライブラリ**と、それを開発・検証するためのハーネス。
+bash0C7 が個人で **PicoRuby の装置を作るための知見と rake タスクを集約する** repo。
+中心は実機を焼いて検証する rake タスクと、実機で踏んだ罠 (§4, §6)。
+その上に載せる装置の実例のひとつが、**PicoRuby を USB 周辺機器にするライブラリ** (`gems/`) と example (`examples/`)。
 
-第1積荷は USB CDC-MIDI。これは「MIDI がやりたい」からではなく、
+USB 周辺機器のライブラリの第1積荷は USB CDC-MIDI。これは「MIDI がやりたい」からではなく、
 **descriptor の C 変更を伴わない USB 経路**だから選んでいる
 (根拠は [research/picoruby-usb-survey.md](research/picoruby-usb-survey.md))。
 R2P2 の descriptor に元から居る HID の keyboard / mouse / consumer も、そのままなら C に触らずに使える。

@@ -1,10 +1,13 @@
 # R2P2-dev-harness
 
-PicoRuby を **USB 周辺機器**にするためのライブラリと、その開発ハーネス。
+bash0C7 が個人で **PicoRuby の装置を作るための知見と rake タスクを集約する** repo。
 
-やりたいのは「PicoRuby で USB 機器を作る」こと。そのためのライブラリを用意する repo であって、
-製品ではない。いま知見も rake タスクも R2P2-darwin / R2P2-ESP32 / picoruby/picoruby に
-散らばっているので、1箇所に集める。
+知見も rake タスクも R2P2-darwin / R2P2-ESP32 / picoruby/picoruby / picoruby-ble-verify などに
+散らばっているので、1箇所に集める。中心は実機を焼く・転送する・走らせる・再起動する rake タスク
+(`rake rp2040:*`) と、実機で踏んだ罠 ([docs/spec.md](docs/spec.md) §6)。
+
+PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`examples/`) は、
+その上に載せた装置の実例のひとつ。
 
 - 設計と決定事項: [docs/spec.md](docs/spec.md) が single source of truth
 - 調べて分かった事実: [docs/research/picoruby-usb-survey.md](docs/research/picoruby-usb-survey.md)
@@ -17,7 +20,7 @@ PicoRuby を **USB 周辺機器**にするためのライブラリと、その�
 |---|---|
 | 対象プラットフォーム | rp2040 (Raspberry Pi Pico 2 W) のみ |
 | Mac の役 | **相手役と開発機**。USB 機器になるのは board 側。darwin 版の USB 機器は対象外 |
-| 第1積荷 | USB CDC-MIDI。**器 (ライブラリの形と rake の共通インタフェース) を先に固める** |
+| 最初の実例 | USB 周辺機器のライブラリ (CDC-MIDI / HID mouse)。**器 (ライブラリの形と rake の共通インタフェース) を先に固める** |
 | USB descriptor | **v1 では変えない。** C 固定の制約をそのまま受け入れる |
 | 新しい gem の置き場所 | `gems/` 配下。`build_config` から `conf.gem gemdir:` で指す |
 | 完了の線引き | **実機検証まで通って green。** ホストのテストだけでは完了としない |
