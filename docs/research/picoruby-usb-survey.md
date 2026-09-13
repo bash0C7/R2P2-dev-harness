@@ -97,7 +97,9 @@ firmware を焼くところまで。
 BOOTSEL 書き込み / ハング復旧の USB 抜き差し / Mac の Bluetooth 許可ダイアログ。
 
 **現行 firmware には reset interface が無く `picotool reboot` が効かない。
-1200-baud touch も効かない。** これが無人化の最大の障害。
+1200-baud touch も効かない。** これが無人化の最大の障害だったが、
+**対処の方式は Mac ローカルの Claude session で既に確立している。**
+改修は Mac 側で行う — [../handoff-to-mac.md](../handoff-to-mac.md)。
 
 ## 関連する外部の記録
 

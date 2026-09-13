@@ -161,14 +161,14 @@ CDC-MIDI の判定材料: Mac 側で MIDI デバイスとして列挙される�
 | G1 | firmware 側に「BOOTSEL モードへ落ちる」口を作る | **初回だけ** BOOTSEL |
 | G2 | ハング時の電源サイクル | 未決 (機材依存) |
 
-**G1 が本丸。** 現行 R2P2 firmware は reset interface を持たないので
-`picotool reboot` が効かず、1200-baud touch も効かない。
-pico-sdk の `reset_usb_boot()` を Ruby から呼べる口 — `Machine.reboot_to_bootsel` 相当 —
-があれば、R2P2 shell 経由で BOOTSEL モードに落とせる。以後の焼き直しは無人で回る。
+**G1 の方式は Mac ローカルの Claude session で既に確立している。**
+本 repo ではそれを前提として扱い、**改修は Mac 側で行う**。
+web session から再設計・再検討はしない。申し送りは
+[handoff-to-mac.md](handoff-to-mac.md)。
 
-これは C を書く必要があるが、**`gems/` 配下に置ける** ので
-「既存 repo を変更しない」制約は満たす。pico-sdk のヘッダを引く rp2040 port の
-ビルド設定が通るかは要検証 (§8)。
+背景としての事実だけ残す: 現行 R2P2 firmware は reset interface を持たないので
+`picotool reboot` が効かず、1200-baud touch も効かない。
+R2P2 shell 経由で BOOTSEL モードへ落とせる口があれば、以後の焼き直しは無人で回る。
 
 ### 取り込むときに落とさない知見
 
@@ -189,14 +189,15 @@ pico-sdk の `reset_usb_boot()` を Ruby から呼べる口 — `Machine.reboot_
 
 1. **器を立てる** — `gems/picoruby-usb-peripheral` の setup/tick/teardown、
    `rake setup` / `test:host` / `rp2040:verify`、CDC-MIDI の example 1本
-2. **無人化 G1** — `reboot_to_bootsel` の口と、それを使う `rp2040:flash`
+2. **無人化 G1** — Mac 側の改修を待って、それを使う `rp2040:flash` を本 repo に置く
 3. **darwin ターゲット** — Mac 側を同じ rake インタフェースに載せる
 4. (v1 外) ESP32、USB HID ゲームパッド
 
 ## 8. 未決
 
-- **`reset_usb_boot()` を `gems/` 配下の gem から呼べるか。** pico-sdk のヘッダと
-  リンクの通し方が未検証。通らなければ G1 は fork か patch に落ちる
+無人化 G1 はここに無い。方式が確定済みで、実装が Mac 側にあるため
+([handoff-to-mac.md](handoff-to-mac.md))。
+
 - **ハング復旧 (G2) の機材。** USB hub の電源制御 (`uhubctl`) が Mac 側で効く hub があるか、
   外部リレーを足すか、firmware の watchdog で代替するか
 - **`rake test:host` の runner の実装量。** upstream の `run_picotest_runner` 相当を

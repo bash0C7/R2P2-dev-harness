@@ -9,6 +9,7 @@ PicoRuby を **USB 周辺機器**にするためのライブラリと、その�
 - 設計と決定事項: [docs/spec.md](docs/spec.md) が single source of truth
 - 調べて分かった事実: [docs/research/picoruby-usb-survey.md](docs/research/picoruby-usb-survey.md)
 - v1 でやらないと決めたこと: [docs/issues/gamepad.md](docs/issues/gamepad.md)
+- Mac 側に渡す作業: [docs/handoff-to-mac.md](docs/handoff-to-mac.md)
 
 ## v1 のスコープ
 
