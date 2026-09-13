@@ -18,7 +18,7 @@ namespace :rp2040 do
     require_vendor!
     ensure_overlay!
     invalidate_stale_firmware_build
-    vendor_rake({}, "r2p2:picoruby:#{BOARD}:prod")
+    with_firmware_patches { vendor_rake({}, "r2p2:picoruby:#{BOARD}:prod") }
     uf2 = latest_uf2
     raise "no .uf2 came out of the build" unless uf2
     File.write(firmware_stamp_path, firmware_stamp)
@@ -41,19 +41,16 @@ namespace :rp2040 do
     puts(have == want ? "up to date" : "stale — the next build wipes build/ and starts over")
   end
 
-  desc "Flash the firmware onto a Pico 2 W in BOOTSEL mode (unverified)"
+  desc "Flash the firmware; a running board is dropped into BOOTSEL without the button (unverified)"
   task :flash do
     uf2 = latest_uf2
     raise "no firmware built yet. Run `rake rp2040:build`." unless uf2
     require_picotool!
-    puts <<~ASK
-      Put the board into BOOTSEL: unplug USB, hold BOOTSEL, plug in, release.
-      (Until the firmware gains a way back into BOOTSEL, this is a human step.
-       See docs/handoff-to-mac.md.)
-    ASK
+    enter_bootsel!
     # picotool は mount を待つ。/Volumes/RP2350 への cp は mount 完了前に走ると
     # Device not configured で落ちる。ボリュームは見えているのに、である。
     sh "picotool load -x #{uf2.shellescape}"
+    wait_until(90) { shell_answers? } or raise "flashed, but the R2P2 shell never answered"
   end
 
   desc "Copy a local .rb onto the board over PicoModem (unverified)"
@@ -105,13 +102,93 @@ def device_tool(name, *args)
   sh "#{RbConfig.ruby.shellescape} #{script.shellescape} #{args.map { |a| a.to_s.shellescape }.join(' ')}"
 end
 
+# 動作中の board を BOOTSEL へ落とす。firmware-patches/machine-usb-boot.patch が
+# 足す Machine.usb_boot (ROM の rom_reset_usb_boot) を board 上の script から呼ぶ。
+# picotool reboot -f -u は使えない: R2P2 は VID 0x16c0 で reset interface も無く、
+# picotool は動作中の board を列挙すらしない。BOOTSEL 中は ROM なので見える。
+#
+# patch の無い firmware が載っている時 (初回、または patch 無しを焼いた後) は
+# script が NoMethodError で終わるだけなので、人手の BOOTSEL へ回す。
+def enter_bootsel!
+  # 中断した run は board を BOOTSEL に置き去りにする。その時 shell は居ない。
+  return if bootsel?
+  if r2p2_ports.any?
+    # wedge した board への serial open は macOS で返らないので、壁時計で切る。
+    bounded_device_tool 60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "usbboot_app.rb"), "/home/usbboot.rb"
+    # 実行中に CDC が落ちるので失敗扱いで返ってくる。正常。
+    bounded_device_tool 40, "rsh.rb", "/home/usbboot.rb", "5"
+    return if wait_until(30) { bootsel? }
+  end
+  puts <<~ASK
+    Put the board into BOOTSEL: unplug USB, hold BOOTSEL, plug in, release.
+    (Needed only while the board runs firmware without Machine.usb_boot: the
+     first flash, or after flashing a build without firmware-patches/.
+     If the board is wedged (enumerated but silent), a replug is needed too.)
+  ASK
+  wait_until(300) { bootsel? } or raise "the board never reached BOOTSEL"
+end
+
+def bootsel?
+  system("picotool info > /dev/null 2>&1")
+end
+
+# 小さい方が CDC0 = R2P2 shell。/dev/cu.usbmodem* の glob で選ばない
+# (ESP32 が先に並び、開くだけでそちらがリセットされる)。
+def r2p2_ports
+  `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
+end
+
+def shell_answers?
+  system("#{RbConfig.ruby.shellescape} #{File.join(HARNESS_ROOT, 'tools', 'pico2w', 'shell_ok.rb').shellescape} > /dev/null 2>&1")
+end
+
+def wait_until(seconds)
+  deadline = Time.now + seconds
+  until Time.now > deadline
+    return true if yield
+    sleep 1
+  end
+  false
+end
+
+# device_tool を tmo.rb 越しに回す。失敗しても raise せず真偽を返す。
+def bounded_device_tool(seconds, name, *args)
+  tools = File.join(HARNESS_ROOT, "tools", "pico2w")
+  ruby = RbConfig.ruby.shellescape
+  command = [ruby, File.join(tools, "tmo.rb").shellescape, seconds.to_s,
+             ruby, File.join(tools, name).shellescape, *args.map { |a| a.to_s.shellescape }].join(" ")
+  puts command
+  system(command)
+end
+
+# firmware-patches/*.patch を vendor/picoruby に当てて build し、終わったら戻す。
+# vendor は upstream の木なので patch を残さない。前の build が SIGKILL された等で
+# 当たったまま残っていたら、当て直さずにそのまま使う。
+def with_firmware_patches
+  patches = Dir[File.join(HARNESS_ROOT, "firmware-patches", "*.patch")].sort
+  applied = []
+  FileUtils.cd(PICORUBY_SRC) do
+    patches.each do |patch|
+      unless system("git apply --reverse --check #{patch.shellescape} > /dev/null 2>&1")
+        sh "git apply #{patch.shellescape}"
+      end
+      applied << patch
+    end
+  end
+  yield
+ensure
+  FileUtils.cd(PICORUBY_SRC) do
+    applied.reverse_each { |patch| sh "git apply --reverse #{patch.shellescape}" }
+  end
+end
+
 def require_picotool!
   return if system("which picotool > /dev/null 2>&1")
   raise <<~MSG
     picotool is not on PATH.
 
-    The firmware exposes no mass storage and no reset interface, so picotool is
-    the only way in. `cp` to /Volumes/RP2350 is not a substitute.
+    The firmware exposes no mass storage, so picotool is the only way to flash.
+    `cp` to /Volumes/RP2350 is not a substitute.
   MSG
 end
 
@@ -149,6 +226,9 @@ def firmware_stamp
   sha = File.directory?(File.join(PICORUBY_SRC, ".git")) ? `git -C #{PICORUBY_SRC.shellescape} rev-parse HEAD`.strip : ""
   inputs = [sha]
   inputs << Digest::SHA256.file(File.join(HARNESS_ROOT, "build_config", "rp2040-pico2_w.rb")).hexdigest
+  Dir[File.join(HARNESS_ROOT, "firmware-patches", "*.patch")].sort.each do |patch|
+    inputs << Digest::SHA256.file(patch).hexdigest
+  end
   HARNESS_GEMS.each do |name|
     gem_dir = File.join(HARNESS_ROOT, "gems", name)
     FIRMWARE_INPUT_GLOBS.each do |glob|
