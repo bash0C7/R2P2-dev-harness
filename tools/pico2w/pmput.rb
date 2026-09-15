@@ -1,7 +1,7 @@
 # PicoModem upload to an ALREADY-RUNNING R2P2 shell (no reset pulse).
 #   ruby pmput.rb <src> <dst> [port]
 
-require_relative "picomodem"
+require_relative "../common/picomodem"
 PM = Deploy::Picomodem
 
 def default_port

@@ -1,7 +1,7 @@
 # Run a script on the R2P2 shell and capture stdout for N seconds, then Ctrl-C.
 #   ruby runapp.rb <device path> <seconds> [port]
 require "serialport"
-require_relative "term"
+require_relative "../common/term"
 
 def default_port
   # Resolve the R2P2 board by USB product name. A bare /dev/cu.usbmodem* glob
