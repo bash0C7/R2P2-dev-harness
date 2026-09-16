@@ -1,0 +1,34 @@
+# Run a script on the R2P2 shell and capture stdout for N seconds, then Ctrl-C.
+#   ruby runapp.rb <device path> <seconds> [port]
+require "serialport"
+require_relative "../common/term"
+
+def default_port
+  out = `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`
+  ports = out.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
+  raise "R2P2 board not found on USB (is the ESP32 plugged in and running R2P2?)" if ports.empty?
+  ports.first
+end
+
+path = ARGV[0]
+secs = (ARGV[1] || "20").to_f
+port = ARGV[2] || default_port
+sp = SerialPort.new(port, 115_200, 8, 1, SerialPort::NONE)
+sp.read_timeout = 100
+Term.settle(sp)
+sp.write(path + "\r\n")
+t0 = Time.now
+buf = +""
+while Time.now - t0 < secs
+  c = sp.read
+  if c && !c.empty?
+    buf << c
+    Term.answer(sp, c.dup)
+    $stdout.print c.gsub(/\e\[[0-9;?]*[A-Za-z]/, "")
+    $stdout.flush
+  end
+  sleep 0.05
+end
+sp.write("\x03")
+sleep 0.5
+sp.close
