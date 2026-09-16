@@ -362,3 +362,29 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `picoruby-ble-verify` での実績: app が固まる類は app 冒頭の `Watchdog.enable(8000)` と定期的な
   `Watchdog.feed` で自動復帰した。CDC ごと固まった board は USB 抜き差ししか効かず、
   Mac からは port ごとの給電制御ができなかった
+
+## 9. ESP32 の罠
+
+対象: M5Stack Chain DualKey（ESP32-S3、PSRAM無し）。`bash0C7/R2P2-ESP32` branch
+`r2p2-esp32-btstack-integration`、VM は `mruby`。build/flash はそちらの rake
+タスクへ委ねる（`rake esp32:build` / `flash`、ENV `R2P2_ESP32_REPO` で checkout
+先を上書き可能）。
+
+- **シリアルポートを開くだけでリセットされる。** Pico 2 W（RP2350）はDTR/RTSで
+  リセットされないので、同じ道具を流用する時は逆の前提になる。`tools/esp32/shell_ok.rb`
+  の生存確認さえ、この副作用でボードを再起動させる — Pico 2 Wの「触らずに見る」
+  という前提が成立しない
+- **ポートを`/dev/cu.usbmodem*`のglobで選ばない。** ESP32が先に並ぶ。`tools/esp32/`
+  各scriptは`ioreg -n "R2P2"`で製品名を見て選ぶが、この文字列がChain DualKeyの
+  実際のUSB製品名と一致するかは実機未確認（次の一歩）
+- **heapが小さい。** PSRAM無しの約180KBで、`MRC_PRISM_ARENA_BLOCK`のデフォルト
+  64KB/compiler contextのままだと起動時boot・sandbox(load時)の2つのcompiler
+  contextで枯渇し`NoMemoryError` → abort → reboot loop。`R2P2-ESP32`側は
+  `MRC_PRISM_ARENA_BLOCK=2048`を`components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb`
+  に追加済み（local commit `e5f5c090`、issue #1・#12参照）
+- **書き込みはesptoolのみ。** ESP-IDFのフルインストールはこのrepoの責務にしない。
+  `rake esp32:build`が内部で`idf.py`を呼ぶのは`R2P2-ESP32`側の環境の話であり、
+  このharness自体はESP-IDFを直接扱わない
+- **QEMU起動確認が`build`に含まれる。** `R2P2-ESP32`の`scripts/qemu_boot_check.sh`
+  （デフォルト300秒、`$> `を見つけたら成功、失敗パターンでも即終了）を実機の前段
+  として通す。実機無しでbuildの健全性がある程度わかる
