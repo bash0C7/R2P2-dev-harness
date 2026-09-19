@@ -25,9 +25,22 @@ module Term
   end
 
   # Wake the shell and answer its queries until the device goes quiet.
+  #
+  # Confirmed on Chain DualKey (Task 8, ESP32): opening the port resets the
+  # board, so a "\r\n" written immediately (the old behavior here) lands
+  # mid-boot and is dropped — the shell prints its own banner and terminal
+  # queries unprompted but never its own "$>". So this waits out whatever's
+  # already in flight (the boot burst, on ESP32; nothing, on an already-idle
+  # Pico 2 W) before writing anything, matching both boards.
   def self.settle(sp, quiet: 0.5, limit: 8.0)
-    sp.write("\r\n")
     pending = +""
+    quiet_until(sp, pending, quiet: quiet, limit: limit)
+    sp.write("\r\n")
+    quiet_until(sp, pending, quiet: quiet, limit: limit)
+    pending
+  end
+
+  def self.quiet_until(sp, pending, quiet:, limit:)
     t0 = Time.now
     last = Time.now
     while Time.now - t0 < limit
@@ -41,6 +54,5 @@ module Term
       end
       sleep 0.05
     end
-    pending
   end
 end

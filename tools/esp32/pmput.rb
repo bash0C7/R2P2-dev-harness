@@ -1,12 +1,19 @@
-# PicoModem upload to an ALREADY-RUNNING R2P2 shell (no reset pulse).
+# PicoModem upload to the R2P2 shell.
 #   ruby pmput.rb <src> <dst> [port]
+#
+# Confirmed on Chain DualKey (Task 8): merely opening this board's USB
+# Serial/JTAG port resets it, so there is no such thing as "an
+# already-running shell" to attach to without a reset pulse — every open
+# starts a fresh boot. macOS's read of this board's native USB Serial/JTAG
+# also occasionally stalls partway through the boot burst for no
+# discoverable reason (roughly 1 in 2 single attempts). Deploy::Picomodem.upload
+# already retries the whole reset+await_shell+offer cycle a few times for
+# exactly this kind of failure, so this just delegates to it instead of
+# hand-rolling a single unretried attempt.
 require_relative "../common/picomodem"
 PM = Deploy::Picomodem
 
 def default_port
-  # A bare /dev/cu.usbmodem* glob is wrong once a Pico 2 W is also plugged
-  # in: sort order and product name both need checking on real hardware
-  # (Task 8) — this filter is a starting point, not yet confirmed.
   out = `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`
   ports = out.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
   if ports.empty?
@@ -19,18 +26,9 @@ src  = ARGV[0]
 dst  = ARGV[1]
 port = ARGV[2] || default_port
 
-content = File.binread(src)
-payload = [content.bytesize].pack("N") + dst
-puts "[pmput] #{src} -> #{dst} (#{content.bytesize} bytes) on #{port}"
-
-serial = SerialPort.new(port, 115_200, 8, 1, SerialPort::NONE)
 begin
-  serial.write("\r\n")
-  PM.settle(serial, $stdout)
-  reason = PM.offer_file_write(serial, payload, $stdout, 1)
-  abort "[pmput] FAILED: #{reason}" if reason
-  PM.send_chunks(serial, content, $stdout)
+  PM.upload(src: src, dst: dst, port: port)
   puts "[pmput] OK"
-ensure
-  serial.close
+rescue => e
+  abort "[pmput] FAILED: #{e.message}"
 end

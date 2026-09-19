@@ -29,13 +29,10 @@ module Deploy
     # main_task.rb prints these, in this order, on every boot.
     APP_AUTOSTART = "Loading app.mrb"
     SHELL_BANNER  = "Starting shell"
+    SHELL_PROMPT  = "$>"
 
     DEFAULT_BOOT_TIMEOUT = 25.0
     DEFAULT_ATTEMPTS     = 3
-
-    # The USB-Serial/JTAG CDC endpoint re-enumerates ~0.5-2 s after a reset,
-    # so the handle that issued the reset must be reopened.
-    REENUMERATE_TIMEOUT = 15.0
 
     # The shell discards input while probing the terminal (read_nonblock in
     # io-console), so wait for quiescence before offering Ctrl-B.
@@ -86,41 +83,26 @@ module Deploy
             "replug the USB-C cable, or pass ESPPORT=... if the node was renamed."
     end
 
-    # Pulses RTS, waits out re-enumeration, returns [serial, port] (the node
-    # can come back under another name).
+    # Opens the port and pulses RTS on that same connection, returning
+    # [serial, port].
+    #
+    # Confirmed on Chain DualKey (Task 8): closing the port and reopening a
+    # second handle for the same reset (the old approach here, mirroring
+    # Pico 2 W's USB-UART bridge which really does drop off the bus) is
+    # unreliable for this board's native USB Serial/JTAG — macOS can hand
+    # the second open a stale fragment, or stall partway through the boot
+    # burst, for no discoverable reason. Resetting on the SAME open
+    # connection that then reads the boot log, as tools/esp32/reset.rb and
+    # shell_ok.rb do, is what actually works reliably here.
     def reset_and_reopen(port, baud, stdout)
-      pulse = SerialPort.new(port, baud, 8, 1, SerialPort::NONE)
-      begin
-        pulse.dtr = 0
-        pulse.rts = 1
-        sleep 0.15
-        pulse.rts = 0
-      ensure
-        pulse.close
-      end
-      stdout.puts "[picomodem] reset pulsed on #{port}; waiting for USB CDC to re-enumerate"
-
-      deadline = now + REENUMERATE_TIMEOUT
-      while now < deadline
-        sleep 0.1
-        if File.exist?(port)
-          begin
-            return [SerialPort.new(port, baud, 8, 1, SerialPort::NONE), port]
-          rescue Errno::ENOENT, Errno::EBUSY, Errno::EIO
-            next
-          end
-        end
-      end
-
-      others = Dir.glob("/dev/cu.usbmodem*").sort
-      if others.size == 1
-        renamed = others.first
-        stdout.puts "[picomodem] WARNING: #{port} never came back; the board re-enumerated as #{renamed}"
-        return [SerialPort.new(renamed, baud, 8, 1, SerialPort::NONE), renamed]
-      end
-      raise PortMissing,
-            "[picomodem] #{port} did not come back within #{REENUMERATE_TIMEOUT}s of reset " \
-            "(nodes now present: #{others.inspect}). The board dropped off USB — replug it."
+      serial = SerialPort.new(port, baud, 8, 1, SerialPort::NONE)
+      serial.read_timeout = 100
+      serial.dtr = 0
+      serial.rts = 1
+      sleep 0.15
+      serial.rts = 0
+      stdout.puts "[picomodem] reset pulsed on #{port}"
+      [serial, port]
     end
 
     # Reads the boot log until the shell announces itself, answering the
@@ -133,7 +115,7 @@ module Deploy
       deadline  = now + boot_timeout
 
       while now < deadline
-        chunk = read_available(serial, 0.1)
+        chunk = read_available(serial)
         next unless chunk
         seen << chunk
         pending << chunk
@@ -145,7 +127,16 @@ module Deploy
         end
         if seen.include?(SHELL_BANNER)
           stdout.puts "[picomodem] shell banner seen#{autostart ? ' (app.mrb returned)' : ''}"
-          settle(serial, stdout)
+          # Confirmed on Chain DualKey (Task 8): the shell prints its banner
+          # and terminal queries unprompted but never its own "$>" — it only
+          # starts actually reading input once nudged with a line. Nudging
+          # the instant "Starting shell" is first seen is too early — the
+          # shell's own read loop is not listening yet — so this waits for
+          # the trailing output to go quiet first, same as tools/common/term.rb's
+          # Term.settle.
+          wait_quiet(serial, pending, quiet: 0.5, limit: 2.0)
+          serial.write "\r\n"
+          await_prompt(serial, stdout)
           return
         end
       end
@@ -219,13 +210,15 @@ module Deploy
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
+    # Confirmed on Chain DualKey (Task 8): io.wait_readable on this SerialPort
+    # object goes unreliable after a write (see read_available), so this
+    # relies on the connection's read_timeout instead, same as everywhere
+    # else in this file.
     def read_exact(io, n, timeout: 5.0)
       buf = +""
       deadline = now + timeout
       while buf.bytesize < n
-        remaining = deadline - now
-        return nil if remaining <= 0
-        return nil unless io.wait_readable(remaining)
+        return nil if now >= deadline
         chunk = io.read(n - buf.bytesize)
         return nil if chunk.nil? || chunk.empty?
         buf << chunk
@@ -253,20 +246,39 @@ module Deploy
       [body.getbyte(0), body.byteslice(1, length - 1) || ""]
     end
 
-    # Answer terminal queries until the device has been quiet for QUIET_SECONDS.
-    def settle(serial, stdout)
-      pending  = +""
-      replies  = 0
-      cap      = now + QUIET_CAP
-      quiet_at = now + QUIET_SECONDS
-      while now < cap && now < quiet_at
-        chunk = read_available(serial, 0.05)
+    # Read (and answer queries in) whatever's still arriving until it stops
+    # for `quiet` seconds, bounded by `limit`.
+    def wait_quiet(serial, pending, quiet:, limit:)
+      deadline = now + limit
+      quiet_at = now + quiet
+      while now < deadline && now < quiet_at
+        chunk = read_available(serial)
         next unless chunk
         pending << chunk
-        replies += answer_queries(serial, pending)
-        quiet_at = now + QUIET_SECONDS
+        answer_queries(serial, pending)
+        quiet_at = now + quiet
       end
-      stdout.puts "[picomodem] settled after #{format('%.1f', QUIET_SECONDS)}s quiet " \
+    end
+
+    # Wait for the shell's own "$>" in reply to the wake-up line written just
+    # before this is called. "Quiet for a bit" (the old approach here) is not
+    # the same thing: on Chain DualKey the reply can lag past a short quiet
+    # window, and offering Ctrl-B before the prompt actually comes back gets
+    # no ACK.
+    def await_prompt(serial, stdout, timeout: QUIET_CAP)
+      seen     = +""
+      pending  = +""
+      replies  = 0
+      deadline = now + timeout
+      while now < deadline
+        chunk = read_available(serial)
+        next unless chunk
+        seen << chunk
+        pending << chunk
+        replies += answer_queries(serial, pending)
+        break if seen.include?(SHELL_PROMPT)
+      end
+      stdout.puts "[picomodem] prompt #{seen.include?(SHELL_PROMPT) ? 'seen' : 'NOT seen'} " \
                   "(terminal queries answered: #{replies})"
     end
 
@@ -284,15 +296,19 @@ module Deploy
         serial.write DSR_REPLY
         replies += 1
       end
-      buf.slice!(0, buf.bytesize - 64) if buf.bytesize > 1024
+      buf.slice!(0, buf.bytesize - 256) if buf.bytesize > 16_384
       replies
     end
 
-    def read_available(io, timeout)
-      return nil unless io.wait_readable(timeout)
-      io.read_nonblock(512)
-    rescue IO::WaitReadable, EOFError, SystemCallError
-      # CDC endpoint went away mid-read; let the caller's deadline diagnose it.
+    # Confirmed on Chain DualKey (Task 8): io.wait_readable + read_nonblock on
+    # this SerialPort object silently stops seeing data that IS there once
+    # something has been written to it (used to work for the boot log, went
+    # dead right after the very first serial.write). tools/esp32/reset.rb and
+    # shell_ok.rb never hit this because they only ever use read_timeout= +
+    # a bare #read, so this does the same instead of trusting wait_readable.
+    def read_available(io)
+      io.read
+    rescue EOFError, SystemCallError
       nil
     end
 
@@ -308,13 +324,9 @@ module Deploy
     end
 
     def drain(serial)
-      while serial.wait_readable(0.1)
-        begin
-          drained = serial.read_nonblock(256)
-          break if drained.nil? || drained.empty?
-        rescue IO::WaitReadable, EOFError
-          break
-        end
+      loop do
+        drained = (serial.read rescue nil)
+        break if drained.nil? || drained.empty?
       end
     end
   end
