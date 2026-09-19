@@ -373,7 +373,26 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 - **シリアルポートを開くだけでリセットされる。** Pico 2 W（RP2350）はDTR/RTSで
   リセットされないので、同じ道具を流用する時は逆の前提になる。`tools/esp32/shell_ok.rb`
   の生存確認さえ、この副作用でボードを再起動させる — Pico 2 Wの「触らずに見る」
-  という前提が成立しない
+  という前提が成立しない。**close→再openの往復は避ける。** 一度closeした接続を
+  reopenする実装（旧`Deploy::Picomodem.reset_and_reopen`）は、macOSが前回接続の
+  断片を返したり起動burstの途中で読めなくなったりして不安定だった。resetから
+  読み取りまで単一の接続を開いたまま行う（`reset.rb`/`shell_ok.rb`と同じ形）方が
+  確実
+- **shellは起動bannerと端末query（`\e[5n`等）は自発的に送るが、`"$>"`は自発的に
+  出さない。** banner後に静穏を待ってから`"\r\n"`を1回送るまでプロンプトが出ない
+  （`tools/common/term.rb`の`Term.settle`と`Deploy::Picomodem`の`await_prompt`で
+  対応済み）。banner検出直後すぐに送ると早すぎてshellの読み取りループがまだ
+  listenしておらず無視される
+- **`io.wait_readable` + `read_nonblock`は、このSerialPortオブジェクトに一度
+  writeした後は信頼できない。** データが実際に来ていても検出できなくなる
+  （原因未特定）。`read_timeout=`を設定した上でbareな`#read`を使う方（`reset.rb`
+  等が元々やっていた形）に統一する必要がある（`Deploy::Picomodem`の
+  `read_available`/`read_exact`/`drain`で対応済み）
+- **長時間・高頻度のresetを繰り返すとボードが無応答になることがある。** この
+  session内でTask 8の検証中に数十回resetを繰り返した後、`shell_ok.rb`を含む
+  全てのアクセスが`silent`（0バイト）になり、3分待っても復帰しなかった。USBの
+  物理的な抜き差しが必要と推定（未確認 — 実機不在のため次回確認）。連続テストの
+  間隔を空けるか、最終確認の前に一度リフレッシュ（抜き差し）を挟むのが安全
 - **ポートを`/dev/cu.usbmodem*`のglobで選ばない。** ESP32が先に並ぶ。`tools/esp32/`
   各scriptは`ioreg -n`で製品名を見て選ぶ。Chain DualKeyの実機で確認した製品名は
   `"USB JTAG/serial debug unit"`（`"USB Product Name"`プロパティは`"USB JTAG_serial
