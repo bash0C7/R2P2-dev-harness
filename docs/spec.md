@@ -375,8 +375,14 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   の生存確認さえ、この副作用でボードを再起動させる — Pico 2 Wの「触らずに見る」
   という前提が成立しない
 - **ポートを`/dev/cu.usbmodem*`のglobで選ばない。** ESP32が先に並ぶ。`tools/esp32/`
-  各scriptは`ioreg -n "R2P2"`で製品名を見て選ぶが、この文字列がChain DualKeyの
-  実際のUSB製品名と一致するかは実機未確認（次の一歩）
+  各scriptは`ioreg -n`で製品名を見て選ぶ。Chain DualKeyの実機で確認した製品名は
+  `"USB JTAG/serial debug unit"`（`"USB Product Name"`プロパティは`"USB JTAG_serial
+  debug unit"`とスラッシュがアンダースコアに化けているが、`ioreg -n`が実際にマッチ
+  するのはノード名側＝スラッシュ表記）。これはESP32-S3内蔵USB Serial/JTAG
+  ペリフェリの既定ディスクリプタ名で、ボード固有ではなくESP32-S3であれば共通の
+  はず。「R2P2」という文字列はfirmwareが自称するものではなく、この道具の名前が
+  誤って製品名だと思い込んでいた設計ミス（Task 8で修正済み、`tools/esp32/*.rb`
+  全ファイルと`reset.rb`）
 - **heapが小さい。** PSRAM無しの約180KBで、`MRC_PRISM_ARENA_BLOCK`のデフォルト
   64KB/compiler contextのままだと起動時boot・sandbox(load時)の2つのcompiler
   contextで枯渇し`NoMemoryError` → abort → reboot loop。`R2P2-ESP32`側は
@@ -388,3 +394,10 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 - **QEMU起動確認が`build`に含まれる。** `R2P2-ESP32`の`scripts/qemu_boot_check.sh`
   （デフォルト300秒、`$> `を見つけたら成功、失敗パターンでも即終了）を実機の前段
   として通す。実機無しでbuildの健全性がある程度わかる
+- **QEMUのESP-IDFバージョンはCIと厳密に合わせる。** ローカルに入れたESP-IDF
+  `v5.4.2`で`qemu_boot_check.sh`を走らせると、"Initializing FLASH disk as the
+  root volume..."で止まったまま`$> `に到達せず、600秒待っても進まない。
+  `.github/workflows/qemu.yml`は`esp_idf_version: v5.5.4`を指定しており、
+  バージョン差が原因と推定（未確定）。実機検証だけを優先する場合はQEMU確認を
+  一旦保留してよいが、CIのQEMU jobを信頼するにはローカルのESP-IDFをCI指定
+  バージョンへ合わせる必要がある

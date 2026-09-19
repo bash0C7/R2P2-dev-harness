@@ -24,7 +24,7 @@ if $PROGRAM_NAME == __FILE__
   def default_port
     # Same product-name lookup as tools/esp32/*.rb generally (Task 5) — a bare
     # /dev/cu.usbmodem* glob is wrong once a Pico 2 W is also plugged in.
-    out = `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`
+    out = `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`
     ports = out.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
     raise "R2P2 board not found on USB (is the ESP32 plugged in?)" if ports.empty?
     ports.first

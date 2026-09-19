@@ -10,7 +10,7 @@
 require_relative "../common/term"
 
 def r2p2_ports
-  `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
+  `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
 end
 
 dev = ARGV[0] || r2p2_ports.first

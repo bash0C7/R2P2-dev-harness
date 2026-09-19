@@ -7,7 +7,7 @@ def default_port
   # A bare /dev/cu.usbmodem* glob is wrong once a Pico 2 W is also plugged
   # in: sort order and product name both need checking on real hardware
   # (Task 8) — this filter is a starting point, not yet confirmed.
-  out = `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`
+  out = `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`
   ports = out.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
   if ports.empty?
     raise "R2P2 board not found on USB (is the ESP32 plugged in and running R2P2?)"

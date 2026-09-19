@@ -4,7 +4,7 @@ require "serialport"
 require_relative "../common/term"
 
 def default_port
-  out = `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`
+  out = `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`
   ports = out.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
   raise "R2P2 board not found on USB (is the ESP32 plugged in and running R2P2?)" if ports.empty?
   ports.first
