@@ -2,7 +2,10 @@
 #
 #   ruby <harness>/tools/pmput.rb examples/rp2040/midi_scale.rb /home/midi_scale.rb
 #
-# Ctrl-C で抜けても、鳴っている note は器が止めるので host に stuck note を残さない。
+# tick の中で例外が raise されて抜けた時は、鳴っている note を器が止める。
+# ただし Ctrl-C (rake rp2040:run が最後に送るものを含む) はこの teardown を
+# 経由しない — 音が鳴っている瞬間に Ctrl-C で止めると host に stuck note が
+# 残り得る (issue #14, docs/spec.md §2)。
 require "usb/peripheral/cdc_midi"
 
 USB::Peripheral::CDCMIDI.new(idle_ms: 0).run do |dev|

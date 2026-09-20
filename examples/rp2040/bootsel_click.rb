@@ -3,7 +3,10 @@
 #
 #   rake rp2040:run[examples/rp2040/bootsel_click.rb,30]
 #
-# 押している間に抜けても、器がボタンを離すので host に押しっぱなしを残さない。
+# tick の中で例外が raise されて抜けた時は、器がボタンを離すので host に
+# 押しっぱなしを残さない。ただし Ctrl-C (rake rp2040:run が最後に送るものを
+# 含む) はこの teardown を経由しない — 押している間に Ctrl-C で止めると
+# host に押しっぱなしが残り得る (issue #14, docs/spec.md §2)。
 require "usb/peripheral/hid_mouse"
 require "cyw43"
 
