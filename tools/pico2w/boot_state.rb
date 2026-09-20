@@ -14,8 +14,14 @@
 require_relative "../common/term"
 
 module BootState
-  APP_LOADING = %r{Loading /home/\S+\.rb}.freeze
-  INIT_LOADING = "Loading /etc/init.d/r2p2"
+  # Confirmed on real hardware (vendor/picoruby's picoruby-shell): the r2p2
+  # init script prints a bare "Loading app.rb" / "Loading app.mrb" / "Loading
+  # <dfu-resolved path>" (no "/home/" prefix, no trailing "..."), while
+  # Shell.bootstrap's own "Loading <file>..." for /etc/init.d/r2p2 itself
+  # always ends in "...". Match by excluding the init.d line rather than by
+  # a "/home/"-prefixed shape, which the real output never has.
+  APP_LOADING = %r{^Loading (?!.*init\.d/r2p2).+$}.freeze
+  INIT_LOADING = "init.d/r2p2"
 
   # $> wins even if an app ran and exited first (e.g. "No app found" then the
   # shell comes up) -- shell is the terminal state we actually care about.
@@ -27,9 +33,12 @@ module BootState
   end
 
   # Reads sp for up to budget seconds, answering terminal queries as they
-  # arrive, and returns as soon as classify(buf) is no longer :unknown (or
-  # once budget runs out, whatever was seen). sp needs #write and #read, the
-  # same duck type Term already expects (see term_test.rb's FakeSerial).
+  # arrive, and returns early only once a *positive* state is confirmed
+  # (:shell or :app -- seeing "Loading /etc/init.d/r2p2" alone does not
+  # return early: that line prints during a completely normal boot too, so
+  # only silence for the *whole* budget after it means :hung, not the
+  # instant it first appears). sp needs #write and #read, the same duck type
+  # Term already expects (see term_test.rb's FakeSerial).
   def self.read(sp, budget:, sleep_step: 0.1)
     buf = +""
     pending = +""
@@ -40,7 +49,8 @@ module BootState
         buf << chunk
         pending << chunk
         Term.answer(sp, pending)
-        return buf unless classify(buf) == :unknown
+        state = classify(buf)
+        return buf if state == :shell || state == :app
       end
       sleep sleep_step
     end
@@ -54,8 +64,13 @@ if $PROGRAM_NAME == __FILE__
   end
 
   dev = ARGV[0]
+  dev = nil if dev && dev.empty?
   enumerate_wait = (ARGV[1] || "15").to_f
-  read_budget = (ARGV[2] || "5").to_f
+  # Measured on real Pico 2 W hardware: enumerate + boot-to-"$>" together
+  # take ~4.2s consistently across a normal reboot (see rp2040.rake's
+  # wait_for_booted_shell! for why this matters -- it used to blind-wait up
+  # to 20s). 10s leaves ample margin without giving up much of the speedup.
+  read_budget = (ARGV[2] || "10").to_f
 
   unless dev
     deadline = Time.now + enumerate_wait

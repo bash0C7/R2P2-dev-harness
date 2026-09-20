@@ -23,28 +23,51 @@ class BootStateTest < Minitest::Test
     end
   end
 
+  # Real capture off a Pico 2 W (rp2040:reboot, no autostart app):
+  #   Initializing FLASH disk as the root volume...
+  #   Press 's' to skip running /etc/init.d/r2p2
+  #   ....................
+  #   Loading /etc/init.d/r2p2...
+  #   No app found
+  #   $>
   def test_classify_shell_when_prompt_seen
-    buf = "Initializing FLASH disk...\nNo app found\n$> "
+    buf = "Initializing FLASH disk as the root volume... \n" \
+          "Press 's' to skip running /etc/init.d/r2p2\n....................\n" \
+          "Loading /etc/init.d/r2p2...\nNo app found\n$> "
     assert_equal :shell, BootState.classify(buf)
   end
 
+  # Real capture with /home/app.rb autostarting: the app-loading line has no
+  # "/home/" prefix and no trailing "..." (unlike the bootstrap line above).
+  #   Loading /etc/init.d/r2p2...
+  #   Loading app.rb
+  #   <app's own output, no "$>" -- it owns the terminal>
   def test_classify_app_when_an_app_is_loading_without_a_prompt_yet
-    buf = "Initializing FLASH disk...\nLoading /etc/init.d/r2p2...\nLoading /home/app.rb\n"
+    buf = "Initializing FLASH disk as the root volume... \n" \
+          "Press 's' to skip running /etc/init.d/r2p2\n....................\n" \
+          "Loading /etc/init.d/r2p2...\nLoading app.rb\ndummy app running\n"
+    assert_equal :app, BootState.classify(buf)
+  end
+
+  def test_classify_app_for_a_dfu_resolved_path_too
+    buf = "Loading /etc/init.d/r2p2...\nLoading /some/dfu/resolved/path.mrb\n"
     assert_equal :app, BootState.classify(buf)
   end
 
   def test_classify_hung_when_stuck_loading_init_with_no_further_progress
-    buf = "Initializing FLASH disk...\nLoading /etc/init.d/r2p2...\n"
+    buf = "Initializing FLASH disk as the root volume... \n" \
+          "Press 's' to skip running /etc/init.d/r2p2\n....................\n" \
+          "Loading /etc/init.d/r2p2...\n"
     assert_equal :hung, BootState.classify(buf)
   end
 
   def test_classify_unknown_when_nothing_seen_yet
     assert_equal :unknown, BootState.classify("")
-    assert_equal :unknown, BootState.classify("Initializing FLASH disk...\n")
+    assert_equal :unknown, BootState.classify("Initializing FLASH disk as the root volume... \n")
   end
 
   def test_classify_prefers_shell_even_if_an_app_ran_and_exited_first
-    buf = "Loading /home/app.rb\nNo app found\n$> "
+    buf = "Loading app.rb\nNo app found\n$> "
     assert_equal :shell, BootState.classify(buf)
   end
 
@@ -55,11 +78,21 @@ class BootStateTest < Minitest::Test
     assert_equal :shell, BootState.classify(buf)
   end
 
-  def test_read_stops_early_once_state_is_no_longer_unknown
-    sp = FakeSerial.new(["Loading /home/app.rb\n", "this chunk must never be read"])
+  def test_read_stops_early_once_an_app_is_confirmed
+    sp = FakeSerial.new(["Loading app.rb\n", "this chunk must never be read"])
     buf = BootState.read(sp, budget: 1.0, sleep_step: 0.01)
     assert_equal :app, BootState.classify(buf)
     assert_equal 1, sp.chunks_left
+  end
+
+  def test_read_does_not_stop_early_just_because_init_is_still_loading
+    # "Loading /etc/init.d/r2p2..." alone prints during a completely normal
+    # boot too -- read must keep going past it, not conclude :hung the
+    # instant it appears.
+    sp = FakeSerial.new(["Loading /etc/init.d/r2p2...\n", "Loading app.rb\n"])
+    buf = BootState.read(sp, budget: 1.0, sleep_step: 0.01)
+    assert_equal :app, BootState.classify(buf)
+    assert_equal 0, sp.chunks_left
   end
 
   def test_read_returns_whatever_it_saw_when_the_budget_runs_out
