@@ -81,14 +81,61 @@ BLE に転送経路を作る必要がある、という前提でブレストし�
   `conf.gem core: 'picoruby-dfu'` を足すだけで済むはず(gemdir では無く upstream の
   core gem なので、`build_config/r2p2-picoruby-pico2_w.rb` への1行追記に相当)
 
-## 依存関係の確認が要る点(未検証)
+## 依存関係を実際に確認した(2026-09-20 追記)
 
-- `picoruby-dfu` は `picoruby-yaml` / `picoruby-vfs` / `picoruby-crc` /
-  `picoruby-pack` (or `mruby-pack`) に依存する (README記載)。pico2_w の
-  `gembox "stdlib"` / `"peripherals"` 等にすでに含まれているかは
-  `rake rp2040:build` を実際に通すまで確定しない
-- BLE のスループット・レイテンシ(ATT MTU 依存の `notify_chunk_size`、既定 20 バイト
-  ペイロード)が、`.rb`/`.mrb` の実用的な転送時間としてどの程度かは実機未計測
+README は「Transport-agnostic」の説明の直後に依存として
+`picoruby-yaml` / `picoruby-vfs` / `picoruby-crc` / `picoruby-pack` を挙げているが、
+**これは不正確。** `mrbgems/picoruby-dfu/mrbgem.rake` の実物を見ると:
+
+```ruby
+spec.add_dependency 'picoruby-env'
+spec.add_dependency 'picoruby-yaml'
+spec.add_dependency 'picoruby-crc'
+if build.femtoruby?
+  spec.add_dependency 'picoruby-pack'
+elsif build.picoruby?
+  spec.add_dependency 'mruby-pack'
+end
+```
+
+`picoruby-vfs` は declare されていない。README の記述と実装がずれている
+(README のほうが古いか、書き手の記憶違いと思われる)。
+
+**この4つの依存の rp2040 対応も確認した:**
+
+| gem | 中身 | rp2040 対応 |
+|---|---|---|
+| `picoruby-env` | `src/mruby` + `ports/rp2040` あり | ○ (port 実在) |
+| `picoruby-yaml` | `mrblib` のみ、`src`/`ports` 無し | ○ (pure Ruby、VM 非依存) |
+| `picoruby-crc` | `src/mruby` のみ、`ports` 無し | ○ (VM 依存の C だけで board 非依存) |
+| `mruby-pack` | mruby 本体寄りの標準 gem | ○ (upstream mruby 由来、board 非依存) |
+
+**さらに、`vendor/picoruby` 自身が持つ `picoruby-dfu` 用のテストを host で実際に
+走らせて確認した** (このharnessの `rake test:host` とは別に、upstream 自身の
+`rake test:gems:picoruby[picoruby-dfu]` を `vendor/picoruby` の中で直接実行):
+
+```
+MetaUtilTest:            success: 17, failure: 0
+MetaYamlRoundtripTest:   success: 6,  failure: 0
+OtaConfirmTest:          success: 7,  failure: 0
+UpdaterReceiveTest:      success: 16, failure: 0
+Total: success: 46, failure: 0, exception: 0, crash: 0, skip: 0
+```
+
+`UpdaterReceiveTest` は `DFU::Updater#receive` のヘッダ解析・CRC・A/B スロット遷移を
+実際に動かして検証している(ソースを読んだだけの推測ではない)。
+
+**これで残った不確実性は縮んだ:** 依存4つは存在も rp2040 対応も確認済みで、
+ロジック自体も host 上の実行で確認済み。まだ確認できていないのは
+**`arm-none-eabi-gcc` での実クロスコンパイルが通るか**と、**rp2040 の実ファイルシステム
+(littlefs 経由の `File`)でも同じ挙動になるか**の2点だけ — host は posix の
+`mruby-io`/`mruby-dir` 経由、rp2040 は別の port を通る。この差はコードを読むだけでは
+埋まらず、`rake rp2040:build` を実機・ツールチェインが揃ったセッションで通すまで残る。
+
+## BLE のスループット(未検証)
+
+ATT MTU 依存の `notify_chunk_size`(既定 20 バイトペイロード)が、`.rb`/`.mrb` の
+実用的な転送時間としてどの程度かは実機未計測。
 
 ## `bash0C7/picoruby-ble-verify` (private) との関係
 

@@ -93,16 +93,28 @@ files it loads.
   0 failures** (see Task 2's test count — the gem's only content is the `Framer` class).
 - `rake test:examples` (mrbc compile-check, still host-only) compiled
   `examples/rp2040/ble_dev_bridge.rb` without a syntax error.
-- **NOT done:** `rake rp2040:build` with the new `conf.gem core: 'picoruby-dfu'` line has
-  never run — this session has no `arm-none-eabi-gcc` and no Pico 2 W. Whether
-  `picoruby-dfu`'s declared dependencies (`picoruby-yaml`, `picoruby-vfs`, `picoruby-crc`,
-  `picoruby-pack`/`mruby-pack`) are already satisfied by `r2p2-picoruby-pico2_w.rb`'s
-  existing gemboxes (`stdlib`, `peripherals`, `peripheral_utils`, `networking`) is still
-  unconfirmed. If a dependency is missing, `rake rp2040:build` will name it in a
-  missing-gem error; add the specific `conf.gem core:` line then, don't guess ahead.
+- **De-risked further after the first push:** read `picoruby-dfu`'s actual
+  `mrbgem.rake` instead of trusting its README — the real dependency list is
+  `picoruby-env` / `picoruby-yaml` / `picoruby-crc` / `mruby-pack` (the README's
+  `picoruby-vfs` mention is stale and wrong, `mrbgem.rake` never declares it). Confirmed
+  each of those four either has an `ports/rp2040` (`picoruby-env`) or is VM-only /
+  pure-Ruby with no board-specific port at all (`picoruby-yaml`, `picoruby-crc`,
+  `mruby-pack`). Then ran upstream's *own* test suite for the gem — not this harness's —
+  via `rake test:gems:picoruby[picoruby-dfu]` inside `vendor/picoruby`: **46 assertions,
+  0 failures**, including `UpdaterReceiveTest` actually exercising header parsing, CRC,
+  and A/B-slot state transitions (not just a read of the source). Full writeup:
+  `docs/research/picoruby-ble-dfu-survey.md`.
+- **STILL NOT done:** `rake rp2040:build` with the new `conf.gem core: 'picoruby-dfu'`
+  line has never run — this session has no `arm-none-eabi-gcc` and no Pico 2 W, and the
+  host test above went through the posix file-I/O port, not rp2040's littlefs-backed one.
+  What's now confirmed is that the dependency *chain* exists and works; what's still open
+  is the actual cross-compile and the rp2040-specific file backend. If `rake
+  rp2040:build` still fails on a missing gem, that's a *different* gap than the one this
+  session ruled out — read the actual error rather than assume it's the same thing.
 
 - [x] **Step 1: Read `rakelib/vendor.rake`'s overlay task before touching anything** — done; found it delegates entirely to `build_config/rp2040-pico2_w.rb` (see the correction note above).
 - [x] **Step 2: Add the gemdir + `picoruby-dfu` lines to the two build_config files**
+- [x] **Step 2b (added after the first push): verify `picoruby-dfu`'s dependency chain and correctness on host** — via upstream's own `rake test:gems:picoruby[picoruby-dfu]`, not this harness's `test:host` (that task doesn't need `picoruby-dfu` in `host-test.rb` at all, so `host-test.rb` was deliberately *not* changed to add it — see Task 2's gem, which also never `require`s it).
 - [x] **Step 3 (host-only): `rake setup && rake test:host && rake test:examples`** — all green, output captured in this session's transcript.
 - [ ] **Step 3b (still open, needs hardware): `rake rp2040:build`** — blocked, see above. Whoever picks this up next should run this before anything else in Task 3.
 - [x] **Step 4: Commit** (folded into one commit with Task 2 and the encoding fix below — see the end of this plan for the actual commit message used).
