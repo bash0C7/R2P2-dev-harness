@@ -164,7 +164,14 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 Mac は USB 機器になる側ではなく、**相手役と開発機**として使う。
 
 環境変数は `PICORUBY_REPO` / `PICORUBY_REF` (取得元と ref) と `SKIP_BUILD`
-(`test:host` で再 build を飛ばす)。
+(`test:host` で再 build を飛ばす)。**ただし `SKIP_BUILD` は無条件の skip ではない。**
+`vendor/picoruby/build/host/` は upstream 自身の rake タスク (`vendor/picoruby` の中で
+直接叩く `rake test:gems:picoruby[...]` など) とも共有される場所で、そちらは自分専用の
+build_config で作り直すことがある。`test:host` は毎回、今の
+`vendor/picoruby` の SHA・`build_config/host-test.rb`・ハーネスの gem の内容から
+stamp を計算し、`build/host/` の中身と食い違っていれば `SKIP_BUILD` が立っていても
+作り直す (`rakelib/test.rake` の `ensure_host_vm_current!`)。rp2040 firmware 側の
+stamp (下記) と同じ考え方。
 
 **未実装のタスクは、黙って通ったふりをせずに落とす。** 何が無くて、代わりに
 今は何をするのかを message に書く。実機まで通って初めて完了 (§5) という線引きは、
@@ -201,7 +208,8 @@ upstream の `picoruby-usb-cdc-midi/test/midi_output_test.rb` が
 
 runner は本 repo が持つ (§3 の代償)。といっても upstream の `Picotest::Runner` を
 そのまま require して使えるので、持つのは「`build_config/host-test.rb` で host VM を
-建てて、gem ごとに Runner を回す」30 行ほど。`collect_gems` の代わりは要らない。
+建てて、gem ごとに Runner を回す」処理と、`build/host/` が今の入力に対して
+まだ有効かを見る stamp guard (上記 §4)。`collect_gems` の代わりは要らない。
 
 ### 実機層 (`rake <target>:verify`)
 

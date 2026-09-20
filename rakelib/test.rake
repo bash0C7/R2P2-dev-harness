@@ -2,7 +2,7 @@ namespace :test do
   desc "Run the harness gems' picotest on the host (no board needed)"
   task :host do
     require_vendor!
-    build_host_vm unless ENV["SKIP_BUILD"]
+    ensure_host_vm_current!
 
     require picotest_path
     ENV["RUBY"] = host_vm_path
@@ -50,6 +50,63 @@ def build_host_vm
   FileUtils.mkdir_p File.join(BUILD_DIR, "test")
   env = { "PICORB_DEBUG" => "1", "MRUBY_CONFIG" => host_test_config }
   vendor_rake(env, "all")
+end
+
+# `vendor/picoruby/build/host/` は vendor/picoruby の中の共有ディレクトリ。
+# `vendor/picoruby` の中で upstream 自身の rake タスクを直接叩くと
+# (例: `rake test:gems:picoruby[<gem>]` で依存を検証するときなど)、
+# そちらは自分専用の一時 build_config で `rake clean` してから同じ
+# `build/host/` を作り直すことがあり、このharnessの gem を含まない別物の VM に
+# 静かに差し替わる。`SKIP_BUILD=1` は「テストだけ直したので rebuild を省きたい」
+# という意思表示であって、外部要因での差し替えまで黙って信用してよいという
+# 意味ではないので、rp2040.rake の firmware_stamp と同じ考え方で
+# 「今の入力に対して本当に有効か」を都度確認し、ずれていれば SKIP_BUILD が
+# 立っていても作り直す。
+HOST_TEST_INPUT_GLOBS = %w[
+  mrbgem.rake
+  mrblib/**/*.rb
+  src/**/*
+  ports/**/*
+  include/**/*
+].freeze
+
+def host_test_stamp
+  sha = File.directory?(File.join(PICORUBY_SRC, ".git")) ? `git -C #{PICORUBY_SRC.shellescape} rev-parse HEAD`.strip : ""
+  inputs = [sha]
+  SUBMODULE_PINS.each_key do |path|
+    inputs << `git -C #{File.join(PICORUBY_SRC, path).shellescape} rev-parse HEAD 2>/dev/null`.strip
+  end
+  inputs << Digest::SHA256.file(host_test_config).hexdigest
+  HARNESS_GEMS.each do |name|
+    gem_dir = File.join(HARNESS_ROOT, "gems", name)
+    HOST_TEST_INPUT_GLOBS.each do |glob|
+      Dir[File.join(gem_dir, glob)].sort.each do |path|
+        next unless File.file?(path)
+        inputs << path.sub("#{HARNESS_ROOT}/", "")
+        inputs << Digest::SHA256.file(path).hexdigest
+      end
+    end
+  end
+  Digest::SHA256.hexdigest(inputs.join("\n"))
+end
+
+def host_test_stamp_path
+  File.join(PICORUBY_SRC, "build", "host", ".harness-test-stamp")
+end
+
+def ensure_host_vm_current!
+  want = host_test_stamp
+  stamp = host_test_stamp_path
+  current = File.file?(stamp) ? File.read(stamp).strip : nil
+
+  if ENV["SKIP_BUILD"]
+    return if current == want && File.executable?(host_vm_path)
+    puts "build/host stamp mismatch despite SKIP_BUILD (something else rebuilt " \
+         "vendor/picoruby/build/host/ since the last rake test:host run) — rebuilding anyway"
+  end
+
+  build_host_vm
+  File.write(stamp, want)
 end
 
 def require_name_of(gem_name)
