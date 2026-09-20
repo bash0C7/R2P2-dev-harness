@@ -401,7 +401,8 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
    ホストのテストと example の compile が green。HID mouse の example は Pico 2 W 実機で USB マウスとして動いた (§5)。
    **残っているのは CDC-MIDI の実機での判定。** `rp2040:verify` が無いので、まだ done ではない
 2. **無人化 G1** — `rp2040:flash` から BOOTSEL の人手を外し、本 repo から Pico 2 W 実機で通した (§6)
-3. (v1 外) ESP32、USB HID ゲームパッド、darwin 版の USB 機器
+3. **ESP32 の rake タスク** — `rake esp32:build` / `flash` / `upload` / `run` / `reboot` を M5Stack Chain DualKey 実機で通した (§9)
+4. (v1 外) ESP32 向けの USB 周辺機器 gem、USB HID ゲームパッド、darwin 版の USB 機器
 
 ## 8. 未決
 
