@@ -100,6 +100,44 @@ ESP32 と同じ「委譲」パターンを踏襲する。本 harness(R2P2-dev-ha
   `esp32_repo_dir`/`require_esp32_repo!` と同じ形)
 - 持たないもの: Xcode プロジェクトそのもの、Swift コード、App Store 提出周りの一切
 
+## 作業の規律
+
+実装(docs/superpowers/plans/2026-09-20-ios-dev-harness-app.md の Task 1-2)を
+このセッションで実際に進めて分かった、この件特有の規律事項。
+
+- **「動く」の線引きは、この件でも実機。** `BleDevBridge::Framer` の picotest が
+  host で全部 green でも、`BLE::UART` / `DFU::Updater` / `Sandbox` を配線した
+  `examples/rp2040/ble_dev_bridge.rb` 自体は Pico 2 W 実機で1回も動かしていない
+  ("実機で確かめるまで動いたと言わない" は docs/spec.md 全体の規律だが、この件は
+  「pure logic は host で検証済み、IO を伴う配線は未検証」という**2段階の完了**に
+  なりやすいので、コミットメッセージや PR で両者を混同しない)
+- **BLE/DFU 側に新しい C は書かない、書きたくなったら立ち止まる。**
+  `picoruby-ble` / `picoruby-ble-uart` / `picoruby-dfu` はすでに upstream に
+  そろっている(docs/research/picoruby-ble-dfu-survey.md)。この件で C の変更が
+  要ると思えた時点で、それは大抵「upstream の API を読み切れていない」サインであり、
+  先に survey doc を疑い直す
+- **`BleDevBridge::Framer` に `BLE`/`DFU`/`Sandbox` への依存を持たせない。**
+  DFU のヘッダ書式(19バイト固定 + 署名長)を知っているのは
+  `DFU::Updater.expected_size` であって、Framer 自身ではない —
+  呼び出し側が block で渡す(`gems/picoruby-usb-peripheral` が USB の具体を
+  何も知らない「器」であるのと同じ形。docs/spec.md §3「器と結線は別の gem に
+  分ける」を BLE 版でも踏襲する)
+- **`picoruby-dfu` はアプリ層(`/home/app.rb`)の更新であって、R2P2 の C
+  ランタイム(`.uf2`)の更新ではない。** この区別をコード・コメント・コミット
+  メッセージのどこでも混同しない。混同すると「BLE で OTA できる」が
+  「ファーム自体を無線更新できる」に読み替えられて事実と違う期待を生む
+- **`gems/*/mrbgem.rake` は ASCII のみ。** `rakelib/test.rake` の
+  `require_name_of` が locale 依存の default external encoding で読むため、
+  日本語コメントが1つ混ざるだけで無関係な gem の後で `rake test:host` 全体が
+  落ちる(このセッションで実際に踏んだ。詳細と直した箇所は docs/spec.md §5)。
+  `mrblib/` 側は従来通り日本語コメント可
+- **build_config への追記は、まず「本当にそこを直すべきか」を実装前に読み切る。**
+  当初の計画は `rakelib/vendor.rake` の overlay task 自体を直す想定だったが、
+  実際に読むと overlay は `build_config/rp2040-pico2_w.rb` を `load` するだけの
+  薄い shim で、直すべきは harness 側の build_config 2 file
+  (`build_config/rp2040-pico2_w.rb` / `build_config/host-test.rb`) だけだった。
+  読まずに計画通り rakelib 側を触っていたら、要らない変更を1つ増やしていた
+
 ## スコープ外
 
 - ファームウェア(C ランタイム)本体の OTA 無線更新

@@ -111,7 +111,12 @@ end
 
 def require_name_of(gem_name)
   rake_file = File.join(HARNESS_ROOT, "gems", gem_name, "mrbgem.rake")
-  found = File.read(rake_file)[/require_name\s*=\s*['"]([^'"]+)['"]/, 1]
+  # 明示 encoding が無いと Ruby は locale (LANG/LC_ALL) 依存の default external
+  # encoding で読む。この sandbox のように locale が空だと US-ASCII になり、
+  # どこかの gem の mrbgem.rake に日本語コメントが1つあるだけで
+  # "invalid byte sequence in US-ASCII" で rake test:host 全体が落ちる
+  # (mrblib/ 側は日本語コメントが前提なので、同じ落とし穴が要る場所は他にも無いか注意)。
+  found = File.read(rake_file, encoding: "UTF-8")[/require_name\s*=\s*['"]([^'"]+)['"]/, 1]
   found || gem_name.sub(/\Apicoruby-/, "")
 end
 

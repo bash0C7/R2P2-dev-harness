@@ -14,6 +14,7 @@ HARNESS_GEMS = %w[
   picoruby-usb-peripheral
   picoruby-usb-peripheral-cdc-midi
   picoruby-usb-peripheral-hid-mouse
+  picoruby-ble-dev-bridge
 ].freeze
 
 # upstream の r2p2 rake task は build_config の path を自分で決め打つので、

@@ -16,4 +16,7 @@ MRuby.each_target do |conf|
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-cdc-midi"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-hid-mouse"
+  # BLE にも DFU にも依存しない純粋なバッファ操作なのでホストだけで検証できる。
+  # docs/superpowers/plans/2026-09-20-ios-dev-harness-app.md 参照。
+  conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-ble-dev-bridge"
 end
