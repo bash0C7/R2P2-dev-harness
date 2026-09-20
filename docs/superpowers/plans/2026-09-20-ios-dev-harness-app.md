@@ -33,7 +33,7 @@ pattern).
 - No Python (repo-wide rule, unrelated to BLE but still applies to any host-side helper written in this phase).
 - No new C code in this phase. `picoruby-ble` / `picoruby-ble-uart` are already in the pico2_w build; the only firmware-build change is adding `picoruby-dfu` via `conf.gem core:`.
 - `picoruby-dfu` updates the **Ruby application layer** (`/home/app.rb`/`.mrb` or the A/B slots), never the R2P2 C runtime (`vendor/picoruby`'s `.uf2`). Do not conflate the two anywhere in code, comments, or docs written in this phase.
-- This session has no physical Pico 2 W attached and no `arm-none-eabi-gcc` toolchain confirmed present — Task 1's build step and every task after it that needs real hardware must be run in a session that has the board (per CLAUDE.md: "Pico 2 W は Claude が触る", "完了の線引きは実機"). Do not claim a task is done from source-reading alone.
+- This session has no physical Pico 2 W attached, full stop — that never changes within it. (It turned out `arm-none-eabi-gcc` *could* be installed here via `apt-get`, so Task 1's cross-build did get run for real; see its updated status. The board itself is a different kind of gap that installing a package can't close.) Every task that needs real hardware must be run in a session that has the board (per CLAUDE.md: "Pico 2 W は Claude が触る", "完了の線引きは実機"). Do not claim a task is done from source-reading alone.
 - iOS-side work (a `R2P2-ios-workbench` sibling repo, Swift/CoreBluetooth code, Xcode builds) is out of this plan entirely. Creating a new repository is a decision for the user, not something to do unprompted (see spec's 決定事項 table). This plan only prepares the firmware side a future iOS client would talk to.
 
 ## File Structure (this phase)
@@ -66,7 +66,7 @@ harness-specific content belongs in `build_config/`).
 
 ---
 
-## Task 1: Add `picoruby-dfu` to the pico2_w build, and a dependency-free framing gem — DONE (host-verified; firmware build unverified)
+## Task 1: Add `picoruby-dfu` to the pico2_w build, and a dependency-free framing gem — DONE (real cross-build verified; real hardware still not)
 
 `picoruby-dfu` exists upstream but is absent from every build_config and gembox (confirmed
 by `grep -rl picoruby-dfu build_config/` on the shallow clone — no hits).
@@ -104,13 +104,26 @@ files it loads.
   0 failures**, including `UpdaterReceiveTest` actually exercising header parsing, CRC,
   and A/B-slot state transitions (not just a read of the source). Full writeup:
   `docs/research/picoruby-ble-dfu-survey.md`.
-- **STILL NOT done:** `rake rp2040:build` with the new `conf.gem core: 'picoruby-dfu'`
-  line has never run — this session has no `arm-none-eabi-gcc` and no Pico 2 W, and the
-  host test above went through the posix file-I/O port, not rp2040's littlefs-backed one.
-  What's now confirmed is that the dependency *chain* exists and works; what's still open
-  is the actual cross-compile and the rp2040-specific file backend. If `rake
-  rp2040:build` still fails on a missing gem, that's a *different* gap than the one this
-  session ruled out — read the actual error rather than assume it's the same thing.
+- **Then actually done, in a later push to this same session:** installed
+  `gcc-arm-none-eabi` via `apt-get` (available and installable in this sandbox after
+  all — the earlier "no arm-none-eabi-gcc" constraint was about what was pre-installed,
+  not what was possible), ran `rake rp2040:setup` (pico-sdk + its submodules, including
+  btstack — several hundred MB, ran in the background), then `rake rp2040:build`
+  **with `conf.gem core: 'picoruby-dfu'` and the new gem's `gemdir:` both present.**
+  It built clean end to end (CMake configure → ~1500 C compiles → link → `.uf2`
+  packaging → the existing `machine-usb-boot.patch` apply/reverse cycle), producing a
+  real `R2P2-PICORUBY-...-PICO2_W-....uf2`. Confirmed the two new gems actually linked
+  in (not just "the build didn't error") by running `strings` on the resulting `.elf`:
+  it contains both `gem_mrblib_picoruby_ble_dev_bridge_proc_*` symbols and
+  `picoruby-dfu`'s own strings (`, expected "DFU\0")`, `dfu_ecdsa_public_key_pem`).
+- **What is STILL NOT done, precisely:** nothing has flashed or booted this `.uf2` on
+  real silicon. A successful cross-build proves the dependency chain resolves for a
+  `CrossBuild` (not just the `MRuby::Build` host target the earlier test used) and that
+  the C compiles clean for Cortex-M33 — it does not prove the firmware boots, that BLE
+  actually powers on and advertises, or that rp2040's littlefs-backed `File` I/O behaves
+  like the posix port `UpdaterReceiveTest` ran against. Those three remain exactly what
+  Task 3 exists to check, unchanged by this. Do not read "the build works" as "the
+  feature works" anywhere this plan or its commit messages are read later.
 
 - [x] **Step 1: Read `rakelib/vendor.rake`'s overlay task before touching anything** — done; found it delegates entirely to `build_config/rp2040-pico2_w.rb` (see the correction note above).
 - [x] **Step 2: Add the gemdir + `picoruby-dfu` lines to the two build_config files**
@@ -196,9 +209,14 @@ up as a standing rule in docs/spec.md §5 and in this feature's design spec's ne
 ## Task 3: Real Pico 2 W verification (blocked on hardware this session doesn't have)
 
 Per docs/spec.md's own rule ("完了の線引きは実機"), nothing above counts as working until
-it runs on a board. This task cannot execute in this session (no Pico 2 W attached, no
-confirmed `arm-none-eabi-gcc`) — it is written out for whichever session next has the
-hardware.
+it runs on a board. This task cannot execute in this session — Task 1 got as far as a
+real, verified cross-build (`arm-none-eabi-gcc` is installable here after all), but there
+is no physical Pico 2 W in this sandbox and never will be. That build lived only in this
+session's ephemeral container (`vendor/picoruby/build/`, gitignored, never part of any
+commit) and is gone once this session ends — Step 1 below still needs to run
+`rake rp2040:build` again from a session that has both a real toolchain and the board,
+it just now has strong prior evidence (this session's `strings` check) that the same
+command should succeed.
 
 - [ ] **Step 1: Flash the Task 1 build to a Pico 2 W, upload Task 2's script as `/home/app.rb`**
 
@@ -262,14 +280,20 @@ start the iOS CoreBluetooth client against the now-verified wire behavior.
   is explicitly kept out (Global Constraints); "Playground" and "sibling repo" rows are
   untouched by this plan on purpose (spec marks them as later/user-decision items, not
   this phase's job).
-- **No fabricated verification, updated:** Tasks 1-2 are now marked done, but "done"
-  means exactly what each task's "What DONE means here" subsection says — host build +
-  picotest + mrbc compile-check green, real BLE/DFU/hardware behavior still entirely
-  unverified. Task 2's earlier explicitly-flagged gap (peek-and-drop losing bytes) is
-  closed for real, not just written around: `BleDevBridgeFramerTest` has a dedicated
-  test (`test_bytes_after_a_dfu_payload_in_the_same_chunk_are_kept_for_the_next_feed`)
-  that would fail if the implementation dropped or misplaced bytes at a mode boundary.
-  Task 3 onward remain marked blocked, unchanged.
+- **No fabricated verification, updated twice now:** Tasks 1-2 are marked done, but
+  "done" means exactly what each task's "What DONE means here" subsection says. That bar
+  moved partway through this work: what started as "no arm-none-eabi-gcc available"
+  turned into "toolchain installed, real cross-build succeeded, gem presence confirmed
+  by `strings`-ing the actual `.elf`" once installing the toolchain turned out to be
+  possible here. What has NOT moved, and structurally cannot move in this sandbox: there
+  is still no physical Pico 2 W, so nothing about booting, BLE radio behavior, or
+  rp2040's real file I/O port is known. A successful cross-build is meaningfully more
+  evidence than "it should build" was, but it is still not "it works" — Task 3 is
+  unchanged and still fully blocked. Task 2's earlier explicitly-flagged gap
+  (peek-and-drop losing bytes) is closed for real, not just written around:
+  `BleDevBridgeFramerTest` has a dedicated test
+  (`test_bytes_after_a_dfu_payload_in_the_same_chunk_are_kept_for_the_next_feed`) that
+  would fail if the implementation dropped or misplaced bytes at a mode boundary.
 - **Deviation from the design doc:** the design doc (and this plan's first draft) assumed
   `rakelib/vendor.rake` needed a code change; reading it before editing showed the real
   surface was two `build_config/*.rb` files instead (see the File Structure section's
