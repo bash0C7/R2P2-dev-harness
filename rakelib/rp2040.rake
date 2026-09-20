@@ -63,17 +63,17 @@ namespace :rp2040 do
     src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
     dst = args[:dst] || "/home/#{File.basename(src)}"
     require_shell!
-    device_tool "pmput.rb", src, dst
+    bounded_device_tool!(60, "pmput.rb", src, dst) or raise_wedged!("upload")
   end
 
   desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
     app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
-    seconds = args[:seconds] || "20"
+    seconds = (args[:seconds] || "20").to_i
     remote = "/home/#{File.basename(app)}"
     require_shell!
-    device_tool "pmput.rb", app, remote
-    device_tool "runapp.rb", remote, seconds
+    bounded_device_tool!(60, "pmput.rb", app, remote) or raise_wedged!("run (upload step)")
+    bounded_device_tool!(seconds + 30, "runapp.rb", remote, seconds.to_s) or raise_wedged!("run")
   end
 
   desc "Reboot the board and wait for the shell"
@@ -81,7 +81,8 @@ namespace :rp2040 do
     # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
     # 打っても何も起きない。script を置いて実行する。
     require_shell!
-    device_tool "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb"
+    bounded_device_tool!(60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb") or
+      raise_wedged!("reboot (upload step)")
     # 効いた時は実行中に CDC が落ちて rsh.rb が ENXIO で失敗する。それが reboot した印。
     _, output = bounded_device_tool 40, "rsh.rb", "/home/reboot.rb", "4"
     raise "the shell ran /home/reboot.rb but the board did not drop off USB" unless output.match?(/ENXIO|Device not configured/)
@@ -103,12 +104,14 @@ namespace :rp2040 do
   end
 end
 
-# 実機を触る helper は tools/pico2w/ に居る。serialport gem と、
-# USB 製品名からポートを引くための macOS の ioreg が要る。
-def device_tool(name, *args)
-  script = File.join(HARNESS_ROOT, "tools", "pico2w", name)
-  raise "#{script} is missing" unless File.file?(script)
-  sh "#{RbConfig.ruby.shellescape} #{script.shellescape} #{args.map { |a| a.to_s.shellescape }.join(' ')}"
+namespace :test do
+  desc "Run the plain-Ruby host tests for tools/common and tools/pico2w (no board needed)"
+  task :rp2040 do
+    Dir[File.join(HARNESS_ROOT, "tools", "common", "*_test.rb"),
+        File.join(HARNESS_ROOT, "tools", "pico2w", "*_test.rb")].sort.each do |test_file|
+      sh "#{RbConfig.ruby.shellescape} #{test_file.shellescape}"
+    end
+  end
 end
 
 # 動作中の board を BOOTSEL へ落とす。firmware-patches/machine-usb-boot.patch が
@@ -176,11 +179,32 @@ def require_shell!
 end
 
 # boot 直後は shell が上がるまで数秒かかる。/home/app.rb が自動起動していると
-# shell は出ないので、しばらく待ってから Ctrl-C で app を止めて確かめる。
+# shell は出ない。tools/pico2w/boot_state.rb が再列挙直後の出力を読んで
+# shell/app/hung を判定するので、app が居るせいで $> が絶対に返らない
+# ケースでも 20 秒を盲目に待たない (issue #16)。判定できなかった (unknown:
+# 読み逃した等) ときだけ、以前どおりの盲目 wait + Ctrl-C に落ちる。
 def wait_for_booted_shell!(what)
-  return if wait_until(20) { shell_answers? }
-  return puts("#{what}; the shell answered only after Ctrl-C, so an autostarted app was stopped") if ensure_shell
-  raise "#{what}, but the R2P2 shell never answered, even after Ctrl-C"
+  case boot_state
+  when "shell"
+    puts "#{what}; shell is up"
+  when "app"
+    puts "#{what}; an app is running (left it running)"
+  when "hung"
+    raise <<~MSG
+      #{what}, but the board is stuck loading /etc/init.d/r2p2 (normal boot
+      reaches shell or an app within a few seconds -- see docs/spec.md §6's
+      compiler-submodule-pin trap for one known cause).
+      If it stays stuck, unplug and replug USB, then re-run.
+    MSG
+  else
+    return if wait_until(20) { shell_answers? }
+    return puts("#{what}; the shell answered only after Ctrl-C, so an autostarted app was stopped") if ensure_shell
+    raise "#{what}, but the R2P2 shell never answered, even after Ctrl-C"
+  end
+end
+
+def boot_state
+  `#{RbConfig.ruby.shellescape} #{File.join(HARNESS_ROOT, 'tools', 'pico2w', 'boot_state.rb').shellescape} 2>&1`.strip
 end
 
 def bootsel?
@@ -215,6 +239,30 @@ def bounded_device_tool(seconds, name, *args)
   output, status = Open3.capture2e(*command)
   puts output
   [status.success?, output]
+end
+
+# bounded_device_tool と同じ壁時計の上限を tmo.rb 越しに掛けるが、出力を
+# 溜め込まず子の stdout/stderr をそのまま継承する。upload / run はログを
+# その場で見たい (run は特に、実行中のアプリのログをそのまま流す)。
+# 出力を検査したい呼び出しは bounded_device_tool (Open3 版) を使うこと。
+def bounded_device_tool!(seconds, name, *args)
+  tools = File.join(HARNESS_ROOT, "tools", "pico2w")
+  command = [RbConfig.ruby, File.join(tools, "tmo.rb"), seconds.to_s,
+             RbConfig.ruby, File.join(tools, name), *args.map(&:to_s)]
+  puts command.shelljoin
+  system(*command)
+end
+
+# wedge した board への blocking な serial open は macOS で返らず、SIGTERM も
+# 効かない (docs/spec.md §6)。bounded_device_tool! が壁時計で切ったあとの
+# 診断メッセージを、enter_bootsel! と同じ言い方で揃える。
+def raise_wedged!(step)
+  raise <<~MSG
+    rp2040:#{step} timed out or failed.
+    shell_ok.rb says: #{shell_answers? ? 'the shell answers' : 'the shell does not answer (wedged)'}
+
+    If it is wedged, unplug and replug USB, then re-run.
+  MSG
 end
 
 # firmware-patches/*.patch を vendor/picoruby に当てて build し、終わったら戻す。
