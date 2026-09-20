@@ -1,0 +1,11 @@
+# Chain DualKey has no UART0 breakout: the only exposed serial channel is
+# the ESP32-S3's native USB Serial/JTAG peripheral. Without this,
+# ESP-IDF's default primary console is UART0 (unreachable here) and USB
+# Serial/JTAG is only the secondary, output-only mirror — the boot log and
+# every Ruby `puts` still shows up over USB, but the shell's STDIN never
+# sees anything sent to it, no matter what's written or when. Confirmed on
+# real hardware (Task 8, docs/spec.md §9): the shell's terminal-query burst
+# and its "$> " prompt draw at the identical time after reset whether or
+# not the queries are answered, proving the device isn't reading replies
+# from USB at all until this is set.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

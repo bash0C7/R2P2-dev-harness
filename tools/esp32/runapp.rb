@@ -2,6 +2,7 @@
 #   ruby runapp.rb <device path> <seconds> [port]
 require "serialport"
 require_relative "../common/term"
+require_relative "reset"
 
 def default_port
   out = `ioreg -w 0 -r -n "USB JTAG/serial debug unit" -l 2>/dev/null`
@@ -15,6 +16,7 @@ secs = (ARGV[1] || "20").to_f
 port = ARGV[2] || default_port
 sp = SerialPort.new(port, 115_200, 8, 1, SerialPort::NONE)
 sp.read_timeout = 100
+Reset.pulse(sp)
 Term.settle(sp)
 sp.write(path + "\r\n")
 t0 = Time.now

@@ -11,6 +11,7 @@ namespace :esp32 do
   desc "Build the R2P2-ESP32 firmware (mruby VM) and boot-check it under QEMU"
   task :build do
     require_esp32_repo!
+    ensure_console_overlay!
     FileUtils.cd(esp32_repo_dir) do
       sh "rake picoruby:build"
       sh "bash scripts/qemu_boot_check.sh #{VM}"
@@ -75,4 +76,24 @@ def esp32_device_tool(name, *args)
   script = File.join(HARNESS_ROOT, "tools", "esp32", name)
   raise "#{script} is missing" unless File.file?(script)
   sh "#{RbConfig.ruby.shellescape} #{script.shellescape} #{args.map { |a| a.to_s.shellescape }.join(' ')}"
+end
+
+# vendor/R2P2-ESP32 is a fresh, disposable checkout (docs/spec.md §9) with no
+# board-specific sdkconfig of its own — idf.py's console default (UART0) is
+# unreachable on Chain DualKey, which has no UART0 breakout (Task 8). Ensure
+# the harness's console overlay is present in its sdkconfig.defaults before
+# every build, and drop any already-generated sdkconfig so idf.py re-derives
+# it from the updated defaults instead of silently keeping the stale choice.
+def ensure_console_overlay!
+  overlay = File.read(File.join(HARNESS_ROOT, "build_config", "esp32-chain_dualkey.sdkconfig.defaults"))
+  defaults_path = File.join(esp32_repo_dir, "sdkconfig.defaults")
+  current = File.exist?(defaults_path) ? File.read(defaults_path) : ""
+  return if current.include?("CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y")
+
+  File.write(defaults_path, "#{current}\n#{overlay}")
+  sdkconfig = File.join(esp32_repo_dir, "sdkconfig")
+  if File.exist?(sdkconfig)
+    puts "[esp32] console overlay applied to sdkconfig.defaults — removing stale sdkconfig"
+    File.delete(sdkconfig)
+  end
 end

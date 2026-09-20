@@ -16,6 +16,13 @@
 #   fresh reset+read attempt right after reliably goes all the way through.
 #   So this retries the whole reset+read a few times rather than trusting
 #   one attempt, each attempt on its own freshly-opened connection.
+# - Boot to "Starting shell..." can itself take 20-25s (a WiFi config probe
+#   runs during boot and doesn't fail fast), so each attempt's window has to
+#   be generous, not just a few seconds.
+# - "$>" can appear by coincidence inside the ESP-IDF boot log noise itself
+#   (well before the real shell banner, let alone a nudge) — checking the
+#   whole cumulative buffer for it is a false-positive trap. Only bytes
+#   received AFTER the nudge count as a real prompt.
 require "serialport"
 require_relative "reset"
 require_relative "../common/term"
@@ -35,32 +42,34 @@ pid = fork do
   r.close
   begin
     got = +""
+    post = +""
     3.times do |attempt|
       sleep 2 if attempt.positive?
       sp = SerialPort.new(dev, 115_200, 8, 1, SerialPort::NONE)
       sp.read_timeout = 100
       Reset.pulse(sp)
       got = +""
+      post = +""
       pending = +""
       nudged = false
-      150.times do
+      350.times do
         chunk = (sp.read rescue nil)
         if chunk && !chunk.empty?
           got << chunk
           pending << chunk
+          post << chunk if nudged
           Term.answer(sp, pending)
         end
         if !nudged && got.include?("Starting shell...")
           sp.write("\r\n")
           nudged = true
         end
-        break if got.include?("$>")
-        sleep 0.1
+        break if post.include?("$>")
       end
       sp.close
-      break if got.include?("$>")
+      break if post.include?("$>")
     end
-    w.write(got)
+    w.write(post.include?("$>") ? "OK#{got}" : "NOPROMPT#{post}")
   rescue => e
     w.write("ERR #{e.class}")
   end
@@ -69,7 +78,7 @@ pid = fork do
 end
 w.close
 alive = true
-420.times { break if (alive = !Process.waitpid(pid, Process::WNOHANG)) == false; sleep 0.25 }
+700.times { break if (alive = !Process.waitpid(pid, Process::WNOHANG)) == false; sleep 0.25 }
 if alive
   Process.kill("KILL", pid) rescue nil
   Process.waitpid(pid) rescue nil
@@ -82,8 +91,10 @@ if out.empty? || out.start_with?("ERR")
   puts "DEAD (#{dev}: #{out.empty? ? 'silent' : out})"
   exit 1
 end
-unless out.include?("$>")
-  puts "DEAD (#{dev}: no prompt, got #{out[0, 60].inspect})"
+if out.start_with?("NOPROMPT")
+  post = out[8..]
+  puts "DEAD (#{dev}: banner seen and nudged, but no \"$>\" reply — " \
+       "post-nudge bytes (#{post.bytesize}): #{post[0, 200].inspect})"
   exit 1
 end
 puts "OK (#{dev})"

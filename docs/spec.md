@@ -370,29 +370,66 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 タスクへ委ねる（`rake esp32:build` / `flash`、ENV `R2P2_ESP32_REPO` で checkout
 先を上書き可能）。
 
-- **シリアルポートを開くだけでリセットされる。** Pico 2 W（RP2350）はDTR/RTSで
-  リセットされないので、同じ道具を流用する時は逆の前提になる。`tools/esp32/shell_ok.rb`
-  の生存確認さえ、この副作用でボードを再起動させる — Pico 2 Wの「触らずに見る」
-  という前提が成立しない。**close→再openの往復は避ける。** 一度closeした接続を
-  reopenする実装（旧`Deploy::Picomodem.reset_and_reopen`）は、macOSが前回接続の
-  断片を返したり起動burstの途中で読めなくなったりして不安定だった。resetから
-  読み取りまで単一の接続を開いたまま行う（`reset.rb`/`shell_ok.rb`と同じ形）方が
-  確実
-- **shellは起動bannerと端末query（`\e[5n`等）は自発的に送るが、`"$>"`は自発的に
-  出さない。** banner後に静穏を待ってから`"\r\n"`を1回送るまでプロンプトが出ない
-  （`tools/common/term.rb`の`Term.settle`と`Deploy::Picomodem`の`await_prompt`で
-  対応済み）。banner検出直後すぐに送ると早すぎてshellの読み取りループがまだ
-  listenしておらず無視される
-- **`io.wait_readable` + `read_nonblock`は、このSerialPortオブジェクトに一度
-  writeした後は信頼できない。** データが実際に来ていても検出できなくなる
-  （原因未特定）。`read_timeout=`を設定した上でbareな`#read`を使う方（`reset.rb`
-  等が元々やっていた形）に統一する必要がある（`Deploy::Picomodem`の
-  `read_available`/`read_exact`/`drain`で対応済み）
-- **長時間・高頻度のresetを繰り返すとボードが無応答になることがある。** この
-  session内でTask 8の検証中に数十回resetを繰り返した後、`shell_ok.rb`を含む
-  全てのアクセスが`silent`（0バイト）になり、3分待っても復帰しなかった。USBの
-  物理的な抜き差しが必要と推定（未確認 — 実機不在のため次回確認）。連続テストの
-  間隔を空けるか、最終確認の前に一度リフレッシュ（抜き差し）を挟むのが安全
+- **shellのCtrl-B/コマンド入力が一切届かなかった根本原因は、ESP-IDFのconsole
+  routing設定だった。** Chain DualKeyにはUART0の物理配線が無く、唯一の露出
+  インターフェースはESP32-S3内蔵USB Serial/JTAGペリフェリだが、`idf.py`の
+  console設定はデフォルトで primary console = UART0（未接続）、USB
+  Serial/JTAG = secondary（起動logの出力ミラー専用、STDIN読み取り対象外）に
+  なる。この状態だと boot log や `puts` の出力は全てUSB経由で正常に見えるため
+  「動いているように見えて実は入力だけが届かない」という非常に紛らわしい壊れ方
+  をする。判別法: reset後、host側が端末query（`\e[6n`等）に一切応答しなくても
+  `"$> "`プロンプトの描画タイミングが応答した場合と寸分違わない（実測: 常に
+  reset後約22秒）→ deviceがhostからの返信を読んでいない証拠。恒久対応として
+  `build_config/esp32-chain_dualkey.sdkconfig.defaults`
+  （`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`）を`rake esp32:build`が
+  `vendor/R2P2-ESP32/sdkconfig.defaults`に自動追記し、古い`sdkconfig`を
+  削除して再生成させる（`rakelib/esp32.rake`の`ensure_console_overlay!`）。
+  この修正だけでCtrl-B ACK・PicoModemアップロード・`rsh.rb`での任意コマンド
+  実行すべてが実機で確認できた
+- **`"$>"`という2文字は起動時のESP-IDF boot logノイズの中に偶然出現しうる。**
+  `shell_ok.rb`が過去に返していた`OK`は、この偶然一致を本物のプロンプトと
+  誤認した false positive だった（resetから1秒未満、bannerより何秒も前に
+  `"$>"`が出現した実例あり）。プロンプト検出は「banner文字列を見た後に
+  受信したバイトの中だけ」を対象にする（`shell_ok.rb`の`post`変数）。同種の
+  誤検出を避けるため、`Deploy::Picomodem`はそもそも`"$>"`文字列を探さず、
+  banner後に静穏（quiet）を待ってから直接Ctrl-Bを送る設計にしてある
+  （下記参照）
+- **Ctrl-Bの前に`"\r\n"`で"nudge"する必要は無い。** shellの編集ループは
+  Ctrl-B（0x02）を生の制御バイトとしてそのまま処理するので、`"$>"`が実際に
+  出ているかを確認する必要が無い。`Deploy::Picomodem`は banner を見たら
+  `QUIET_SECONDS`（0.4秒）静穏を待って直接Ctrl-Bを送るだけでよい
+  （`tools/common/picomodem.rb`の`settle`）。「静穏を待たず即座に送ると
+  早すぎる」という以前の記録は誤りで、真因は上記のconsole routing問題だった
+- **シリアルポートを開くだけではリセットされない。** resetにはRTSパルスの
+  明示的な送信が要る（`Reset.pulse`：`dtr=0` → `rts=1` → 150ms → `rts=0`）。
+  「開くだけでリセットされる」という以前の記録は誤り
+- **resetは`close→再open`でよい。** `Deploy::Picomodem.reset_and_reopen`は
+  pulse用に一度開いて閉じ、USB CDCの再列挙（0.5〜2秒）を`REENUMERATE_TIMEOUT`
+  （15秒）でpoll してから新しい接続を開く。「単一の接続を開いたままpulseする
+  方が確実」という以前の記録は、false positive調査中の誤診断に基づく誤り
+  だった。stackchan-picoruby（`bash0C7/stackchan-picoruby`、同じESP32-S3
+  native USB Serial/JTAG系統のCoreS3向け）の`lib/deploy/picomodem.rb`が
+  この形で実績があり、参照実装として復元した
+- **`io.wait_readable` + `read_nonblock`は問題ない。** 「writeした後は信頼
+  できない」という以前の記録は誤りで、真因は上記のconsole routing問題
+  だった。`reset_and_reopen`/`read_available`/`read_exact`/`drain`は
+  `wait_readable`+`read_nonblock`ベースの実装に戻してある
+- **未知のshellコマンドを実行するとスタックオーバーフローで再起動することが
+  ある。** `picoruby-shell`の`Shell#builtin?`が`self.respond_to?(name)`
+  （private methodを含めない）で判定しているため、`_pwd`等の全builtinが
+  「見つからない」と判定され外部コマンド実行パスに落ちる。そちらの
+  未検出コマンド処理で深い再帰かスタック消費が起き、
+  `A stack overflow in task picoruby_task`でreboot する（例:
+  `rsh.rb "pwd"` → `pwd: command not found` → overflow → 自動reboot）。
+  ボード自体はwatchdog的に綺麗に再起動して復帰するため実害は限定的だが、
+  `rsh.rb`等でshellに任意文字列を打たせる時は要注意。firmware
+  （`picoruby-shell`）側のバグでありこのharnessでは直さない
+- **長時間・高頻度のresetを繰り返すとボードが無応答になることがあった。**
+  この session内でTask 8の検証中に数十回resetを繰り返した後、`shell_ok.rb`
+  を含む全てのアクセスが`silent`（0バイト）になり、3分待っても復帰しな
+  かった。USBの物理的な抜き差しで復帰した（`ioreg`の`sessionID`変化で確認）。
+  以後、console routing修正後の同日の検証では再現していない。連続テストの
+  間隔を空けるか、長時間検証の前に一度リフレッシュ（抜き差し）を挟むのが安全
 - **ポートを`/dev/cu.usbmodem*`のglobで選ばない。** ESP32が先に並ぶ。`tools/esp32/`
   各scriptは`ioreg -n`で製品名を見て選ぶ。Chain DualKeyの実機で確認した製品名は
   `"USB JTAG/serial debug unit"`（`"USB Product Name"`プロパティは`"USB JTAG_serial
