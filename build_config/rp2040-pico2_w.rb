@@ -25,11 +25,20 @@ MRuby.each_target do |conf|
   # docs/research/picoruby-ble-dfu-survey.md and
   # docs/superpowers/plans/2026-09-20-ios-dev-harness-app.md (Task 1).
   #
-  # UNVERIFIED: this session has no arm-none-eabi-gcc and no Pico 2 W, so
-  # `rake rp2040:build` has not been run with this line present. If
-  # picoruby-dfu's dependencies (picoruby-yaml / picoruby-vfs / picoruby-crc /
-  # picoruby-pack, per its README) aren't already pulled in by upstream's
-  # gemboxes, the build will fail with a missing-gem error naming the gap —
-  # add the specific missing `conf.gem core:` line here, don't guess ahead.
+  # Its declared dependencies (picoruby-env/-yaml/-crc, mruby-pack — read
+  # straight from mrbgem.rake, not the README, which lists a stale
+  # picoruby-vfs dependency that isn't actually there) all either have an
+  # rp2040 port or are VM-only/pure-Ruby, and picoruby-dfu's own upstream
+  # test suite (46 assertions) passes on a host build. mruby's gem
+  # dependency resolution is expected to pull all of them in on its own,
+  # same as it did on host, without needing separate conf.gem lines here.
+  #
+  # STILL UNVERIFIED: this session has no arm-none-eabi-gcc and no Pico 2 W,
+  # so `rake rp2040:build` has never actually run with this line present,
+  # and rp2040's littlefs-backed File I/O is a different port than the
+  # posix one the host test suite exercised. If the cross-build still fails
+  # on a missing gem, that would mean the dependency resolution behaves
+  # differently for a CrossBuild than it did here — read the error rather
+  # than assume it's the same gap the survey doc already ruled out.
   conf.gem core: 'picoruby-dfu'
 end
