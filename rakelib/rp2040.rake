@@ -46,7 +46,7 @@ namespace :rp2040 do
     puts(have == want ? "up to date" : "stale — the next build wipes build/ and starts over")
   end
 
-  desc "Flash the firmware; a running board is dropped into BOOTSEL without the button (unverified)"
+  desc "Flash the firmware; a running board is dropped into BOOTSEL without the button"
   task :flash do
     uf2 = latest_uf2
     raise "no firmware built yet. Run `rake rp2040:build`." unless uf2
