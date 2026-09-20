@@ -221,6 +221,18 @@ gem の `mrbgem.rake` に日本語コメントが混ざっているだけで `ra
 原因がわかりにくい。`require_name_of` 側は `encoding: "UTF-8"` を明示して直したが、
 `mrbgem.rake` は既存の慣習通り英語のみに保つ (`mrblib/` 側の日本語コメントは対象外)。
 
+**`vendor/picoruby` の中で upstream 自身の rake タスクを直接叩くと、
+`build/host/` を取り合う。** `rake test:host` は `build_config/host-test.rb`
+(このharnessの gem 入り) で `vendor/picoruby/build/host/` を建てる。upstream 自身の
+`rake test:gems:picoruby[<gem>]` のような、`vendor/picoruby` の中で直接動かすタスクは
+**自分専用の一時 build_config で同じ `build/host/` を `rake clean` してから作り直す**
+ことがあり、このharnessの gem を含まない別物の VM に静かに差し替わる
+(`picoruby-dfu` の依存を検証したときに実際に踏んだ。詳細:
+docs/research/picoruby-ble-dfu-survey.md)。**§4 の stamp guard がこれを自動で
+検知して直すので、手で `rake test:host` を取り直す必要はない** —
+`SKIP_BUILD=1` を付けたままでも、次に `rake test:host`(または `rake test`)を
+叩けば「stamp mismatch」を表示してから作り直す。
+
 ### 実機層 (`rake <target>:verify`)
 
 Pico 2 W に焼き、Mac を相手役にして、両側のログで判定する。

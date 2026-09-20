@@ -131,6 +131,15 @@ ESP32 と同じ「委譲」パターンを踏襲する。本 harness(R2P2-dev-ha
   日本語コメントが1つ混ざるだけで無関係な gem の後で `rake test:host` 全体が
   落ちる(このセッションで実際に踏んだ。詳細と直した箇所は docs/spec.md §5)。
   `mrblib/` 側は従来通り日本語コメント可
+- **`vendor/picoruby` の中で upstream 自身の rake タスクを直接叩くと、
+  このharnessの `build/host/` を黙って壊すことがある。** `picoruby-dfu` の依存を
+  upstream の `rake test:gems:picoruby[picoruby-dfu]` で検証したところ、
+  そのタスクは自分専用の一時 build_config で `build/host/` を `rake clean` して
+  作り直す — このharness自身の `rake test:host` と同じ場所を使うので、
+  直後に `SKIP_BUILD=1 rake test:host` を叩くと `picoruby-ble-dev-bridge` を
+  含まない別物の VM を「まだ有効」と誤認して全滅する(実際に踏んだ)。
+  upstream 側の検証を挟んだら、`SKIP_BUILD` なしで `rake test:host` を
+  もう一度通してから次に進む(詳細: docs/research/picoruby-ble-dfu-survey.md)
 - **build_config への追記は、まず「本当にそこを直すべきか」を実装前に読み切る。**
   当初の計画は `rakelib/vendor.rake` の overlay task 自体を直す想定だったが、
   実際に読むと overlay は `build_config/rp2040-pico2_w.rb` を `load` するだけの

@@ -149,6 +149,20 @@ dfu_ecdsa_public_key_pem
 Task 3)確定しない。「ビルドが通った」と「動いた」を混同しない — 前者は今回のセッションで
 確認済み、後者は引き続き未確認。
 
+**検証中に踏んだ罠: `vendor/picoruby` 内で upstream 自身の `rake test:gems:picoruby[...]`
+を直に叩くと、このharnessの `build/host/` を黙って壊す。** `picoruby-dfu` の依存確認
+(前節)のために `vendor/picoruby` の中で upstream の `rake test:gems:picoruby[picoruby-dfu]`
+を直接実行したところ、そのタスクは**自分専用の一時 build_config で `rake clean` してから
+`build/host/` を作り直す**。このharness自身の `rake test:host` も同じ `build/host/` を使うため、
+upstream のタスクを挟んだ直後に `SKIP_BUILD=1 rake test:host` を叩くと、
+`picoruby-ble-dev-bridge` を含まない別物の VM を「まだ有効」と誤認して
+`uninitialized constant BleDevBridge` で全滅する(実際にこのセッションで再現した)。
+**upstream 側の検証タスクを挟んだ直後は、`SKIP_BUILD` を使わずに `rake test:host` を
+もう一度素通しして、このharness自身の host VM を作り直してから次に進む。**
+`docs/spec.md` の「stamp を跨いだ stale 化」の話(§4)と根は同じ — `build/host/` は
+build_config が変わっても中身だけ黙って差し替わる共有ディレクトリなので、
+「誰が最後にそこへ書いたか」を意識しないと静かに間違う。
+
 ## BLE のスループット(未検証)
 
 ATT MTU 依存の `notify_chunk_size`(既定 20 バイトペイロード)が、`.rb`/`.mrb` の
