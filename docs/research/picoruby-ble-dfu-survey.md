@@ -125,12 +125,29 @@ Total: success: 46, failure: 0, exception: 0, crash: 0, skip: 0
 `UpdaterReceiveTest` は `DFU::Updater#receive` のヘッダ解析・CRC・A/B スロット遷移を
 実際に動かして検証している(ソースを読んだだけの推測ではない)。
 
-**これで残った不確実性は縮んだ:** 依存4つは存在も rp2040 対応も確認済みで、
-ロジック自体も host 上の実行で確認済み。まだ確認できていないのは
-**`arm-none-eabi-gcc` での実クロスコンパイルが通るか**と、**rp2040 の実ファイルシステム
-(littlefs 経由の `File`)でも同じ挙動になるか**の2点だけ — host は posix の
-`mruby-io`/`mruby-dir` 経由、rp2040 は別の port を通る。この差はコードを読むだけでは
-埋まらず、`rake rp2040:build` を実機・ツールチェインが揃ったセッションで通すまで残る。
+**追記(同日、実クロスビルドまで確認できた):** この sandbox に
+`apt-get install gcc-arm-none-eabi` でツールチェインを入れ、`rake rp2040:setup`
+(pico-sdk の再帰 submodule、btstack 込み)→ `rake rp2040:build` を実際に通した。
+**ビルドは成功し、`.uf2` が実際に出力された。** 出来上がった `.elf` を `strings` で見ると:
+
+```
+$ strings R2P2-PICORUBY-....elf | grep -iE "ble_dev_bridge|dfu"
+, expected "DFU\0")
+gem_mrblib_picoruby_ble_dev_bridge_proc_irep_0
+...
+dfu_ecdsa_public_key_pem
+```
+
+`picoruby-ble-dev-bridge`(このharnessの新 gem)と `picoruby-dfu` のエラー文字列・鍵埋め込みが
+両方とも実バイナリに入っている — ビルドが「落ちなかった」だけでなく、**目的の gem が
+実際にリンクされたこと**まで確認できた。
+
+**それでもまだ確認できていないこと:** これは「コンパイルとリンクが通った」ことの証拠
+であって、「実機で動く」ことの証拠ではない。焼いても起動するか、BLE スタックが実際に
+無線を掴むか、`File` I/O が rp2040 の littlefs port でも host の posix port と同じに
+振る舞うかは、Pico 2 W 実機で `rake rp2040:flash` 以降を通すまで(このharnessの
+Task 3)確定しない。「ビルドが通った」と「動いた」を混同しない — 前者は今回のセッションで
+確認済み、後者は引き続き未確認。
 
 ## BLE のスループット(未検証)
 

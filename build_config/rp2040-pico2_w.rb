@@ -29,16 +29,20 @@ MRuby.each_target do |conf|
   # straight from mrbgem.rake, not the README, which lists a stale
   # picoruby-vfs dependency that isn't actually there) all either have an
   # rp2040 port or are VM-only/pure-Ruby, and picoruby-dfu's own upstream
-  # test suite (46 assertions) passes on a host build. mruby's gem
-  # dependency resolution is expected to pull all of them in on its own,
-  # same as it did on host, without needing separate conf.gem lines here.
+  # test suite (46 assertions) passes on a host build.
   #
-  # STILL UNVERIFIED: this session has no arm-none-eabi-gcc and no Pico 2 W,
-  # so `rake rp2040:build` has never actually run with this line present,
-  # and rp2040's littlefs-backed File I/O is a different port than the
-  # posix one the host test suite exercised. If the cross-build still fails
-  # on a missing gem, that would mean the dependency resolution behaves
-  # differently for a CrossBuild than it did here — read the error rather
-  # than assume it's the same gap the survey doc already ruled out.
+  # `rake rp2040:build` WITH this line HAS been run for real in this
+  # session (arm-none-eabi-gcc installed via apt for the occasion) and
+  # produced a real .uf2 — `strings` on the resulting .elf shows both
+  # `gem_mrblib_picoruby_ble_dev_bridge_proc_*` symbols and picoruby-dfu's
+  # own error strings (e.g. `, expected "DFU\0")`), confirming both gems
+  # actually compiled and linked in, not just "the build didn't crash".
+  # See docs/research/picoruby-ble-dfu-survey.md for the full picture.
+  #
+  # STILL UNVERIFIED: this only proves it *builds*. Nothing has flashed or
+  # booted this image on real silicon (still needs a Pico 2 W, per the
+  # plan's Task 3) — rp2040's littlefs-backed File I/O is a different port
+  # than the posix one the host test suite exercised, and the BLE/BTstack
+  # stack has never actually powered on and talked to a real radio.
   conf.gem core: 'picoruby-dfu'
 end
