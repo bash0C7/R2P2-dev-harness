@@ -6,16 +6,20 @@ device helper だけを持ってきたもの。あちらでは Pico 2 W で動�
 
 | file | 何をするか |
 |---|---|
-| `picomodem.rb` | PicoModem プロトコル。`bash0C7/stackchan-picoruby` の `lib/deploy/picomodem.rb` の複製 |
 | `pmput.rb` | ローカルの `.rb` を `/home/<name>.rb` へ転送する |
 | `rsh.rb` | R2P2 shell にコマンドを1つ打って N 秒読む |
 | `runapp.rb` | `/home/<name>.rb` を実行して N 秒キャプチャし、Ctrl-C で止める |
 | `reboot_app.rb` | board に置いて実行するとリブートする 2 行 |
 | `usbboot_app.rb` | board に置いて実行すると BOOTSEL へ落ちる。`Machine.usb_boot` 入りの firmware が要る |
-| `term.rb` | 行エディタの端末問い合わせ (`\e[6n` / `\e[5n`) に答える。`rsh.rb` / `runapp.rb` が使う |
 | `tmo.rb` | コマンドに壁時計の上限を掛け、process group ごと SIGKILL する |
 | `interrupt.rb` | shell の port に Ctrl-C を送る。自動起動した `/home/app.rb` を止めて `$>` を出す |
 | `shell_ok.rb` | 呼び出し元を固まらせずに shell の生存を確かめる。`$>` プロンプトが返れば `OK`、それ以外は `DEAD` |
+| `boot_state.rb` | 再列挙直後の CDC0 出力を読み、`shell` / `app` / `hung` / `unknown` のどれかを数秒で答える。`/home/app.rb` が自動起動する board で、出ない `$>` を盲目に待たないために使う |
+
+PicoModem プロトコル (`picomodem.rb`。`bash0C7/stackchan-picoruby` の `lib/deploy/picomodem.rb` の写し) と
+端末問い合わせへの応答 (`term.rb`。行エディタの `\e[6n` / `\e[5n` に答える) は、
+ESP32 の `tools/esp32/` と共有するので `tools/common/` に置いてある。
+`pmput.rb` が `picomodem.rb` を、`rsh.rb` / `runapp.rb` / `shell_ok.rb` / `boot_state.rb` が `term.rb` を使う。
 
 `serialport` gem が要る。
 
