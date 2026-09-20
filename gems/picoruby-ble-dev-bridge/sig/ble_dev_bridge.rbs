@@ -1,0 +1,16 @@
+module BleDevBridge
+  class Framer
+    type mode_t = :repl | :dfu
+    type unit_t = [:line, String] | [:dfu_payload, String]
+    type dfu_total_t = ^(String) -> Integer?
+
+    MAGIC: String
+
+    @mode: mode_t
+    @buf: String
+
+    def initialize: () -> void
+    attr_reader mode: mode_t
+    def feed: (String? bytes) ?{ (String) -> Integer? } -> unit_t?
+  end
+end

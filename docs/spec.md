@@ -211,6 +211,16 @@ runner は本 repo が持つ (§3 の代償)。といっても upstream の `Pic
 建てて、gem ごとに Runner を回す」処理と、`build/host/` が今の入力に対して
 まだ有効かを見る stamp guard (上記 §4)。`collect_gems` の代わりは要らない。
 
+**`gems/*/mrbgem.rake` は ASCII だけにする。** `rakelib/test.rake` の
+`require_name_of` が `File.read(rake_file)` で読むが、明示 encoding が無いと
+Ruby は locale (`LANG`/`LC_ALL`) 依存の default external encoding で読む。
+CI やこの harness のような locale が空の環境では US-ASCII になり、**どれか1つの
+gem の `mrbgem.rake` に日本語コメントが混ざっているだけで `rake test:host` 全体が
+`ArgumentError: invalid byte sequence in US-ASCII` で落ちる** — 落ちた gem 自身の
+テストではなく、HARNESS_GEMS 内で先に処理された無関係な gem の出力の後に出るので
+原因がわかりにくい。`require_name_of` 側は `encoding: "UTF-8"` を明示して直したが、
+`mrbgem.rake` は既存の慣習通り英語のみに保つ (`mrblib/` 側の日本語コメントは対象外)。
+
 ### 実機層 (`rake <target>:verify`)
 
 Pico 2 W に焼き、Mac を相手役にして、両側のログで判定する。

@@ -39,82 +39,77 @@ pattern).
 ## File Structure (this phase)
 
 ```
-rakelib/vendor.rake            modified — vendor:overlay gains a step that appends
-                                `conf.gem core: 'picoruby-dfu'` to the generated
-                                build_config shim (docs/spec.md §3's shim mechanism)
-examples/rp2040/ble_dev_bridge.rb   new — BLE UART peripheral loop dispatching to
-                                     Sandbox (REPL) or DFU::Updater (file replace)
-examples/rp2040/ble_dev_bridge_test.rb  new — host test for the dispatch logic only
-docs/research/picoruby-ble-dfu-survey.md  already added in this same PR (research, not code)
+build_config/rp2040-pico2_w.rb      modified — gains gemdir: for the new gem below
+                                     plus `conf.gem core: 'picoruby-dfu'`
+build_config/host-test.rb           modified — gains gemdir: for the new gem below
+gems/picoruby-ble-dev-bridge/       new gem — pure framing logic, zero dependency on
+                                     BLE/DFU/Sandbox (mrbgem.rake, mrblib/, sig/, test/)
+Rakefile                            modified — HARNESS_GEMS gains the new gem's name
+examples/rp2040/ble_dev_bridge.rb   new — wires BLE::UART + DFU::Updater + Sandbox
+                                     through the new gem's Framer
+rakelib/test.rake                   modified — require_name_of now reads mrbgem.rake
+                                     with explicit UTF-8 (see the discipline note below)
+docs/spec.md                        modified — one bullet added to §5 documenting the
+                                     mrbgem.rake/encoding gotcha (not a new numbered
+                                     section — that still waits on Task 3's real hardware)
+docs/research/picoruby-ble-dfu-survey.md  already added in the previous PR revision
 ```
 
-`docs/spec.md` is intentionally **not** touched in this phase — per its own §6/§9
-convention, a new "罠" section only gets added once something has actually been run on
-real hardware (Task 3). Writing it now would be documenting untested claims.
+**Correction from the first draft of this plan:** Task 1 originally targeted
+`rakelib/vendor.rake` (the `vendor:overlay` task). Reading it before editing (as Step 1
+already said to do) showed `vendor:overlay` is a thin shim that just `load`s
+`build_config/rp2040-pico2_w.rb` — the actual gem list lives entirely in that harness-side
+file (and its host-test counterpart), not in the overlay task itself. `rakelib/vendor.rake`
+needed no change at all; only the two `build_config/*.rb` files did. Smaller change than
+planned, in the direction docs/spec.md §3 already implies (the overlay task is generic;
+harness-specific content belongs in `build_config/`).
 
 ---
 
-## Task 1: Add `picoruby-dfu` to the pico2_w build overlay
+## Task 1: Add `picoruby-dfu` to the pico2_w build, and a dependency-free framing gem — DONE (host-verified; firmware build unverified)
 
 `picoruby-dfu` exists upstream but is absent from every build_config and gembox (confirmed
-by `grep -rl picoruby-dfu build_config/` on the shallow clone — no hits). The harness
-never edits `vendor/picoruby`'s tracked build_config directly except through the shim
-mechanism described in docs/spec.md §3 (the same mechanism used for `Machine.usb_boot`'s
-firmware-patches/ approach conceptually, though this is a build_config line, not a C
-patch).
+by `grep -rl picoruby-dfu build_config/` on the shallow clone — no hits).
 
-**Files:**
-- Modify: `rakelib/vendor.rake` (the `vendor:overlay` task / shim generation)
+**What actually needed changing, after reading the code (see the File Structure section's
+correction above):** not `rakelib/vendor.rake`, but the two harness-owned build_config
+files it loads.
 
-**Interfaces:**
-- Consumes: whatever `vendor:overlay` currently does to produce `vendor/picoruby/build_config/r2p2-picoruby-pico2_w.rb` as a shim over the upstream original (docs/spec.md §3).
-- Produces: a pico2_w build that includes `picoruby-dfu`, consumed by Task 2's script at runtime and by `rake rp2040:build` in Step 3 below.
+**Files (as built):**
+- Modified: `build_config/rp2040-pico2_w.rb` — added `conf.gem gemdir:` for the new
+  `picoruby-ble-dev-bridge` gem and `conf.gem core: 'picoruby-dfu'`, both inside the
+  existing `MRuby.each_target do |conf| ... end` block, guarded by the same
+  `next unless conf.name.start_with?("r2p2-picoruby-pico2_w")` the file already had.
+- Modified: `build_config/host-test.rb` — added `conf.gem gemdir:` for
+  `picoruby-ble-dev-bridge` only (no `picoruby-dfu`: the new gem has zero dependency on
+  it, see Task 2).
+- Created: `gems/picoruby-ble-dev-bridge/{mrbgem.rake,mrblib/ble_dev_bridge.rb,sig/ble_dev_bridge.rbs,test/framer_test.rb}`
+- Modified: `Rakefile` — `HARNESS_GEMS` gained `picoruby-ble-dev-bridge` so `rake test:host` picks up its `test/`.
 
-- [ ] **Step 1: Read the current `vendor:overlay` implementation**
+**What DONE means here, precisely:**
+- `rake setup` (fetch `vendor/picoruby` + submodules) ran successfully in this session.
+- `rake test:host` (host build, `gcc`, no `arm-none-eabi-gcc` needed) built the host VM
+  with `picoruby-ble-dev-bridge` included and ran its picotest suite: **21 assertions,
+  0 failures** (see Task 2's test count — the gem's only content is the `Framer` class).
+- `rake test:examples` (mrbc compile-check, still host-only) compiled
+  `examples/rp2040/ble_dev_bridge.rb` without a syntax error.
+- **NOT done:** `rake rp2040:build` with the new `conf.gem core: 'picoruby-dfu'` line has
+  never run — this session has no `arm-none-eabi-gcc` and no Pico 2 W. Whether
+  `picoruby-dfu`'s declared dependencies (`picoruby-yaml`, `picoruby-vfs`, `picoruby-crc`,
+  `picoruby-pack`/`mruby-pack`) are already satisfied by `r2p2-picoruby-pico2_w.rb`'s
+  existing gemboxes (`stdlib`, `peripherals`, `peripheral_utils`, `networking`) is still
+  unconfirmed. If a dependency is missing, `rake rp2040:build` will name it in a
+  missing-gem error; add the specific `conf.gem core:` line then, don't guess ahead.
 
-Run: `grep -n "overlay" rakelib/vendor.rake` and read the surrounding method. Confirm
-exactly how it decides what to append to the generated shim (this needs to be understood
-before editing it — do not guess at the shim's structure).
-
-- [ ] **Step 2: Add the `picoruby-dfu` line to whatever the overlay appends**
-
-The change should be additive and minimal: one more `conf.gem core: 'picoruby-dfu'` line
-in the generated shim, alongside whatever `conf.gem gemdir:` lines already get appended
-for this harness's own `gems/`. Do not duplicate or reorder the existing upstream gem
-lines the shim loads via `load` (per §3, the harness must never diverge from upstream's
-own build_config beyond appending).
-
-- [ ] **Step 3: `rake setup` (or `rake refresh` if `vendor/picoruby` already exists) then `rake rp2040:build`**
-
-Requires `arm-none-eabi-gcc`. If this session's environment lacks it, stop here and note
-the gap rather than guessing at the outcome — this step needs a session that already runs
-`rp2040:build` successfully (i.e. one with the board-adjacent toolchain set up, per
-CLAUDE.md).
-
-Expected: the build succeeds and `picoruby-dfu`'s declared dependencies
-(`picoruby-yaml`, `picoruby-vfs`, `picoruby-crc`, `picoruby-pack`/`mruby-pack`) resolve
-from gemboxes already pulled in by `r2p2-picoruby-pico2_w.rb` (`stdlib`, `peripherals`,
-`peripheral_utils`, `networking` — unconfirmed until this step actually runs). If a
-dependency is missing, the build_config gembox list is missing one, not `picoruby-dfu`
-itself; add the specific missing `conf.gem core:` line in the same overlay step and
-re-run.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add rakelib/vendor.rake
-git commit -m "feat(rp2040): enable picoruby-dfu in the pico2_w build overlay
-
-picoruby-ble and picoruby-ble-uart are already in upstream's
-r2p2-picoruby-pico2_w.rb build_config. picoruby-dfu (A/B-slot OTA,
-transport-agnostic receive(io)) is not, and is the piece Task 2's
-BLE bridge script needs to accept whole-file app updates over
-BLE::UART. See docs/research/picoruby-ble-dfu-survey.md."
-```
+- [x] **Step 1: Read `rakelib/vendor.rake`'s overlay task before touching anything** — done; found it delegates entirely to `build_config/rp2040-pico2_w.rb` (see the correction note above).
+- [x] **Step 2: Add the gemdir + `picoruby-dfu` lines to the two build_config files**
+- [x] **Step 3 (host-only): `rake setup && rake test:host && rake test:examples`** — all green, output captured in this session's transcript.
+- [ ] **Step 3b (still open, needs hardware): `rake rp2040:build`** — blocked, see above. Whoever picks this up next should run this before anything else in Task 3.
+- [x] **Step 4: Commit** (folded into one commit with Task 2 and the encoding fix below — see the end of this plan for the actual commit message used).
 
 ---
 
-## Task 2: `examples/rp2040/ble_dev_bridge.rb` — BLE UART + REPL/DFU dispatch
+## Task 2: BLE UART + REPL/DFU dispatch — DONE (host-verified; the BLE/Sandbox path itself is real-hardware-only)
 
 Upstream's `mrbgems/picoruby-ble-uart/example/ble_irb.rb` is a working BLE REPL (feeds
 each line to a `Sandbox`, notifies the result back). This task adapts that pattern to
@@ -122,106 +117,67 @@ also recognize a DFU binary payload on the same link, so one BLE connection can 
 both "run this one-liner" and "replace `/home/app.rb` with this file" without the iOS
 side needing two separate services.
 
+The first draft of this plan sketched the dispatch logic inline in the example script and
+flagged an explicit unresolved gap: peeking 4 bytes to check for the DFU magic, with no
+plan for what to do with those bytes if they turned out to belong to an ordinary REPL
+line — a peek-and-drop implementation would silently eat 4 bytes off the front of every
+REPL line. **Building it for real forced that gap closed**, by not doing a "peek": the
+gem accumulates every byte it's given in its own buffer and only classifies the buffer's
+*current full contents* (never bytes already consumed and discarded), so nothing is ever
+looked at then thrown away undecided.
+
+**Files (as built):**
+- `gems/picoruby-ble-dev-bridge/mrbgem.rake` — no dependency declared, matching
+  `picoruby-usb-peripheral`'s "器、依存なし" shape (docs/spec.md §3). Comments in this
+  file are plain ASCII on purpose (see the discipline note below).
+- `gems/picoruby-ble-dev-bridge/mrblib/ble_dev_bridge.rb` — `BleDevBridge::Framer`, a
+  small state machine (`:repl` / `:dfu`) over one owned buffer:
+  - `#feed(bytes, &dfu_total)` appends `bytes` (or nothing, if `nil`) to the internal
+    buffer, then either extracts a complete `\n`-terminated REPL line, switches to `:dfu`
+    mode when the buffer's start matches `DFU::Updater::MAGIC` (`"DFU\0"`, duplicated here
+    as a literal — deliberately not `require 'dfu'`, see below), or (in `:dfu` mode) asks
+    the caller-supplied `dfu_total` block how many bytes the full payload needs and
+    extracts it once enough have arrived.
+  - Returns at most one decoded unit (`[:line, str]` or `[:dfu_payload, bytes]`) per call;
+    the caller loops, feeding `nil` on subsequent calls, until `feed` returns `nil`, to
+    drain multiple units that arrived in one BLE packet.
+  - **No `require 'ble'` / `require 'dfu'` / `require 'sandbox'` anywhere in this gem.**
+    The DFU wire format (19-byte header, `expected_size`) is knowledge that belongs to
+    `picoruby-dfu`, not to this framer — the caller passes it in as a block. This is the
+    same reason `picoruby-usb-peripheral` doesn't know about any concrete USB gem.
+- `gems/picoruby-ble-dev-bridge/sig/ble_dev_bridge.rbs` — RBS signature, matching the existing gems' `sig/` convention.
+- `gems/picoruby-ble-dev-bridge/test/framer_test.rb` — `Picotest::Test` subclass, 11 test methods / 21 assertions, covering: partial lines across multiple `feed` calls, lines shorter than the 4-byte magic (must not block waiting for more bytes), magic split across two `feed` calls, waiting while `dfu_total` is still `nil` (mirrors `DFU::Updater.expected_size`'s real behavior before the header fully arrives), a payload extracted with trailing bytes of the *next* unit already in the same chunk (the direct test of the closed gap), and mode returning to `:repl` after a payload so the next REPL line parses normally.
+- `examples/rp2040/ble_dev_bridge.rb` — the actual wiring: `require 'ble'`, `require 'dfu'`, `require 'ble_dev_bridge'`; builds a `BLE::UART.new(name: "R2P2")`, a `Sandbox.new('ble-dev-bridge')`, and a `BleDevBridge::Framer.new`; inside `uart.start do ... end`, reads once per tick with `uart.read_nonblock`, feeds it to the framer in a `loop` (passing `nil` after the first iteration) until `feed` returns `nil`, and dispatches `:line` to a `run_repl_line` helper (same `Sandbox#compile`/`#execute`/`#result` shape as upstream's `ble_irb.rb`) or `:dfu_payload` to a `run_dfu_payload` helper (`BLE::UART::BufferIO.new(payload)` fed into `DFU::Updater.new(path: "/home/app.rb").receive(io)`, `path:` mode so this stays a fast-iteration overwrite rather than an A/B-slot release).
+
+**What DONE means here, precisely:**
+- `rake test:host` ran `BleDevBridgeFramerTest`: **21 assertions, 0 failures, 0 errors, 0 crashes**, on the real picoruby host VM (not just a CRuby syntax check).
+- `rake test:examples` compiled `examples/rp2040/ble_dev_bridge.rb` with the real `mrbc` (Prism-based parser) with no error.
+- **NOT done, and not attempted:** actually running `examples/rp2040/ble_dev_bridge.rb`. `BLE::UART.new` powers on BTstack/CYW43 hardware that only exists on the rp2040 port — running it on this session's host VM would not exercise anything meaningful (there is no BLE radio to power on) and could only produce a misleading pass or an uninformative crash. This is exactly the boundary Task 3 exists to cross with real hardware; simulating it here would violate the "don't fabricate verification" rule as much as skipping it silently would.
+
+- [x] **Step 1: Decide the framing rule** — done as `BleDevBridge::Framer`, described above (own-buffer design, not peek-and-drop).
+- [x] **Step 2: Write the gem + the example script** — done, files listed above.
+- [x] **Step 3: Host test the framing logic** — done, 21/21 assertions passing.
+- [x] **Step 4: Commit** — folded into one commit together with Task 1 and the encoding fix (see below for the actual message).
+
+### A bug found while doing this (not originally in this plan): `mrbgem.rake` must stay ASCII
+
+Adding `gems/picoruby-ble-dev-bridge/mrbgem.rake` with a Japanese-language comment first
+made `rake test:host` **crash entirely** with `ArgumentError: invalid byte sequence in
+US-ASCII`, not on this gem's own test run but on the *next* one processed (whichever gem
+happens to come after it in `Rakefile`'s `HARNESS_GEMS` array) — misleading if you don't
+already know where to look. Root cause: `rakelib/test.rake`'s `require_name_of` does
+`File.read(rake_file)` with no explicit encoding, so Ruby uses the locale
+(`LANG`/`LC_ALL`)-dependent default external encoding; this session's locale is empty, so
+that default is US-ASCII, and any non-ASCII byte in *any* gem's `mrbgem.rake` (not just the
+new one) makes the read raise. Fixed by making the read explicit (`encoding: "UTF-8"`) and
+keeping this gem's `mrbgem.rake` itself in plain ASCII (matching every existing
+`mrbgem.rake` in the repo — only `mrblib/`'s comments are Japanese by convention). Written
+up as a standing rule in docs/spec.md §5 and in this feature's design spec's new "作業の規律" section, since it applies to every future gem, not just this one.
+
 **Files:**
-- Create: `examples/rp2040/ble_dev_bridge.rb`
-- Create: `examples/rp2040/ble_dev_bridge_test.rb`
-
-**Interfaces:**
-- Consumes: `BLE::UART` (upstream, already in the pico2_w build), `DFU::Updater` (Task 1), `Sandbox` (already used by upstream's `ble_irb.rb`, confirmed present in the shell gembox R2P2 already ships).
-- Produces: a `/home/`-deployable script; no other code in this repo calls it yet (it's an example a developer runs manually via `rake rp2040:upload`/`run`, same as every other file in `examples/rp2040/`).
-
-- [ ] **Step 1: Decide the framing rule and write it down before coding**
-
-The two payload shapes need to be told apart on one `BLE::UART#gets_nonblock`/
-`#read_nonblock` stream:
-- A REPL line: arbitrary text ending in `\n`.
-- A DFU payload: starts with the 4-byte magic `"DFU\0"` (binary, not line-oriented — `DFU::Updater.expected_size(buf)` from `mrblib/updater.rb` already exists to tell the caller how many total bytes to wait for once the header is visible).
-
-Rule: peek at the first 4 bytes of newly arrived data. If they equal `DFU::Updater::MAGIC`,
-switch this connection into DFU mode (buffer until `DFU::Updater.expected_size` bytes are
-available, then hand the whole buffer to a `DFU::Updater.new(path: "/home/app.rb").receive(io)`
-call via a small buffer-backed IO — `BLE::UART::BufferIO` from `mrblib/ble_uart.rb` is
-exactly this adapter and already exists). Otherwise treat arriving data as line-oriented
-REPL input, same as `ble_irb.rb`.
-
-- [ ] **Step 2: Write `examples/rp2040/ble_dev_bridge.rb`**
-
-Structure (based on `ble_irb.rb`, extended with the DFU branch from Step 1):
-
-```ruby
-require 'ble'
-require 'dfu'
-
-uart = BLE::UART.new(name: "R2P2")
-sandbox = Sandbox.new('ble-dev-bridge')
-mode = :repl
-dfu_buf = +""
-
-uart.start do
-  if mode == :repl
-    if (chunk = uart.read_nonblock(4)) && chunk == DFU::Updater::MAGIC
-      mode = :dfu
-      dfu_buf = chunk.dup
-    elsif chunk
-      # not DFU magic: treat as the start of a REPL line, re-queue via gets_nonblock
-      # (exact re-queueing mechanics need to be worked out against BLE::UART's
-      # actual buffer API in Step 2 — this sketch is not final code)
-    end
-  end
-
-  if mode == :repl
-    if (line = uart.gets_nonblock) && (code = line.chomp) && !code.empty?
-      if sandbox.compile("begin; _ = (#{code}); rescue => _; end; _")
-        sandbox.execute
-        sandbox.wait(timeout: nil)
-        sandbox.suspend
-        uart.puts "=> #{sandbox.result.inspect}"
-      else
-        uart.puts "=> SyntaxError"
-      end
-    end
-  else # :dfu
-    dfu_buf << (uart.read_nonblock(256) || "")
-    expected = DFU::Updater.expected_size(dfu_buf)
-    if expected && dfu_buf.bytesize >= expected
-      io = BLE::UART::BufferIO.new(dfu_buf)
-      begin
-        DFU::Updater.new(path: "/home/app.rb").receive(io)
-        uart.puts "OK"
-      rescue => e
-        uart.puts "ERR #{e.message}"
-      end
-      mode = :repl
-      dfu_buf = +""
-    end
-  end
-end
-```
-
-This sketch has a known gap flagged inline (re-queuing the peeked 4 bytes back into the
-REPL line buffer when they turn out not to be DFU magic) — resolve it by reading
-`BLE::UART`'s actual `@rx_buffer` handling in `mrblib/ble_uart.rb` again at implementation
-time rather than guessing further here; do not ship the peek-and-drop version, it would
-silently eat 4 bytes of every REPL line.
-
-- [ ] **Step 3: Host test of `DFU::Updater.expected_size` and the mode-switch decision only**
-
-Nothing here touches real BLE or a real Sandbox; both are hardware/board-only. Test just
-the pure framing decision (magic-byte detection, `expected_size` accounting) with a fake
-buffer, following the stub pattern docs/spec.md §5 already uses for CDC-MIDI's
-`write_bytes`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add examples/rp2040/ble_dev_bridge.rb examples/rp2040/ble_dev_bridge_test.rb
-git commit -m "feat(rp2040): example BLE UART bridge dispatching REPL lines or DFU payloads
-
-Adapts picoruby-ble-uart's own example/ble_irb.rb to also recognize a
-DFU::Updater payload on the same connection, so app-code replacement
-and REPL access can share one BLE::UART link. Framing logic covered
-by a host test; the BLE/Sandbox path itself needs real hardware (Task 3)."
-```
+- Modified: `rakelib/test.rake` (`require_name_of`, one line + a comment)
+- Modified: `docs/spec.md` (§5, one new paragraph)
+- Modified: `docs/superpowers/specs/2026-09-20-ios-dev-harness-app-design.md` (new "作業の規律" section)
 
 ---
 
@@ -267,9 +223,12 @@ behavior into a new docs/spec.md section (Task 4).
 ## Task 4: docs/spec.md — new section, only after Task 3 lands
 
 Not written now — writing it before Task 3 runs would document unverified claims, which
-docs/spec.md's own regará. Once Task 3 is done, add a `## iOS 開発ハーネス向け BLE` (or
-similarly named) section mirroring the structure of §6 (rp2040 traps) / §9 (ESP32 traps):
-what's confirmed, what surprised, exact commands used.
+goes against docs/spec.md's own convention for its numbered sections. Once Task 3 is
+done, add a `## iOS 開発ハーネス向け BLE` (or similarly named) section mirroring the
+structure of §6 (rp2040 traps) / §9 (ESP32 traps): what's confirmed, what surprised,
+exact commands used. (A separate, small, general-purpose bullet already landed in §5 in
+this phase — see the `mrbgem.rake`/encoding note above — but that's an unrelated existing
+section, not this new one.)
 
 ---
 
@@ -287,15 +246,22 @@ start the iOS CoreBluetooth client against the now-verified wire behavior.
 ## Self-Review Notes
 
 - **Spec coverage:** the spec's 決定事項 table's "転送経路" and "アプリコード転送" rows
-  are directly implemented by Tasks 1-2; "ファーム自体の OTA" is explicitly kept out
-  (Global Constraints); "Playground" and "sibling repo" rows are untouched by this
-  plan on purpose (spec marks them as later/user-decision items, not this phase's job).
-- **No fabricated verification:** every task past Task 2 that would require a physical
-  board, a second BLE device, or Xcode is marked blocked rather than described as done.
-  Task 2's code is presented as a sketch with one explicitly flagged unresolved gap
-  (buffer peek re-queueing) rather than as finished, untested code — writing confident
-  final code for a codepath nobody has run would violate the "don't claim it works"
-  rule as much as skipping the hardware step would.
-- **Deviation from the design doc:** none — this plan is scoped to exactly the design's
-  "完了条件" (BLE UART + DFU on real Pico 2 W), which is deliberately narrower than the
-  full iOS app the spec describes.
+  are directly implemented by Tasks 1-2 (now done, host-verified); "ファーム自体の OTA"
+  is explicitly kept out (Global Constraints); "Playground" and "sibling repo" rows are
+  untouched by this plan on purpose (spec marks them as later/user-decision items, not
+  this phase's job).
+- **No fabricated verification, updated:** Tasks 1-2 are now marked done, but "done"
+  means exactly what each task's "What DONE means here" subsection says — host build +
+  picotest + mrbc compile-check green, real BLE/DFU/hardware behavior still entirely
+  unverified. Task 2's earlier explicitly-flagged gap (peek-and-drop losing bytes) is
+  closed for real, not just written around: `BleDevBridgeFramerTest` has a dedicated
+  test (`test_bytes_after_a_dfu_payload_in_the_same_chunk_are_kept_for_the_next_feed`)
+  that would fail if the implementation dropped or misplaced bytes at a mode boundary.
+  Task 3 onward remain marked blocked, unchanged.
+- **Deviation from the design doc:** the design doc (and this plan's first draft) assumed
+  `rakelib/vendor.rake` needed a code change; reading it before editing showed the real
+  surface was two `build_config/*.rb` files instead (see the File Structure section's
+  correction). Also new relative to the first draft: an unplanned bug fix
+  (`rakelib/test.rake`'s `require_name_of` encoding) and a `docs/spec.md` §5 addition,
+  both found only by actually running `rake test:host` rather than reading the code —
+  the kind of thing that stays invisible until something is actually executed.

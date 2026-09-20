@@ -16,4 +16,20 @@ MRuby.each_target do |conf|
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-cdc-midi"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-hid-mouse"
+  conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-ble-dev-bridge"
+
+  # picoruby-ble / picoruby-ble-uart are already in upstream's own
+  # r2p2-picoruby-pico2_w.rb (loaded above). picoruby-dfu is not — it's the
+  # A/B-slot OTA updater examples/rp2040/ble_dev_bridge.rb needs to accept
+  # whole-file app updates over BLE::UART. See
+  # docs/research/picoruby-ble-dfu-survey.md and
+  # docs/superpowers/plans/2026-09-20-ios-dev-harness-app.md (Task 1).
+  #
+  # UNVERIFIED: this session has no arm-none-eabi-gcc and no Pico 2 W, so
+  # `rake rp2040:build` has not been run with this line present. If
+  # picoruby-dfu's dependencies (picoruby-yaml / picoruby-vfs / picoruby-crc /
+  # picoruby-pack, per its README) aren't already pulled in by upstream's
+  # gemboxes, the build will fail with a missing-gem error naming the gap —
+  # add the specific missing `conf.gem core:` line here, don't guess ahead.
+  conf.gem core: 'picoruby-dfu'
 end
