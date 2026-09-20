@@ -91,6 +91,21 @@ USB デバイスとしての物理的な終了処理は不要 — USB は host �
 ブロックはその後に走る追加分として扱う。ユーザーが何も書かなくても
 stuck note / stuck key は起きない、が既定の挙動。
 
+**ただし R2P2 の Ctrl-C はこの ensure を通さない (issue #14)。**
+`#session` の `ensure` が保証するのは tick 内で Ruby の例外が raise された
+場合だけ。R2P2 shell の Ctrl-C は `picoruby-sandbox` の `Sandbox#loop` が
+`Machine.poll_signal` で拾い、`Sandbox#stop` (mrubyc の `mrbc_terminate_task`)
+でアプリの task をスケジューラ層から直接止める — Ruby の
+raise/rescue/ensure の unwind を経由しない強制終了である
+(`vendor/picoruby/mrbgems/picoruby-sandbox/mrblib/sandbox.rb`,
+`src/mrubyc/sandbox.c`)。つまり `rake rp2040:upload` / `run` / `flash` /
+`reboot` が `tools/pico2w/interrupt.rb` で送る Ctrl-C を含め、Ctrl-C で
+アプリを止めると `restore_host_state` / `teardown` ブロックは走らず、
+押しっぱなしのボタンや鳴りっぱなしの note が host に残り得る。
+これは既知の制約であり、直すなら vendor/picoruby の task 強制終了の
+仕組み自体 (全アプリの Ctrl-C 挙動に影響する) に手を入れる必要があるため、
+本 harness の対象外としている。
+
 ## 3. 置き場所と取り込ませ方
 
 ```
@@ -326,15 +341,23 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   答えないとコマンド行が黙って消え、プロンプトだけが返る。
   shell に打つ helper は `tools/pico2w/term.rb` で `\e[1;1R` と `\e[0n` を返す
 - **wedge した board への blocking な serial open は macOS で返らず、SIGTERM も効かない。**
-  `tmo.rb` で process group ごと SIGKILL する。生存確認は `shell_ok.rb` が fork した子で O_NONBLOCK で開く
+  `tmo.rb` で process group ごと SIGKILL する。生存確認は `shell_ok.rb` が fork した子で O_NONBLOCK で開く。
+  `rake rp2040:upload` / `run` / `reboot` はいずれも `pmput.rb` / `runapp.rb` の呼び出しを
+  `tmo.rb` 越しに束縛しており (issue #17)、wedge した board でも壁時計で失敗して返る
+  (`upload` は60秒、`run` はアプリの実行秒数+30秒)。ログはその場で流れる (Open3 で溜め込まない)
 - **shell の生存を「何か bytes が返った」で判定しない。** 起動時に固まる board も起動バナーは出す。
   `$>` プロンプトが返ったかで見る
 - **R2P2 は起動時に app を自動実行する。** `/etc/init.d/r2p2` が `$HOME/app.mrb` → `$HOME/app.rb` →
   `DFU::BootManager.resolve` の順に探して load し、wifi 設定があれば `/bin/wifi_connect` も走らせる。
   FS 領域は `picotool load` を跨いで残るので、固まる app を置くと焼き直しても毎 boot 固まる。
-  app が動いている間 shell は黙っていて、Ctrl-C で app が止まり `$>` が出る。
-  `rake rp2040:upload` / `run` / `reboot` / `flash` は prompt が返らなければ `tools/pico2w/interrupt.rb` で Ctrl-C を送る
-  (reboot / flash の後は 20 秒待ってから)。止めた app は USB の挿し直しか reboot でまた起動する
+  app が動いている間 shell は黙っていて、Ctrl-C で app が止まり `$>` が出る
+  (ただし teardown は走らない — 上記「片付け (teardown) は要る」の Ctrl-C の注記参照)。
+  `rake rp2040:upload` / `run` / `reboot` は prompt が返らなければ `tools/pico2w/interrupt.rb` で Ctrl-C を送る。
+  `flash` / `reboot` の直後は、`tools/pico2w/boot_state.rb` が再列挙直後の CDC0 出力を読んで
+  shell / app / hung を数秒で判定する (issue #16)。app が起動していると判定できた場合は
+  Ctrl-C せずそのまま動かし続ける — 20 秒の盲目待ちも自動 Ctrl-C も過去の挙動。
+  判定できなかった (unknown) 場合だけ、以前どおり最大20秒待ってから Ctrl-C で確かめる。
+  止めた app は USB の挿し直しか reboot でまた起動する
 - **firmware の CMake は `<picoruby>/bin/mrbc` で mrblib を compile する。** それを置くのはホスト VM の build なので、
   空の vendor では `rp2040:build` が先に建てる
 - **マスストレージはマウントされない。** ファイル転送は PicoModem のみ
