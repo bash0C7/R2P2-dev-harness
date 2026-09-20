@@ -511,3 +511,16 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   バージョン差が原因と推定（未確定）。実機検証だけを優先する場合はQEMU確認を
   一旦保留してよいが、CIのQEMU jobを信頼するにはローカルのESP-IDFをCI指定
   バージョンへ合わせる必要がある
+- **VM taskのstack既定（8192）で boot loop することがある（機序は未確定、相関のみ）。**
+  sendairk03のDualKey検証（upstream `picoruby/R2P2-ESP32` master + IDF v5.4.2 +
+  `sdkconfigs/usb_console`）で、gem構成に`ws2812`（依存で`picoruby-rmt`を引く）を
+  足すと、`main_task: Returned from app_main()`の直後に
+  `Core 1 panic'ed (StoreProhibited)`（PCは`vPortYieldFromInt`、core1で実行中の
+  taskのTCBが壊れている）がbootのたびに同一レジスタ値で繰り返された。`ws2812`を
+  外すか、envで`PICORB_TASK_STACK_SIZE=16384`を渡すと消える（QEMUと実機の両方で
+  1変数ずつ確認）。stackあふれの現場はdebuggerで直接見ていない。btstack branchの
+  gem構成で同じことが起きるかは未確認
+- **QEMU確認はboot loopの検出器として使える。** `scripts/qemu_boot_check.sh mruby`
+  はローカルIDF v5.4.2では`$> `に届かずtimeoutするが（上記）、panicの有無は
+  見分けられる。実機を焼く前に、`QEMU_BOOT_TIMEOUT=60`でgem構成を1変数ずつ変えて
+  切り分けられる
