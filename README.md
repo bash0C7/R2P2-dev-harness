@@ -87,7 +87,7 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
   `HARNESS_SEND_RB=1` でソースのまま送る (Pico 2 W も同じ)
 - 板の serial / USB を開くタスクと tool は board ごとの lock (`~/.cache/r2p2-device-locks/`) で排他される。
   別 session が使っていると待つ ([docs/spec.md](docs/spec.md) §6)
-- ESP32 の罠は [docs/spec.md](docs/spec.md) §9
+- ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、
 `rake test:esp32` (`tools/common` と `tools/esp32`)。`rake test` には含まれない。
@@ -110,7 +110,7 @@ board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common
 | `rake rp2040:flash` | 実装済み。**Pico 2 W 実機で BOOTSEL ボタンなしに通した** (patch 入り firmware が載っていれば) |
 | `rake rp2040:upload` / `run` / `reboot` | 実装済み。Pico 2 W 実機で通した。`.rb` は mrbc で `.mrb` にして送る (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
-| `rake esp32:build` / `flash` / `upload` / `run` / `reboot` | 実装済み。M5Stack Chain DualKey 実機で通した (`R2P2-ESP32` の sibling checkout が要る)。`.rb` → `.mrb` → 転送 → 実行 (現在の既定) も `rake esp32:run` で DualKey 実機に通した。板に自動起動して戻らない `/home/app.mrb` が残っていると shell が上がらず転送に入れない (storage partition を消して復旧) |
+| `rake esp32:build` / `flash` / `upload` / `run` / `reboot` | 実装済み。M5Stack Chain DualKey 実機で通した (`R2P2-ESP32` の sibling checkout が要る)。`.rb` → `.mrb` → 転送 → 実行 (現在の既定) も `rake esp32:run` で DualKey 実機に通した |
 | `rake esp32:qemu_check` | 実装済み。QEMU で panic の有無をログから判定する。PASS 側 (通常の構成) と FAIL 側 (`PICORB_TASK_STACK_SIZE=1024` で Core 1 が panic) を QEMU で通した |
 | `rake test:rp2040` / `test:esp32` | 実装済み。`tools/` の plain-Ruby テスト。board 不要 |
 | `tools/pico2w/` | Pico 2 W 実機を触る helper。`picoruby-ble-verify` から。実機で通った |
