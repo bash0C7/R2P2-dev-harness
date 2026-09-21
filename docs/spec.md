@@ -523,4 +523,7 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 - **QEMU確認はboot loopの検出器として使える。** `scripts/qemu_boot_check.sh mruby`
   はローカルIDF v5.4.2では`$> `に届かずtimeoutするが（上記）、panicの有無は
   見分けられる。実機を焼く前に、`QEMU_BOOT_TIMEOUT=60`でgem構成を1変数ずつ変えて
-  切り分けられる
+  切り分けられる。`rake esp32:qemu_check`（IDFのexport済みが前提、
+  `QEMU_BOOT_TIMEOUT`既定60）がログで判定する: `Guru Meditation`/`Rebooting...`
+  があればFAIL、なくて`main_task: Returned from app_main()`が出ていればPASS
+  （`$> `未到達は既知としてその旨を表示）、それも無ければFAIL

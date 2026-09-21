@@ -5,6 +5,8 @@
 # インストール・保守はこの harness の責務にしない (docs/spec.md 参照)。
 # upload/run/reboot はこの harness 自前の tools/esp32/ で picomodem
 # プロトコルを直接話す。
+require_relative "../tools/esp32/qemu_verdict"
+
 namespace :esp32 do
   VM = "mruby".freeze # PICORB_VMS[:picoruby] => :mruby in R2P2-ESP32's Rakefile
 
@@ -16,6 +18,22 @@ namespace :esp32 do
       sh "rake picoruby:build"
       sh "bash scripts/qemu_boot_check.sh #{VM}"
     end
+  end
+
+  desc "Judge boot-loop (Core panic) under QEMU from the log; run before flashing (needs IDF env exported)"
+  task :qemu_check do
+    require_esp32_repo!
+    ENV["QEMU_BOOT_TIMEOUT"] ||= "60"
+    log_path = File.join(esp32_repo_dir, "qemu-boot-#{VM}.log")
+    File.delete(log_path) if File.exist?(log_path)
+    FileUtils.cd(esp32_repo_dir) do
+      # exit is 1 for both panic and the "$> " timeout; the log decides.
+      system("bash scripts/qemu_boot_check.sh #{VM}")
+    end
+    raise "#{log_path} was not produced" unless File.file?(log_path)
+    result = QemuVerdict.judge(File.read(log_path))
+    puts "[esp32:qemu_check] #{result.pass ? 'PASS' : 'FAIL'}: #{result.message}"
+    exit 1 unless result.pass
   end
 
   desc "Flash the last build to the board via esptool"
