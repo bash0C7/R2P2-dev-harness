@@ -75,13 +75,18 @@ ESP32 (M5Stack Chain DualKey、Mac に USB で接続)。firmware の build と f
 ```sh
 rake esp32:build                          # firmware を build し、QEMU で起動確認まで通す
 rake esp32:flash                          # esptool で焼く
-rake esp32:run[app.rb,20]                 # 転送して走らせ、ログを取る
-rake esp32:upload[app.rb,/home/app.rb]    # 転送だけ。/home/app.rb は起動時に自動実行される
+rake esp32:qemu_check                     # QEMU で boot loop (Core panic) の有無を判定。焼く前に。IDF の export が前提
+rake esp32:run[app.rb,20]                 # .mrb にして転送し、走らせてログを取る
+rake esp32:upload[app.rb,/home/app.rb]    # .mrb にして転送だけ。/home/app.mrb は起動時に自動実行される
 rake esp32:reboot                         # RTS パルスで reset して shell を待つ
 ```
 
 - `tools/esp32/` はポートを `ioreg` の製品名で選ぶ。`/dev/cu.usbmodem*` の glob だと
   Pico 2 W と並んだときに取り違える
+- `upload` / `run` は `.rb` を mrbc で `.mrb` にして送る (板上の prism が heap を食い `NoMemoryError` になるため)。
+  `HARNESS_SEND_RB=1` でソースのまま送る (Pico 2 W も同じ)
+- 板の serial / USB を開くタスクと tool は board ごとの lock (`~/.cache/r2p2-device-locks/`) で排他される。
+  別 session が使っていると待つ ([docs/spec.md](docs/spec.md) §6)
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9
 
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、
@@ -103,13 +108,14 @@ board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common
 | `rake setup` / `refresh` / `test:host` / `clean` | 実装済み |
 | `rake rp2040:setup` / `rp2040:build` / `stamp` / `firmware` | 実装済み。**ビルドは通る** (4.6MB の .uf2 が出る) |
 | `rake rp2040:flash` | 実装済み。**Pico 2 W 実機で BOOTSEL ボタンなしに通した** (patch 入り firmware が載っていれば) |
-| `rake rp2040:upload` / `run` / `reboot` | 実装済み。Pico 2 W 実機で通した (macOS の `ioreg` と `serialport` gem が要る) |
+| `rake rp2040:upload` / `run` / `reboot` | 実装済み。Pico 2 W 実機で通した。`.rb` は mrbc で `.mrb` にして送る (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
 | `rake esp32:build` / `flash` / `upload` / `run` / `reboot` | 実装済み。M5Stack Chain DualKey 実機で通した (`R2P2-ESP32` の sibling checkout が要る) |
+| `rake esp32:qemu_check` | 実装済み。QEMU で panic の有無をログから判定する。PASS 側を QEMU で通した |
 | `rake test:rp2040` / `test:esp32` | 実装済み。`tools/` の plain-Ruby テスト。board 不要 |
 | `tools/pico2w/` | Pico 2 W 実機を触る helper。`picoruby-ble-verify` から。実機で通った |
 | `tools/esp32/` | ESP32 実機を触る helper。実機で通った |
-| `tools/common/` | `tools/pico2w/` と `tools/esp32/` が共有する PicoModem と端末問い合わせ応答 |
+| `tools/common/` | `tools/pico2w/` と `tools/esp32/` が共有する PicoModem・端末問い合わせ応答・mrbc での compile・board の排他 lock |
 | `firmware-patches/` | build の間だけ vendor/picoruby に当てる patch。`Machine.usb_boot` を足す |
 
 ハーネスの gem は rp2040 の firmware に実際に入っている

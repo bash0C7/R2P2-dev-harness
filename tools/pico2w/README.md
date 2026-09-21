@@ -6,9 +6,9 @@ device helper だけを持ってきたもの。あちらでは Pico 2 W で動�
 
 | file | 何をするか |
 |---|---|
-| `pmput.rb` | ローカルの `.rb` を `/home/<name>.rb` へ転送する |
+| `pmput.rb` | ローカルのファイルを `/home/<name>` へ転送する (rake は `.rb` を `.mrb` にして渡す) |
 | `rsh.rb` | R2P2 shell にコマンドを1つ打って N 秒読む |
-| `runapp.rb` | `/home/<name>.rb` を実行して N 秒キャプチャし、Ctrl-C で止める |
+| `runapp.rb` | `/home/<name>` (`.rb` / `.mrb`) を実行して N 秒キャプチャし、Ctrl-C で止める |
 | `reboot_app.rb` | board に置いて実行するとリブートする 2 行 |
 | `usbboot_app.rb` | board に置いて実行すると BOOTSEL へ落ちる。`Machine.usb_boot` 入りの firmware が要る |
 | `tmo.rb` | コマンドに壁時計の上限を掛け、process group ごと SIGKILL する |
@@ -30,6 +30,8 @@ ESP32 の `tools/esp32/` と共有するので `tools/common/` に置いてあ�
   リセットされる。3本とも USB の製品名から引く
   (`ioreg -w 0 -r -n "R2P2" -l | grep IOCalloutDevice`、小さい方が CDC0 = shell)
 - **マスストレージはマウントされない。** ファイル転送は PicoModem のみ
+- **serial を開く tool は起動時に board 単位の lock を取る** (`tools/common/device_lock.rb`、`rp2040`)。
+  別 session が同じ板を使っていると待つ。rake task が持っている間は環境変数で再入して通る ([docs/spec.md](../../docs/spec.md) §6)
 - **`stackchan-picoruby` の `Deploy::Picomodem.upload` をそのまま呼んではいけない。**
   RP2350 は DTR/RTS でリセットされないので、起動バナー待ちで必ずタイムアウトする。
   `pmput.rb` はそのリセット手順を外してある

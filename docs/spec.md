@@ -170,7 +170,7 @@ upstream の build_config を `load` して、そこへ `conf.gem gemdir:` を�
 | `rake <target>:build` | firmware / 実行ファイルを作る | rp2040 実装済み。ビルドは通る。compiler の submodule は固定 (§6) |
 | `rake <target>:stamp` | 前回の build が今の入力に対してまだ有効か | rp2040 実装済み |
 | `rake <target>:flash` | 実機へ焼く (§6) | rp2040 実装済み。**Pico 2 W 実機で BOOTSEL 押下なしに通した**。BOOTSEL は patch 無し firmware の時だけ人間 |
-| `rake <target>:upload[src,dst]` | `.rb` を board へ転送する | rp2040 実装済み。Pico 2 W 実機で通した |
+| `rake <target>:upload[src,dst]` | `.rb` を mrbc で `.mrb` にして board へ転送する (`HARNESS_SEND_RB=1` でソースのまま。§9) | rp2040 実装済み。Pico 2 W 実機で `.rb` → `.mrb` → 実行まで通した。esp32 も実装済み |
 | `rake <target>:run[app,secs]` | 実機でアプリを走らせ、ログを取る | rp2040 実装済み。Pico 2 W 実機で通した |
 | `rake <target>:reboot` | board をリブートし、shell が戻るまで待つ | rp2040 実装済み。Pico 2 W 実機で通した |
 | `rake <target>:verify` | build → flash → run → **判定**。これが green で完了 | 未実装。判定が無い |
