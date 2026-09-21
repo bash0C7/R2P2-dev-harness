@@ -15,6 +15,7 @@ PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`ex
 - **Pico 2 W は Claude が触る。** `rake rp2040:build` / `flash` / `upload` / `run` / `reboot` は Bash から直接回せる
   (sandbox を外さずに USB へ届く)。人に頼むのは物理操作 (初回の BOOTSEL、wedge 時の USB 抜き差し、ボタン押下) と
   画面の目視だけ
+- **`upload` / `run` は `.rb` を mrbc で `.mrb` にして送る (既定)。** 板上で prism が `.rb` を compile すると heap を食い `NoMemoryError` で落ちる (DualKey で実測、docs/spec.md §9)。`.rb` のまま送るのは `HARNESS_SEND_RB=1`
 - **serial を開くものは `tools/pico2w/tmo.rb` で時間を区切る。** wedge した board への open は macOS で返らない
 - **board には `/home/app.rb` が置いてあり、起動時に自動実行されることがある。** その間 shell は黙る。
   `upload` / `run` / `reboot` は `$>` が返らなければ Ctrl-C で止めてから shell を使う。

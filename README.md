@@ -58,7 +58,8 @@ rake rp2040:reboot
 
 - `rp2040:flash` は `Machine.usb_boot` 入りの firmware が載っていればボタン不要。
   初めて焼くときだけ、BOOTSEL を押したまま USB を挿す
-- USB を挿しただけで app を動かすには `/home/app.rb` として置く。起動時に自動実行される:
+- USB を挿しただけで app を動かすには `/home/app.rb` として置く。起動時に自動実行される
+  （`.rb` は mrbc で `.mrb` にして送られ、板には `/home/app.mrb` が置かれる。`HARNESS_SEND_RB=1` でソースのまま送る）:
   `rake rp2040:upload[examples/rp2040/bootsel_click.rb,/home/app.rb]`。
   app が動いている間 shell は黙る。`upload` / `run` / `reboot` は `$>` が返らなければ
   Ctrl-C で app を止めてから shell を使う。`flash` / `reboot` の直後は

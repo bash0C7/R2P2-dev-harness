@@ -530,3 +530,15 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `QEMU_BOOT_TIMEOUT`既定60）がログで判定する: `Guru Meditation`/`Rebooting...`
   があればFAIL、なくて`main_task: Returned from app_main()`が出ていればPASS
   （`$> `未到達は既知としてその旨を表示）、それも無ければFAIL
+- **`upload` / `run` は既定で mrbc により `.mrb` にコンパイルして送る。** 実機に `.rb` を
+  送って shell から走らせると、板上で prism がコンパイルするため heap を食い、DualKey
+  （ESP32-S3、mruby VM）で1.4〜2.3KBの小さなscriptでも`NoMemoryError`で落ちた
+  （1行のscriptは通り、閾値はgemの量とheap設定で動く）。同じscriptをhostのmrbcで`.mrb`
+  （1003バイト）にして送ると完走し、結果も一致した。`.rb`を渡すと`build/mrb/<name>.mrb`を作り、
+  送り先も`.mrb`にする（`/home/app.rb`を指定しても`/home/app.mrb`。`/etc/init.d/r2p2`は
+  `app.mrb`を先に見る）。`.mrb`を渡せばそのまま送る。`HARNESS_SEND_RB=1`で`.rb`を
+  ソースのまま送る。mrbcが無い/compileが失敗した時は`.rb`に戻さず、理由を出して落ちる。
+  使うmrbcは firmware を build した picoruby のもの（VMの版が板と合う必要がある）: ESP32は
+  `R2P2-ESP32/components/picoruby-esp32/picoruby/build/host/bin/mrbc`、Pico 2 Wは
+  `vendor/picoruby/bin/mrbc`。`MRBC=`で差し替えられる。DualKeyでの実測はconcurrency-r1-ff
+  session、Pico 2 Wでの実機確認は未了

@@ -58,22 +58,22 @@ namespace :rp2040 do
     wait_for_booted_shell! "flashed"
   end
 
-  desc "Copy a local .rb onto the board over PicoModem (/home/app.rb autostarts at boot)"
+  desc "Compile a local .rb to .mrb (HARNESS_SEND_RB=1: send source) and copy it over PicoModem (/home/app.mrb autostarts at boot)"
   task :upload, [:src, :dst] do |_t, args|
     src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
-    dst = args[:dst] || "/home/#{File.basename(src)}"
+    payload = prepare_payload(src, args[:dst], rp2040_mrbc)
     require_shell!
-    bounded_device_tool!(60, "pmput.rb", src, dst) or raise_wedged!("upload")
+    bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("upload")
   end
 
   desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
     app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
     seconds = (args[:seconds] || "20").to_i
-    remote = "/home/#{File.basename(app)}"
+    payload = prepare_payload(app, nil, rp2040_mrbc)
     require_shell!
-    bounded_device_tool!(60, "pmput.rb", app, remote) or raise_wedged!("run (upload step)")
-    bounded_device_tool!(seconds + 30, "runapp.rb", remote, seconds.to_s) or raise_wedged!("run")
+    bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("run (upload step)")
+    bounded_device_tool!(seconds + 30, "runapp.rb", payload.remote, seconds.to_s) or raise_wedged!("run")
   end
 
   desc "Reboot the board and wait for the shell"
@@ -112,6 +112,11 @@ namespace :test do
       sh "#{RbConfig.ruby.shellescape} #{test_file.shellescape}"
     end
   end
+end
+
+# firmware の CMake が mrblib を compile するのと同じ <picoruby>/bin/mrbc。
+def rp2040_mrbc
+  File.join(PICORUBY_SRC, "bin", "mrbc")
 end
 
 # 動作中の board を BOOTSEL へ落とす。firmware-patches/machine-usb-boot.patch が

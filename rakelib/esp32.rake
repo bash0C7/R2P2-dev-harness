@@ -44,20 +44,20 @@ namespace :esp32 do
     end
   end
 
-  desc "Copy a local .rb onto the board over PicoModem (/home/app.rb autostarts at boot)"
+  desc "Compile a local .rb to .mrb (HARNESS_SEND_RB=1: send source) and copy it over PicoModem (/home/app.mrb autostarts at boot)"
   task :upload, [:src, :dst] do |_t, args|
     src = args[:src] or raise "usage: rake esp32:upload[<local .rb>,</home/name.rb>]"
-    dst = args[:dst] || "/home/#{File.basename(src)}"
-    esp32_device_tool "pmput.rb", src, dst
+    payload = prepare_payload(src, args[:dst], esp32_mrbc)
+    esp32_device_tool "pmput.rb", payload.local, payload.remote
   end
 
   desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
     app = args[:app] or raise "usage: rake esp32:run[<local .rb>,<seconds>]"
     seconds = args[:seconds] || "20"
-    remote = "/home/#{File.basename(app)}"
-    esp32_device_tool "pmput.rb", app, remote
-    esp32_device_tool "runapp.rb", remote, seconds
+    payload = prepare_payload(app, nil, esp32_mrbc)
+    esp32_device_tool "pmput.rb", payload.local, payload.remote
+    esp32_device_tool "runapp.rb", payload.remote, seconds
   end
 
   desc "Reset the board (RTS pulse) and wait for the shell"
@@ -80,6 +80,11 @@ end
 # PICORUBY_REPO/PICORUBY_REF in the top-level Rakefile.
 def esp32_repo_dir
   ENV["R2P2_ESP32_REPO"] || File.expand_path("../R2P2-ESP32", HARNESS_ROOT)
+end
+
+# firmware を build した picoruby の host mrbc。VM の版が実機と合う必要がある。
+def esp32_mrbc
+  File.join(esp32_repo_dir, "components", "picoruby-esp32", "picoruby", "build", "host", "bin", "mrbc")
 end
 
 def require_esp32_repo!
