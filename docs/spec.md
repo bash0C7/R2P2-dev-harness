@@ -558,4 +558,6 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   使うmrbcは firmware を build した picoruby のもの（VMの版が板と合う必要がある）: ESP32は
   `R2P2-ESP32/components/picoruby-esp32/picoruby/build/host/bin/mrbc`、Pico 2 Wは
   `vendor/picoruby/bin/mrbc`。`MRBC=`で差し替えられる。DualKeyでの実測はconcurrency-r1-ff
-  session、Pico 2 Wでの実機確認は未了
+  session（`.mrb`を直接送る別scriptでの実測）。Pico 2 Wは`rake rp2040:run`で`.rb`→`.mrb`→実行まで実機で通した。
+  **`rake esp32:upload` / `run`のこの経路はDualKey実機で未検証**（QEMUはPicoModem転送を検証できない。
+  ホストでESP32のmrbcが`.rb`を`.mrb`にすることまでは確認済み）
