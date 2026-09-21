@@ -559,5 +559,7 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `R2P2-ESP32/components/picoruby-esp32/picoruby/build/host/bin/mrbc`、Pico 2 Wは
   `vendor/picoruby/bin/mrbc`。`MRBC=`で差し替えられる。DualKeyでの実測はconcurrency-r1-ff
   session（`.mrb`を直接送る別scriptでの実測）。Pico 2 Wは`rake rp2040:run`で`.rb`→`.mrb`→実行まで実機で通した。
-  **`rake esp32:upload` / `run`のこの経路はDualKey実機で未検証**（QEMUはPicoModem転送を検証できない。
-  ホストでESP32のmrbcが`.rb`を`.mrb`にすることまでは確認済み）
+  `rake esp32:run`もDualKey実機で`.rb`→`.mrb`→転送→実行まで通した（出力`hello from mrb 3`）。
+  板に戻らない`/home/app.mrb`が自動起動で残っていると、shellが上がらずpmputが
+  "never returned, so ... `$shell.start`" で失敗する。復旧は storage partition の消去
+  （`esptool erase_region 0x210000 0x100000`、firmwareは残る。`/home`の中身は消える）
