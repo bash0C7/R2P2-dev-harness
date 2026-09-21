@@ -23,6 +23,8 @@
 #   (well before the real shell banner, let alone a nudge) — checking the
 #   whole cumulative buffer for it is a false-positive trap. Only bytes
 #   received AFTER the nudge count as a real prompt.
+require_relative "../common/device_lock"
+DeviceLock.hold("esp32")
 require "serialport"
 require_relative "reset"
 require_relative "../common/term"

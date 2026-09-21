@@ -21,6 +21,8 @@ module Reset
 end
 
 if $PROGRAM_NAME == __FILE__
+  require_relative "../common/device_lock"
+  DeviceLock.hold("esp32")
   def default_port
     # Same product-name lookup as tools/esp32/*.rb generally (Task 5) — a bare
     # /dev/cu.usbmodem* glob is wrong once a Pico 2 W is also plugged in.

@@ -1,5 +1,7 @@
 # Run a script on the R2P2 shell and capture stdout for N seconds, then Ctrl-C.
 #   ruby runapp.rb <device path> <seconds> [port]
+require_relative "../common/device_lock"
+DeviceLock.hold("esp32")
 require "serialport"
 require_relative "../common/term"
 require_relative "reset"

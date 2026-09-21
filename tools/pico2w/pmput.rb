@@ -1,6 +1,8 @@
 # PicoModem upload to an ALREADY-RUNNING R2P2 shell (no reset pulse).
 #   ruby pmput.rb <src> <dst> [port]
 
+require_relative "../common/device_lock"
+DeviceLock.hold("rp2040")
 require_relative "../common/picomodem"
 PM = Deploy::Picomodem
 

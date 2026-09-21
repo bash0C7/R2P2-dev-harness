@@ -375,6 +375,22 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `rake rp2040:upload` / `run` / `reboot` はいずれも `pmput.rb` / `runapp.rb` の呼び出しを
   `tmo.rb` 越しに束縛しており (issue #17)、wedge した board でも壁時計で失敗して返る
   (`upload` は60秒、`run` はアプリの実行秒数+30秒)。ログはその場で流れる (Open3 で溜め込まない)
+- **板の serial / USB を開くものは board 単位の lock で排他する (`tools/common/device_lock.rb`)。**
+  2つの session が同じ板を同時に開き、Ctrl-B の ACK が取れず出力が欠け、`shell_ok.rb` が wedge でもないのに
+  DEAD を返した実例がある。lock は board の種類ごと (`rp2040` / `esp32`) に
+  `~/.cache/r2p2-device-locks/<target>.lock/` を mkdir で作る (macOS に flock が無い。`owner` に `pid コマンド`)。
+  - **排他にする**: 同じ board への upload / run / reboot / flash / reset / interrupt / rsh / `shell_ok.rb` /
+    `boot_state.rb`。読むだけでも serial を開くなら排他 (2つの opener は互いの read を壊し、wedge に見える)
+  - **同時でよい**: build、host テスト、QEMU、`ioreg` での列挙 (serial を開かない)、別の board 同士 (DualKey と Pico 2 W)
+  - **粒度**: rake の `upload` / `run` / `reboot` / `flash` はコマンド単位で持つ (`run` の upload と runapp の間に
+    割り込ませない)。serial を開く最下層の tool も自分で取るので、`tools/*.rb` を直接呼ぶ利用者にも効く
+  - **再入**: 持ち主は自分の pid を環境変数 `R2P2_DEVICE_LOCK_HOLDER_<TARGET>` に出し、子
+    (rake → `tmo.rb` → `pmput.rb`) はそれで通る。自分の親を待つデッドロックは起きない
+  - **待ち・失敗**: `DEVICE_LOCK_WAIT` 秒 (既定600) 待ち、30秒ごとに持ち主の pid を表示する。超えたら持ち主を
+    名指して失敗。持ち主の pid が死んでいれば奪う (`tmo.rb` が SIGKILL した場合など)。
+    持ち主が生きたまま消えない時だけ `rm -r ~/.cache/r2p2-device-locks/<target>.lock`
+  - **識別**: board の種類単位。同じ種類を2枚挿す運用は想定しない (要るなら port / USB serial 単位に細分する)
+  - `R2P2_DEVICE_LOCK_DIR` で lock の置き場を変えられる。他の repo の script が同じ板を触るなら同じ場所を使うこと
 - **shell の生存を「何か bytes が返った」で判定しない。** 起動時に固まる board も起動バナーは出す。
   `$>` プロンプトが返ったかで見る
 - **R2P2 は起動時に app を自動実行する。** `/etc/init.d/r2p2` が `$HOME/app.mrb` → `$HOME/app.rb` →

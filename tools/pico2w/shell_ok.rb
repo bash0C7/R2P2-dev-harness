@@ -5,6 +5,8 @@
 # OK means the "$>" prompt came back, not merely that bytes did: a board that
 # hangs while loading /etc/init.d/r2p2 still prints its boot banner first.
 # The line editor draws the prompt only after its terminal probes are answered.
+require_relative "../common/device_lock"
+DeviceLock.hold("rp2040")
 require_relative "../common/term"
 
 def r2p2_ports

@@ -10,6 +10,8 @@
 # already retries the whole reset+await_shell+offer cycle a few times for
 # exactly this kind of failure, so this just delegates to it instead of
 # hand-rolling a single unretried attempt.
+require_relative "../common/device_lock"
+DeviceLock.hold("esp32")
 require_relative "../common/picomodem"
 PM = Deploy::Picomodem
 

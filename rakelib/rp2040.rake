@@ -48,45 +48,53 @@ namespace :rp2040 do
 
   desc "Flash the firmware; a running board is dropped into BOOTSEL without the button"
   task :flash do
-    uf2 = latest_uf2
-    raise "no firmware built yet. Run `rake rp2040:build`." unless uf2
-    require_picotool!
-    enter_bootsel!
-    # picotool は mount を待つ。/Volumes/RP2350 への cp は mount 完了前に走ると
-    # Device not configured で落ちる。ボリュームは見えているのに、である。
-    sh "picotool load -x #{uf2.shellescape}"
-    wait_for_booted_shell! "flashed"
+    with_board("rp2040") do
+      uf2 = latest_uf2
+      raise "no firmware built yet. Run `rake rp2040:build`." unless uf2
+      require_picotool!
+      enter_bootsel!
+      # picotool は mount を待つ。/Volumes/RP2350 への cp は mount 完了前に走ると
+      # Device not configured で落ちる。ボリュームは見えているのに、である。
+      sh "picotool load -x #{uf2.shellescape}"
+      wait_for_booted_shell! "flashed"
+    end
   end
 
   desc "Compile a local .rb to .mrb (HARNESS_SEND_RB=1: send source) and copy it over PicoModem (/home/app.mrb autostarts at boot)"
   task :upload, [:src, :dst] do |_t, args|
-    src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
-    payload = prepare_payload(src, args[:dst], rp2040_mrbc)
-    require_shell!
-    bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("upload")
+    with_board("rp2040") do
+      src = args[:src] or raise "usage: rake rp2040:upload[<local .rb>,</home/name.rb>]"
+      payload = prepare_payload(src, args[:dst], rp2040_mrbc)
+      require_shell!
+      bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("upload")
+    end
   end
 
   desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
-    app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
-    seconds = (args[:seconds] || "20").to_i
-    payload = prepare_payload(app, nil, rp2040_mrbc)
-    require_shell!
-    bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("run (upload step)")
-    bounded_device_tool!(seconds + 30, "runapp.rb", payload.remote, seconds.to_s) or raise_wedged!("run")
+    with_board("rp2040") do
+      app = args[:app] or raise "usage: rake rp2040:run[<local .rb>,<seconds>]"
+      seconds = (args[:seconds] || "20").to_i
+      payload = prepare_payload(app, nil, rp2040_mrbc)
+      require_shell!
+      bounded_device_tool!(60, "pmput.rb", payload.local, payload.remote) or raise_wedged!("run (upload step)")
+      bounded_device_tool!(seconds + 30, "runapp.rb", payload.remote, seconds.to_s) or raise_wedged!("run")
+    end
   end
 
   desc "Reboot the board and wait for the shell"
   task :reboot do
-    # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
-    # 打っても何も起きない。script を置いて実行する。
-    require_shell!
-    bounded_device_tool!(60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb") or
-      raise_wedged!("reboot (upload step)")
-    # 効いた時は実行中に CDC が落ちて rsh.rb が ENXIO で失敗する。それが reboot した印。
-    _, output = bounded_device_tool 40, "rsh.rb", "/home/reboot.rb", "4"
-    raise "the shell ran /home/reboot.rb but the board did not drop off USB" unless output.match?(/ENXIO|Device not configured/)
-    wait_for_booted_shell! "rebooted"
+    with_board("rp2040") do
+      # R2P2 shell は入力を Ruby として評価しないので、プロンプトに Machine.reboot と
+      # 打っても何も起きない。script を置いて実行する。
+      require_shell!
+      bounded_device_tool!(60, "pmput.rb", File.join(HARNESS_ROOT, "tools", "pico2w", "reboot_app.rb"), "/home/reboot.rb") or
+        raise_wedged!("reboot (upload step)")
+      # 効いた時は実行中に CDC が落ちて rsh.rb が ENXIO で失敗する。それが reboot した印。
+      _, output = bounded_device_tool 40, "rsh.rb", "/home/reboot.rb", "4"
+      raise "the shell ran /home/reboot.rb but the board did not drop off USB" unless output.match?(/ENXIO|Device not configured/)
+      wait_for_booted_shell! "rebooted"
+    end
   end
 
   desc "build -> flash -> run -> judge (not implemented yet)"

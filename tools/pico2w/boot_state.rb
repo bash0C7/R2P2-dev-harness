@@ -59,6 +59,8 @@ module BootState
 end
 
 if $PROGRAM_NAME == __FILE__
+  require_relative "../common/device_lock"
+  DeviceLock.hold("rp2040")
   def r2p2_ports
     `ioreg -w 0 -r -n "R2P2" -l 2>/dev/null`.scan(/"IOCalloutDevice" = "([^"]+)"/).flatten.sort
   end

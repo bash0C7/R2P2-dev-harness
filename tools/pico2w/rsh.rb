@@ -1,5 +1,7 @@
 # Send a line to the R2P2 shell and capture output for N seconds.
 #   ruby rsh.rb "<command>" [seconds] [port]
+require_relative "../common/device_lock"
+DeviceLock.hold("rp2040")
 require "serialport"
 require_relative "../common/term"
 

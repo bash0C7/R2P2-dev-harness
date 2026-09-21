@@ -10,3 +10,13 @@ def prepare_payload(src, remote, firmware_mrbc)
 rescue Mrbc::Error => e
   raise e.message
 end
+
+require_relative "../tools/common/device_lock"
+
+# 板の serial / USB を触る task はコマンド単位で board の lock を持つ。
+# 中で呼ぶ tool (tmo.rb 越しの pmput.rb 等) は環境変数で再入して通る。
+def with_board(target, &block)
+  DeviceLock.synchronize(target, &block)
+rescue DeviceLock::Timeout => e
+  raise e.message
+end

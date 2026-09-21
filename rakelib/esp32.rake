@@ -38,31 +38,39 @@ namespace :esp32 do
 
   desc "Flash the last build to the board via esptool"
   task :flash do
-    require_esp32_repo!
-    FileUtils.cd(esp32_repo_dir) do
-      sh "rake flash"
+    with_board("esp32") do
+      require_esp32_repo!
+      FileUtils.cd(esp32_repo_dir) do
+        sh "rake flash"
+      end
     end
   end
 
   desc "Compile a local .rb to .mrb (HARNESS_SEND_RB=1: send source) and copy it over PicoModem (/home/app.mrb autostarts at boot)"
   task :upload, [:src, :dst] do |_t, args|
-    src = args[:src] or raise "usage: rake esp32:upload[<local .rb>,</home/name.rb>]"
-    payload = prepare_payload(src, args[:dst], esp32_mrbc)
-    esp32_device_tool "pmput.rb", payload.local, payload.remote
+    with_board("esp32") do
+      src = args[:src] or raise "usage: rake esp32:upload[<local .rb>,</home/name.rb>]"
+      payload = prepare_payload(src, args[:dst], esp32_mrbc)
+      esp32_device_tool "pmput.rb", payload.local, payload.remote
+    end
   end
 
   desc "Run an app on the board and capture its log"
   task :run, [:app, :seconds] do |_t, args|
-    app = args[:app] or raise "usage: rake esp32:run[<local .rb>,<seconds>]"
-    seconds = args[:seconds] || "20"
-    payload = prepare_payload(app, nil, esp32_mrbc)
-    esp32_device_tool "pmput.rb", payload.local, payload.remote
-    esp32_device_tool "runapp.rb", payload.remote, seconds
+    with_board("esp32") do
+      app = args[:app] or raise "usage: rake esp32:run[<local .rb>,<seconds>]"
+      seconds = args[:seconds] || "20"
+      payload = prepare_payload(app, nil, esp32_mrbc)
+      esp32_device_tool "pmput.rb", payload.local, payload.remote
+      esp32_device_tool "runapp.rb", payload.remote, seconds
+    end
   end
 
   desc "Reset the board (RTS pulse) and wait for the shell"
   task :reboot do
-    esp32_device_tool "reset.rb"
+    with_board("esp32") do
+      esp32_device_tool "reset.rb"
+    end
   end
 end
 
