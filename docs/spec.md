@@ -545,7 +545,8 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   切り分けられる。`rake esp32:qemu_check`（IDFのexport済みが前提、
   `QEMU_BOOT_TIMEOUT`既定60）がログで判定する: `Guru Meditation`/`Rebooting...`
   があればFAIL、なくて`main_task: Returned from app_main()`が出ていればPASS
-  （`$> `未到達は既知としてその旨を表示）、それも無ければFAIL
+  （`$> `未到達は既知としてその旨を表示）、それも無ければFAIL。QEMUで実測済み: 通常構成はPASS、
+  `PICORB_TASK_STACK_SIZE=1024`にするとCore 1が`LoadProhibited`でpanicしFAIL（exit 1、該当行を表示）
 - **`upload` / `run` は既定で mrbc により `.mrb` にコンパイルして送る。** 実機に `.rb` を
   送って shell から走らせると、板上で prism がコンパイルするため heap を食い、DualKey
   （ESP32-S3、mruby VM）で1.4〜2.3KBの小さなscriptでも`NoMemoryError`で落ちた

@@ -111,7 +111,7 @@ board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common
 | `rake rp2040:upload` / `run` / `reboot` | 実装済み。Pico 2 W 実機で通した。`.rb` は mrbc で `.mrb` にして送る (macOS の `ioreg` と `serialport` gem が要る) |
 | `rake rp2040:verify` | 未実装。判定する相手役が無いので落ちる |
 | `rake esp32:build` / `flash` / `upload` / `run` / `reboot` | 実装済み。M5Stack Chain DualKey 実機で通した (`R2P2-ESP32` の sibling checkout が要る) |
-| `rake esp32:qemu_check` | 実装済み。QEMU で panic の有無をログから判定する。PASS 側を QEMU で通した |
+| `rake esp32:qemu_check` | 実装済み。QEMU で panic の有無をログから判定する。PASS 側 (通常の構成) と FAIL 側 (`PICORB_TASK_STACK_SIZE=1024` で Core 1 が panic) を QEMU で通した |
 | `rake test:rp2040` / `test:esp32` | 実装済み。`tools/` の plain-Ruby テスト。board 不要 |
 | `tools/pico2w/` | Pico 2 W 実機を触る helper。`picoruby-ble-verify` から。実機で通った |
 | `tools/esp32/` | ESP32 実機を触る helper。実機で通った |
