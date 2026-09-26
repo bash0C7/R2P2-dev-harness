@@ -96,6 +96,7 @@ macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる
 ```sh
 rake fpga:setup                        # 足りないシミュレータを入れる (brew / apt-get)。最後に doctor を回す
 rake fpga:test                         # Ruby の道具のテスト + 全テストベンチ (Verilator と Icarus) + 参照との突き合わせ
+rake fpga:emu[fpga/corpus/blink.mrb]   # PERIDOT-Air のボードエミュレーター。LED とボタンの変化を実時間で表示
 rake fpga:run[fpga/corpus/counter.mrb] # 1本をシミュレーション上のコアで走らせ、$LED などへの書き込みを表示
 rake fpga:rom[fpga/corpus/blink.mrb]   # PicoRuby で書いた変換器で ROM イメージと命令一覧を作るだけ
 rake fpga:sim[mrb_core_tb]             # テストベンチ1本を Verilator で。波形は build/fpga/mrb_core_tb.fst

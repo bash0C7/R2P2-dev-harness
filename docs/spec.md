@@ -583,11 +583,13 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 |---|---|
 | `rake fpga:setup` | 足りないシミュレータを入れる。macOS は `brew install verilator icarus-verilog surfer`、Linux は `apt-get install -y verilator iverilog` (root でなければ sudo) |
 | `rake fpga:doctor` | verilator / iverilog / vvp / surfer の有無と版。必須が欠けていれば落ちる |
-| `rake fpga:test` | 下の `test:fpga` + `fpga:tb` + `fpga:check`。CI の `fpga` job が回す |
+| `rake fpga:test` | 下の `test:fpga` + `fpga:tb` + `fpga:check` + `fpga:emu:check`。CI の `fpga` job が回す |
 | `rake test:fpga` | `tools/fpga/*_test.rb` (minitest)。シミュレータ不要。picoruby が要るものは無ければ skip。CI の `host` job でも回す |
 | `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
 | `rake fpga:check` | `fpga/corpus/*.mrb` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
+| `rake fpga:emu[src,ms,ce_div]` | PERIDOT-Air のボードエミュレーター。実機の top を 50MHz で回し、LED とボタンの変化を実時間 (秒) で表示し、参照インタプリタと突き合わせる |
+| `rake fpga:emu:check` | コーパス全部をエミュレーターで 600ms 回し、LED の変化を参照と突き合わせる |
 | `rake fpga:rom[src]` | `.rb` / `.mrb` を PicoRuby の変換器で ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
 | `rake fpga:run[src,max]` | 1本をシミュレーションで走らせ、I/O を表示する。トレースと波形を `build/fpga/rom/` に残す |
 | `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` `.hex` `.lst` と `docs/fpga-opcodes.md` を mrbc と PicoRuby の変換器で作り直す / 最新かを見る |
@@ -740,6 +742,30 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 - **書き込み (`rake fpga:flash`)。** Mac ネイティブの `openFPGALoader -c usb-blaster <svf>` で SRAM へ
   (電源を切ると消える)。`FPGA_CABLE` でケーブルを変えられる。EPCQ16 への永続書き込みはまだ無い
 - **yosys は使えなかった。** Ubuntu 24.04 の yosys 0.33 は `import pkg::*` を読めず、LE の見積もりに使えない
+
+### ボードエミュレーター
+
+実機が届くまでの代役。`fpga/sim/board_emu_tb.sv` が実機の top (`peridot_air_top.sv`) をそのまま置き、
+50MHz のクロック・`CE_DIV`・`RESET_N`・`D[0]`・`USER_LED` を実機どおりに回して、ピンの変化を実時間で書く。
+`rake fpga:emu[fpga/corpus/blink.mrb,2000]` で:
+
+```
+   0.000 s  LED    on
+   0.281 s  LED    off
+   0.561 s  LED    on
+  ...
+  LED  flips every 0.2805 s on average
+  ok blink LED: 8 change(s), same as the reference interpreter
+```
+
+- **時刻を引き延ばして速く回す。** CPU は `en` の cycle でしか進まないので、回路の `CE_DIV` を 1/k にし
+  (1命令あたり 10 cycle 以上は残す)、時刻を k 倍して表示する。`CE_DIV=1000` なら k=100 で、実機 2 秒分が
+  0.3 秒ほどで回る。1:1 で回した結果との差は 10µs 以内だった。`FPGA_EMU_EXACT=1` で 1:1 (実機 1 秒分に 20 秒ほど)
+- **ボタン。** `<name>.buttons` (`fpga/corpus/button.buttons`) に `<ms> <0|1>` (1 = 押す) を書くと、その時刻に `D[0]` を落とす
+- **参照と突き合わせる。** 同じ時間に実行される命令数だけ参照インタプリタを回し、LED の点灯の変化の列が一致するかを見る。
+  窓の端は ±4 命令の揺れを許す。ボタンを押すプログラムは、時刻と命令数を対応付けられないので突き合わせない。
+  「参照の先頭と一致」だけだと、LED が点きっぱなしになる壊れ方 (`SUB` を足し算にした時) を見逃したので、変化の数まで比べる
+- **見えないもの。** 点灯の極性、ピンの電気的なこと、Quartus での合成結果。これらは実機で見る
 
 ### 版と波形
 
