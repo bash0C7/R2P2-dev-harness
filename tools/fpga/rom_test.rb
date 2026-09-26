@@ -36,7 +36,8 @@ class FpgaRomTest < Minitest::Test
     "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SENDB" => %w[SEND], "SSENDB" => %w[SSEND], "MODULE" => %w[CLASS],
     "LOADSELF" => %w[MOVE], "RETSELF" => %w[RETURN], "RETTRUE" => %w[LOADTRUE], "RETFALSE" => %w[LOADFALSE],
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL],
-    "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST]
+    "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
+    "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST] # ポートでないグローバル変数
   }.freeze
 
   def check_operands(where, opname, fields, w, pc_of, image)
@@ -83,7 +84,7 @@ class FpgaRomTest < Minitest::Test
       assert_equal (n == "*" ? 15 : n.to_i), w.c & 0x7F, where # n=* は splat (R[a+1] が引数の配列)
     when "CLASS"
       assert_equal "R#{w.a}", fields[0], where
-      assert_equal fields[1].delete(":"), image.class_names[w.b] || FpgaIsa::CLASSES.to_h.invert[w.b], where
+      assert_equal fields[1].delete(":"), (image.class_names[w.b] || FpgaIsa::CLASSES.to_h.invert[w.b]).split("::").last, where # class A::B の dump は B
     when "SETCONST"
       assert_equal "R#{w.a}", fields[1], where
     # インスタンス変数は b = 名前のシンボル番号 (オブジェクトの何番目かは実行時にメソッド表で引く)
@@ -297,9 +298,34 @@ class FpgaRomTest < Minitest::Test
     assert_match(/pool/, e.message)
   end
 
-  def test_rejects_unknown_gvar
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("GETGV"), 1, 0, op("STOP")], syms: ["$FOO"])) }
-    assert_match(/\$FOO.*io_map/, e.message)
+  # io_map.rb に無いグローバル変数は定数の表に置き、一番外の先頭で nil にする (代入前に読むと nil)
+  def test_general_globals_start_as_nil
+    image = FpgaRom.from_binary(rite([op("GETGV"), 1, 0, op("SETGV"), 1, 1, op("STOP")], syms: ["$foo", "$LED2"]))
+    names = image.words.first(6).map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal %w[TABLE LOADNIL SETCONST CLASS SEND0 GETCONST], names
+    assert_equal image.words[2].b, image.words[5].b
+    assert_equal ["SETGV", 1], [FpgaIsa::OPS[image.words[6].op].name, image.words[6].b] # $LED2 はポートのまま
+  end
+
+  # A::X と class A::B は GETCONST / GETMCNST の連なりから静的に解く。知らない入れ物は止める
+  def test_scoped_constants
+    with_mrbc do
+      image = compile(<<~RUBY)
+        module A
+          X = 2
+          class B; end
+        end
+        class A::C < A::B; end
+        A::Y = 3
+        $LED = A::X + A::Y
+        $LED2 = A::C.new.is_a?(A::B)
+      RUBY
+      assert image.class_names.key("A::C")
+      e = assert_raises(FpgaRom::Error) { compile("$LED = Nope::X\n") }
+      assert_match(/not a known class or module/, e.message)
+      e = assert_raises(FpgaRom::Error) { compile("module A; end\n$LED = A::Q\n") }
+      assert_match(/A::Q .* is not assigned anywhere/, e.message)
+    end
   end
 
   def test_rejects_write_to_input

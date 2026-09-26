@@ -190,7 +190,7 @@ module FpgaRom
     ireps.each_with_index do |ir, i|
       ir.base = base
       base += 1 if ctx.bodies[ir.index]
-      base += 2 if ir.index == 0
+      base += 2 + 2 * ctx.globals.size if ir.index == 0
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
@@ -204,8 +204,14 @@ module FpgaRom
     ireps.each_with_index do |ir, i|
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
       if ir.index == 0
-        words << Word.new(ir.base, nil, FpgaIsa.op("CLASS").num, 0, FpgaIsa::CLS_OBJECT, 0, ir, false)
-        words << Word.new(ir.base + 1, nil, FpgaIsa.op("SEND0").num, 0, ctx.sym_id("new"), 0, ir, false)
+        # 一般のグローバル変数を nil に (R0 を借りる)、self (main) を作る
+        ctx.globals.each_with_index do |g, j|
+          words << Word.new(ir.base + 2 * j, nil, FpgaIsa.op("LOADNIL").num, 0, 0, 0, ir, false)
+          words << Word.new(ir.base + 2 * j + 1, nil, FpgaIsa.op("SETCONST").num, 0, ctx.consts.fetch(g), 0, ir, false)
+        end
+        g = 2 * ctx.globals.size
+        words << Word.new(ir.base + g, nil, FpgaIsa.op("CLASS").num, 0, FpgaIsa::CLS_OBJECT, 0, ir, false)
+        words << Word.new(ir.base + g + 1, nil, FpgaIsa.op("SEND0").num, 0, ctx.sym_id("new"), 0, ir, false)
       end
       decoded[i].each_with_index do |insn, k|
         pc = pc_of[i][insn.addr]
@@ -258,7 +264,7 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops
+                :method_names, :noops, :cref, :globals
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
 
@@ -272,6 +278,8 @@ module FpgaRom
       end
       @method_names = {} # メソッドの irep の番号 -> 名前 (super が使う)
       @noops = {}        # クラスの本体の attr_* / include / private など (実行時は何もしない) の場所 -> true
+      @cref = {}         # irep の番号 -> 字句の入れ子のクラスの名前 (内側から。一番外は含めない)。Ruby の cref
+      @globals = []      # ポートでないグローバル変数の名前 (定数の表に置き、始めに nil にする)
       @scope = {}
       @bodies = {}
       @parents = {}
@@ -309,17 +317,18 @@ module FpgaRom
       id
     end
 
-    # 字句の入れ子 (A::B の中なら A::B, A, 一番外) の順に、名前の候補
-    def lexical_names(scope, name)
-      names = []
-      path = scope.id == FpgaIsa::CLS_OBJECT ? "" : scope.name
-      while path != ""
-        names << "#{path}::#{name}"
-        cut = path.rindex("::")
-        path = cut ? path[0, cut] : ""
+    # 字句の入れ子 (cref: module A; class B の中なら A::B, A、class A::B の中なら A::B だけ) の順に、名前の候補。最後は一番外
+    def lexical_names(cref, name)
+      cref.map { |c| "#{c}::#{name}" } + [name]
+    end
+
+    # 定数の番号 (無ければ振る)
+    def const_slot(key, what)
+      unless @consts[key]
+        raise Error, "#{@source}: too many constants (the core has #{FpgaIsa::NCONST}) at #{what}" if @consts.size >= FpgaIsa::NCONST
+        @consts[key] = @consts.size
       end
-      names << name
-      names
+      @consts[key]
     end
   end
 
@@ -338,10 +347,30 @@ module FpgaRom
     nil
   end
 
-  # irep を字句のクラス scope の中として読み、クラス・メソッド・定数・ブロックの親を集める
-  def self.analyze(irep, scope, ctx)
+  # k 番目の命令で R[reg] に入っている定数の path (GETCONST / GETMCNST の連なりを字句の入れ子で解く)。
+  # 分からなければ nil
+  def self.const_path(ctx, irep, insns, k, reg)
+    i = k - 1
+    i -= 1 while i >= 0 && !(insns[i].operands[0] == reg && !%w[SETGV SETCONST SETMCNST SETIV JMP JMPIF JMPNOT JMPNIL].include?(insns[i].name))
+    return nil if i < 0
+    d = insns[i]
+    sym = irep.syms[d.operands[1]]
+    if d.name == "GETCONST"
+      ctx.lexical_names(ctx.cref[irep.index], sym).each do |n|
+        return n if ctx.klass_named(n) || ctx.const_keys[n]
+      end
+      return sym
+    end
+    return nil unless d.name == "GETMCNST"
+    base = const_path(ctx, irep, insns, i, d.operands[0])
+    base && ctx.klass_named(base) ? "#{base}::#{sym}" : nil
+  end
+
+  # irep を字句のクラス scope (cref は字句の入れ子) の中として読み、クラス・メソッド・定数・ブロックの親を集める
+  def self.analyze(irep, scope, ctx, cref = [])
     source = ctx.source
     ctx.scope[irep.index] = scope
+    ctx.cref[irep.index] = cref
     insns = ctx.decoded[irep.index]
     insns.each_with_index do |insn, k|
       ops = insn.operands
@@ -350,23 +379,28 @@ module FpgaRom
         a = ops[0]
         sym = irep.syms[ops[1]]
         outer = prev_def(insns, k, a)
+        # class A::B: 入れ物は A (知っているクラスかモジュール)。字句の入れ子には A を足さない (Ruby の cref と同じ)
+        container = scope.id == FpgaIsa::CLS_OBJECT ? nil : scope.name
         unless outer && outer.name == "LOADNIL"
-          raise Error, "#{source}: #{insn.name.downcase} #{sym} at #{where(irep, insn)} is nested with ::, which is not supported"
+          path = const_path(ctx, irep, insns, k, a)
+          unless path && ctx.klass_named(path)
+            raise Error, "#{source}: #{insn.name.downcase} #{sym} at #{where(irep, insn)} is nested in something that is not a known class or module"
+          end
+          container = path
         end
         super_id = nil
         if insn.name == "CLASS"
           sup = prev_def(insns, k, a + 1)
-          if sup && sup.name == "GETCONST"
-            sname = irep.syms[sup.operands[1]]
-            sk = nil
-            ctx.lexical_names(scope, sname).each { |n| sk ||= ctx.klass_named(n) }
-            raise Error, "#{source}: superclass #{sname} of #{sym} at #{where(irep, insn)} is not a known class" unless sk
+          if sup && (sup.name == "GETCONST" || sup.name == "GETMCNST")
+            sname = const_path(ctx, irep, insns, k, a + 1)
+            sk = sname && ctx.klass_named(sname)
+            raise Error, "#{source}: superclass #{sname || '?'} of #{sym} at #{where(irep, insn)} is not a known class" unless sk
             super_id = sk.id
           elsif !(sup && sup.name == "LOADNIL")
             raise Error, "#{source}: the superclass of #{sym} at #{where(irep, insn)} must be a constant"
           end
         end
-        full = scope.id == FpgaIsa::CLS_OBJECT ? sym : "#{scope.name}::#{sym}"
+        full = container ? "#{container}::#{sym}" : sym
         k2 = ctx.klass_named(full)
         if k2
           if super_id && k2.super_id != super_id
@@ -377,21 +411,19 @@ module FpgaRom
           ctx.classes << k2
         end
         ctx.class_at[site_key(irep, k)] = k2
-        # 続く EXEC a I[n] が本体
+        # すぐ後の EXEC a I[n] が本体 (空の本体 `class E < StandardError; end` には EXEC が無い)
         j = k + 1
-        while j < insns.size && !(insns[j].name == "EXEC" && insns[j].operands[0] == a)
-          j += 1
+        if j < insns.size && insns[j].name == "EXEC" && insns[j].operands[0] == a
+          body = irep.reps[insns[j].operands[1]]
+          ctx.exec_at[site_key(irep, j)] = body
+          ctx.bodies[body.index] = true
+          analyze(body, k2, ctx, [full] + cref)
         end
-        raise Error, "#{source}: no body for #{full} at #{where(irep, insn)}" if j >= insns.size
-        body = irep.reps[insns[j].operands[1]]
-        ctx.exec_at[site_key(irep, j)] = body
-        ctx.bodies[body.index] = true
-        analyze(body, k2, ctx)
       when "TDEF"
         m = irep.reps[ops[2]]
         scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
         ctx.method_names[m.index] = irep.syms[ops[1]]
-        analyze(m, scope, ctx)
+        analyze(m, scope, ctx, cref)
       when "SDEF"
         d = prev_def(insns, k, ops[0])
         unless ctx.bodies[irep.index] && d && d.name == "LOADSELF"
@@ -400,15 +432,29 @@ module FpgaRom
         m = irep.reps[ops[2]]
         scope.meta_methods[irep.syms[ops[1]]] = m
         ctx.method_names[m.index] = irep.syms[ops[1]]
-        analyze(m, scope, ctx)
+        analyze(m, scope, ctx, cref)
       when "BLOCK", "LAMBDA"
         block = irep.reps[ops[1]]
         ctx.parents[block.index] = irep
         ctx.lambdas[block.index] = true if insn.name == "LAMBDA"
-        analyze(block, scope, ctx)
+        analyze(block, scope, ctx, cref)
       when "SETCONST"
         name = irep.syms[ops[1]]
         ctx.const_keys[scope.id == FpgaIsa::CLS_OBJECT ? name : "#{scope.name}::#{name}"] = true
+      when "SETMCNST"
+        # A::X = v: 入れ物 (R[a+1]) は知っているクラスかモジュール
+        base = const_path(ctx, irep, insns, k, ops[0] + 1)
+        unless base && ctx.klass_named(base)
+          raise Error, "#{source}: SETMCNST at #{where(irep, insn)} assigns into something that is not a known class or module"
+        end
+        ctx.const_keys["#{base}::#{irep.syms[ops[1]]}"] = true
+      when "GETGV", "SETGV"
+        # io_map.rb に無い名前は一般のグローバル変数 (定数の表に置く)
+        name = irep.syms[ops[1]]
+        unless FpgaIoMap.fetch(name) || ctx.globals.include?(name)
+          ctx.globals << name
+          ctx.const_slot(name, name)
+        end
       when "SSENDB"
         # lambda { } に渡したブロックは lambda (ブロックの中の return を通すため)
         sym = irep.syms[ops[1]]
@@ -438,7 +484,7 @@ module FpgaRom
             raise Error, "#{source}: include at #{where(irep, insn)} takes module constants only" unless d && d.name == "GETCONST"
             mname = irep.syms[d.operands[1]]
             mod = nil
-            ctx.lexical_names(scope, mname).each { |n| mod ||= ctx.klass_named(n) }
+            ctx.lexical_names(cref, mname).each { |n| mod ||= ctx.klass_named(n) }
             raise Error, "#{source}: #{mname} at #{where(irep, insn)} is not a known module" unless mod && mod.is_module
             scope.includes << mod
           end
@@ -668,9 +714,9 @@ module FpgaRom
     if name == "GETGV" || name == "SETGV"
       sym = irep.syms[b]
       port = FpgaIoMap.fetch(sym)
+      # ポートでなければ一般のグローバル変数: 定数の表の番号 (始めに nil にしてあるので、代入前に読むと nil)
       unless port
-        raise Error, "#{source}: #{name} at #{where(irep, insn)} uses #{sym}, " \
-                     "which is not in tools/fpga/io_map.rb (known: #{FpgaIoMap::BY_NAME.keys.join(', ')})"
+        return Word.new(pc, insn, FpgaIsa.op(name == "GETGV" ? "GETCONST" : "SETCONST").num, a, ctx.consts.fetch(sym), 0, irep)
       end
       if name == "SETGV" && port.dir == :in
         raise Error, "#{source}: SETGV at #{where(irep, insn)} writes #{sym}, which is an input port"
@@ -704,6 +750,21 @@ module FpgaRom
     # クラスの本体の attr_* / include / private など: 実行時は nil を置くだけ
     return Word.new(pc, insn, FpgaIsa.op("LOADNIL").num, a, 0, 0, irep) if ctx.noops[site_key(irep, k)]
 
+    # A::X: 入れ物を GETCONST / GETMCNST の連なりから解き、クラスならその即値、定数なら番号
+    if name == "GETMCNST" || name == "SETMCNST"
+      base = const_path(ctx, irep, ctx.decoded[irep.index], k, name == "GETMCNST" ? a : a + 1)
+      full = base ? "#{base}::#{irep.syms[b]}" : nil
+      unless full && ctx.klass_named(base)
+        raise Error, "#{source}: #{name} at #{where(irep, insn)} looks in something that is not a known class or module"
+      end
+      kl = ctx.klass_named(full)
+      return Word.new(pc, insn, FpgaIsa.op("CLASS").num, a, kl.id, 0, irep) if kl && name == "GETMCNST"
+      unless ctx.const_keys[full]
+        raise Error, "#{source}: #{full} at #{where(irep, insn)} is not assigned anywhere in the program" if name == "GETMCNST"
+      end
+      return Word.new(pc, insn, FpgaIsa.op(name == "GETMCNST" ? "GETCONST" : "SETCONST").num, a, ctx.const_slot(full, full), 0, irep)
+    end
+
     # 定数: 字句の入れ子の順に探す。クラスならその即値 (CLASS)、ほかは番号
     if name == "GETCONST" || name == "SETCONST"
       sym = irep.syms[b]
@@ -712,7 +773,7 @@ module FpgaRom
       if name == "SETCONST"
         key = scope.id == FpgaIsa::CLS_OBJECT ? sym : "#{scope.name}::#{sym}"
       else
-        ctx.lexical_names(scope, sym).each do |n|
+        ctx.lexical_names(ctx.cref[irep.index], sym).each do |n|
           next if key
           kl = ctx.klass_named(n)
           return Word.new(pc, insn, FpgaIsa.op("CLASS").num, a, kl.id, 0, irep) if kl
