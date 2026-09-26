@@ -107,6 +107,12 @@ def fpga_run_and_judge(tb, sim, cmd)
   puts "ok #{tb} (#{sim})"
 end
 
+# コンパイラの出力 (make の行、Icarus の "sorry" 等) は log に落とし、失敗した時だけ見せる。
+def fpga_quiet_sh(log, *cmd)
+  ok = system(*cmd, out: log, err: [:child, :out])
+  raise "#{cmd.first} failed (log: #{log.sub("#{HARNESS_ROOT}/", "")}):\n#{File.read(log)}" unless ok
+end
+
 # Verilator --binary。C++ を書かずに SV だけのテストベンチを実行ファイルにする。
 # -Wall の warning は error 扱い (Verilator の既定)。波形は FST。
 def fpga_sim_verilator(tb)
@@ -114,9 +120,10 @@ def fpga_sim_verilator(tb)
   mdir = File.join(FPGA_BUILD_DIR, "verilator", tb)
   FileUtils.rm_rf mdir
   FileUtils.mkdir_p mdir
-  sh "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
-     "-j", "0", "--Mdir", mdir, "--top-module", tb, "-o", tb,
-     *fpga_rtl_sources, path
+  fpga_quiet_sh(File.join(mdir, "build.log"),
+                "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
+                "-j", "0", "--Mdir", mdir, "--top-module", tb, "-o", tb,
+                *fpga_rtl_sources, path)
   dump = File.join(FPGA_BUILD_DIR, "#{tb}.fst")
   fpga_run_and_judge(tb, "verilator", [File.join(mdir, tb), "+dump=#{dump}"])
   puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
@@ -128,7 +135,7 @@ def fpga_sim_icarus(tb)
   dir = File.join(FPGA_BUILD_DIR, "icarus")
   FileUtils.mkdir_p dir
   vvp = File.join(dir, "#{tb}.vvp")
-  sh "iverilog", "-g2012", "-Wall", "-o", vvp, "-s", tb, *fpga_rtl_sources, path
+  fpga_quiet_sh(File.join(dir, "#{tb}.build.log"), "iverilog", "-g2012", "-Wall", "-o", vvp, "-s", tb, *fpga_rtl_sources, path)
   dump = File.join(FPGA_BUILD_DIR, "#{tb}.icarus.fst")
   fpga_run_and_judge(tb, "icarus", ["vvp", "-n", vvp, "-fst", "+dump=#{dump}"])
   puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
@@ -209,11 +216,13 @@ require_relative "../tools/fpga/ref_vm"
 require_relative "../tools/fpga/compare"
 require_relative "../tools/fpga/corpus"
 require_relative "../tools/fpga/gen_pkg"
+require_relative "../tools/fpga/quartus"
 
 FPGA_SIM_DIR      = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR      = File.join(FPGA_BUILD_DIR, "rom")
 FPGA_CORE_NREGS   = 16
 FPGA_DEFAULT_STEPS = 20_000
+FPGA_BOARD_BUILD  = File.join(FPGA_BUILD_DIR, "peridot_air")
 
 # .rb (mrbc でその場で compile) か .mrb を ROM イメージにして build/fpga/rom/ に書く。
 def fpga_rom(src)
@@ -348,6 +357,43 @@ namespace :fpga do
 
   desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation"
   task test: ["test:fpga", "fpga:tb", "fpga:check"]
+
+  # ---- PERIDOT-Air 実機 (issue #10 #11)。合成は Quartus、書き込みは openFPGALoader
+  desc "Synthesize for PERIDOT-Air with Quartus (local quartus_sh, or FPGA_QUARTUS_HOST over ssh). e.g. rake fpga:build[fpga/corpus/blink.mrb]"
+  task :build, [:src, :ce_div] do |_t, args|
+    raise "usage: rake fpga:build[<file.rb|file.mrb>,<CE_DIV>]" unless args[:src]
+    image, _hex = fpga_rom(args[:src])
+    dir = FpgaQuartus.write_project(FPGA_BOARD_BUILD, image, ce_div: (args[:ce_div] || 1000).to_i)
+    rel = dir.sub("#{HARNESS_ROOT}/", "")
+    puts "project: #{rel} (#{image.words.size} words from #{args[:src]})"
+
+    host = ENV["FPGA_QUARTUS_HOST"]
+    if fpga_tool?("quartus_sh")
+      FileUtils.cd(dir) { sh FpgaQuartus.compile_script }
+    elsif host
+      remote = ENV["FPGA_QUARTUS_DIR"] || "r2p2-fpga-build"
+      sh "rsync", "-a", "--delete", "#{dir}/", "#{host}:#{remote}/"
+      sh "ssh", host, "cd #{remote.shellescape} && #{FpgaQuartus.compile_script}"
+      sh "rsync", "-a", "#{host}:#{remote}/output_files/", File.join(dir, "output_files/")
+    else
+      raise "Quartus is not here. Put quartus_sh on PATH, or set FPGA_QUARTUS_HOST=<ssh host> " \
+            "(a Linux VM with Quartus Lite; docs/spec.md §10). The project is ready in #{rel}"
+    end
+
+    summary = FpgaQuartus.fit_summary(dir)
+    puts summary ? summary.join("\n") : "no fit summary in #{rel}/output_files"
+    puts "svf: #{FpgaQuartus.svf_path(dir).sub("#{HARNESS_ROOT}/", '')}"
+  end
+
+  desc "Write the last fpga:build into PERIDOT-Air's SRAM over USB-Blaster with openFPGALoader (lost at power off)"
+  task :flash do
+    svf = FpgaQuartus.svf_path(FPGA_BOARD_BUILD)
+    raise "no #{svf.sub("#{HARNESS_ROOT}/", '')}. Run `rake fpga:build[...]` first" unless File.file?(svf)
+    unless fpga_tool?("openFPGALoader")
+      raise "openFPGALoader not found. `brew install openfpgaloader` (macOS) / `apt-get install openfpgaloader` (Linux)"
+    end
+    sh "openFPGALoader", "-c", ENV["FPGA_CABLE"] || "usb-blaster", svf
+  end
 end
 
 namespace :test do
