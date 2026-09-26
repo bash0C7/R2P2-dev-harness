@@ -221,6 +221,7 @@ require_relative "../tools/fpga/gen_pkg"
 require_relative "../tools/fpga/quartus"
 require_relative "../tools/fpga/emu"
 require_relative "../tools/fpga/fuzz"
+require_relative "../tools/fpga/gap"
 
 FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
@@ -467,6 +468,40 @@ namespace :fpga do
     end
     puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
          "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{gcs} GC in #{gc_progs} program(s))"
+  end
+
+  desc "Measure how many real PicoRuby programs (gem examples, examples/, fpga/corpus) convert and run on the core, and what blocks the rest"
+  task :gap, [:verbose] do |_t, args|
+    require_fpga_tools!
+    mrbc = FpgaCorpus.default_mrbc
+    raise "#{mrbc} is not built. Run `rake setup` and `rake test:host`" unless File.executable?(mrbc)
+    dir = File.join(FPGA_BUILD_DIR, "gap")
+    FileUtils.rm_rf dir
+    FileUtils.mkdir_p dir
+    results = FpgaGap.targets.map { |path| FpgaGap.check(path, mrbc: mrbc, dir: dir) }
+    # 変換できたものは参照とコアで走らせて突き合わせる
+    results.each do |r|
+      next unless r[:status] == :converted
+      ref = fpga_ref_trace(r[:hex], stim: nil, max: FPGA_DEFAULT_STEPS)
+      sim = fpga_sim_trace(r[:hex], name: "gap", stim: nil, max: FPGA_DEFAULT_STEPS)
+      r[:status] = FpgaCompare.compare(ref, sim).ok ? :matched : :differs
+    end
+    lines = []
+    count = ->(st) { results.count { |r| r[:status] == st } }
+    in_scope = results.size - count.(:out_of_scope)
+    lines << "#{results.size} program(s): #{in_scope} in scope, #{count.(:out_of_scope)} out of scope (hardware the board lacks)"
+    lines << "in scope: #{count.(:matched) + count.(:differs)} convert, #{count.(:matched)} match the reference, " \
+             "#{count.(:differs)} differ, #{count.(:blocked)} blocked"
+    lines << "blocked by (programs):"
+    FpgaGap.histogram(results).each { |reason, n| lines << format("  %4d  %s", n, reason) }
+    lines << "per program:"
+    results.each do |r|
+      lines << format("  %-13s %s%s", r[:status], FpgaGap.rel(r[:path]), r[:reasons].empty? ? "" : "  (#{r[:reasons].join(', ')})")
+    end
+    report = File.join(FPGA_BUILD_DIR, "gap.txt")
+    File.write(report, lines.join("\n") + "\n")
+    puts(args[:verbose] ? lines : lines.take_while { |l| l != "per program:" }.first(30))
+    puts "full report: #{fpga_rel(report)}"
   end
 
   desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
