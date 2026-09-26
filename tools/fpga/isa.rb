@@ -82,7 +82,8 @@ module FpgaIsa
   #   STRCAT        SEND a+1 :to_s と SEND a :<< (式展開は新しい STRING から始まるので R[a] を伸ばしてよい)
   #   LOADL         32bit に収まる整数は LOADI32
   #   JMPUW         catch handler の無い irep ではただの JMP (while の中の break)
-  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL JMPUW].freeze
+  #   HASH HASHADD HASHCAT RANGE_INC RANGE_EXC  プレリュードの Hash / Range を作るメソッドの呼び出し (ARRAY と SEND)
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL JMPUW HASH HASHADD HASHCAT RANGE_INC RANGE_EXC].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
   # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
@@ -118,13 +119,13 @@ module FpgaIsa
     ["Integer", "%", 1, "MOD"], ["Integer", "-@", 0, "NEG"], ["Integer", "<<", 1, "SHL"], ["Integer", ">>", 1, "SHR"],
     ["Integer", "&", 1, "AND"], ["Integer", "|", 1, "OR"], ["Integer", "^", 1, "XOR"], ["Integer", "~", 0, "INV"],
     ["Integer", "abs", 0, "ABS"], ["Integer", "zero?", 0, "ZERO"], ["Integer", "even?", 0, "EVEN"], ["Integer", "odd?", 0, "ODD"],
-    ["Object", "!", 0, "NOT"], ["Object", "==", 1, "OEQ"], ["Object", "class", 0, "CLASSOF"],
+    ["Object", "!", 0, "NOT"], ["Object", "==", 1, "OEQ"], ["Object", "equal?", 1, "SAME"], ["Object", "class", 0, "CLASSOF"],
     ["Object", "sleep_ms", 1, "SLEEPMS"], ["Object", "sleep", 1, "SLEEP"], ["Object", "lambda", 0, "LAMBDA"],
     ["Object", "is_a?", 1, "ISA"], ["Object", "kind_of?", 1, "KINDOF"], ["Object", "respond_to?", 1, "RESPOND"],
     ["Class", "new", -1, "NEW"],
     ["Array", "size", 0, "SIZE"], ["Array", "length", 0, "LENGTH"], ["Array", "empty?", 0, "EMPTY"],
     ["Array", "first", 0, "FIRST"], ["Array", "last", 0, "LAST"], ["Array", "pop", 0, "POP"],
-    ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "[]", 1, "AGET"], ["Array", "[]=", 2, "ASET"],
+    ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "__aget", 1, "AGET"], ["Array", "[]=", 2, "ASET"],
     ["Proc", "call", -1, "CALL"],
     # String (Array と同じ形で、1語に1バイト)。ほかのメソッドはプレリュード。__ で始まるものはプレリュードの中身
     ["String", "bytesize", 0, "SBYTES"], ["String", "getbyte", 1, "SGETB"], ["String", "__aset", 2, "SASET"],
@@ -180,6 +181,14 @@ module FpgaIsa
   CLS_PROC   = 8
   CLS_CLASS  = 9
   CLS_STRING = 11
+  CLS_HASH   = 12
+  CLS_RANGE  = 13
+  CLS_EXC    = 15
+  # new できてインスタンス変数を持てるクラス: Object、プレリュードが Ruby で書く組み込み (Hash / Range / Exception)、
+  # プログラムのクラス (FIRST_USER_CLASS から CLS_DATA の前まで)
+  def self.instantiable?(cls)
+    cls == CLS_OBJECT || cls == CLS_HASH || cls == CLS_RANGE || cls == CLS_EXC || (cls >= FIRST_USER_CLASS && cls < CLS_DATA)
+  end
   CLS_DATA   = 0x7FF0
   CLS_ENV    = 0x7FF1
   FIRST_USER_CLASS = 32

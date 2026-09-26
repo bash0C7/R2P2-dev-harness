@@ -12,8 +12,8 @@ class FpgaGapTest < Minitest::Test
 
   # 最初の1つで止めず、止まる理由を全部挙げる
   def test_blockers_lists_every_reason
-    bin = rite([op("LOADL"), 1, 0, op("SSEND"), 1, 0, 1, op("HASH"), 2, 3, 0, op("STOP")], syms: %w[foo], pool: [:float])
-    assert_equal ["Float literal", "method foo", "op HASH"], FpgaGap.blockers(bin)
+    bin = rite([op("LOADL"), 1, 0, op("SSEND"), 1, 0, 1, op("SCLASS"), 2, op("STOP")], syms: %w[foo], pool: [:float])
+    assert_equal ["Float literal", "method foo", "op SCLASS"], FpgaGap.blockers(bin)
   end
 
   # 組み込み・iterator・def したメソッドは理由にしない

@@ -12,9 +12,14 @@ class FpgaRomTest < Minitest::Test
     refute_empty names
     names.each do |name|
       image = FpgaRom.from_binary(File.binread(File.join(CORPUS, "#{name}.mrb")))
-      dump = File.readlines(File.join(CORPUS, "#{name}.dump"), chomp: true).map { |l| l.split(/\s+/, 4) }
-      # 元の命令ごとの先頭の語 (block_given? は数語になり、TABLE・本体の ENTER・メソッド表は変換器が足す)。
-      # dump の irep の順は ROM の並びと同じ
+      # dump は irep ごとの命令の行 ("irep" で区切る。順は ROM の並びと同じ)。ROM に置かなかった irep (呼ばれないメソッド) は除く
+      groups = []
+      File.readlines(File.join(CORPUS, "#{name}.dump"), chomp: true).each do |l|
+        l == "irep" ? groups << [] : groups.last << l.split(/\s+/, 4)
+      end
+      assert_equal image.ireps.size, groups.size, name
+      dump = groups.each_with_index.flat_map { |g, i| image.ireps[i].base ? g : [] }
+      # 元の命令ごとの先頭の語 (block_given? は数語になり、TABLE・本体の ENTER・メソッド表は変換器が足す)
       firsts = image.words.select(&:first)
       pc_of = firsts.to_h { |w| [[w.irep.index, w.insn.addr], w.pc] }
       assert_equal dump.size, firsts.size, name
@@ -38,7 +43,8 @@ class FpgaRomTest < Minitest::Test
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
-    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32]
+    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32],
+    "HASH" => %w[ARRAY], "HASHADD" => %w[ARRAY], "HASHCAT" => %w[SEND], "RANGE_INC" => %w[SEND], "RANGE_EXC" => %w[SEND]
   }.freeze
 
   def check_operands(where, opname, fields, w, pc_of, image)
@@ -139,8 +145,8 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_unsupported_instruction_with_location
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("HASH"), 1, 0, op("STOP")])) }
-    assert_match(/unsupported instruction\(s\): HASH at byte 001/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("SCLASS"), 1, op("STOP")])) }
+    assert_match(/unsupported instruction\(s\): SCLASS at byte 001/, e.message)
   end
 
   # 呼び出しは b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。演算の落ち先のシンボルは 0 から固定
@@ -179,11 +185,11 @@ class FpgaRomTest < Minitest::Test
   # ENTER: a = 必須、b = nregs、c = 省略可能 | 残り << 5 | 後ろの必須 << 6。キーワード引数は止める
   def test_enter_carries_the_parameter_shape
     params = irep_record([op("ENTER"), 0x04, 0x30, 0x80, op("RETNIL")], nregs: 7) # 1:1:1:1:0:0:0 (m1 o r m2)
-    image = FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [params]))
+    image = FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [params]))
     enter = image.words.find { |w| FpgaIsa::OPS[w.op]&.name == "ENTER" }
     assert_equal [1, 7, 1 | (1 << 5) | (1 << 6)], [enter.a, enter.b, enter.c]
     kw = irep_record([op("ENTER"), 0x00, 0x00, 0x04, op("RETNIL")]) # 0:0:0:0:1:0:0 (key 1)
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [kw])) }
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [kw])) }
     assert_match(/takes keyword parameters/, e.message)
   end
 
@@ -200,7 +206,7 @@ class FpgaRomTest < Minitest::Test
         class Bar < Foo
           def get = 2
         end
-        $LED = Bar.make
+        $LED = Bar.make + Bar.new.get + Foo.new.get
       RUBY
       foo = image.class_names.key("Foo")
       bar = image.class_names.key("Bar")
@@ -439,9 +445,9 @@ class FpgaRomTest < Minitest::Test
   def test_picoruby_converter_stops_with_the_location
     with_picoruby do |dir|
       e = assert_raises(FpgaConverter::Error) do
-        picoruby_convert(dir, rite([op("NOP"), op("HASH"), 1, 0, op("STOP")]))
+        picoruby_convert(dir, rite([op("NOP"), op("SCLASS"), 1, op("STOP")]))
       end
-      assert_match(/unsupported instruction\(s\): HASH at byte 001/, e.message)
+      assert_match(/unsupported instruction\(s\): SCLASS at byte 001/, e.message)
       e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
       assert_match(/needs 17 registers/, e.message)
     end

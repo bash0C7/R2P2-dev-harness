@@ -30,6 +30,9 @@ package mrb_pkg;
   localparam logic [15:0] CLS_PROC   = 16'd8;
   localparam logic [15:0] CLS_CLASS  = 16'd9;
   localparam logic [15:0] CLS_STRING = 16'd11;
+  localparam logic [15:0] CLS_HASH   = 16'd12;
+  localparam logic [15:0] CLS_RANGE  = 16'd13;
+  localparam logic [15:0] CLS_EXC    = 16'd15;
   localparam logic [15:0] CLS_DATA   = 16'd32752;
   localparam logic [15:0] CLS_ENV    = 16'd32753;
   localparam logic [15:0] CLS_META   = 16'h8000;
@@ -88,32 +91,33 @@ package mrb_pkg;
   localparam logic [13:0] PR_ODD      = 14'd20; // Integer#odd? (0 arg)
   localparam logic [13:0] PR_NOT      = 14'd21; // Object#! (0 arg)
   localparam logic [13:0] PR_OEQ      = 14'd22; // Object#== (1 arg)
-  localparam logic [13:0] PR_CLASSOF  = 14'd23; // Object#class (0 arg)
-  localparam logic [13:0] PR_SLEEPMS  = 14'd24; // Object#sleep_ms (1 arg)
-  localparam logic [13:0] PR_SLEEP    = 14'd25; // Object#sleep (1 arg)
-  localparam logic [13:0] PR_LAMBDA   = 14'd26; // Object#lambda (0 arg)
-  localparam logic [13:0] PR_ISA      = 14'd27; // Object#is_a? (1 arg)
-  localparam logic [13:0] PR_KINDOF   = 14'd28; // Object#kind_of? (1 arg)
-  localparam logic [13:0] PR_RESPOND  = 14'd29; // Object#respond_to? (1 arg)
-  localparam logic [13:0] PR_NEW      = 14'd30; // Class#new (any)
-  localparam logic [13:0] PR_SIZE     = 14'd31; // Array#size (0 arg)
-  localparam logic [13:0] PR_LENGTH   = 14'd32; // Array#length (0 arg)
-  localparam logic [13:0] PR_EMPTY    = 14'd33; // Array#empty? (0 arg)
-  localparam logic [13:0] PR_FIRST    = 14'd34; // Array#first (0 arg)
-  localparam logic [13:0] PR_LAST     = 14'd35; // Array#last (0 arg)
-  localparam logic [13:0] PR_POP      = 14'd36; // Array#pop (0 arg)
-  localparam logic [13:0] PR_PUSH     = 14'd37; // Array#push (1 arg)
-  localparam logic [13:0] PR_APUSH    = 14'd38; // Array#<< (1 arg)
-  localparam logic [13:0] PR_AGET     = 14'd39; // Array#[] (1 arg)
-  localparam logic [13:0] PR_ASET     = 14'd40; // Array#[]= (2 arg)
-  localparam logic [13:0] PR_CALL     = 14'd41; // Proc#call (any)
-  localparam logic [13:0] PR_SBYTES   = 14'd42; // String#bytesize (0 arg)
-  localparam logic [13:0] PR_SGETB    = 14'd43; // String#getbyte (1 arg)
-  localparam logic [13:0] PR_SASET    = 14'd44; // String#__aset (2 arg)
-  localparam logic [13:0] PR_SPUSH    = 14'd45; // String#__push (1 arg)
-  localparam logic [13:0] PR_SSLICE   = 14'd46; // String#__slice (2 arg)
-  localparam logic [13:0] PR_SYMSTR   = 14'd47; // Symbol#to_s (0 arg)
-  localparam logic [13:0] PR_NAMESYM  = 14'd48; // Module#__name_sym (0 arg)
+  localparam logic [13:0] PR_SAME     = 14'd23; // Object#equal? (1 arg)
+  localparam logic [13:0] PR_CLASSOF  = 14'd24; // Object#class (0 arg)
+  localparam logic [13:0] PR_SLEEPMS  = 14'd25; // Object#sleep_ms (1 arg)
+  localparam logic [13:0] PR_SLEEP    = 14'd26; // Object#sleep (1 arg)
+  localparam logic [13:0] PR_LAMBDA   = 14'd27; // Object#lambda (0 arg)
+  localparam logic [13:0] PR_ISA      = 14'd28; // Object#is_a? (1 arg)
+  localparam logic [13:0] PR_KINDOF   = 14'd29; // Object#kind_of? (1 arg)
+  localparam logic [13:0] PR_RESPOND  = 14'd30; // Object#respond_to? (1 arg)
+  localparam logic [13:0] PR_NEW      = 14'd31; // Class#new (any)
+  localparam logic [13:0] PR_SIZE     = 14'd32; // Array#size (0 arg)
+  localparam logic [13:0] PR_LENGTH   = 14'd33; // Array#length (0 arg)
+  localparam logic [13:0] PR_EMPTY    = 14'd34; // Array#empty? (0 arg)
+  localparam logic [13:0] PR_FIRST    = 14'd35; // Array#first (0 arg)
+  localparam logic [13:0] PR_LAST     = 14'd36; // Array#last (0 arg)
+  localparam logic [13:0] PR_POP      = 14'd37; // Array#pop (0 arg)
+  localparam logic [13:0] PR_PUSH     = 14'd38; // Array#push (1 arg)
+  localparam logic [13:0] PR_APUSH    = 14'd39; // Array#<< (1 arg)
+  localparam logic [13:0] PR_AGET     = 14'd40; // Array#__aget (1 arg)
+  localparam logic [13:0] PR_ASET     = 14'd41; // Array#[]= (2 arg)
+  localparam logic [13:0] PR_CALL     = 14'd42; // Proc#call (any)
+  localparam logic [13:0] PR_SBYTES   = 14'd43; // String#bytesize (0 arg)
+  localparam logic [13:0] PR_SGETB    = 14'd44; // String#getbyte (1 arg)
+  localparam logic [13:0] PR_SASET    = 14'd45; // String#__aset (2 arg)
+  localparam logic [13:0] PR_SPUSH    = 14'd46; // String#__push (1 arg)
+  localparam logic [13:0] PR_SSLICE   = 14'd47; // String#__slice (2 arg)
+  localparam logic [13:0] PR_SYMSTR   = 14'd48; // Symbol#to_s (0 arg)
+  localparam logic [13:0] PR_NAMESYM  = 14'd49; // Module#__name_sym (0 arg)
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -140,6 +144,7 @@ package mrb_pkg;
       PR_ODD     : return 8'h00;
       PR_NOT     : return 8'h00;
       PR_OEQ     : return 8'h01;
+      PR_SAME    : return 8'h01;
       PR_CLASSOF : return 8'h00;
       PR_SLEEPMS : return 8'h01;
       PR_SLEEP   : return 8'h01;

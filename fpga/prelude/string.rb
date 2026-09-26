@@ -639,7 +639,7 @@ class Array
     i = 0
     while i < size
       r << ", " if i > 0
-      r << self[i].inspect
+      r << __aget(i).inspect
       i += 1
     end
     r << "]"
@@ -654,7 +654,7 @@ class Array
     i = 0
     while i < size
       r << sep if i > 0
-      x = self[i]
+      x = __aget(i)
       r << (x.is_a?(Array) ? x.join(sep) : x.to_s)
       i += 1
     end
