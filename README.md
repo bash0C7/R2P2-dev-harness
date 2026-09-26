@@ -89,6 +89,19 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
   別 session が使っていると待つ ([docs/spec.md](docs/spec.md) §6)
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
+FPGA (mruby ネイティブ CPU、issue #4) の HDL シミュレーション。`vendor/picoruby` は要らない。
+macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる:
+
+```sh
+rake fpga:setup                   # 足りないシミュレータを入れる (brew / apt-get)。最後に doctor を回す
+rake fpga:doctor                  # 入っているかと版を見る
+rake fpga:test                    # fpga/tb/*_tb.sv を全部、Verilator と Icarus の両方で回す
+rake fpga:sim[counter8_tb]        # 1本だけ Verilator で。波形は build/fpga/counter8_tb.fst
+rake fpga:sim:icarus[counter8_tb] # 1本だけ Icarus で (4値。リセット漏れの X が見える)
+```
+
+波形は `surfer build/fpga/counter8_tb.fst` で開く。約束事と罠は [docs/spec.md](docs/spec.md) §10。
+
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、
 `rake test:esp32` (`tools/common` と `tools/esp32`)。`rake test` には含まれない。
 
