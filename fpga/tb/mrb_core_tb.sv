@@ -1153,6 +1153,39 @@ module mrb_core_tb;
     run();
     expect_error(3);
 
+    // ---- キーワード引数: 印 KW (c の bit 8) 付きの呼び出しは R[a+1] に Hash、ブロックはその次。
+    //      ENTER の kd (c の bit 11) は R[len+1] に Hash (渡されなければ空の Hash を作る)、kd でなければ最後の引数として数える
+    begin_test("keyword arguments");
+    method_entry(CLS_NIL, 20, 16'd11);
+    method_entry(CLS_NIL, 21, 16'd13);
+    method_entry(CLS_NIL, 22, 16'd15);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI8, 2, 42));                     // 1: 渡す Hash の代わり (回路は型を見ない)
+    prog.push_back(w(OP_SSEND, 1, 20, 16'h100));             // 2: R1 = f(**42)
+    prog.push_back(w(OP_SSEND0, 3, 20));                     // 3: R3 = f() (空の Hash)
+    prog.push_back(w(OP_LOADI8, 5, 43));                     // 4
+    prog.push_back(w(OP_SSEND, 4, 21, 16'h100));             // 5: R4 = g(**43) (kd でない: 引数 1 個になる)
+    prog.push_back(w(OP_LOADI8, 7, 44));                     // 6
+    prog.push_back(w(OP_BLOCK, 8, 17));                      // 7
+    prog.push_back(w(OP_NOP));                               // 8
+    prog.push_back(w(OP_SSEND, 6, 22, 16'h180));             // 9: R6 = h(**44, &R8) (ブロックは Hash の次)
+    prog.push_back(w(OP_STOP));                              // 10
+    prog.push_back(w(OP_ENTER, 0, 5, 16'h800));              // 11: f(**k)
+    prog.push_back(w(OP_RETURN, 1));                         // 12
+    prog.push_back(w(OP_ENTER, 1, 4));                       // 13: g(a)
+    prog.push_back(w(OP_RETURN, 1));                         // 14
+    prog.push_back(w(OP_ENTER, 0, 5, 16'h800));              // 15: h(**k, &b)
+    prog.push_back(w(OP_RETURN, 2));                         // 16
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 17: ブロック
+    prog.push_back(w(OP_RETNIL));                            // 18
+    run();
+    expect_halt();
+    expect_reg(1, vint(42));
+    expect_reg(4, vint(43));
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][10:0]] !== {TAG_HDR, CLS_HASH, 16'd4})
+      $fatal(1, "%s: R3 is not an empty Hash", name);
+    if (dut.core.regs[6] !== dut.core.regs[8] || dut.core.regs[6][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: the block did not reach h", name);
+
     begin_test("upvar below the register file");
     prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い
     run();

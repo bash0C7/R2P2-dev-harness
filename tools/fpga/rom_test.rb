@@ -38,9 +38,11 @@ class FpgaRomTest < Minitest::Test
 
   # 別の命令に置き換わるもの
   REWRITTEN = {
-    "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SENDB" => %w[SEND], "SSENDB" => %w[SSEND], "MODULE" => %w[CLASS],
+    "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SENDB" => %w[SEND ARRAY MOVE], "SSENDB" => %w[SSEND ARRAY MOVE], "MODULE" => %w[CLASS],
     "LOADSELF" => %w[MOVE], "RETSELF" => %w[RETURN], "RETTRUE" => %w[LOADTRUE], "RETFALSE" => %w[LOADFALSE],
-    "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL],
+    "SEND" => %w[ARRAY MOVE], "SUPER" => %w[ARRAY MOVE], # キーワード引数は Hash にしてから呼ぶ
+    "KARG" => %w[MOVE], "KEY_P" => %w[MOVE], "KEYEND" => %w[MOVE],
+    "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
     "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32],
@@ -182,7 +184,8 @@ class FpgaRomTest < Minitest::Test
     assert_equal image.ireps[2].base, lookup(image, FpgaIsa::CLS_OBJECT, "f")
   end
 
-  # ENTER: a = 必須、b = nregs、c = 省略可能 | 残り << 5 | 後ろの必須 << 6。キーワード引数は止める
+  # ENTER: a = 必須、b = nregs、c = 省略可能 | 残り << 5 | 後ろの必須 << 6 | kd << 11。kd (キーワード引数) なら回路が空の Hash を
+  # 作ることがあるので、プレリュードの Hash の形を確かめる (プレリュードの無いこの program では止まる)
   def test_enter_carries_the_parameter_shape
     params = irep_record([op("ENTER"), 0x04, 0x30, 0x80, op("RETNIL")], nregs: 7) # 1:1:1:1:0:0:0 (m1 o r m2)
     image = FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [params]))
@@ -190,7 +193,19 @@ class FpgaRomTest < Minitest::Test
     assert_equal [1, 7, 1 | (1 << 5) | (1 << 6)], [enter.a, enter.b, enter.c]
     kw = irep_record([op("ENTER"), 0x00, 0x00, 0x04, op("RETNIL")]) # 0:0:0:0:1:0:0 (key 1)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [kw])) }
-    assert_match(/takes keyword parameters/, e.message)
+    assert_match(/the prelude's Hash has instance variables \[\]/, e.message)
+  end
+
+  # キーワード引数: 呼ぶ側は組を Hash にして (ARRAY、__to_hash)、印 KW (c の bit 8) 付きで呼ぶ。KARG は Hash のメソッドの呼び出し
+  def test_keyword_calls_are_lowered
+    begin
+      image = FpgaRom.from_binary(File.binread(File.join(CORPUS, "kwargs.mrb")))
+      sends = image.words.select { |w| w.insn && FpgaIsa::OPS[w.op].name == "SEND" && (w.c & FpgaRom::KW) != 0 }
+      refute_empty sends
+      enters = image.words.select { |w| w.insn && FpgaIsa::OPS[w.op].name == "ENTER" && (w.c >> 11) == 1 }
+      refute_empty enters
+      assert(image.words.any? { |w| w.insn&.name == "KARG" && FpgaIsa::OPS[w.op].name == "MOVE" })
+    end
   end
 
   # クラス: CLASS は R[a] = クラスの即値、本体の EXEC は b = 本体の先頭 (変換器が足した ENTER)。

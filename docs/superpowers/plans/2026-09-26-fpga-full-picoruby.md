@@ -171,7 +171,15 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 - **Array の残りはプレリュード。** `Array#[]` は `(i)` だけ primitive で、`(i, n)` と `(range)` はプレリュード (`__aget` を呼ぶ)。
   `Enumerable` (each を使うもの) を Array・Hash・Range で共有する
 - **`case` / `when`** は `===` を送るだけ (P2 で Object#=== と Module#=== がある)。Range#=== は include?
-- **キーワード引数** は Hash の後に同じ段でやる (設計は着手時に書く)
+- **キーワード引数** (PicoRuby の vm.c の `vm_op_enter` / OP_SEND と同じ意味):
+  - 呼ぶ側: nk 組のキーワードは Hash にしてから呼ぶ。変換器が下げる: `ARRAY k 2nk` + 作業用レジスタ S (組とブロックより上) で
+    `__to_hash` + `MOVE k S` (+ ブロックを k+1 へ)、最後に印 (c の bit 8、KW) 付きの `SEND`。`**h` (nk = 15) は `h.empty?` なら印なしで呼ぶ
+  - フレームは印を持つ (`argkw`)。ブロックの枠はその1つ後ろ。`new` は initialize へ、Proc#call はブロックへ印を渡す。ほかの primitive はエラー
+  - `ENTER` (c の bit 11 = kd: キーワードか **opts を受ける): kd でなく印があれば、Hash を最後の引数として数える
+    (引数 14 個以上なら止める)。kd なら R[len+1] = 渡された Hash (無ければ回路が空の Hash を作る: Hash の形 `@keys @vals @default
+    @default_proc` を変換器が確かめる)、ブロックは R[len+2]
+  - `KARG` / `KEY_P` / `KEYEND` は、作業用レジスタ N = nregs (フレームの上) で `R[len+1].__karg(:k)` / `key?(:k)` / `__keyend` を
+    呼ぶ形に変換器が下げる (KARG は Hash から消す。**opts には残りが入る)
 ### P4 例外
 
 - `raise` / `rescue` / `ensure` / `retry` (`EXCEPT` `RESCUE` `RAISEIF` `JMPUW`)。irep の catch handler を ROM の表にする
@@ -201,6 +209,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P1e 定数の path・グローバル変数 | 51 | 19 (example は 0 / 32) | 19 | consts.rb を追加。`GETMCNST` は止める理由から消えた (`GPIO::OUT` などは P5 でクラスができれば通る)。上位は文字列 30、`puts` 15 |
 | 2026-09-26 | P2 文字列と出力 | 53 | 23 (example は 2 / 32: picoruby-dfu の app_1 / app_2) | 23 | hello.rb、strings.rb を追加。止める理由の上位はデバイス (`start` 14、`connect` 8、`require psg` 8)、`HASH` 4、Float 3 |
 | 2026-09-26 | P3a Hash・Range・Array | 54 | 25 (example は 3 / 32) | 25 | collections.rb を追加。使わないメソッドを ROM から落とす (live_ireps)。上位はデバイス |
+| 2026-09-26 | P3b キーワード引数 | 55 | 26 (example は 3 / 32) | 26 | kwargs.rb を追加。止める理由はデバイス (P5)、Float 3、`getch` など |
 
 ## 見つけたこと
 
@@ -256,3 +265,8 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
   CRuby には同じ形の Hash#inspect を入れてから比べる。PicoRuby の組み込みには `Hash#min_by` `sort_by`、`Array#tally` `zip`
   `each_slice`、`Range#sum` などが無い (プレリュードは持つ)。collections.rb は picoruby とは比べない
 - P3: `Range#===` を `<` で書いて、`(1..9) === "hi"` が String#< で止まった。CRuby の cover? と同じく <=> で比べ、比べられなければ偽
+- P3: キーワード引数は PicoRuby の vendor の vm.c (`vm_op_enter`、OP_SEND) を読んで合わせた。mruby 3.3 の説明と違い、
+  KARG で Hash から消し (dup しない)、kd のメソッドに Hash が渡されなければ空の Hash を作る。呼ぶ側の Hash 作りと KARG は
+  変換器がプレリュードの呼び出しに下げ、回路は印の受け渡しと空の Hash を作るだけにした
+- P3: tb のキーワード引数のケースで、比べるために取っておいたレジスタが呼び出し先のフレームの中にあり、ENTER が nil にした
+  (参照インタプリタと RTL は一致していて、テストの誤り)

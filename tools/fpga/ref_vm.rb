@@ -38,6 +38,8 @@ class FpgaRefVm
   def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [])
     @rom = words
     @regs = Array.new(nregs) { NIL }
+    @call_kw = 0 # 今の呼び出しのキーワード引数の印 (c の bit 8)
+    @kw = 0      # 今のフレームの印 (ENTER が見る)
     @io = Array.new(FpgaIoMap::NPORTS) { NIL }
     @consts = Array.new(FpgaIsa::NCONST)
     @heap = Array.new(FpgaIsa::HEAP_SIZE) { NIL }
@@ -449,13 +451,15 @@ class FpgaRefVm
       @symtab = c
     when "EXEC"
       fault! unless ok?(a + 1)
+      @call_kw = 0
       frame(pc, a, 0, false, @mcls)
       return b
     when "SUPER"
       @stats[:super_call] += 1
       # 今のメソッドが見つかったクラスの親から、同じ名前 (b) を引く。受け手は self、ブロックの枠はそのまま渡す
       argc = c & 0x7F
-      fault! unless ok?(a + window(argc))
+      @call_kw = (c >> 8) & 1
+      fault! unless ok?(a + window(argc) + @call_kw)
       @regs[@bp + a] = @regs[@bp]
       r = lookup(@mcls, b, super_first: true)
       fault! unless r
@@ -533,7 +537,9 @@ class FpgaRefVm
     when "BLOCK"
       fault! unless ok?(a)
       set(step, a, [FpgaIsa::TAG_OBJ, new_proc((b & 0xFFFF) | ((c & 0x80) << 16))])
-    when "BLKCALL" then return blkcall(pc, a, b, false)
+    when "BLKCALL"
+      @call_kw = 0
+      return blkcall(pc, a, b, false)
     when "ARYCAT"
       # R[a] = splat(R[a]) + splat(R[a+1])。splat: 配列は中身、nil は空、Proc と即値は1要素。
       # ほかのオブジェクトは to_a を持つかもしれないので止める
@@ -650,9 +656,11 @@ class FpgaRefVm
 
   # メソッドの呼び出し: R[a] (SSEND は R0 を R[a] に写してから) のクラスで b を引く。c = 引数の数 | ブロックを渡す印 << 7。
   # メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、R[1..引数の数] = 引数、その次がブロックの枠)、primitive ならその場で
+  # c の bit 8 (KW) はキーワード引数の Hash を R[window(argc)] に持つ印。ブロックの枠はその次 (@call_kw でフレームへ渡す)
   def send(step, pc, a, sym, c, self_call)
     argc = c & 0x7F
-    fault! unless ok?(a + window(argc))
+    @call_kw = (c >> 8) & 1
+    fault! unless ok?(a + window(argc) + @call_kw)
     @regs[@bp + a] = @regs[@bp] if self_call # self を受け手の場所へ (トレースに出さない)
     r = lookup(class_of(reg(a)), sym)
     fault! unless r
@@ -669,11 +677,11 @@ class FpgaRefVm
       frame(pc, a, argc, blk, found)
       tgt
     when FpgaIsa::TGT_IVAR
-      fault! unless argc.zero?
+      fault! unless argc.zero? && @call_kw.zero?
       set(step, a, @heap[ivar_addr(reg(a), tgt)])
       pc + 1
     else
-      fault! unless argc == 1
+      fault! unless argc == 1 && @call_kw.zero?
       @heap[ivar_addr(reg(a), tgt)] = reg(a + 1)
       set(step, a, reg(a + 1))
       pc + 1
@@ -696,12 +704,13 @@ class FpgaRefVm
     fault! if @stack.size >= FpgaIsa::STACK_DEPTH
     @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, ctor])
     @bp += a
-    @regs[@bp + window(argc)] = NIL unless blk
+    @regs[@bp + window(argc) + @call_kw] = NIL unless blk
     @cp = NIL
     @env = NIL
     @fn = 0
     @mcls = mcls
     @argc = argc
+    @kw = @call_kw
   end
 
   # 引数の後ろのブロックの枠の位置 (argc = 15 は R[1] に引数の配列)
@@ -714,15 +723,16 @@ class FpgaRefVm
   def blkcall(pc, a, n, blk)
     pr = reg(a)
     fault! unless proc?(pr)
-    fault! unless ok?(a + window(n)) && @stack.size < FpgaIsa::STACK_DEPTH
+    fault! unless ok?(a + window(n) + @call_kw) && @stack.size < FpgaIsa::STACK_DEPTH
     @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, false])
     @bp += a
     @regs[@bp] = @heap[pr[1] + 4]
-    @regs[@bp + window(n)] = NIL unless blk
+    @regs[@bp + window(n) + @call_kw] = NIL unless blk
     @cp = pr
     @env = NIL
     @fn = 0
     @argc = n
+    @kw = @call_kw
     @heap[pr[1] + 1][1] & 0xFFFF
   end
 
@@ -731,17 +741,29 @@ class FpgaRefVm
   # proc は調べずに、引数が1つの配列で len > 1 なら展開する。並べ終えると R[1..m1+o] 前、R[m1+o+1] 残りの配列、
   # その後ろに m2、R[len+1] ブロック、その先 nregs まで nil。省略可能な引数は、渡された数だけ後ろの JMP の表を飛ばす。
   # 書き込みはトレースに出さない (ハードウェアも同じ順に書く)
+  # キーワード引数 (c の bit 11 = kd、PicoRuby の vm_op_enter と同じ): 呼び出しの印 @kw があれば Hash は R[window(argc)]。
+  # kd でなければその Hash を最後の引数として数え (14 個以上は止める)、kd なら R[len+1] に置く (無ければ空の Hash を作る)。
+  # ブロックは R[len+kd+1]
   def enter(pc, a, b, c)
     m1 = a
     o = c & 0x1F
     r = (c >> 5) & 1
     m2 = (c >> 6) & 0x1F
+    kd = (c >> 11) & 1
     len = m1 + o + r + m2
-    fault! if @bp + [b, len + 2].max > @regs.size
+    fault! if @bp + [b, len + kd + 2].max > @regs.size
+    argc = @argc
+    kw = @kw || 0
+    if kw == 1 && kd.zero?
+      fault! if argc >= 14
+      argc += 1
+      kw = 0
+    end
+    kidx = argc == 15 ? 2 : argc + 1 # 印がある時の Hash の場所
     strict = !proc?(@cp) || lambda?(@cp)
-    heap = @argc == 15 || (!strict && @argc == 1 && len > 1 && ary?(reg(1)))
+    heap = argc == 15 || (!strict && argc == 1 && len > 1 && ary?(reg(1)))
     fault! if heap && !ary?(reg(1))
-    cnt = heap ? ary_len(reg(1)) : @argc
+    cnt = heap ? ary_len(reg(1)) : argc
     fault! if strict && (cnt < m1 + m2 || (r.zero? && cnt > m1 + o + m2))
     if cnt < len
       mlen = cnt < m1 + m2 ? [cnt - m1, 0].max : m2
@@ -759,14 +781,29 @@ class FpgaRefVm
       skip = o
       desc = false
     end
-    # 1. 残りの配列 (確保で GC が走ってよい。まだ何も動かしていない)
-    if r == 1
-      @stats[:rest] += 1
-      p = new_array(Array.new(rn))
-      rn.times { |k| @heap[p + 4 + k] = heap ? ary_get(reg(1), m1 + o + k) : reg(1 + m1 + o + k) }
+    # 1. 残りの配列と (kd で Hash が渡されなければ) 空の Hash を1回で確保する (GC が走ってよい。まだ何も動かしていない)
+    mkhash = kd == 1 && kw.zero?
+    rsize = r == 1 ? 4 + rn : 0
+    if r == 1 || mkhash
+      q = alloc(rsize + (mkhash ? 13 : 0))
+      if r == 1
+        @stats[:rest] += 1
+        p = q
+        @heap[p] = hdr(FpgaIsa::CLS_ARRAY, 2)
+        @heap[p + 1] = int(rn)
+        @heap[p + 2] = [FpgaIsa::TAG_OBJ, p + 3]
+        @heap[p + 3] = hdr(FpgaIsa::CLS_DATA, rn)
+        rn.times { |k| @heap[p + 4 + k] = heap ? ary_get(reg(1), m1 + o + k) : reg(1 + m1 + o + k) }
+      end
+      if mkhash
+        @stats[:kwhash] += 1
+        h = q + rsize
+        new_hash_at(h)
+      end
     end
-    # 2. 以後は確保しない。ブロックと、配列から読むならその中身の位置を覚えてから動かす
-    blk = @regs[@bp + (heap ? 2 : @argc + 1)]
+    # 2. 以後は確保しない。ブロック、キーワードの Hash と、配列から読むならその中身の位置を覚えてから動かす
+    blk = @regs[@bp + (heap ? 2 : argc + 1) + kw]
+    kdict = kd.zero? ? nil : (kw == 1 ? @regs[@bp + kidx] : [FpgaIsa::TAG_OBJ, h])
     src = heap ? reg(1) : nil
     get = ->(j) { heap ? ary_get(src, j) : @regs[@bp + 1 + j] }
     (desc ? (m2 - 1).downto(0) : 0.upto(m2 - 1)).each do |k|
@@ -774,8 +811,9 @@ class FpgaRefVm
     end
     ((heap ? 0 : front)...(m1 + o)).each { |i| @regs[@bp + 1 + i] = i < front ? get.(i) : NIL }
     @regs[@bp + m1 + o + 1] = [FpgaIsa::TAG_OBJ, p] if r == 1
-    @regs[@bp + len + 1] = blk
-    ((len + 2)...b).each { |i| @regs[@bp + i] = NIL }
+    @regs[@bp + len + 1] = kdict if kd == 1
+    @regs[@bp + len + kd + 1] = blk
+    ((len + kd + 2)...b).each { |i| @regs[@bp + i] = NIL }
     @fn = b
     @stats[:enter_skip] += 1 if skip > 0
     pc + 1 + skip
@@ -839,6 +877,21 @@ class FpgaRefVm
     ret(step, value)
   end
 
+  # 空の Hash を h から 13 語に作る (プレリュードの Hash の形: @keys @vals @default @default_proc。変換器が確かめる)
+  def new_hash_at(h)
+    @heap[h] = hdr(FpgaIsa::CLS_HASH, 4)
+    @heap[h + 1] = [FpgaIsa::TAG_OBJ, h + 5]
+    @heap[h + 2] = [FpgaIsa::TAG_OBJ, h + 9]
+    @heap[h + 3] = NIL
+    @heap[h + 4] = NIL
+    [5, 9].each do |x|
+      @heap[h + x] = hdr(FpgaIsa::CLS_ARRAY, 2)
+      @heap[h + x + 1] = int(0)
+      @heap[h + x + 2] = [FpgaIsa::TAG_OBJ, h + x + 3]
+      @heap[h + x + 3] = hdr(FpgaIsa::CLS_DATA, 0)
+    end
+  end
+
   def shift_left(x, s)
     return int(0) if s >= FpgaIsa::INT_BITS
     return int(x < 0 ? -1 : 0) if s <= -FpgaIsa::INT_BITS
@@ -851,6 +904,7 @@ class FpgaRefVm
     fault! unless pr
     fault! unless pr[2] == -1 || pr[2] == argc
     name = pr[3]
+    fault! unless @call_kw.zero? || name == "CALL" || name == "NEW" # キーワード引数を受ける primitive は new と call だけ
     return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
     x = reg(a)
