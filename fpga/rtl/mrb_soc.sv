@@ -5,6 +5,7 @@ module mrb_soc
   import mrb_pkg::*;
 #(
   parameter int    NREGS    = RF_SIZE,
+  parameter int    NTASKS   = TASKS,
   parameter int    PC_BITS  = 14,
   parameter int    HEAP_WORDS = HEAP_SIZE,
   parameter        ROM_FILE = "" // string。型を付けると Icarus が渡せない
@@ -63,7 +64,7 @@ module mrb_soc
 
   // トレース用の信号はテストベンチが core.* で覗く
   /* verilator lint_off PINCONNECTEMPTY */
-  mrb_core #(.NREGS(NREGS), .PC_BITS(PC_BITS), .HEAP_WORDS(HEAP_WORDS)) core (
+  mrb_core #(.NREGS(NREGS), .NTASKS(NTASKS), .PC_BITS(PC_BITS), .HEAP_WORDS(HEAP_WORDS)) core (
     .clk, .rst_n(core_rst_n), .en, .ms_tick,
     .rom_addr, .rom_data,
     .io_addr, .io_re, .vtime, .io_rdata, .io_we, .io_wdata,

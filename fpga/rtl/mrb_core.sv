@@ -23,7 +23,8 @@ module mrb_core
   import mrb_pkg::*;
   import mrb_fpconv_pkg::*;
 #(
-  parameter int NREGS   = RF_SIZE, // レジスタファイルの大きさ (全フレームで共有)
+  parameter int NREGS   = RF_SIZE, // タスク1つの区画のレジスタの数 (区画の中の全フレームで共有)
+  parameter int NTASKS  = TASKS,  // 区画の数 (タスクの数の上限。2 の冪)
   parameter int PC_BITS = 14,
   parameter int HEAP_WORDS = HEAP_SIZE // ヒープの語数 (2 の冪。半分ずつ使う)
 ) (
@@ -53,12 +54,15 @@ module mrb_core
   output logic [PC_BITS-1:0]  dbg_pc,
   output logic [7:0]          dbg_op,
   output logic                rf_we,
-  output logic [7:0]          rf_waddr,
+  output logic [15:0]         rf_waddr,  // レジスタファイル全体での番号 (区画 i は i * NREGS から)
   output logic [VAL_BITS-1:0] rf_wdata
 );
-  localparam int RB   = $clog2(NREGS);
+  localparam int NR   = NREGS * NTASKS; // レジスタファイル全体
+  localparam int RB   = $clog2(NR);
+  localparam int TB   = NTASKS > 1 ? $clog2(NTASKS) : 1;
   localparam int SB   = $clog2(STACK_DEPTH + 1);
   localparam int CB   = $clog2(NCONST);
+  localparam int VSB  = $clog2(LOCKED_INSNS_PER_US); // 1µs の中の単位 (LOCKED_INSNS_PER_US 分の 1 µs) の bit 数
   localparam int HB   = $clog2(HEAP_WORDS);
   localparam int HALF = HEAP_WORDS / 2;
   localparam logic [VAL_BITS-1:0] V_NIL = {TAG_NIL, {INT_BITS{1'b0}}};
@@ -113,13 +117,14 @@ module mrb_core
     LM_NIVARS,  // new のインスタンス変数の数 (親はたどらない、無ければ 0)
     LM_NAME,    // Module#name: (クラス, NAME_SYM) -> 名前のシンボル (親はたどらない、無ければ nil)
     LM_RESCUE,  // RESCUE: is_a? と同じく引いて R[b] に書く
-    LM_CERR     // Integer#__core_error (見つからなければエラー停止)
+    LM_CERR,    // Integer#__core_error (見つからなければエラー停止)
+    LM_TRAP     // タスクの割り込み Integer#__task_tick / __task_main_end (見つからなければ割り込まない / 止まる)
   } lmode_t;
   lmode_t lk_mode;
 
   logic [PC_BITS-1:0]  pc;
   logic [47:0]         ir;        // 実行中の命令 (EXEC で ROM から取る)
-  logic [VAL_BITS-1:0] regs [NREGS];
+  logic [VAL_BITS-1:0] regs [NR];
   logic [RB-1:0]       bp;
   logic [7:0]          argc;
   logic                argkw;     // 今のフレームにキーワード引数の Hash が渡されたか (呼び出しの c の bit 8)
@@ -127,19 +132,42 @@ module mrb_core
   logic [VAL_BITS-1:0] env;       // 今のフレームの env (無ければ nil)
   logic [7:0]          fn;        // 今のフレームの nregs (env に写す数。メソッドは ENTER が決める)
 
-  // コールスタック: 戻り先の pc、呼び出し元の bp・Proc・env・nregs
-  logic [PC_BITS-1:0]  ret_pc [STACK_DEPTH];
-  logic [RB-1:0]       ret_bp [STACK_DEPTH];
-  logic [VAL_BITS-1:0] ret_cp [STACK_DEPTH];
-  logic [VAL_BITS-1:0] ret_env [STACK_DEPTH];
-  logic [7:0]          ret_fn [STACK_DEPTH];
-  logic [15:0]         ret_mcls [STACK_DEPTH];
-  logic                ret_ctor [STACK_DEPTH]; // new の initialize のフレーム (戻り値で R0 を上書きしない)
+  // コールスタック: 戻り先の pc、呼び出し元の bp・Proc・env・nregs。区画ごとに STACK_DEPTH 段 (区画 t の段 s は {t, s})
+  logic [PC_BITS-1:0]  ret_pc [NTASKS*STACK_DEPTH];
+  logic [RB-1:0]       ret_bp [NTASKS*STACK_DEPTH];
+  logic [VAL_BITS-1:0] ret_cp [NTASKS*STACK_DEPTH];
+  logic [VAL_BITS-1:0] ret_env [NTASKS*STACK_DEPTH];
+  logic [7:0]          ret_fn [NTASKS*STACK_DEPTH];
+  logic [15:0]         ret_mcls [NTASKS*STACK_DEPTH];
+  logic                ret_ctor [NTASKS*STACK_DEPTH]; // new の initialize のフレーム (戻り値で R0 を上書きしない)
   logic [15:0]         mcls;      // 今のメソッドが見つかったクラス (super の起点)
   logic [SB-1:0]       sp;
 
   logic [SB-2:0] top;
   assign top = (SB-1)'(sp - SB'(1));
+  // タスク (docs/spec.md §10「Task (P6)」、ref_vm.rb の task_prim)。今の区画と、止めている区画の状態 (sv_*)
+  logic [TB-1:0]       task_id;
+  logic [TB+SB-2:0]    spi, topi; // 今の区画のスタックの段 sp と top
+  assign spi  = {task_id, sp[SB-2:0]};
+  assign topi = {task_id, top};
+  logic [16:0]         rbase, rlim; // 今の区画の始めと終わり (レジスタの番号は rlim より小さいこと)
+  assign rbase = 17'(task_id) * 17'(NREGS);
+  assign rlim  = rbase + 17'(NREGS);
+  logic [PC_BITS-1:0]  sv_pc [NTASKS];
+  logic [RB-1:0]       sv_bp [NTASKS];
+  logic [VAL_BITS-1:0] sv_cp [NTASKS], sv_env [NTASKS], sv_exc [NTASKS], sv_xval [NTASKS];
+  logic [7:0]          sv_fn [NTASKS], sv_argc [NTASKS];
+  logic [15:0]         sv_mcls [NTASKS];
+  logic                sv_argkw [NTASKS];
+  logic [SB-1:0]       sv_sp [NTASKS];
+  logic [NTASKS-1:0]    sv_valid;  // 止めている (__task_init で作ったか、__task_switch で離れた) 区画
+  logic                tlock;     // tick の割り込みを止めている (スケジューラーの中)
+  logic                tnext_v;   // タスクがある (__task_on に ms を渡した)
+  logic [31:0]         tnext;     // 次に割り込む仮想の時計の ms
+  logic                trap_end;  // S_LKDONE (LM_TRAP): 一番外の終わりの __task_main_end (見つからなければ止まる)
+  logic                trap_skip; // 割り込めなかった: 同じ命令の区切りではもう割り込まない
+  logic                refetch;   // 割り込みを見た後の S_FETCH (デバイスの tick とテストベンチの入力は済んでいる)
+  logic [VAL_BITS-1:0] trap_recv; // 割り込みで呼ぶメソッドの受け手 (今の ms か 0)
 
   // 定数 (GETCONST / SETCONST)
   logic [VAL_BITS-1:0] consts [NCONST];
@@ -191,7 +219,7 @@ module mrb_core
 
   // GC
   logic [2:0]          gphase;    // 0 レジスタ、1 定数、2 スタックの Proc と env、3 cp と env、4 走査
-  logic [7:0]          gi;
+  logic [15:0]         gi;
   logic [HB:0]         gfree, scan;
   logic [HB:0]         fw_src, fw_k, fw_size;
   logic [TAG_BITS-1:0] fw_tag;
@@ -354,11 +382,11 @@ module mrb_core
   assign ib  = 17'(bp) + 17'(b);
 
   logic a_ok, a1_ok, a2_ok, a3_ok, b_ok;
-  assign a_ok  = ia  < 17'(NREGS);
-  assign a1_ok = ia1 < 17'(NREGS);
-  assign a2_ok = ia2 < 17'(NREGS);
-  assign a3_ok = ia3 < 17'(NREGS);
-  assign b_ok  = ib  < 17'(NREGS);
+  assign a_ok  = ia  < rlim;
+  assign a1_ok = ia1 < rlim;
+  assign a2_ok = ia2 < rlim;
+  assign a3_ok = ia3 < rlim;
+  assign b_ok  = ib  < rlim;
 
   logic [VAL_BITS-1:0] ra, ra1, ra2, rb;
   assign ra  = regs[ia[RB-1:0]];
@@ -520,7 +548,7 @@ module mrb_core
   logic [16:0]         iu;       // S_UPOP / EXEC での外側のレジスタの番号
   logic                u_ok, h_ok;
   assign iu   = (state == S_UPOP ? 17'(fb_base) : 17'(bp)) + 17'(b);
-  assign u_ok = iu < 17'(NREGS);
+  assign u_ok = iu < rlim;
   assign h_ok = 17'(b) + 17'd1 < 17'(fb_esize);
   // S_WALK の終わり: たどった Proc の env と、その生死
   logic [HB-1:0]       walk_env;
@@ -580,7 +608,7 @@ module mrb_core
   assign e_need   = 17'(b) > e_len + 17'(e_kd) + 17'd2 ? 17'(b) : e_len + 17'(e_kd) + 17'd2;
   // 止めるもの (e_hard) と、引数の数が違う (ArgumentError にできる、e_argnum)
   logic                e_hard, e_argnum;
-  assign e_hard   = 17'(bp) + e_need > 17'(NREGS) || (e_heap && !r1_ary) || (e_fold && argc >= 8'd14);
+  assign e_hard   = 17'(bp) + e_need > rlim || (e_heap && !r1_ary) || (e_fold && argc >= 8'd14);
   assign e_argnum = e_strict && (e_cnt < e_m1 + e_m2 || (e_r == 17'd0 && e_cnt > e_m1 + e_o + e_m2));
   assign e_bad    = e_hard || e_argnum;
   // 必須の引数だけで数が合う (前と同じく、nregs までを埋めるだけ)
@@ -668,6 +696,8 @@ module mrb_core
   logic                go_x, set_exc, clr_exc, set_htable;
   logic                go_fp;   // Float の primitive (S_PRIM の終わりに計算する)
   logic                go_loadf;
+  logic                go_mend;  // 一番外の終わり (STOP、スタックが空の戻り) でタスクがある: __task_main_end を引く
+  logic                go_task;  // タスクの primitive (__task_init / __task_switch / __task_on / __task_lock) の状態の更新
   // Ruby の例外にできるエラー (isa.rb の CERR_*): 例外の表があれば S_CERR で Integer#__core_error を呼ぶ
   logic                cerr;
   logic [2:0]          cerr_kind;
@@ -696,6 +726,16 @@ module mrb_core
   // キーワード引数を受ける primitive は new と Proc#call だけ
   assign prim_argc_bad = (prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc}) ||
                          (lk_kw && prim != PR_NEW && prim != PR_CALL);
+
+  // タスクの primitive の区画 (R[a+1])
+  logic [TB-1:0] tt;
+  logic          t_in, ra2_proc, ra1_truthy;
+  logic [VAL_BITS-1:0] ra2_info; // Proc の2語目 (先頭 pc)
+  assign ra1_truthy = tag_of(ra1) != TAG_NIL && tag_of(ra1) != TAG_FALSE;
+  assign ra2_info   = heap[ha(val_of(ra2)) + HB'(1)];
+  assign tt       = ra1[TB-1:0];
+  assign t_in     = val_of(ra1) < 32'(NTASKS);
+  assign ra2_proc = tag_of(ra2) == TAG_OBJ && heap[ha(val_of(ra2))][31:16] == CLS_PROC;
 
   logic io_prim;
   // __io_read / __io_write の番地と値の検査 (Icarus は always_comb の if の条件に関数の呼び出しがあると止まるので wire に)
@@ -735,6 +775,8 @@ module mrb_core
     go_x      = 1'b0;
     go_fp     = 1'b0;
     go_loadf  = 1'b0;
+    go_mend   = 1'b0;
+    go_task   = 1'b0;
     cerr      = 1'b0;
     cerr_kind = '0;
     cerr_a1   = V_NIL;
@@ -904,7 +946,7 @@ module mrb_core
           wr      = 1'b0;
           do_call = 1'b1;
           npc     = pr_info[PC_BITS-1:0];
-          err     = prim_argc_bad || !ra_proc || !(ia + blk_win + 17'(lk_kw) < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
+          err     = prim_argc_bad || !ra_proc || !(ia + blk_win + 17'(lk_kw) < rlim) || sp >= SB'(STACK_DEPTH);
         end
         // Float (ヒープの箱の double)。計算は S_PRIM の終わりに fp_compute で (結果で S_FP が分かれる)
         PR_FADD, PR_FSUB, PR_FMUL, PR_FDIV, PR_FMOD, PR_FPOW, PR_FLT, PR_FLE, PR_FGT, PR_FGE, PR_FEQ, PR_FCMP,
@@ -936,6 +978,35 @@ module mrb_core
             cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra2;
           end
         end
+        // タスク (ref_vm.rb の task_prim)。状態の更新は always_ff の go_task
+        PR_TINIT: begin
+          // __task_init(区画, Proc): 区画を空にし、切り替えたら Proc を引数なしで呼び始める
+          wval    = V_NIL;
+          go_task = 1'b1;
+          err     = prim_argc_bad || !ra1_int || !t_in || tt == task_id || !ra2_proc;
+        end
+        PR_TSWITCH: begin
+          // __task_switch(区画): 今の区画を止めて (戻り値 nil) 区画の続きへ
+          wval    = V_NIL;
+          go_task = 1'b1;
+          err     = prim_argc_bad || !ra1_int || !t_in || (tt != task_id && !sv_valid[tt]);
+          if (tt != task_id) npc = sv_pc[tt];
+        end
+        PR_TSLOT: begin err = prim_argc_bad; wval = mk_int(32'(task_id)); end
+        PR_TLOCK: begin err = prim_argc_bad; wval = mk_bool(tlock); go_task = 1'b1; end
+        PR_TON: begin
+          // __task_on(ms か nil): 次に割り込む ms (nil は割り込まない)
+          wval    = V_NIL;
+          go_task = 1'b1;
+          err     = prim_argc_bad || !(ra1_int || tag_of(ra1) == TAG_NIL);
+        end
+        PR_HWSLEEPUS: begin
+          // __hw_sleep_us(n): 仮想の時計を n µs 進め (待つのは n / 1000 ms)、R[a] = n
+          wr       = 1'b0;
+          err      = prim_argc_bad || !ra1_int || y < 0;
+          go_sleep = 1'b1;
+        end
+        PR_HALT: begin wr = 1'b0; halt = 1'b1; end // __halt: 止まる
         default: err = 1'b1;
       endcase
       // 引数の数が違う (回路の primitive)。ほかのどのエラーより先
@@ -1062,12 +1133,12 @@ module mrb_core
           lk_blk_n  = c[7];
           lk_kw_n   = c[8];
           pre_self  = op == OP_SSEND || op == OP_SSEND0;
-          err       = !(ia + send_win + 17'(c[8]) < 17'(NREGS));
+          err       = !(ia + send_win + 17'(c[8]) < rlim);
         end
         OP_BLKCALL: begin
           do_call = 1'b1;
           npc     = pr_info[PC_BITS-1:0];
-          err     = !ra_proc || !(ia + blk_win < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
+          err     = !ra_proc || !(ia + blk_win < rlim) || sp >= SB'(STACK_DEPTH);
         end
         OP_GETIV: begin go_lookup = 1'b1; lk_mode_n = LM_GETIV; end
         OP_SETIV: begin go_lookup = 1'b1; lk_mode_n = LM_SETIV; end
@@ -1080,7 +1151,7 @@ module mrb_core
           lk_blk_n   = 1'b1;
           lk_kw_n    = c[8];
           pre_self   = 1'b1;
-          err        = !(ia + send_win + 17'(c[8]) < 17'(NREGS));
+          err        = !(ia + send_win + 17'(c[8]) < rlim);
         end
         OP_EXEC: begin
           // クラスの本体を self = R[a] で呼ぶ (引数 0 個、ブロックなし)
@@ -1103,8 +1174,8 @@ module mrb_core
           go_array = 1'b1;
           err      = !a1_ok || !(ra_nil || ra_ary) || (tag_of(ra1) == TAG_OBJ && !ra1_ary && !ra1_proc);
         end
-        OP_ARYPUSH: begin go_array = 1'b1; err = !(ia + 17'(b) < 17'(NREGS)) || !ra_ary; end
-        OP_APOST:   begin go_array = 1'b1; err = !(ia + 17'(c) < 17'(NREGS)); end
+        OP_ARYPUSH: begin go_array = 1'b1; err = !(ia + 17'(b) < rlim) || !ra_ary; end
+        OP_APOST:   begin go_array = 1'b1; err = !(ia + 17'(c) < rlim); end
         OP_ARGARY:  begin
           go_array = 1'b1;
           err      = !(17'(a) > ag_top) || !a1_ok || (ag_r != 17'd0 && !ag_rest_ary);
@@ -1116,10 +1187,10 @@ module mrb_core
             x_kind_n   = BRK_RET;
             x_target_n = 16'(bp);
             xval_n     = op == OP_RETURN ? ra : V_NIL;
-          end else if (sp == '0) halt = 1'b1;
+          end else if (sp == '0) begin halt = !tnext_v; go_mend = tnext_v; end
           else begin
             do_ret = 1'b1;
-            npc    = ret_pc[top];
+            npc    = ret_pc[topi];
             wval   = op == OP_RETURN ? ra : V_NIL;
           end
         end
@@ -1137,7 +1208,7 @@ module mrb_core
           end else if (cp_lam) begin
             // lambda の中の break は lambda から戻る
             do_ret = 1'b1;
-            npc    = ret_pc[top];
+            npc    = ret_pc[topi];
             wval   = ra;
           end else begin
             // Proc を作ったフレームまで畳む (そのフレームの底を S_WALK で求める)
@@ -1160,8 +1231,8 @@ module mrb_core
           else go_walk = 1'b1;
         end
         OP_BLOCK:  go_block = 1'b1;
-        OP_ARRAY:  begin go_array = 1'b1; err = b[7:0] != 0 && !(ia + 17'(b[7:0]) - 17'd1 < 17'(NREGS)); end
-        OP_ARRAY2: begin go_array = 1'b1; err = c[7:0] != 0 && !(17'(bp) + 17'(b[7:0]) + 17'(c[7:0]) - 17'd1 < 17'(NREGS)); end
+        OP_ARRAY:  begin go_array = 1'b1; err = b[7:0] != 0 && !(ia + 17'(b[7:0]) - 17'd1 < rlim); end
+        OP_ARRAY2: begin go_array = 1'b1; err = c[7:0] != 0 && !(17'(bp) + 17'(b[7:0]) + 17'(c[7:0]) - 17'd1 < rlim); end
         OP_AREF: begin
           // 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
           wr   = 1'b1;
@@ -1199,7 +1270,8 @@ module mrb_core
             err    = !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
           end
         end
-        OP_STOP: halt = 1'b1;
+        // タスクがあれば止まる前に __task_main_end (残りのタスクを走らせ、終わったら割り込みを止めて戻る)
+        OP_STOP: begin halt = !tnext_v; go_mend = tnext_v; end
         default: err = 1'b1;
       endcase
       // a を使う命令は bp + a がレジスタファイルに収まっていること (ref_vm.rb と同じ判定)
@@ -1210,14 +1282,14 @@ module mrb_core
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
       do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_sleep = 1'b0;
-      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0;
+      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0; go_mend = 1'b0; go_task = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
 
   // ---- マイクロ状態でレジスタに書くもの (トレースにも出す)
   logic                m_we;
-  logic [7:0]          m_waddr;
+  logic [RB-1:0]       m_waddr;
   logic [VAL_BITS-1:0] m_wdata;
   logic [HB-1:0]       s_p, s_d;   // S_SET1 / S_GROW / S_FILL / S_PUT: 配列と中身
   logic [15:0]         s_len;
@@ -1246,13 +1318,13 @@ module mrb_core
 
   always_comb begin
     m_we    = 1'b0;
-    m_waddr = 8'(m_dst);
+    m_waddr = RB'(m_dst);
     m_wdata = V_NIL;
     case (state)
       S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_proc)); end
-      S_RETFIN: if (!ret_ctor[top]) begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
+      S_RETFIN: if (!ret_ctor[topi]) begin m_we = 1'b1; m_waddr = RB'(bp); m_wdata = hold; end
       S_LKDONE: if (!lkd_err) begin
-        m_waddr = 8'(ia[RB-1:0]);
+        m_waddr = RB'(ia[RB-1:0]);
         case (lk_mode)
           LM_CALL: begin
             if (lk_kind_iv) begin m_we = 1'b1; m_wdata = heap[iv_addr]; end
@@ -1261,19 +1333,19 @@ module mrb_core
           LM_GETIV: begin m_we = 1'b1; m_wdata = lk_hitr ? heap[iv_addr] : V_NIL; end
           LM_ISA, LM_RESPOND: begin m_we = 1'b1; m_wdata = mk_bool(lk_hitr); end
           LM_NAME: begin m_we = 1'b1; m_wdata = lk_hitr ? mk(TAG_SYM, {16'd0, lk_tgt}) : V_NIL; end
-          LM_RESCUE: begin m_we = 1'b1; m_waddr = 8'(ib[RB-1:0]); m_wdata = mk_bool(lk_hitr); end
+          LM_RESCUE: begin m_we = 1'b1; m_waddr = RB'(ib[RB-1:0]); m_wdata = mk_bool(lk_hitr); end
           default: ;
         endcase
       end
-      S_FP: if (fk == FK_VAL) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = fval; end
-      S_FBOX: begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
+      S_FP: if (fk == FK_VAL) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = fval; end
+      S_FBOX: begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_FSTR: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
+      S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_AELEM: if (17'(m_k) == 17'(m_n) && m_after != AF_ENTER) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_SROM: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_APOST: if (en_k < 17'(c)) begin
         m_we    = 1'b1;
-        m_waddr = 8'(ia + 17'd1 + en_k);
+        m_waddr = RB'(ia + 17'd1 + en_k);
         m_wdata = ap_out;
       end
       S_PUT: begin
@@ -1281,24 +1353,29 @@ module mrb_core
         if (m_aset) begin m_we = 1'b1; m_wdata = regs[m_val[RB-1:0]]; end
       end
       // 巻き戻しを終えるフレーム: 呼び出し元の R[a] (= このフレームの R0) に値を置く (new の initialize から戻る時は置かない)
-      S_XPOP: if (x_deliver && !(x_kind == BRK_RET && ret_ctor[top])) begin
-        m_we = 1'b1; m_waddr = 8'(bp); m_wdata = xval;
+      S_XPOP: if (x_deliver && !(x_kind == BRK_RET && ret_ctor[topi])) begin
+        m_we = 1'b1; m_waddr = RB'(bp); m_wdata = xval;
       end
       S_SLEEP: if (remain == 0) begin m_we = 1'b1; m_wdata = hold; end
       S_UPOP: if (fb_heap) begin
         // 退避済みの env: 読むのはレジスタへ (トレースに出る)、書くのはヒープへ (出ない)
         if ((op == OP_GETUPVAR || op == OP_BLKPUSH) && h_ok) begin
-          m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = heap[fb_env + HB'(2) + HB'(b)];
+          m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = heap[fb_env + HB'(2) + HB'(b)];
         end
       end else if (u_ok) begin
-        if (op == OP_GETUPVAR || op == OP_BLKPUSH) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = regs[iu[RB-1:0]]; end
-        if (op == OP_SETUPVAR) begin m_we = 1'b1; m_waddr = 8'(iu[RB-1:0]); m_wdata = ra; end
+        if (op == OP_GETUPVAR || op == OP_BLKPUSH) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = regs[iu[RB-1:0]]; end
+        if (op == OP_SETUPVAR) begin m_we = 1'b1; m_waddr = RB'(iu[RB-1:0]); m_wdata = ra; end
       end
       default: ;
     endcase
   end
 
   // ---- GC: 今のルート
+  logic [TB+SB-2:0] gi_ent;   // phase 2: スタックの段 ({区画, 段})
+  logic [TB-1:0]    gi_stask, gi_ctask; // phase 2 / 3 の区画
+  assign gi_ent   = gi[TB+SB-1:1];
+  assign gi_stask = gi[TB+SB-1:SB];
+  assign gi_ctask = gi[TB+1:2];
   logic [VAL_BITS-1:0] root;
   logic                root_live, root_end;
   always_comb begin
@@ -1306,17 +1383,28 @@ module mrb_core
     root_live = 1'b0;
     root_end  = 1'b0;
     case (gphase)
-      3'd0: begin root_end = gi == 8'(NREGS); if (!root_end) begin root = regs[gi[RB-1:0]]; root_live = 1'b1; end end
-      3'd1: begin root_end = gi == 8'(NCONST); if (!root_end) begin root = consts[gi[CB-1:0]]; root_live = cvalid[gi[CB-1:0]]; end end
-      // コールスタックは1段ごとに Proc、env の順
+      3'd0: begin root_end = gi == 16'(NR); if (!root_end) begin root = regs[gi[RB-1:0]]; root_live = 1'b1; end end
+      3'd1: begin root_end = gi == 16'(NCONST); if (!root_end) begin root = consts[gi[CB-1:0]]; root_live = cvalid[gi[CB-1:0]]; end end
+      // コールスタックは区画の順に、底から1段ごとに Proc、env の順 (積んでいない段は飛ばす)
       3'd2: begin
-        root_end = gi == 8'(sp) * 8'd2;
-        if (!root_end) begin root = gi[0] ? ret_env[gi[SB-1:1]] : ret_cp[gi[SB-1:1]]; root_live = 1'b1; end
+        root_end = gi == 16'(NTASKS * STACK_DEPTH * 2);
+        if (!root_end) begin
+          root      = gi[0] ? ret_env[gi_ent] : ret_cp[gi_ent];
+          // 止めている区画は __task_init で作ったものだけ (ほかの sv_sp はまだ書いていない)
+          root_live = gi_stask == task_id ? SB'(gi_ent[SB-2:0]) < sp : sv_valid[gi_stask] && SB'(gi_ent[SB-2:0]) < sv_sp[gi_stask];
+        end
       end
-      // cp、env、exc、xval の順
+      // 区画の順に cp、env、exc、xval (今の区画はそのもの、止めている区画は sv_*)
       default: begin
-        root_end = gi == 8'd4;
-        if (!root_end) begin root = gi[1] ? (gi[0] ? xval : exc) : (gi[0] ? env : cp); root_live = 1'b1; end
+        root_end = gi == 16'(NTASKS * 4);
+        if (!root_end) begin
+          if (gi_ctask == task_id) begin
+            root = gi[1] ? (gi[0] ? xval : exc) : (gi[0] ? env : cp); root_live = 1'b1;
+          end else begin
+            root = gi[1] ? (gi[0] ? sv_xval[gi_ctask] : sv_exc[gi_ctask]) : (gi[0] ? sv_env[gi_ctask] : sv_cp[gi_ctask]);
+            root_live = sv_valid[gi_ctask];
+          end
+        end
       end
     endcase
   end
@@ -1331,8 +1419,18 @@ module mrb_core
   logic [41:0] sleep_ms_n;
   logic [63:0] sleep_us;
   assign sleep_ms_n = prim == PR_SLEEP ? 42'(unsigned'(y)) * 42'd1000 : 42'(unsigned'(y));
-  assign sleep_us   = 64'(sleep_ms_n) * 64'd1000;
+  assign sleep_us   = prim == PR_HWSLEEPUS ? 64'(unsigned'(y)) : 64'(sleep_ms_n) * 64'd1000;
   wire run  = (state == S_EXEC || state == S_PRIM) && en; // 命令か primitive の結果を書く cycle
+  // タスクの割り込み: 仮想の時計がスケジューラーの決めた ms (tnext) に届いた命令の区切りで、割り込みを止めておらず、
+  // 今のフレームが ENTER を済ませている (fn > 0) なら Integer#__task_tick を呼ぶ (ref_vm.rb の run)
+  logic [31:0] vt_ms, hw_ms;
+  logic [VSB-1:0] vt_sub;  // 仮想の時計の 1µs の中の端数 (LOCKED_INSNS_PER_US 分の 1 µs が単位)
+  logic [VSB:0]   vt_next; // 今の命令を足した端数 (bit VSB が 1µs の繰り上がり)
+  assign vt_next = {1'b0, vt_sub} + (tlock ? (VSB+1)'(1) : (VSB+1)'(LOCKED_INSNS_PER_US / INSNS_PER_US));
+  assign hw_ms    = unsigned'(y) / 32'd1000; // __hw_sleep_us で待つ ms
+  logic        trap_now;
+  assign vt_ms    = 32'(vtime / 64'd1000);
+  assign trap_now = tnext_v && !tlock && fn != 8'd0 && !trap_skip && vtime >= 64'(tnext) * 64'd1000;
 
   assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
                     state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
@@ -1344,12 +1442,14 @@ module mrb_core
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
-  assign rf_we    = (run && (wr || (ret_now && !ret_ctor[top]) || set_up)) || (en && m_we);
-  assign rf_waddr = run ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
+  assign rf_we    = (run && (wr || (ret_now && !ret_ctor[topi]) || set_up)) || (en && m_we);
+  logic [RB-1:0] rf_wreg;
+  assign rf_wreg  = run ? (do_ret ? bp : set_up ? iu[RB-1:0] : ia[RB-1:0]) : m_waddr;
+  assign rf_waddr = 16'(rf_wreg);
   assign rf_wdata = run ? wval : m_wdata;
   assign io_we    = (exec || (state == S_PRIM && en)) && iow;
   assign io_re    = state == S_PRIM && en && prim == PR_IOREAD && !err;
-  assign fetching = state == S_FETCH;
+  assign fetching = state == S_FETCH && !refetch;
   assign halted   = state == S_HALT;
   assign error    = state == S_ERROR;
 
@@ -1380,26 +1480,59 @@ module mrb_core
       tbase   <= '0;
       symtab  <= '0;
       vtime   <= '0;
+      vt_sub  <= '0;
       m_fromfpu <= 1'b0;
       hbase   <= '0;
       hcount  <= '0;
       exc     <= V_NIL;
       xval    <= V_NIL;
+      task_id <= '0;
+      sv_valid <= '0;
+      tlock   <= 1'b0;
+      tnext_v <= 1'b0;
+      tnext   <= '0;
+      trap_end <= 1'b0;
+      trap_skip <= 1'b0;
+      refetch <= 1'b0;
     end else if (state == S_INIT) begin
       // レジスタファイルは一括ではリセットしない (ブロック RAM にできるように)
       regs[clr_ptr[RB-1:0]] <= V_NIL;
       clr_ptr <= clr_ptr + (RB+1)'(1);
-      if (clr_ptr == (RB+1)'(NREGS - 1)) state <= S_FETCH;
+      if (clr_ptr == (RB+1)'(NR - 1)) state <= S_FETCH;
     end else begin
       // sleep の残りは en に関係なく 1ms ごとに減らす
       if (state == S_SLEEP && ms_tick && remain != 0) remain <= remain - 42'd1;
-      // 仮想の時計: 命令を始めるたびに 1µs、sleep は待つ時間の分
-      if (exec) vtime <= vtime + 64'd1;
-      else if (run && go_sleep) vtime <= vtime + sleep_us;
+      // 仮想の時計: 命令は INSNS_PER_US 個で 1µs、タスクの割り込みを止めている間 (スケジューラー) は LOCKED_INSNS_PER_US 個で 1µs。
+      // sleep は待つ時間の分
+      if (exec) begin
+        vt_sub <= vt_next[VSB-1:0];
+        if (vt_next[VSB]) vtime <= vtime + 64'd1;
+      end
+      if (run && go_sleep) vtime <= vtime + sleep_us;
       if (en) begin
         if (m_we) regs[m_waddr[RB-1:0]] <= m_wdata;
         case (state)
-          S_FETCH: state <= S_EXEC;
+          S_FETCH: begin
+            refetch <= 1'b0;
+            if (trap_now) begin
+              // タスクの割り込み (ref_vm.rb の task_trap): Integer#__task_tick(今の ms) を引く。この命令はまだ始めない
+              lk_cls    <= CLS_INT;
+              lk_sym    <= SYM_TICK;
+              lk_argc   <= 7'd0;
+              lk_blk    <= 1'b0;
+              lk_kw     <= 1'b0;
+              lk_mode   <= LM_TRAP;
+              lk_super  <= 1'b0;
+              lk_depth  <= '0;
+              lk_hitr   <= 1'b0;
+              trap_end  <= 1'b0;
+              trap_recv <= mk_int(vt_ms);
+              state     <= t_on ? S_LOOKUP : S_LKDONE;
+            end else begin
+              trap_skip <= 1'b0;
+              state     <= S_EXEC;
+            end
+          end
           S_EXEC, S_PRIM: begin
             if (state == S_EXEC) ir <= rom_data;
             if (wr) regs[ia[RB-1:0]] <= wval;
@@ -1422,6 +1555,58 @@ module mrb_core
             end
             if (clr_exc) exc <= V_NIL;
             gc_done <= 1'b0;
+            if (go_task) case (prim)
+              PR_TINIT: begin
+                // 区画 tt: R0 は Proc の self、R1 (ブロックの枠) は nil、続きは Proc の先頭 (書き込みはトレースに出さない)
+                regs[RB'(17'(tt) * 17'(NREGS))]         <= heap[ha(val_of(ra2)) + HB'(4)];
+                regs[RB'(17'(tt) * 17'(NREGS) + 17'd1)] <= V_NIL;
+                sv_pc[tt]    <= ra2_info[PC_BITS-1:0];
+                sv_bp[tt]    <= RB'(17'(tt) * 17'(NREGS));
+                sv_cp[tt]    <= ra2;
+                sv_env[tt]   <= V_NIL;
+                sv_exc[tt]   <= V_NIL;
+                sv_xval[tt]  <= V_NIL;
+                sv_fn[tt]    <= '0;
+                sv_argc[tt]  <= '0;
+                sv_argkw[tt] <= 1'b0;
+                sv_mcls[tt]  <= CLS_OBJECT;
+                sv_sp[tt]    <= '0;
+                sv_valid[tt] <= 1'b1;
+              end
+              PR_TSWITCH: if (tt != task_id) begin
+                // 今の区画を止め (続きは次の命令)、区画 tt の状態を戻す
+                sv_pc[task_id]    <= pc + PC_BITS'(1);
+                sv_bp[task_id]    <= bp;
+                sv_cp[task_id]    <= cp;
+                sv_env[task_id]   <= env;
+                sv_exc[task_id]   <= exc;
+                sv_xval[task_id]  <= xval;
+                sv_fn[task_id]    <= fn;
+                sv_argc[task_id]  <= argc;
+                sv_argkw[task_id] <= argkw;
+                sv_mcls[task_id]  <= mcls;
+                sv_sp[task_id]    <= sp;
+                sv_valid[task_id] <= 1'b1;
+                sv_valid[tt]      <= 1'b0;
+                task_id <= tt;
+                bp      <= sv_bp[tt];
+                cp      <= sv_cp[tt];
+                env     <= sv_env[tt];
+                exc     <= sv_exc[tt];
+                xval    <= sv_xval[tt];
+                fn      <= sv_fn[tt];
+                argc    <= sv_argc[tt];
+                argkw   <= sv_argkw[tt];
+                mcls    <= sv_mcls[tt];
+                sp      <= sv_sp[tt];
+              end
+              PR_TLOCK: tlock <= ra1_truthy;
+              PR_TON: begin
+                tnext_v <= ra1_int;
+                tnext   <= val_of(ra1);
+              end
+              default: ;
+            endcase
             if (err && cerr) begin
               cx_kind <= cerr_kind;
               cx_a1   <= cerr_a1;
@@ -1430,6 +1615,21 @@ module mrb_core
               state   <= S_CERR;
             end else if (err) state <= S_ERROR;
             else if (halt) state <= S_HALT;
+            else if (go_mend) begin
+              // 一番外の終わりでタスクがある: 0.__task_main_end を引く (戻ったらこの命令をもう一度)
+              lk_cls    <= CLS_INT;
+              lk_sym    <= SYM_MEND;
+              lk_argc   <= 7'd0;
+              lk_blk    <= 1'b0;
+              lk_kw     <= 1'b0;
+              lk_mode   <= LM_TRAP;
+              lk_super  <= 1'b0;
+              lk_depth  <= '0;
+              lk_hitr   <= 1'b0;
+              trap_end  <= 1'b1;
+              trap_recv <= mk_int('0);
+              state     <= t_on ? S_LOOKUP : S_LKDONE;
+            end
             else if (go_lookup) begin
               // メソッド探索の前の準備 (トレースに出さない書き込み)
               if (pre_self) regs[ia[RB-1:0]] <= regs[bp];
@@ -1447,13 +1647,13 @@ module mrb_core
               state    <= t_on ? S_LOOKUP : S_LKDONE; // 表が無ければ見つからなかったことにする
             end else if (do_call) begin
               // ブロックの呼び出し: R0 は Proc を作った時の self
-              ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
-              ret_bp[sp[SB-2:0]]  <= bp;
-              ret_cp[sp[SB-2:0]]  <= cp;
-              ret_env[sp[SB-2:0]] <= env;
-              ret_fn[sp[SB-2:0]]  <= fn;
-              ret_mcls[sp[SB-2:0]] <= mcls;
-              ret_ctor[sp[SB-2:0]] <= 1'b0;
+              ret_pc[spi]  <= pc + PC_BITS'(1);
+              ret_bp[spi]  <= bp;
+              ret_cp[spi]  <= cp;
+              ret_env[spi] <= env;
+              ret_fn[spi]  <= fn;
+              ret_mcls[spi] <= mcls;
+              ret_ctor[spi] <= 1'b0;
               env                 <= V_NIL;
               fn                  <= '0;
               argc                <= blk_n;
@@ -1467,13 +1667,13 @@ module mrb_core
               state               <= S_FETCH;
             end else if (do_frame) begin
               // クラスの本体: 引数 0 個、ブロックの枠は nil
-              ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
-              ret_bp[sp[SB-2:0]]  <= bp;
-              ret_cp[sp[SB-2:0]]  <= cp;
-              ret_env[sp[SB-2:0]] <= env;
-              ret_fn[sp[SB-2:0]]  <= fn;
-              ret_mcls[sp[SB-2:0]] <= mcls;
-              ret_ctor[sp[SB-2:0]] <= 1'b0;
+              ret_pc[spi]  <= pc + PC_BITS'(1);
+              ret_bp[spi]  <= bp;
+              ret_cp[spi]  <= cp;
+              ret_env[spi] <= env;
+              ret_fn[spi]  <= fn;
+              ret_mcls[spi] <= mcls;
+              ret_ctor[spi] <= 1'b0;
               sp                  <= sp + SB'(1);
               regs[ia1[RB-1:0]]   <= V_NIL;
               bp                  <= ia[RB-1:0];
@@ -1538,12 +1738,12 @@ module mrb_core
               dcont  <= S_RETFIN;
               state  <= S_DETACH;
             end else if (do_ret) begin
-              if (!ret_ctor[top]) regs[bp] <= wval; // initialize の戻り値は捨てる
-              bp       <= ret_bp[top];
-              cp       <= ret_cp[top];
-              env      <= ret_env[top];
-              fn       <= ret_fn[top];
-              mcls     <= ret_mcls[top];
+              if (!ret_ctor[topi]) regs[bp] <= wval; // initialize の戻り値は捨てる
+              bp       <= ret_bp[topi];
+              cp       <= ret_cp[topi];
+              env      <= ret_env[topi];
+              fn       <= ret_fn[topi];
+              mcls     <= ret_mcls[topi];
               sp       <= sp - SB'(1);
               pc       <= npc;
               state    <= S_FETCH;
@@ -1785,7 +1985,8 @@ module mrb_core
             end else if (go_sleep) begin
               m_dst  <= ia[RB:0];
               hold   <= ra1;
-              remain <= prim == PR_SLEEP ? 42'(unsigned'(y)) * 42'd1000 : 42'(unsigned'(y));
+              remain <= prim == PR_SLEEP ? 42'(unsigned'(y)) * 42'd1000 :
+                        prim == PR_HWSLEEPUS ? 42'(hw_ms) : 42'(unsigned'(y));
               state  <= S_SLEEP;
             end else begin
               pc    <= npc;
@@ -1845,15 +2046,47 @@ module mrb_core
               state   <= S_CERR;
             end else if (lkd_err) state <= S_ERROR;
             else case (lk_mode)
+              LM_TRAP: begin
+                if (lk_hitr && lk_kind_pc && sp < SB'(STACK_DEPTH) && 17'(bp) + 17'(fn) + 17'd2 < rlim) begin
+                  // 割り込み (ref_vm.rb の task_call): 今のフレームの上 (fn) に受け手を置いて呼ぶ。戻ったら同じ pc から
+                  // (戻り値は捨てる = ctor のフレーム)。書き込みはトレースに出さない。呼んでいる間は割り込まない
+                  regs[RB'(17'(bp) + 17'(fn))]         <= trap_recv;
+                  regs[RB'(17'(bp) + 17'(fn) + 17'd1)] <= V_NIL;
+                  ret_pc[spi]   <= pc;
+                  ret_bp[spi]   <= bp;
+                  ret_cp[spi]   <= cp;
+                  ret_env[spi]  <= env;
+                  ret_fn[spi]   <= fn;
+                  ret_mcls[spi] <= mcls;
+                  ret_ctor[spi] <= 1'b1;
+                  sp    <= sp + SB'(1);
+                  bp    <= RB'(17'(bp) + 17'(fn));
+                  cp    <= V_NIL;
+                  env   <= V_NIL;
+                  fn    <= '0;
+                  mcls  <= lk_fcls;
+                  argc  <= '0;
+                  argkw <= 1'b0;
+                  tlock <= 1'b1;
+                  pc    <= lk_tgt[PC_BITS-1:0];
+                  refetch <= !trap_end; // tick の割り込みなら、まだ同じ step
+                  state <= S_FETCH;
+                end else if (trap_end) state <= S_HALT;
+                else begin
+                  trap_skip <= 1'b1;
+                  refetch   <= 1'b1;
+                  state     <= S_FETCH;
+                end
+              end
               LM_CERR: begin
                 // Integer#__core_error(詳細1, 詳細2) のフレーム (底は bp + cx_base、ブロックの枠は nil)
-                ret_pc[sp[SB-2:0]]   <= pc + PC_BITS'(1);
-                ret_bp[sp[SB-2:0]]   <= bp;
-                ret_cp[sp[SB-2:0]]   <= cp;
-                ret_env[sp[SB-2:0]]  <= env;
-                ret_fn[sp[SB-2:0]]   <= fn;
-                ret_mcls[sp[SB-2:0]] <= mcls;
-                ret_ctor[sp[SB-2:0]] <= 1'b0;
+                ret_pc[spi]   <= pc + PC_BITS'(1);
+                ret_bp[spi]   <= bp;
+                ret_cp[spi]   <= cp;
+                ret_env[spi]  <= env;
+                ret_fn[spi]   <= fn;
+                ret_mcls[spi] <= mcls;
+                ret_ctor[spi] <= 1'b0;
                 sp                   <= sp + SB'(1);
                 regs[RB'(17'(bp) + 17'(cx_base) + 17'd3)] <= V_NIL;
                 bp                   <= RB'(17'(bp) + 17'(cx_base));
@@ -1875,13 +2108,13 @@ module mrb_core
                   state <= S_PRIM;
                 end else if (lk_kind_pc) begin
                   // メソッド: フレームを作る (底は bp + a)。ブロックを渡さなければその枠は nil
-                  ret_pc[sp[SB-2:0]]   <= pc + PC_BITS'(1);
-                  ret_bp[sp[SB-2:0]]   <= bp;
-                  ret_cp[sp[SB-2:0]]   <= cp;
-                  ret_env[sp[SB-2:0]]  <= env;
-                  ret_fn[sp[SB-2:0]]   <= fn;
-                  ret_mcls[sp[SB-2:0]] <= mcls;
-                  ret_ctor[sp[SB-2:0]] <= lk_mode == LM_INIT;
+                  ret_pc[spi]   <= pc + PC_BITS'(1);
+                  ret_bp[spi]   <= bp;
+                  ret_cp[spi]   <= cp;
+                  ret_env[spi]  <= env;
+                  ret_fn[spi]   <= fn;
+                  ret_mcls[spi] <= mcls;
+                  ret_ctor[spi] <= lk_mode == LM_INIT;
                   sp                   <= sp + SB'(1);
                   if (!lk_blk) regs[RB'(ia + lk_win + 17'(lk_kw))] <= V_NIL;
                   bp                   <= ia[RB-1:0];
@@ -1970,21 +2203,26 @@ module mrb_core
                 scan   <= space ? HALF_W : '0;
                 state  <= S_GC_SCAN;
               end else gphase <= gphase + 3'd1;
-            end else if (!root_live || !is_ref(root)) gi <= gi + 8'd1;
+            end else if (!root_live || !is_ref(root)) gi <= gi + 16'd1;
             else if (tag_of(fw_obj) == TAG_FWD) begin
               case (gphase)
                 3'd0: regs[gi[RB-1:0]] <= mk(tag_of(root), val_of(fw_obj));
                 3'd1: consts[gi[CB-1:0]] <= mk(tag_of(root), val_of(fw_obj));
-                3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
-                      else ret_cp[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
-                default: case (gi[1:0])
+                3'd2: if (gi[0]) ret_env[gi_ent] <= mk(tag_of(root), val_of(fw_obj));
+                      else ret_cp[gi_ent] <= mk(tag_of(root), val_of(fw_obj));
+                default: if (gi_ctask == task_id) case (gi[1:0])
                   2'd0: cp <= mk(tag_of(root), val_of(fw_obj));
                   2'd1: env <= mk(tag_of(root), val_of(fw_obj));
                   2'd2: exc <= mk(tag_of(root), val_of(fw_obj));
                   default: xval <= mk(tag_of(root), val_of(fw_obj));
+                endcase else case (gi[1:0])
+                  2'd0: sv_cp[gi_ctask] <= mk(tag_of(root), val_of(fw_obj));
+                  2'd1: sv_env[gi_ctask] <= mk(tag_of(root), val_of(fw_obj));
+                  2'd2: sv_exc[gi_ctask] <= mk(tag_of(root), val_of(fw_obj));
+                  default: sv_xval[gi_ctask] <= mk(tag_of(root), val_of(fw_obj));
                 endcase
               endcase
-              gi <= gi + 8'd1;
+              gi <= gi + 16'd1;
             end else begin
               fw_src  <= (HB+1)'(ha(val_of(root)));
               fw_size <= (HB+1)'(lo16(fw_obj));
@@ -2019,13 +2257,18 @@ module mrb_core
               case (gphase)
                 3'd0: regs[gi[RB-1:0]] <= mk(fw_tag, 32'(gfree));
                 3'd1: consts[gi[CB-1:0]] <= mk(fw_tag, 32'(gfree));
-                3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
-                      else ret_cp[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
-                3'd3: case (gi[1:0])
+                3'd2: if (gi[0]) ret_env[gi_ent] <= mk(fw_tag, 32'(gfree));
+                      else ret_cp[gi_ent] <= mk(fw_tag, 32'(gfree));
+                3'd3: if (gi_ctask == task_id) case (gi[1:0])
                   2'd0: cp <= mk(fw_tag, 32'(gfree));
                   2'd1: env <= mk(fw_tag, 32'(gfree));
                   2'd2: exc <= mk(fw_tag, 32'(gfree));
                   default: xval <= mk(fw_tag, 32'(gfree));
+                endcase else case (gi[1:0])
+                  2'd0: sv_cp[gi_ctask] <= mk(fw_tag, 32'(gfree));
+                  2'd1: sv_env[gi_ctask] <= mk(fw_tag, 32'(gfree));
+                  2'd2: sv_exc[gi_ctask] <= mk(fw_tag, 32'(gfree));
+                  default: sv_xval[gi_ctask] <= mk(fw_tag, 32'(gfree));
                 endcase
                 default: heap[scan[HB-1:0]] <= mk(fw_tag, 32'(gfree));
               endcase
@@ -2033,7 +2276,7 @@ module mrb_core
                 scan  <= scan + 1'b1;
                 state <= S_GC_SCAN;
               end else begin
-                gi    <= gi + 8'd1;
+                gi    <= gi + 16'd1;
                 state <= S_GC_ROOT;
               end
             end
@@ -2075,11 +2318,11 @@ module mrb_core
             end
           end
           S_RETFIN: begin
-            bp    <= ret_bp[top];
-            cp    <= ret_cp[top];
-            env   <= ret_env[top];
-            fn    <= ret_fn[top];
-            mcls  <= ret_mcls[top];
+            bp    <= ret_bp[topi];
+            cp    <= ret_cp[topi];
+            env   <= ret_env[topi];
+            fn    <= ret_fn[topi];
+            mcls  <= ret_mcls[topi];
             sp    <= sp - SB'(1);
             pc    <= ret_to;
             state <= S_FETCH;
@@ -2332,7 +2575,7 @@ module mrb_core
           // ---- コアのエラーを例外にする (ref_vm.rb の core_error): 例外の表があれば、フレームの上に
           //      [種類, 詳細1, 詳細2] を置いて Integer#__core_error を引く (書き込みはトレースに出さない)
           S_CERR: begin
-            if (hcount == 16'd0 || !(17'(bp) + 17'(cx_base) + 17'd3 < 17'(NREGS))) state <= S_ERROR;
+            if (hcount == 16'd0 || !(17'(bp) + 17'(cx_base) + 17'd3 < rlim)) state <= S_ERROR;
             else begin
               regs[RB'(17'(bp) + 17'(cx_base))]         <= mk_int({29'd0, cx_kind});
               regs[RB'(17'(bp) + 17'(cx_base) + 17'd1)] <= cx_a1;
@@ -2402,13 +2645,30 @@ module mrb_core
           S_XMISS: begin
             // このフレームに handler が無い。JUMP は行き先へ。ほかは畳む (最後のフレームなら値を置いて終える)
             x_deliver <= x_kind == BRK_BRK0 || (x_kind == BRK_RET && 16'(bp) == x_target) ||
-                         (x_kind == BRK_BRK && sp != '0 && 16'(ret_bp[top]) == x_target);
+                         (x_kind == BRK_BRK && sp != '0 && 16'(ret_bp[topi]) == x_target);
             if (x_kind == BRK_JUMP) begin
               exc   <= V_NIL;
               xval  <= V_NIL;
               pc    <= x_target[PC_BITS-1:0];
               state <= S_FETCH;
-            end else if (x_kind == BRK_RET && 16'(bp) == x_target && sp == '0) state <= S_HALT;
+            end else if (x_kind == BRK_RET && 16'(bp) == x_target && sp == '0) begin
+              // 一番外から戻る: タスクがあれば __task_main_end (戻ったらこの命令をもう一度)
+              if (!tnext_v) state <= S_HALT;
+              else begin
+                lk_cls    <= CLS_INT;
+                lk_sym    <= SYM_MEND;
+                lk_argc   <= 7'd0;
+                lk_blk    <= 1'b0;
+                lk_kw     <= 1'b0;
+                lk_mode   <= LM_TRAP;
+                lk_super  <= 1'b0;
+                lk_depth  <= '0;
+                lk_hitr   <= 1'b0;
+                trap_end  <= 1'b1;
+                trap_recv <= mk_int('0);
+                state     <= t_on ? S_LOOKUP : S_LKDONE;
+              end
+            end
             else if (sp == '0) state <= S_ERROR; // 一番外まで捕まらなかった例外など
             else if (tag_of(env) != TAG_NIL) begin
               m_k   <= '0;
@@ -2418,19 +2678,19 @@ module mrb_core
           end
           S_XPOP: begin
             // フレームを畳む (値を置くのは m_we)。終えるなら戻り先 (BRK0 は行き先) へ、続けるなら呼び出し元の pc で探す
-            bp   <= ret_bp[top];
-            cp   <= ret_cp[top];
-            env  <= ret_env[top];
-            fn   <= ret_fn[top];
-            mcls <= ret_mcls[top];
+            bp   <= ret_bp[topi];
+            cp   <= ret_cp[topi];
+            env  <= ret_env[topi];
+            fn   <= ret_fn[topi];
+            mcls <= ret_mcls[topi];
             sp   <= sp - SB'(1);
             if (x_deliver) begin
               exc   <= V_NIL;
               xval  <= V_NIL;
-              pc    <= x_kind == BRK_BRK0 ? x_target[PC_BITS-1:0] : ret_pc[top];
+              pc    <= x_kind == BRK_BRK0 ? x_target[PC_BITS-1:0] : ret_pc[topi];
               state <= S_FETCH;
             end else begin
-              xpc   <= ret_pc[top] - PC_BITS'(1);
+              xpc   <= ret_pc[topi] - PC_BITS'(1);
               state <= S_XSTART;
             end
           end

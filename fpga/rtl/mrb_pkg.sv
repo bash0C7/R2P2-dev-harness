@@ -42,8 +42,11 @@ package mrb_pkg;
 
   // コアの大きさ (tools/fpga/isa.rb)
   localparam int RF_SIZE     = 128;
-  localparam int STACK_DEPTH = 16;
+  localparam int TASKS       = 8;
+  localparam int STACK_DEPTH = 32;
   localparam int NCONST      = 64;
+  localparam int INSNS_PER_US = 16; // 仮想の時計: 始めた命令この数で 1µs
+  localparam int LOCKED_INSNS_PER_US = 256; // 割り込みを止めている間の命令はこの数で 1µs
 
   // メソッド表 (tools/fpga/isa.rb)。1語 = {クラス, シンボル, 飛び先}。飛び先の上位 2bit が種類
   localparam logic [15:0] SUPER_SYM = 16'hffff;
@@ -75,6 +78,8 @@ package mrb_pkg;
   localparam logic [15:0] SYM_ASET = 16'd10; // []=
   localparam logic [15:0] SYM_INIT = 16'd11; // initialize
   localparam logic [15:0] SYM_CERR = 16'd12; // __core_error
+  localparam logic [15:0] SYM_TICK = 16'd13; // __task_tick
+  localparam logic [15:0] SYM_MEND = 16'd14; // __task_main_end
 
   // primitive (tools/fpga/isa.rb の PRIMS)。メソッド表の飛び先の番号
   localparam logic [13:0] PR_IADD     = 14'd0; // Integer#+ (1 arg)
@@ -157,7 +162,14 @@ package mrb_pkg;
   localparam logic [13:0] PR_FFMOD    = 14'd77; // Float#__fmod (1 arg)
   localparam logic [13:0] PR_I2F      = 14'd78; // Integer#to_f (0 arg)
   localparam logic [13:0] PR_STOD     = 14'd79; // String#__strtod (0 arg)
-  localparam int NPRIMS = 80;
+  localparam logic [13:0] PR_TINIT    = 14'd80; // Object#__task_init (2 arg)
+  localparam logic [13:0] PR_TSWITCH  = 14'd81; // Object#__task_switch (1 arg)
+  localparam logic [13:0] PR_TSLOT    = 14'd82; // Object#__task_slot (0 arg)
+  localparam logic [13:0] PR_TLOCK    = 14'd83; // Object#__task_lock (1 arg)
+  localparam logic [13:0] PR_TON      = 14'd84; // Object#__task_on (1 arg)
+  localparam logic [13:0] PR_HWSLEEPUS = 14'd85; // Object#__hw_sleep_us (1 arg)
+  localparam logic [13:0] PR_HALT     = 14'd86; // Object#__halt (0 arg)
+  localparam int NPRIMS = 87;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
   localparam logic [2:0] CERR_ZERODIV     = 3'd1;
   localparam logic [2:0] CERR_NOMETHOD    = 3'd2;
@@ -249,6 +261,13 @@ package mrb_pkg;
       PR_FFMOD   : return 8'h01;
       PR_I2F     : return 8'h00;
       PR_STOD    : return 8'h00;
+      PR_TINIT   : return 8'h02;
+      PR_TSWITCH : return 8'h01;
+      PR_TSLOT   : return 8'h00;
+      PR_TLOCK   : return 8'h01;
+      PR_TON     : return 8'h01;
+      PR_HWSLEEPUS: return 8'h01;
+      PR_HALT    : return 8'h00;
       default: return 8'h00;
     endcase
   endfunction

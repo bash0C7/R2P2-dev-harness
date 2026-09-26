@@ -113,7 +113,7 @@ module mrb_core_tb;
     cycles = 0;
     gcs    = 0;
     last_space = 1'b0;
-    for (int i = 0; i < 100000 && !halted && !error; i++) begin
+    for (int i = 0; i < 400000 && !halted && !error; i++) begin
       @(posedge clk);
       cycles++;
       if (dut.core.space != last_space) gcs++; // GC の回数 (使う半分が入れ替わった回数)
@@ -1386,7 +1386,7 @@ module mrb_core_tb;
     prog.push_back(w(OP_LOADI16, 9, 16'h121));               // 11
     prog.push_back(w(OP_SSEND, 8, 21, 1));                   // 12: R8 = UART_RX (無ければ -1)
     prog.push_back(w(OP_LOADI16, 11, 16'h110));              // 13
-    prog.push_back(w(OP_SSEND, 10, 21, 1));                  // 14: R10 = 仮想の時計 (µs) = 始めた命令の数
+    prog.push_back(w(OP_SSEND, 10, 21, 1));                  // 14: R10 = 仮想の時計 (µs) = 始めた命令の数 / INSNS_PER_US (15 個なので 0)
     prog.push_back(w(OP_LOADI_1, 13));                       // 15
     prog.push_back(w(OP_LOADI_7, 14));                       // 16
     prog.push_back(w(OP_SSEND, 12, 20, 2));                  // 17: 番地 1 ($LED2) = 7 (ポートにも書ける)
@@ -1397,7 +1397,7 @@ module mrb_core_tb;
     expect_reg(4, vint(16'h10));
     expect_reg(6, vint(32'd723471715));
     expect_reg(8, vint(-1));
-    expect_reg(10, vint(15));
+    expect_reg(10, vint(15 / INSNS_PER_US));
     expect_out(1, vint(7));
 
     // Float (ヒープの箱の double): LOADF は ROM のデータの2語から。+ と to_s / format / String#__strtod は
@@ -1514,6 +1514,99 @@ module mrb_core_tb;
     expect_error(7);
     expect_reg(2, VTRUE);
     expect_reg(3, VFALSE);
+
+    // ---- タスク (P6): 区画 1 に Proc を置いて切り替え、戻る。区画ごとにレジスタが別 (区画 1 の R0 は regs[NREGS])
+    begin_test("task partitions");
+    method_entry(CLS_OBJECT, 40, tgt_prim(PR_TINIT));
+    method_entry(CLS_OBJECT, 41, tgt_prim(PR_TSWITCH));
+    method_entry(CLS_OBJECT, 42, tgt_prim(PR_TSLOT));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_BLOCK, 5, 10));                      // 1: R5 = proc (10)
+    prog.push_back(w(OP_LOADI_1, 4));                        // 2
+    prog.push_back(w(OP_SSEND, 3, 40, 2));                   // 3: __task_init(1, R5)
+    prog.push_back(w(OP_LOADI_1, 4));                        // 4
+    prog.push_back(w(OP_SSEND, 3, 41, 1));                   // 5: __task_switch(1) (R3 = nil を書いてから切り替える)
+    prog.push_back(w(OP_LOADI_7, 6));                        // 6: 区画 0 に戻った
+    prog.push_back(w(OP_SSEND, 3, 42, 0));                   // 7: R3 = __task_slot = 0
+    prog.push_back(w(OP_STOP));                              // 8
+    prog.push_back(w(OP_NOP));                               // 9
+    prog.push_back(w(OP_ENTER, 0, 5));                       // 10: 区画 1 (R0 = Proc の self = nil)
+    prog.push_back(w(OP_SSEND, 1, 42, 0));                   // 11: R1 = 1
+    prog.push_back(w(OP_LOADI_3, 2));                        // 12
+    prog.push_back(w(OP_LOADI_0, 4));                        // 13
+    prog.push_back(w(OP_SSEND, 3, 41, 1));                   // 14: __task_switch(0)
+    run();
+    expect_halt();
+    expect_reg(3, vint(0));
+    expect_reg(6, vint(7));
+    expect_reg(NREGS + 1, vint(1));
+    expect_reg(NREGS + 2, vint(3));
+    expect_reg(NREGS + 3, VNIL);
+    if (dut.core.task_id != 0 || !dut.core.sv_valid[1] || dut.core.sv_pc[1] != 15)
+      $fatal(1, "%s: task=%0d sv_valid=%b sv_pc[1]=%0d", name, dut.core.task_id, dut.core.sv_valid, dut.core.sv_pc[1]);
+
+    begin_test("task switch to a slot that was never made");
+    method_entry(CLS_OBJECT, 41, tgt_prim(PR_TSWITCH));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());
+    prog.push_back(w(OP_LOADI_2, 2));
+    prog.push_back(w(OP_SSEND, 1, 41, 1));                   // 2
+    run();
+    expect_error(2);
+
+    // ---- 割り込み: __task_on(0) の次の命令の区切りで Integer#__task_tick(今の ms) を今のフレームの上 (fn = 8) で呼び、
+    //      戻ったら同じ命令から。呼んでいる間は割り込みを止めている (__task_lock(false) は前の true を返す)
+    begin_test("task tick trap");
+    method_entry(CLS_OBJECT, 43, tgt_prim(PR_TON));
+    method_entry(CLS_OBJECT, 44, tgt_prim(PR_TLOCK));
+    method_entry(CLS_INT, SYM_TICK, 16'd20);
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_INT, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_ENTER, 0, 8));                       // 1: fn = 8
+    prog.push_back(w(OP_LOADI_0, 4));                        // 2
+    prog.push_back(w(OP_SSEND, 3, 43, 1));                   // 3: __task_on(0)
+    prog.push_back(w(OP_LOADI_5, 5));                        // 4: ここで割り込み、戻ってからもう一度
+    prog.push_back(w(OP_ADDI, 5, 1));                        // 5: R5 = 6 (1回だけ)
+    prog.push_back(w(OP_STOP));                              // 6
+    for (int i = 7; i < 20; i++) prog.push_back(w(OP_NOP));
+    prog.push_back(w(OP_ENTER, 0, 5));                       // 20: __task_tick
+    prog.push_back(w(OP_MOVE, 2, 0));                        // 21: R2 = 受け手 (今の ms = 0)
+    prog.push_back(w(OP_LOADNIL, 4));                        // 22
+    prog.push_back(w(OP_SSEND, 3, 43, 1));                   // 23: __task_on(nil)
+    prog.push_back(w(OP_LOADFALSE, 4));                      // 24
+    prog.push_back(w(OP_SSEND, 3, 44, 1));                   // 25: R3 = __task_lock(false) = true
+    prog.push_back(w(OP_LOADI_7, 4));                        // 26
+    prog.push_back(w(OP_RETURN, 4));                         // 27: 戻り値は捨てる
+    run();
+    expect_halt();
+    expect_reg(5, vint(6));
+    expect_reg(8 + 2, vint(0));
+    expect_reg(8 + 3, VTRUE);
+    if (dut.core.sp != 0 || dut.core.bp != 0 || dut.core.tlock) $fatal(1, "%s: sp=%0d bp=%0d tlock=%b", name, dut.core.sp, dut.core.bp, dut.core.tlock);
+
+    // ---- 一番外の終わり: タスクがあれば STOP の前に 0.__task_main_end (割り込みを止めて戻ると STOP をもう一度で止まる)
+    begin_test("task main end");
+    method_entry(CLS_OBJECT, 43, tgt_prim(PR_TON));
+    method_entry(CLS_INT, SYM_MEND, 16'd10);
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_INT, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_ENTER, 0, 6));                       // 1: fn = 6
+    prog.push_back(w(OP_LOADI16, 4, 16'd1000));              // 2
+    prog.push_back(w(OP_SSEND, 3, 43, 1));                   // 3: __task_on(1000) (割り込みはまだ来ない)
+    prog.push_back(w(OP_STOP));                              // 4
+    for (int i = 5; i < 10; i++) prog.push_back(w(OP_NOP));
+    prog.push_back(w(OP_ENTER, 0, 5));                       // 10: __task_main_end
+    prog.push_back(w(OP_LOADI_6, 2));                        // 11
+    prog.push_back(w(OP_LOADNIL, 4));                        // 12
+    prog.push_back(w(OP_SSEND, 3, 43, 1));                   // 13: __task_on(nil)
+    prog.push_back(w(OP_RETURN, 2));                         // 14
+    run();
+    expect_halt();
+    expect_reg(6 + 2, vint(6));
+    if (int'(dut.core.pc) != 4) $fatal(1, "%s: halted at %0d", name, dut.core.pc);
 
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");

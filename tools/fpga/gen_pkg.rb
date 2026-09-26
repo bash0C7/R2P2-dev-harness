@@ -35,8 +35,11 @@ module FpgaGenPkg
     lines << ""
     lines << "  // コアの大きさ (tools/fpga/isa.rb)"
     lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"
+    lines << "  localparam int TASKS       = #{FpgaIsa::TASKS};"
     lines << "  localparam int STACK_DEPTH = #{FpgaIsa::STACK_DEPTH};"
     lines << "  localparam int NCONST      = #{FpgaIsa::NCONST};"
+    lines << "  localparam int INSNS_PER_US = #{FpgaIsa::INSNS_PER_US}; // 仮想の時計: 始めた命令この数で 1µs"
+    lines << "  localparam int LOCKED_INSNS_PER_US = #{FpgaIsa::LOCKED_INSNS_PER_US}; // 割り込みを止めている間の命令はこの数で 1µs"
     lines << ""
     lines << "  // メソッド表 (tools/fpga/isa.rb)。1語 = {クラス, シンボル, 飛び先}。飛び先の上位 2bit が種類"
     lines << "  localparam logic [15:0] SUPER_SYM = 16'h#{FpgaIsa::SUPER_SYM.to_s(16)};"
@@ -91,7 +94,8 @@ module FpgaGenPkg
   # 演算の落ち先のシンボルの名前を SystemVerilog の識別子にする
   OP_SYM_NAMES = {
     "+" => "ADD", "-" => "SUB", "*" => "MUL", "/" => "DIV", "==" => "EQ", "<" => "LT", "<=" => "LE", ">" => "GT",
-    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET", "initialize" => "INIT", "__core_error" => "CERR"
+    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET", "initialize" => "INIT", "__core_error" => "CERR",
+    "__task_tick" => "TICK", "__task_main_end" => "MEND"
   }.freeze
 
   def write

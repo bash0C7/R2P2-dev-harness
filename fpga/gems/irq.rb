@@ -1,6 +1,6 @@
 # FPGA 版の irq gem。API は PicoRuby の picoruby-irq (mrblib/irq.rb と sig/irq.rbs) のうち、ポーリング (IRQ.process) で使う所。
 # 枠と事象の列はデバイス (tools/fpga/devices.rb の IRQ_*、0x160 から。RP2040 の port と同じ 16 枠・列 32) が持つ。
-# IRQ.start / stop は Task が要る (FPGA では P6)。
+# IRQ.start / stop は配るタスク (Task) を作る / 止める。
 module IRQ
   MAX_PROCESS_COUNT = 5
   HANDLER = {}
@@ -55,12 +55,34 @@ module IRQ
     count
   end
 
+  # [配っているか, 配るタスク]
+  DISPATCH = [false, nil]
+
+  # 登録した handler に、事象が来たら呼ぶタスク (PicoRuby は ISR から Task::Queue で起こす。ここは 1ms ごとに見る)。
+  # 始めていなければ true
   def self.start
-    raise NotImplementedError, "IRQ.start needs Task, which the FPGA core does not have yet"
+    return false if DISPATCH[0]
+    DISPATCH[0] = true
+    if DISPATCH[1].nil? || DISPATCH[1].status == :DORMANT
+      DISPATCH[1] = Task.new(name: "irq_dispatcher") do
+        while DISPATCH[0]
+          begin
+            IRQ.process
+          rescue => e
+            puts "IRQ: GPIO handler raised #{e.class}: #{e.message}"
+          end
+          sleep_ms 1
+        end
+      end
+    end
+    true
   end
 
+  # 止めたら true (始めていなければ false)。登録は残る
   def self.stop
-    false
+    return false unless DISPATCH[0]
+    DISPATCH[0] = false
+    true
   end
 
   def irq(event_type, **opts, &callback)

@@ -49,8 +49,10 @@ class FpgaRefVm
 
   # stim: [[step, port, value], ...]。step 以降の命令から port の入力が value になる。
   # heap_size: ヒープの語数 (RTL の HEAP_WORDS と同じにする。ファズは小さくして GC を突く)
-  def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [], heap_size: FpgaIsa::HEAP_SIZE)
+  # nregs: タスク1つの区画のレジスタの数、tasks: 区画の数 (タスクの数の上限。RTL の NREGS / TASKS と同じにする)
+  def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [], heap_size: FpgaIsa::HEAP_SIZE, tasks: FpgaIsa::TASKS)
     @rom = words
+    @ntasks = tasks
     @heap_size = heap_size
     @half = heap_size / 2
     @nregs = nregs
@@ -65,8 +67,15 @@ class FpgaRefVm
   # 電源を入れた時と watchdog の再起動 (コアのリセット): レジスタ・ヒープ・定数・ポート・仮想の時計を初めから。
   # step はデバイスの刺激のために数え続ける (仮想の時計はこの step から)
   def boot(step)
-    @boot_step = step
-    @regs = Array.new(@nregs) { NIL }
+    @units = 0 # 始めた命令の時間 (1µs の LOCKED_INSNS_PER_US 分の 1 が単位)
+    @lock_now = false # 今の命令を割り込みを止めて始めたか
+    @regs = Array.new(@nregs * @ntasks) { NIL } # タスク i の区画は i * nregs から
+    @task = 0      # 今のタスクの区画
+    @rlim = @nregs # 今の区画の終わり
+    @stacks = Array.new(@ntasks) { [] } # 区画ごとのコールスタック
+    @ctx = Array.new(@ntasks) # 止めている区画の状態 (context_save)
+    @tlock = false # tick の割り込みを止めている (スケジューラーの中)
+    @tnext = nil   # 次に割り込む仮想の時計の ms (nil はタスクが無い。__task_on で決める)
     @call_kw = 0 # 今の呼び出しのキーワード引数の印 (c の bit 8)
     @kw = 0      # 今のフレームの印 (ENTER が見る)
     @io = Array.new(FpgaIoMap::NPORTS) { NIL }
@@ -74,7 +83,7 @@ class FpgaRefVm
     @heap = Array.new(@heap_size) { NIL }
     @space = 0
     @hp = 0
-    @stack = [] # [戻り先の pc, 呼び出し元の bp, 呼び出し元の Proc, 呼び出し元の env, 呼び出し元の nregs]
+    @stack = @stacks[0] # [戻り先の pc, 呼び出し元の bp, 呼び出し元の Proc, 呼び出し元の env, 呼び出し元の nregs, ...]
     @bp = 0
     @cp = NIL   # 今のフレームが Proc (ブロック) ならその参照
     @env = NIL  # 今のフレームの env (中で Proc を作った時にできる)
@@ -87,12 +96,17 @@ class FpgaRefVm
     @hcount = 0
     @tbase = 0  # メソッド表 (TABLE で決まる)
     @tsize = 0
-    @slept = 0 # sleep した時間 (µs)。仮想の時計 = 始めた命令の数 + これ
+    @slept = 0 # sleep した時間 (µs)。仮想の時計 = 始めた命令の時間 + これ
   end
 
-  # 仮想の時計 (µs): この step までに始めた命令の数 (started は今の命令を含めるか) + sleep した時間
-  def vtime(step, started)
-    step - @boot_step + (started ? 1 : 0) + @slept
+  # 仮想の時計 (µs): 始めた命令の時間 (started は今の命令を含めるか) + sleep した時間。命令は INSNS_PER_US 個で 1µs、
+  # タスクの割り込みを止めて (__task_lock) 始めた命令は LOCKED_INSNS_PER_US 個で 1µs (スケジューラーは PicoRuby では C で速い)
+  def vtime(_step, started)
+    (@units + (started ? insn_units : 0)) / FpgaIsa::LOCKED_INSNS_PER_US + @slept
+  end
+
+  def insn_units
+    @lock_now ? 1 : FpgaIsa::LOCKED_INSNS_PER_US / FpgaIsa::INSNS_PER_US
   end
 
   attr_reader :trace, :regs, :io, :consts, :heap, :stats
@@ -119,9 +133,13 @@ class FpgaRefVm
         pc = 0
         @dev.tick(step, vtime(step, false))
       end
+      # タスクがあれば、仮想の時計がスケジューラーの決めた ms に届いた命令の区切りで Integer#__task_tick を割り込みで呼ぶ
+      pc = task_trap(pc, step) if @tnext && !@tlock && @fn > 0 && vtime(step, false) / 1000 >= @tnext
       # ROM の空きは全 bit 1 (op 0xff、未対応命令) で埋まっている。ハードウェアと同じくエラーになる
       op, a, b, c = FpgaRom.unpack(@rom[pc] || FpgaRom::PAD)
       @trace << format("X %d %d %02x", step, pc, op)
+      @pc_now = pc
+      @lock_now = @tlock
       result = begin
         execute(step, pc, op, a, b, c)
       rescue Fault
@@ -139,6 +157,7 @@ class FpgaRefVm
       else
         pc = result
       end
+      @units += insn_units
       step += 1
     end
     @trace
@@ -218,7 +237,7 @@ class FpgaRefVm
   def core_error(pc, e)
     return :error if @hcount.zero?
     s = e.base || @fn
-    return :error unless @bp + s + 3 < @regs.size
+    return :error unless @bp + s + 3 < @rlim
     @stats[:core_error] += 1
     @regs[@bp + s] = int(e.kind)
     @regs[@bp + s + 1] = e.a1
@@ -230,8 +249,99 @@ class FpgaRefVm
     r[0] & 0x3FFF
   end
 
+  # ---- タスク (docs/spec.md §10「Task (P6)」)。区画ごとにレジスタとコールスタックを持ち、切り替えは小さな状態を入れ替えるだけ
+
+  # 割り込み: 今のフレームの上 (fn) に受け手 (Integer) を置いて Integer#<sym> を呼び、戻ったら同じ pc から (戻り値は捨てる)。
+  # 割り込みの間は tick を止める。呼べなければ (表に無い、区画かスタックが足りない) nil
+  def task_call(pc, sym, recv)
+    r = lookup(FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index(sym))
+    return nil unless r && (r[0] >> 14) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH && @bp + @fn + 2 < @rlim
+    @tlock = true
+    @regs[@bp + @fn] = recv
+    @call_kw = 0
+    frame(pc - 1, @fn, 0, false, r[1], true)
+    r[0] & 0x3FFF
+  end
+
+  # 一番外の終わり (STOP、スタックが空の戻り)。タスクがあれば止まる前に __task_main_end (残りのタスクを走らせ、終わったら
+  # 割り込みを止めて戻る。戻ったらこの命令をもう一度実行して止まる)
+  def main_end
+    return :halt unless @tnext
+    task_call(@pc_now, "__task_main_end", int(0)) || :halt
+  end
+
+  # tick の割り込み (__task_tick の受け手は今の ms)
+  def task_trap(pc, step)
+    now = vtime(step, false) / 1000
+    to = task_call(pc, "__task_tick", int(now))
+    return pc unless to
+    @stats[:task_tick] += 1
+    to
+  end
+
+  TASK_PRIMS = %w[TINIT TSWITCH TSLOT TLOCK TON HWSLEEPUS].freeze
+
+  def context_save(pc)
+    @ctx[@task] = { pc: pc, bp: @bp, cp: @cp, env: @env, fn: @fn, mcls: @mcls, argc: @argc, kw: @kw, exc: @exc, xval: @xval }
+  end
+
+  # 区画 t に切り替える。t の続きの pc を返す
+  def context_load(t)
+    c = @ctx[t]
+    @ctx[t] = nil
+    @task = t
+    @rlim = (t + 1) * @nregs
+    @stack = @stacks[t]
+    @bp, @cp, @env, @fn, @mcls, @argc, @kw, @exc, @xval = c.values_at(:bp, :cp, :env, :fn, :mcls, :argc, :kw, :exc, :xval)
+    @stats[:task_switch] += 1
+    c[:pc]
+  end
+
+  # タスクの primitive。__task_init(区画, Proc): 区画を空にし、切り替えたら Proc を引数なしで呼び始める (R0 は Proc の self、
+  # ブロックの枠は nil)。__task_switch(区画): 今の区画を止めて (戻り値 nil) 区画へ。__task_slot: 今の区画。
+  # __task_lock(真偽): 割り込みを止める / 許す (前の値を返す)。__task_on(ms か nil): 次に割り込む仮想の時計の ms (nil は出さない)。
+  # __hw_sleep_us(n): 仮想の時計を進める
+  def task_prim(step, pc, name, a)
+    case name
+    when "TINIT"
+      t = reg(a + 1)
+      pr = reg(a + 2)
+      fault! unless int?(t) && t[1] < @ntasks && t[1] != @task && proc?(pr)
+      base = t[1] * @nregs
+      @stacks[t[1]].clear
+      @regs[base] = @heap[pr[1] + 4]
+      @regs[base + 1] = NIL
+      @ctx[t[1]] = { pc: @heap[pr[1] + 1][1] & 0xFFFF, bp: base, cp: pr, env: NIL, fn: 0, mcls: FpgaIsa::CLS_OBJECT, argc: 0,
+                     kw: 0, exc: NIL, xval: NIL }
+      set(step, a, NIL)
+    when "TSWITCH"
+      t = reg(a + 1)
+      fault! unless int?(t) && t[1] < @ntasks && (t[1] == @task || @ctx[t[1]])
+      set(step, a, NIL)
+      return pc + 1 if t[1] == @task
+      context_save(pc + 1)
+      return context_load(t[1])
+    when "TSLOT" then set(step, a, int(@task))
+    when "TLOCK"
+      prev = @tlock
+      @tlock = truthy?(reg(a + 1))
+      set(step, a, bool(prev))
+    when "TON"
+      v = reg(a + 1)
+      fault! unless int?(v) || v == NIL
+      @tnext = int?(v) ? v[1] : nil
+      set(step, a, NIL)
+    when "HWSLEEPUS"
+      y = reg(a + 1)
+      fault! unless int?(y) && signed(y[1]) >= 0
+      @slept += y[1]
+      set(step, a, y)
+    end
+    pc + 1
+  end
+
   def ok?(r)
-    @bp + r < @regs.size
+    @bp + r < @rlim
   end
 
   def reg(r)
@@ -272,22 +382,30 @@ class FpgaRefVm
     p
   end
 
-  # Cheney のコピー GC。ルートはレジスタファイル全部 (番号順)、定義済みの定数 (番号順)、
-  # コールスタックの Proc と env (底から、1段ごとに Proc、env の順)、今の Proc、今の env、exc、xval。ハードウェアも同じ順に写す
+  # Cheney のコピー GC。ルートはレジスタファイル全部 (番号順)、定義済みの定数 (番号順)、区画ごとのコールスタックの Proc と env
+  # (区画の順、底から、1段ごとに Proc、env の順)、区画ごとの今の Proc、env、exc、xval (区画の順)。ハードウェアも同じ順に写す
   def gc
     @stats[:gc] += 1
     @space = 1 - @space
     @free = @space * @half
     @regs.each_index { |i| @regs[i] = forward(@regs[i]) }
     @consts.each_index { |i| @consts[i] = forward(@consts[i]) if @consts[i] }
-    @stack.each do |fr|
-      fr[2] = forward(fr[2])
-      fr[3] = forward(fr[3])
+    @stacks.each do |st|
+      st.each do |fr|
+        fr[2] = forward(fr[2])
+        fr[3] = forward(fr[3])
+      end
     end
-    @cp = forward(@cp)
-    @env = forward(@env)
-    @exc = forward(@exc)
-    @xval = forward(@xval)
+    @ntasks.times do |t|
+      if t == @task
+        @cp = forward(@cp)
+        @env = forward(@env)
+        @exc = forward(@exc)
+        @xval = forward(@xval)
+      elsif @ctx[t]
+        %i[cp env exc xval].each { |k| @ctx[t][k] = forward(@ctx[t][k]) }
+      end
+    end
     scan = @space * @half
     while scan < @free
       w = @heap[scan]
@@ -615,7 +733,9 @@ class FpgaRefVm
       @exc = x
       return unwind(step, pc, :raise, 0, NIL)
     when "JMPUW" then return unwind(step, pc, FpgaIsa::BRK_JUMP, b, NIL)
-    when "STOP" then return :halt
+    when "STOP"
+      # タスクがあれば止まる前に __task_main_end (残りのタスクを走らせ、終わったら割り込みを止めて戻る)
+      return main_end
     when "BREAK" then return brk(step, pc, a, b, c)
     when "RETURN_BLK" then return return_blk(step, pc, a, c)
     when "GETUPVAR", "BLKPUSH" then set(step, a, read_slot(c, b))
@@ -843,7 +963,7 @@ class FpgaRefVm
     m2 = (c >> 6) & 0x1F
     kd = (c >> 11) & 1
     len = m1 + o + r + m2
-    fault! if @bp + [b, len + kd + 2].max > @regs.size
+    fault! if @bp + [b, len + kd + 2].max > @rlim
     argc = @argc
     kw = @kw || 0
     if kw == 1 && kd.zero?
@@ -913,7 +1033,7 @@ class FpgaRefVm
 
   # 戻り: 呼び出し先の R0 (= 呼び出し元の R[a]) に値を置いて戻る。フレームが無ければ停止
   def ret(step, value)
-    return :halt if @stack.empty?
+    return main_end if @stack.empty?
     callee = @bp
     pc = pop_frame
     set_abs(step, callee, value) unless @popped_ctor # initialize の戻り値は捨てる (R0 = new したオブジェクト)
@@ -1011,7 +1131,7 @@ class FpgaRefVm
         return finish(target)
       when FpgaIsa::BRK_RET
         if @bp == target
-          return :halt if @stack.empty?
+          return main_end if @stack.empty?
           callee = @bp
           ret_pc = pop_frame
           set_abs(step, callee, @xval) unless @popped_ctor # initialize の戻り値は捨てる
@@ -1082,6 +1202,8 @@ class FpgaRefVm
     return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
     return io_prim(step, pc, name, a) if name == "IOREAD" || name == "IOWRITE"
+    return task_prim(step, pc, name, a) if TASK_PRIMS.include?(name)
+    return :halt if name == "HALT" # __halt: 止まる (main が terminate された後、ほかのタスクが全部終わった時)
     return float_prim(step, pc, name, a) if FLOAT_PRIMS.include?(name)
     if name == "RAISE"
       @exc = reg(a + 1)

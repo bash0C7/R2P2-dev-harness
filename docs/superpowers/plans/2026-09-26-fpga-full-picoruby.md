@@ -284,23 +284,30 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 
 - `Task.new { }`、`Task.pass`、`sleep` で切り替わる協調マルチタスク。タスクごとにレジスタ窓とコールスタックを持つ
 - PSG (P5e) の `start` / `join` と `IRQ.start` は Task の上に作られているので、P6 を P5e より先にする
-- **P6 の設計。** PicoRuby の mruby-task (src/task.c) と同じ意味。
-  - **タスクごとに区画を分ける。** レジスタファイルとコールスタックを TASKS (8) 個の区画に分け (タスク i の R0 は i × 128)、
-    今のタスクの番号で選ぶ。切り替えは pc・bp・cp・env・fn・mcls・スタックの深さ・例外の途中の値などの小さな状態を
-    タスクごとの表に写して入れ替えるだけ (レジスタを写さない)。env が生きている間の bp を指したままでよいのは、区画が重ならないから
-    (ブロックが main の変数を読むタスクでも、main の区画はそのまま残る)。GC の根は全区画
-  - **スケジューラーはプレリュードの Ruby** (`Task` クラス、ready / waiting / suspended の列は優先度の順、同じ優先度は後ろへ。
-    task.c の mrb_task_q_insert と同じ)。回路の primitive は、区画にブロックを置く (`__task_init`)、区画を切り替える
-    (`__task_switch`)、今の区画 (`__task_slot`)、tick を止める / 許す (`__task_lock`)
-  - **tick は仮想の時計で。** R2P2 (Pico 2) と同じく 1 tick = 1ms、timeslice は 10 tick。コアは仮想の時計が次の tick を越えた
-    命令の区切りで (スケジューラーが許していれば) `__task_tick` を割り込みで呼び、戻ったらその命令から続ける。
-    割り込みのフレームは今のフレームの上 (bp + nregs) に置く。これのために一番外の irep にも ENTER を置く
-  - **sleep と idle。** タスクがあれば `sleep` / `sleep_ms` はスケジューラーが WAITING にし、どのタスクも動けなければ
-    次に起きる tick まで仮想の時計を進める (今の sleep_ms と同じ)
-  - **タスクの終わり。** 区画はブロックを包んだ Ruby (`r = blk.call` の後に `Task.__finish(r)`) から始め、終わったら区画を返す。
-    例外はタスクの結果にする (mruby の exception_as_result)。区画が尽きたら Task.new は例外
-  - **突き合わせ。** 出力の順が sleep で決まるプログラムは picoruby の host VM とも比べる (host の tick は 4ms なので、
-    tick の単位に依らない書き方のものだけ)
+- **P6 の設計。** PicoRuby の mruby-task (src/task.c、task_queue.c) と同じ意味。詳細は docs/spec.md §10「Task (P6)」
+  - **区画。** レジスタファイルとコールスタックを TASKS (8) 個の区画に分け (タスク i の R0 は i × 128、スタックは区画ごとに 32 段)、
+    切り替えは小さな状態 (pc・bp・cp・env・fn・mcls・argc・exc・xval・スタックの深さ) を区画ごとの表と入れ替えるだけ。GC の根は全区画
+  - **スケジューラーは FPGA 版の gem の Ruby** (`fpga/gems/task.rb`)。task.c を1行ずつ写す (switching_、mrb_tick、task_run_body)。
+    回路の primitive は `__task_init` `__task_switch` `__task_slot` `__task_lock` `__task_on` `__hw_sleep_us` `__halt`
+  - **割り込みはスケジューラーが決めた ms にだけ。** tick (1ms、timeslice 10) は割り込みの時にまとめて進める。
+    割り込みのフレームは今のフレームの上 (bp + fn)。一番外の irep にもいつも ENTER を置く。一番外の終わりは `__task_main_end`
+  - **仮想の時計は 16 命令で 1µs、スケジューラーの命令は 256 個で 1µs** (P6 で決めた。下の「見つけたこと」)
+  - **突き合わせ。** mruby-task の examples 8 本と picoruby-mruby の example/task.rb は参照と RTL が一致。host の picoruby とは
+    tick の単位 (host は 4ms)・番地・UINT32_MAX の表し方の違いだけ。statistics.rb は `workers.each(&:join)` (Symbol#to_proc) が要る → P7
+
+### P7 動的な send と Symbol#to_proc
+
+- `obj.send(:name, ...)` / `__send__` / `public_send` と、`&:sym` のブロック (Symbol#to_proc)。mruby-task の statistics.rb が使う
+- **P7 の設計。**
+  - **`__send` (回路の primitive、Object、引数の数は何でも)。** R[a+1] の Symbol を名前にして、残りの引数を1つ下へずらし
+    (R[a+1..] = R[a+2..]、ブロックとキーワードの Hash の枠も)、引数の数を1つ減らして普通の呼び出しと同じく受け手のクラスから引く。
+    ずらす書き込みはトレースに出さない。名前が Symbol でなければ TypeError (コアのエラー)、引数 0 個はエラー
+  - **`send` / `__send__` / `public_send` はプレリュード** (`def send(name, *args, &blk)`)。引数の数で `__send(name, a0, ...)` に
+    分ける (配列の splat で呼ぶと argc 15 になり、primitive の受け手の検査が通らないため)。キーワード引数は最後の Hash として渡す
+  - **`&:sym`。** mruby の OP_SENDB は、ブロックの枠が nil でも Proc でもなければ `to_proc` を送る。回路でこれをすると呼び出しの
+    途中にもう1つ呼び出しが要るので、変換器が「ブロックの枠を LOADSYM で埋めた直後の SENDB」(`&:sym` の形) に
+    `SEND 枠 :to_proc` を足す。`Symbol#to_proc` はプレリュード (`proc { |o, *a| o.__send(sym, *a) }` を引数の数で分けたもの)。
+    LOADSYM 以外の値 (`&obj`) を渡すものは今は止めない (Proc でなければ呼んだ所でエラー)
 
 ## 記録
 
@@ -323,6 +330,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P5b Float | 60 | 31 (example は 3 / 32) | 31 | floats.rb を追加。10進との変換は多倍長の整数で正確に (mrb_fpconv_pkg、tb は両シミュレーターで 1174 本)。ROM を 16384 語に。止める理由はほぼ device の gem (psg、i2c、irq ...) |
 | 2026-09-26 | P5c IRQ・PWM・ADC・watchdog・io/console | 63 | 38 (example は 9 / 32) | 38 | peripherals.rb (刺激)、irq_loopback.rb、watchdog.rb を追加。example の irq_gpio_picoruby など IRQ.start を使う3本は、参照と RTL は一致するが NotImplementedError で終わる (P6 で Task ができてから)。止める理由は i2c / spi / psg / Task |
 | 2026-09-26 | P5d I2C・SPI・表示器・Time・hcsr04・rotary_encoder | 65 | 47 (example は 17 / 32) | 47 | buses.rb (刺激)、display.rb を追加。ヒープ 65536 語 (parameter)。表示器はトレースのデコーダーでエミュレーターが描く。止める理由は Task (P6)、psg (P5e)、picotest、pio、pitchdetector |
+| 2026-09-26 | P6 Task | 66 | 50 (example は 19 / 32) | 50 | tasks.rb を追加 (host の picoruby とも比べる)。区画 8 つ、スケジューラーは task.c を写した Ruby。仮想の時計を 16 命令で 1µs に。mruby-task の examples 9 本は参照と RTL が一致、host とは表し方の違いだけ。止める理由は psg (P5e)、picotest、pio、pitchdetector |
 
 ## 見つけたこと
 
@@ -450,6 +458,22 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 - P5d: SSD1306 の画面 (1024 バイト、1語 1バイト) は 2048 語のヒープに入らず、UC8151 (4736 バイト) は 16384 語でも尽きた。
   65536 語にし、GC を突く tb とファズは parameter で 2048 語のまま回す (大きいヒープではファズの GC がほぼ起きなくなった)
 - P5d: 変換器を走らせる PicoRuby の host VM の既定のヒープ (6.4MB) が、表示器の gem を入れたプログラムで尽きた (NoMemoryError)。
-  build_config/host-test.rb の overlay で 64MB にした。`-DHEAP_SIZE=(1024*65536)` は shell が括弧でつまずくので数で書く
+  build_config/host-test.rb の overlay で 16000000 バイトにした (estalloc は 24bit の番地なので 16MB 未満まで)。`-DHEAP_SIZE=(...)` は shell が括弧でつまずくので数で書く
 - P5d: 外のチップの表示器を RTL のデバイスにすると SV と Ruby に2回書くことになる。書き込みはトレースに出るので、
   表示はトレースを読むデコーダー (Ruby 1つ) にし、読み出しの返事だけを刺激にした
+- P6: 最初は 1ms ごとに `__task_tick` を割り込ませたが、Ruby のスケジューラーが 1 回ごとに数百命令 (1命令 1µs の時計で数百 µs) を
+  食い、タスクの時間がずれた。次に何か起きる ms にだけ割り込み、tick をまとめて進める形にした
+- P6: 一番外の irep は STOP でなく RETURN で終わることがある (スタックが空の RETURN)。そこも `__task_main_end` にした。
+  STACK_DEPTH 16 では、タスクの中からスケジューラーまでの呼び出しの深さが足りなかった → 区画ごとに 32
+- P6: 最初の Task は task.c の細部を読まずに書き、host の picoruby と 5 本違った。`Task.new` は優先度が高くてもすぐ切り替えない
+  (task.c は列に入れた後の先頭と比べる)、列の先頭でない走っているタスクの timeslice は減らない、`Queue#push` はいつも切り替える、
+  sleep 中に suspend したタスクは resume で WAITING に戻る、など。task.c と task_queue.c を1行ずつ写し直した
+- P6: 残りの違い (同時に起きるタスクの順、timeslice の切れ目) は、スケジューラーの命令が仮想の時計を進め、1命令 1µs が host
+  (C のスケジューラー、速い CPU) より何十倍も遅いことだった。16 命令で 1µs (INSNS_PER_US。125MHz のコアの速さの見当)、
+  割り込みを止めている間の命令は 256 個で 1µs にして、host と tick の単位などの表し方の違いだけになった。
+  最初は割り込みを止めている間の命令を 0 にしたが、`Task.pass` だけで回るタスクがいると時計が進まず step ばかり食った
+- P6: `Task.stat` の Hash で、行の途中に書いた注釈が `dormant:` を注釈の中に入れていた (statistics.rb が NoMethodError で気づいた)
+- P6: Icarus だけ GC のケースが止まらなかった。GC が「止めている区画」のスタックの深さ sv_sp を、まだ __task_init していない
+  区画でも読んでいた (リセットしない配列なので X、Verilator は 0)。sv_valid で囲んだ
+- P6: 区画を 8 にしてレジスタファイルが 1024 語になり、リセットの S_INIT (1語 1 cycle) と GC の根 (全区画のレジスタと
+  スタック) が長くなった。peridot_air_top_tb の待ちと mrb_core_tb の cycle の上限を伸ばした
