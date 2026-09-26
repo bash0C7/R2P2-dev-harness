@@ -202,7 +202,8 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
   畳む所は静的に見つからない (黙って ensure を飛ばす)。止められないので P4a と一緒に作った: 例外と同じ状態機械で、
   畳むフレームごとに ensure を探し、あれば巻き戻しの塊 (種類、行き先、値) を exc に置いて ensure へ飛び、
   ensure の最後の RAISEIF が塊を受けて続ける (spec §10「例外 (P4)」)
-- **P4c コアのエラーを例外にする** (NoMethodError、ArgumentError、ZeroDivisionError ...)。P4a では今と同じくエラーで止まる
+- **P4c コアのエラーを例外にする** (NoMethodError、ArgumentError、ZeroDivisionError ...)。例外を作るのは回路でなくプレリュード:
+  コアはフレームの上に [種類, 詳細] を置いて `Integer#__core_error` を呼ぶだけ (例外の表があるプログラムだけ)
 ### P5 require とデバイス
 
 - `require` は変換器が解決する。範囲内の gem は組み込み、範囲外は「範囲外」
@@ -229,6 +230,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P3a Hash・Range・Array | 54 | 25 (example は 3 / 32) | 25 | collections.rb を追加。使わないメソッドを ROM から落とす (live_ireps)。上位はデバイス |
 | 2026-09-26 | P3b キーワード引数 | 55 | 26 (example は 3 / 32) | 26 | kwargs.rb を追加。止める理由はデバイス (P5)、Float 3、`getch` など |
 | 2026-09-26 | P4a+b 例外・ensure の巻き戻し | 56 | 27 (example は 3 / 32) | 27 | exceptions.rb を追加。使わないクラスを表から落とす (live_classes)。止める理由はほぼデバイス (P5)。catch handler は止める理由から消えた |
+| 2026-09-26 | P4c コアのエラーを例外に | 57 | 28 (example は 3 / 32) | 28 | errors.rb を追加。メソッドの生死をクラスでも絞り、blink.rb は 4800 → 1850 語。止める理由はほぼデバイス (P5) |
 
 ## 見つけたこと
 
@@ -303,3 +305,12 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 - P4: rom.rb に Enumerator の連鎖 (`each_with_index.any?`) と正規表現のキャプチャを書き、変換器が PicoRuby で走らなくなる所だった。
   CRuby の突き合わせでは見つからないので、書いたら `rake fpga:corpus` (PicoRuby で変換) を回す
 - P4: fpga:fuzz と fpga:gap を同時に回すと、同じ build/fpga/verilator/mrb_run_tb で Verilator のビルドがぶつかって落ちる
+- P4c: `Integer("12x")` が黙って 12 を返していた (プレリュードが `to_i` に任せていた)。例外を入れたので厳しく読んで ArgumentError にした
+- P4c: KeyError などをプレリュードで raise にしたら、collections.rb が 8218 語で ROM (8192) を超えた。blink.rb (5行) でも
+  コードが 3000 語あった: 演算の落ち先 (`+` `==` `[]` ...) がいつも使われるので、String#== や Hash#[] まで全部生きていた。
+  メソッドの生死を「名前が使われる」かつ「そのクラスのオブジェクトができ得る」の不動点にし (blink.rb 4800 → 1850 語)、
+  メソッド表の詰め率を 1/2 から 2/3 にした (collections.rb 7200 語)
+- P4c: is_a? の表の行に、メタクラスの祖先の行を入れていた。メタクラスの番号は値にならない (クラスの class は Class) ので無駄だった。
+  祖先も値として現れ得るクラスだけにした
+- P4c: 置き換えの途中で、書き足した live_classes / const_class を消してしまった (置き換える範囲の目印の間に入れていた)。
+  commit 済みの版から戻した

@@ -185,7 +185,7 @@ module FpgaFuzz
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
         maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
-        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41 }.freeze
+        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41, nosuch: 42, divz: 43 }.freeze
   # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
   HEAP_TEXT = "hello, fpga!"
   HEAP_TABLE_LOG = 6 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
@@ -200,6 +200,7 @@ module FpgaFuzz
     words = []
     words << encode(FpgaIsa.op("TABLE"), HEAP_TABLE_LOG, 0, 0)
     words << :htable
+    words << encode(FpgaIsa.op("ENTER"), 0, 16, 0) # fn = 16 (コアのエラーの __core_error はその上で呼ぶ)
     catches = [] # [種類, begin, end, 飛び先]
     8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
     words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
@@ -337,10 +338,16 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("SSEND0"), 12, S[:kwm], 0)
         end
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
-      when 13 # 例外: 投げるか ensure を通って戻る raiser を呼び、rescue で受けて投げたもの (配列) を R15 に
+      when 13 # 例外: 投げるか ensure を通って戻る raiser を呼ぶか、コアのエラー (0 で割る、無いメソッド、引数の数) を起こし、
+        # rescue で受けて投げたもの (配列) を R15 に
         site = words.size
         words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
-        words << encode(FpgaIsa.op("SSEND"), 12, S[:raiser], 1)
+        words << case rng.rand(4)
+                 when 0 then encode(FpgaIsa.op("SSEND"), 12, S[:raiser], 1)
+                 when 1 then encode(FpgaIsa.op("SSEND"), 12, S[:vargs], 1) # 数が足りない
+                 when 2 then encode(FpgaIsa.op("SEND"), 12, S[:nosuch], 1)
+                 else encode(FpgaIsa.op("SSEND"), 12, S[:divz], 1)
+                 end
         words << encode(FpgaIsa.op("JMP"), 0, words.size + 2, 0)
         catches << [FpgaIsa::CATCH_RESCUE, site + 1, site + 2, words.size]
         words << encode(FpgaIsa.op("EXCEPT"), 15, 0, 0)
@@ -443,6 +450,19 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("ARRAY2"), 4, 3, rng.rand(3))
     words << encode(FpgaIsa.op("RAISEIF"), 3, 0, 0)
     words << encode(FpgaIsa.op("RETNIL"), 0, 0, 0)
+    # Integer#__core_error(d1, d2): [種類, d1, d2] を投げる
+    cerr_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 2, 7, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 4, 0, 3)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("SEND"), 3, S[:raise], 1)
+    # divz(x): self / (x - x) (x が Integer なら 0 で割る。配列なら Array#+ の結果で割って TypeError か 0 で割る)
+    divz_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 5, 0)
+    words << encode(FpgaIsa.op("MOVE"), 2, 0, 0)
+    words << encode(FpgaIsa.op("LOADI_0"), 3, 0, 0)
+    words << encode(FpgaIsa.op("DIV"), 2, 0, 0)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
     # proc { |a, b| [b, a] }
     pair_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 2, 5, 0)
@@ -471,7 +491,8 @@ module FpgaFuzz
       [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")],
       [FpgaIsa::CLS_INT, S[:vargs], vargs_at], [FpgaIsa::CLS_INT, S[:kwm], kwm_at],
       [FpgaIsa::CLS_INT, S[:raiser], raiser_at], [FpgaIsa::CLS_INT, S[:raise], prim.("RAISE")],
-      [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")],
+      [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")], [FpgaIsa::CLS_INT, S[:divz], divz_at],
+      [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"), cerr_at],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],

@@ -694,7 +694,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **表の1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。** 飛び先の上位 2bit が種類: 0 = メソッドの先頭 pc、
   1 = primitive (回路が持つメソッド、`PRIMS`)、2 = インスタンス変数を読む、3 = 書く (下の「オブジェクト」)。(クラス, `SUPER_SYM` = 0xFFFF) の飛び先は親クラスの番号
   (メタクラスは親のメタクラスへ、Object のメタクラスは Class へ)。空きは全 bit 1
-- **開番地法のハッシュ表。** 位置は (クラス × 5 + シンボル) & (大きさ − 1) から1語ずつ。大きさは項目の2倍以上の2の冪 (16 以上)。
+- **開番地法のハッシュ表。** 位置は (クラス × 5 + シンボル) & (大きさ − 1) から1語ずつ。大きさは詰め率 2/3 までの2の冪 (16 以上)。
   コアは 1 cycle に1語比べる (S_LOOKUP / S_PROBE)。見つからなければ親の輪を引き、32 段で諦める (表が壊れていても止まる)
 - **`TABLE` (pc 0)。** a = 表の大きさの log2、b = 表の先頭の語アドレス、c = シンボル表の先頭。実行するまではどの探索も見つからない
 - **呼び出し (`SEND` / `SEND0` / `SSEND` / `SSEND0`)。** b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。
@@ -795,8 +795,11 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
   参照の突き合わせは CRuby に同じ形の `Hash#inspect` を入れてから走らせる (`FpgaOracle::HASH_INSPECT`)
 - **`case` / `when`** は `===` を送るだけ。`Range#===` / `include?` は CRuby の `cover?` と同じく `<=>` で比べ、比べられなければ偽
 - **プレリュードの使わないメソッドは ROM に置かない。** 変換器が、一番外から生きているコード (ブロック、クラスの本体) と、
-  名前が使われる (送る、`LOADSYM`、`super`、下げた命令が送る) メソッドを、増えなくなるまでたどる (`live_ireps`)。
-  置かないメソッドの中の未対応の命令は止めない
+  名前が使われる (送る、`LOADSYM`、`super`、下げた命令が送る、演算の落ち先) かつそのクラスのオブジェクト (`def self.x` は
+  クラスの値) ができ得るメソッドを、増えなくなるまでたどる (`live_ireps`)。オブジェクトができ得るクラスは、いつもあるもの
+  (main、nil、true、false、Integer、Symbol、クラスの値)、生きているコードの命令が作るもの (配列、文字列、Proc、`ENTER` の
+  残りの配列と空の Hash)、定数として参照されるクラス (new できる) とその祖先。最小の不動点なので、実行時に呼ばれ得る
+  メソッドは必ず残る。置かないメソッドの中の未対応の命令は止めない
 
 ### 例外 (P4)
 
@@ -837,8 +840,20 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **使われないクラスはメソッド表に行を置かない** (`live_classes`)。組み込みと、生きているコードで定数として参照される
   クラス (親クラス・入れ物・`include` の引数としての参照は、それを使うクラスが生きている時だけ)、本体が self を使う
   クラス、それらの祖先。プレリュードの例外のクラスは `raise` や `rescue` を使うプログラムでだけ表に載る
-- **まだのもの (P4c):** コアの実行時エラー (0 で割る、NoMethodError、型の違い、引数の数) は例外にならず、今までどおり
-  エラーで止まる (rescue できない)。`loop` は StopIteration を捕まえない
+- **コアの実行時エラーも例外になる (P4c)。** 例外の表があるプログラムでは、0 で割る (ZeroDivisionError)、メソッドが無い
+  (NoMethodError)、引数の数 (ENTER と回路の primitive、ArgumentError)、Integer の演算・比較の引数が Integer でない
+  (TypeError / ArgumentError) で止まらず、フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて
+  プレリュードの `Integer#__core_error` (受け手が種類、`CERR_*`) を呼ぶ (S_CERR)。そのメソッドが例外を作って投げるので、
+  呼び出しの位置から普通に巻き戻る。例外の表が無いプログラムは今までどおりその命令でエラー停止 (E 行)。
+  表があっても捕まらなければ、E 行は `__core_error` の中の `__raise` になる。一番外にも `ENTER` を足す (fn = nregs)。
+  メッセージは PicoRuby の形 (`undefined method 'foo' for NilClass`、`wrong number of arguments (given 1, expected 2)`、
+  `divided by 0`)。ほかのエラー (レジスタ・コールスタック・ヒープが尽きる、壊れた表、戻ったメソッドへの break、
+  定義されていない定数) は例外にせず止まる
+- **プレリュードのエラーも raise する。** `Hash#fetch` (KeyError)、キーワード引数の不足・余り (ArgumentError)、
+  `Array#[]` の添字 (TypeError)、`Integer("12x")` (ArgumentError。今までは黙って 12 を返していた。0x 0b 0o 0 の接頭辞と `_`)。
+  メッセージはこれらだけ CRuby の形 (PicoRuby は `Key not found`、`missing keyword: a`、`invalid string for number`)。
+  「FPGA では未対応」を表すわざと未定義の呼び出し (`__*_not_supported`) は今までどおり止まる
+- `loop` は StopIteration を捕まえない
 
 ### プレリュード
 
@@ -846,8 +861,8 @@ primitive を組み合わせるメソッドは、mruby の mrblib と同じく R
 一緒に compile する** (`mrbc -o out.mrb fpga/prelude/core.rb prog.rb` で1つの irep になる)。コアはそれを普通のメソッドとして走らせる。
 回路を増やさずに組み込みメソッドを足すため。今あるもの: `Integer#times` `upto` `downto`、`Array#each` `each_with_index` `map`
 `==` `include?` `join` `inspect`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?` `===` `puts` `print` `p` `format`、
-`NilClass#nil?`、`Module#===` `name`、String のメソッド (上の「文字列と出力」)、例外のクラスと `raise` (上の「例外 (P4)」)。プレリュードは ROM を 4000 語ほど使う
-(使わないメソッドも全部入る)。CRuby / picoruby でも同じ意味になる書き方だけで書く
+`NilClass#nil?`、`Module#===` `name`、String のメソッド (上の「文字列と出力」)、例外のクラスと `raise` (上の「例外 (P4)」)。使うメソッドだけが ROM に入る
+(`blink.rb` で全体 1900 語ほど、文字列を使うと 5000 語ほど、collections.rb で 7200 語)。CRuby / picoruby でも同じ意味になる書き方だけで書く
 (参照の突き合わせは CRuby の組み込みと比べる)。
 
 ### ROM 形式と変換 (#7)

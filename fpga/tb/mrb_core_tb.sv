@@ -1305,6 +1305,58 @@ module mrb_core_tb;
     expect_reg(1, vint(99));
     expect_reg(5, vint(7));
 
+    // コアのエラー: 例外の表があれば、フレームの上 (fn から) に [種類, 詳細1, 詳細2] を置いて Integer#__core_error を呼ぶ
+    begin_test("core error becomes an exception");
+    method_entry(CLS_INT, SYM_CERR, 16'd9);
+    method_entry(CLS_INT, 21, tgt_prim(PR_RAISE));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_ENTER, 0, 6));                       // 2: fn = 6
+    prog.push_back(w(OP_LOADI_7, 1));                        // 3
+    prog.push_back(w(OP_LOADI_0, 2));                        // 4
+    prog.push_back(w(OP_DIV, 1));                            // 5: 0 で割る (rescue [5, 6) -> 7)
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_EXCEPT, 3));                         // 7: R3 = 投げたもの (種類)
+    prog.push_back(w(OP_STOP));                              // 8
+    prog.push_back(w(OP_ENTER, 2, 5));                       // 9: __core_error(d1, d2): 種類 (self) を投げる
+    prog.push_back(w(OP_MOVE, 3, 0));                        // 10
+    prog.push_back(w(OP_MOVE, 4, 0));                        // 11
+    prog.push_back(w(OP_SEND, 3, 21, 1));                    // 12
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b0, 5, 6, 7));
+    run();
+    expect_halt();
+    expect_reg(3, vint(CERR_ZERODIV));
+    expect_reg(1, vint(7));
+
+    begin_test("no method becomes an exception");
+    method_entry(CLS_INT, SYM_CERR, 16'd8);
+    method_entry(CLS_INT, 21, tgt_prim(PR_RAISE));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_ENTER, 0, 6));                       // 2
+    prog.push_back(w(OP_SEND0, 1, 30));                      // 3: nil.no_such (rescue [3, 4) -> 5)
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_EXCEPT, 3));                         // 5: R3 = [種類, 名前, 受け手] の配列
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_NOP));                               // 7
+    prog.push_back(w(OP_ENTER, 2, 7));                       // 8: __core_error(d1, d2)
+    prog.push_back(w(OP_ARRAY2, 4, 0, 3));                   // 9: R4 = [self, d1, d2]
+    prog.push_back(w(OP_MOVE, 3, 0));                        // 10
+    prog.push_back(w(OP_SEND, 3, 21, 1));                    // 11
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b0, 3, 4, 5));
+    run();
+    expect_halt();
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: R3 is not an array", name);
+    begin
+      logic [10:0] d;
+      d = dut.core.heap[dut.core.regs[3][10:0] + 2][10:0];
+      expect_val("kind", dut.core.heap[d + 1], vint(CERR_NOMETHOD));
+      expect_val("name", dut.core.heap[d + 2], {TAG_SYM, 32'd30});
+      expect_val("recv", dut.core.heap[d + 3], VNIL);
+    end
+
     begin_test("rescue compares classes");
     method_entry(ISA_BIT | CLS_INT, CLS_INT, 16'd1);
     prog.push_back(w_table());                               // 0

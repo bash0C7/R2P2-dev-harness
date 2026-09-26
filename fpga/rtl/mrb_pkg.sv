@@ -73,6 +73,7 @@ package mrb_pkg;
   localparam logic [15:0] SYM_AREF = 16'd9; // []
   localparam logic [15:0] SYM_ASET = 16'd10; // []=
   localparam logic [15:0] SYM_INIT = 16'd11; // initialize
+  localparam logic [15:0] SYM_CERR = 16'd12; // __core_error
 
   // primitive (tools/fpga/isa.rb の PRIMS)。メソッド表の飛び先の番号
   localparam logic [13:0] PR_IADD     = 14'd0; // Integer#+ (1 arg)
@@ -126,6 +127,13 @@ package mrb_pkg;
   localparam logic [13:0] PR_SYMSTR   = 14'd48; // Symbol#to_s (0 arg)
   localparam logic [13:0] PR_NAMESYM  = 14'd49; // Module#__name_sym (0 arg)
   localparam logic [13:0] PR_RAISE    = 14'd50; // Object#__raise (1 arg)
+  localparam int NPRIMS = 51;
+  // コアの実行時エラーの種類 (Integer#__core_error の受け手)
+  localparam logic [2:0] CERR_ZERODIV  = 3'd1;
+  localparam logic [2:0] CERR_NOMETHOD = 3'd2;
+  localparam logic [2:0] CERR_ARGNUM   = 3'd3;
+  localparam logic [2:0] CERR_TYPE     = 3'd4;
+  localparam logic [2:0] CERR_COMPARE  = 3'd5;
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)

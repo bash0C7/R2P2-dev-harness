@@ -63,8 +63,8 @@ class FpgaRefVmTest < Minitest::Test
   end
 
   # picoruby の組み込みに無いメソッド (Hash#min_by、sort_by、Array#tally、zip、each_slice、Range#sum ...) を使うので、
-  # picoruby とは比べないもの (CRuby とは比べる)
-  PICORUBY_LACKS = %w[collections].freeze
+  # picoruby とは比べないもの (CRuby とは比べる)。errors はメッセージが PicoRuby と違うもの (Integer()、キーワード引数) を出す
+  PICORUBY_LACKS = %w[collections errors].freeze
 
   # 止まるプログラムは、picoruby host VM (本物の mruby VM) の最後の値とも比べる
   def test_finite_corpus_agrees_with_picoruby

@@ -63,3 +63,21 @@ class Object
     __raise(e)
   end
 end
+
+class Integer
+  # コアの実行時エラー (受け手は種類、isa.rb の CERR_*)。メッセージは PicoRuby の形
+  def __core_error(detail, other)
+    e = if self == 1
+          ZeroDivisionError.new("divided by 0")
+        elsif self == 2
+          NoMethodError.new("undefined method '#{detail}' for #{other.class}")
+        elsif self == 3
+          ArgumentError.new("wrong number of arguments (given #{detail}, expected #{other})")
+        elsif self == 4
+          TypeError.new("can't convert #{detail.nil? ? 'nil' : detail.class} into Integer")
+        else
+          ArgumentError.new("comparison of Integer with #{detail.class} failed")
+        end
+    __raise(e)
+  end
+end

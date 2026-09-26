@@ -299,7 +299,8 @@ class FpgaRomTest < Minitest::Test
       assert_equal [2, 4], [nivars(image, p_id), nivars(image, q_id)]
       # is_a? が出てくるので ISA の行がある (祖先を辿らずに1回で引く)
       assert probe(image, FpgaIsa::ISA_BIT | q_id, p_id, image.table_size - 1)
-      assert probe(image, FpgaIsa::ISA_BIT | q_id, image.class_names.key("Named"), image.table_size - 1)
+      # Named は include の引数にしか出ず、値にならない (is_a? の引数にならない) ので行は無い
+      refute probe(image, FpgaIsa::ISA_BIT | q_id, image.class_names.key("Named"), image.table_size - 1)
       refute probe(image, FpgaIsa::ISA_BIT | p_id, q_id, image.table_size - 1)
     end
   end
