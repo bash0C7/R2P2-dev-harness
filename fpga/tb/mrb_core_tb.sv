@@ -55,6 +55,11 @@ module mrb_core_tb;
     return w(OP_TABLE, TB_LOG, TB_BASE);
   endfunction
 
+  // 例外の表の1語 (isa.rb の CATCH_*): {種類 << 15 | 飛び先, begin, end}
+  function automatic logic [47:0] w_catch(input logic ens, input logic [14:0] beg, input logic [15:0] en, input logic [14:0] tgt);
+    return {ens, tgt, 16'(beg), en};
+  endfunction
+
   function automatic logic [15:0] tgt_prim(input logic [13:0] p);
     return {TGT_PRIM, p};
   endfunction
@@ -1195,6 +1200,125 @@ module mrb_core_tb;
     prog.push_back(w(OP_BREAK, 1, 0));
     run();
     expect_error(0);
+
+    // ---- 例外と巻き戻し: 例外の表 (HTABLE の b から c 語、1語 = {種類 << 15 | 飛び先, begin, end}) を pc 200 から置く
+    begin_test("raise and rescue across frames");
+    method_entry(CLS_NIL, 20, 16'd9);
+    method_entry(CLS_NIL, 21, tgt_prim(PR_RAISE));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_LOADI_1, 1));                        // 2
+    prog.push_back(w(OP_SSEND0, 2, 20));                     // 3: f (rescue [3, 4) -> 6)
+    prog.push_back(w(OP_LOADI_5, 3));                        // 4: 通らない
+    prog.push_back(w(OP_STOP));                              // 5
+    prog.push_back(w(OP_EXCEPT, 4));                         // 6: R4 = 投げたもの
+    prog.push_back(w(OP_LOADI_7, 5));                        // 7
+    prog.push_back(w(OP_STOP));                              // 8
+    prog.push_back(w(OP_ENTER, 0, 4));                       // 9: f
+    prog.push_back(w(OP_LOADI8, 2, 42));                     // 10
+    prog.push_back(w(OP_SSEND, 1, 21, 1));                   // 11: __raise(42)
+    prog.push_back(w(OP_RETNIL));                            // 12
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b0, 3, 4, 6));
+    run();
+    expect_halt();
+    expect_reg(3, VNIL);
+    expect_reg(4, vint(42));
+    expect_reg(5, vint(7));
+    expect_val("exc", dut.core.exc, VNIL);
+
+    begin_test("uncaught raise is an error");
+    method_entry(CLS_NIL, 21, tgt_prim(PR_RAISE));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_LOADI_1, 2));                        // 2
+    prog.push_back(w(OP_SSEND, 1, 21, 1));                   // 3: 覆う handler が無い
+    prog.push_back(w(OP_STOP));                              // 4
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b0, 4, 5, 4));
+    run();
+    expect_error(3);
+
+    begin_test("return through ensure");
+    method_entry(CLS_NIL, 20, 16'd4);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 2: R1 = g
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_ENTER, 0, 4));                       // 4: g
+    prog.push_back(w(OP_LOADI_3, 1));                        // 5
+    prog.push_back(w(OP_RETURN, 1));                         // 6: ensure [6, 7) -> 7
+    prog.push_back(w(OP_EXCEPT, 2));                         // 7: R2 = 巻き戻しの塊
+    prog.push_back(w(OP_LOADI_6, 3));                        // 8: ensure の本体
+    prog.push_back(w(OP_RAISEIF, 2));                        // 9: return の続き
+    prog.push_back(w(OP_STOP));                              // 10
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b1, 6, 7, 7));
+    run();
+    expect_halt();
+    expect_reg(1, vint(3));
+    expect_reg(4, vint(6));
+    expect_val("exc", dut.core.exc, VNIL);
+
+    begin_test("JMPUW through ensure");
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_LOADI_0, 1));                        // 2
+    prog.push_back(w(OP_LOADI_1, 2));                        // 3
+    prog.push_back(w(OP_JMPUW, 0, 9));                       // 4: ensure [3, 5) -> 6、行き先は外
+    prog.push_back(w(OP_STOP));                              // 5
+    prog.push_back(w(OP_EXCEPT, 3));                         // 6
+    prog.push_back(w(OP_LOADI_4, 4));                        // 7
+    prog.push_back(w(OP_RAISEIF, 3));                        // 8: 9 へ
+    prog.push_back(w(OP_LOADI_5, 5));                        // 9
+    prog.push_back(w(OP_STOP));                              // 10
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b1, 3, 5, 6));
+    run();
+    expect_halt();
+    expect_reg(4, vint(4));
+    expect_reg(5, vint(5));
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][10:0]][31:16] != CLS_BRK)
+      $fatal(1, "%s: R3 is not a break object", name);
+
+    begin_test("break through ensure in an iterator");
+    method_entry(CLS_NIL, 20, 16'd5);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_HTABLE, 0, 200, 1));                 // 1
+    prog.push_back(w(OP_BLOCK, 2, 12));                      // 2
+    prog.push_back(w(OP_SSEND, 1, 20, 16'h80));              // 3: R1 = each { break 99 }
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_ENTER, 0, 5));                       // 5: each
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 6
+    prog.push_back(w(OP_BLKCALL, 3, 0));                     // 7: ensure [7, 8) -> 8
+    prog.push_back(w(OP_EXCEPT, 2));                         // 8
+    prog.push_back(w(OP_LOADI_7, 4));                        // 9
+    prog.push_back(w(OP_RAISEIF, 2));                        // 10
+    prog.push_back(w(OP_RETNIL));                            // 11
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 12: ブロック
+    prog.push_back(w(OP_LOADI8, 1, 99));                     // 13
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 14
+    while (prog.size() < 200) prog.push_back(w(OP_NOP));
+    prog.push_back(w_catch(1'b1, 7, 8, 8));
+    run();
+    expect_halt();
+    expect_reg(1, vint(99));
+    expect_reg(5, vint(7));
+
+    begin_test("rescue compares classes");
+    method_entry(ISA_BIT | CLS_INT, CLS_INT, 16'd1);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_5, 1));                        // 1
+    prog.push_back(w(OP_CLASS, 2, CLS_INT));                 // 2
+    prog.push_back(w(OP_RESCUE, 1, 2));                      // 3: R2 = true
+    prog.push_back(w(OP_CLASS, 3, CLS_ARRAY));               // 4
+    prog.push_back(w(OP_RESCUE, 1, 3));                      // 5: R3 = false
+    prog.push_back(w(OP_LOADI_1, 4));                        // 6
+    prog.push_back(w(OP_RESCUE, 1, 4));                      // 7: クラスでない
+    run();
+    expect_error(7);
+    expect_reg(2, VTRUE);
+    expect_reg(3, VFALSE);
 
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");

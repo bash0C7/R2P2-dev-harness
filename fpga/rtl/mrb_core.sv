@@ -58,6 +58,7 @@ module mrb_core
   localparam int HALF = HEAP_SIZE / 2;
   localparam logic [VAL_BITS-1:0] V_NIL = {TAG_NIL, {INT_BITS{1'b0}}};
   localparam logic signed [INT_BITS-1:0] INT_MIN = {1'b1, {(INT_BITS-1){1'b0}}};
+  localparam logic [2:0] X_RAISE = 3'd4; // x_kind: 例外を投げる (rescue と ensure を探し、無ければフレームを畳む)
 
   typedef enum logic [5:0] {
     S_INIT, S_FETCH, S_EXEC, S_CLEAR, S_HALT, S_ERROR,
@@ -67,7 +68,6 @@ module mrb_core
     S_BLOCK,              // Proc を書く
     S_AHDR, S_AELEM,      // 配列リテラル: 見出し / 要素
     S_SET1, S_GROW, S_FILL, S_PUT, // 配列への代入・push
-    S_UNWIND, S_UNWIND_RET, // break (動的) / ブロックの中の return
     S_SLEEP,
     S_WALK, S_UPOP,       // Proc の連鎖をたどって外側のフレームの底を求め、命令を仕上げる
     S_ENV,                // Proc と一緒に env を作る (中身を nil で埋める)
@@ -81,16 +81,19 @@ module mrb_core
     S_APOST,              // a, *b, c = v: 後ろの c 個をレジスタへ
     S_SROM, S_SBYTE,      // String を ROM のデータから写す: 語を読む / 1バイト書く
     S_SYMRD, S_SYMGO,     // Symbol#to_s: シンボル表を読む / 読んだ場所から String を作る
-    S_EHASH               // ENTER: キーワード引数の空の Hash を書く
+    S_EHASH,              // ENTER: キーワード引数の空の Hash を書く
+    // 例外と巻き戻し (ref_vm.rb の unwind): 表の1語目を出す / 1語ずつ比べる / 見つかった / 無かった /
+    // フレームを畳む / 巻き戻しの塊を書く
+    S_XSTART, S_XSCAN, S_XHIT, S_XMISS, S_XPOP, S_BRKW
   } state_t;
   state_t state;
 
   // 確保のあとに続ける処理
-  typedef enum logic [2:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ, MO_EHASH } mop_t;
+  typedef enum logic [2:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ, MO_EHASH, MO_BRK } mop_t;
   mop_t mop;
 
   // メソッド表を引く目的
-  typedef enum logic [2:0] {
+  typedef enum logic [3:0] {
     LM_CALL,    // 呼び出し (見つからなければ NoMethodError)
     LM_INIT,    // new の initialize (見つからなければそのまま、ctor のフレーム)
     LM_GETIV,   // GETIV (見つからなければ nil)
@@ -98,7 +101,8 @@ module mrb_core
     LM_ISA,     // is_a? (親はたどらない)
     LM_RESPOND, // respond_to?
     LM_NIVARS,  // new のインスタンス変数の数 (親はたどらない、無ければ 0)
-    LM_NAME     // Module#name: (クラス, NAME_SYM) -> 名前のシンボル (親はたどらない、無ければ nil)
+    LM_NAME,    // Module#name: (クラス, NAME_SYM) -> 名前のシンボル (親はたどらない、無ければ nil)
+    LM_RESCUE   // RESCUE: is_a? と同じく引いて R[b] に書く
   } lmode_t;
   lmode_t lk_mode;
 
@@ -133,6 +137,19 @@ module mrb_core
   // メソッド表 (TABLE で決まる) と探索
   logic                t_on;      // TABLE を実行したか (していなければどの探索も見つからない)
   logic [PC_BITS-1:0]  symtab;    // シンボル表の先頭 (TABLE の c)
+  // 例外と巻き戻し (ref_vm.rb の unwind)
+  logic [PC_BITS-1:0]  hbase;     // 例外の表の先頭と数 (HTABLE)
+  logic [15:0]         hcount;
+  logic [VAL_BITS-1:0] exc;       // 投げている例外か巻き戻しの塊 (EXCEPT が読む。GC の根)
+  logic [VAL_BITS-1:0] xval;      // 巻き戻しで運ぶ値 (GC の根)
+  logic [VAL_BITS-1:0] x_brk;     // 続けている巻き戻しの塊 (RAISEIF から。無ければ nil)
+  logic [2:0]          x_kind;    // BRK_* (isa.rb) か X_RAISE
+  logic [15:0]         x_target;  // 行き先 (JUMP と BRK0 は pc、RET と BRK はフレームの底)
+  logic [PC_BITS-1:0]  xpc;       // 表で探す pc (今のフレームは pc、呼び出し元は戻り先 - 1)
+  logic [15:0]         hi;        // 何語目を比べているか
+  logic [PC_BITS-1:0]  h_tgt;     // 見つかった handler
+  logic [15:0]         h_beg, h_end;
+  logic                x_deliver; // S_XPOP: 畳んだフレームで巻き戻しを終える
   logic [PC_BITS-1:0]  m_rom;     // String を作る時の ROM のデータの語アドレス
   logic [15:0]         m_cls;     // 作る配列の形のオブジェクトのクラス (Array か String)
   logic                m_fromrom; // 要素を ROM のデータから写す (S_SROM)
@@ -173,7 +190,6 @@ module mrb_core
   logic [15:0]         m_i, m_len, m_cap;
   logic                m_push, m_aset;
   logic [VAL_BITS-1:0] hold;
-  logic [RB-1:0]       target;
   logic [41:0]         remain;
   state_t              dcont;     // S_DETACH の後に行く状態
   logic [PC_BITS-1:0]  ret_to;    // S_RETFIN で戻る pc
@@ -283,6 +299,12 @@ module mrb_core
   assign ra1_byte  = tag_of(ra1) == TAG_INT && val_of(ra1) <= 32'd255;
   assign ra2_byte  = tag_of(ra2) == TAG_INT && val_of(ra2) <= 32'd255;
   logic ra2_int, s_idx_ok, s_slice_ok;
+  // R[a] が巻き戻しの塊か、その {種類, 行き先} と運ぶ値 (RAISEIF)
+  logic                ra_brk;
+  logic [VAL_BITS-1:0] brk_w1, brk_val;
+  assign ra_brk  = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_BRK;
+  assign brk_w1  = heap[ha(val_of(ra)) + HB'(1)];
+  assign brk_val = heap[ha(val_of(ra)) + HB'(2)];
   // String の primitive の範囲 (Icarus は always_comb の中で関数を呼ぶ式があると時刻を進めなくなることがあるので wire に)
   assign s_idx_ok   = val_of(ra1) < 32'(arr_len);
   assign s_slice_ok = 33'(val_of(ra1)) + 33'(val_of(ra2)) <= 33'(arr_len);
@@ -378,7 +400,7 @@ module mrb_core
   assign lk_empty = rom_data == '1;
   assign lk_hit   = rom_data[47:32] == lk_cls && rom_data[31:16] == lk_key;
   assign lk_last  = lk_i == t_mask;
-  assign lk_walk  = !(lk_mode == LM_ISA || lk_mode == LM_NIVARS || lk_mode == LM_NAME); // 見つからなければ親へ進むか
+  assign lk_walk  = !(lk_mode == LM_ISA || lk_mode == LM_NIVARS || lk_mode == LM_NAME || lk_mode == LM_RESCUE); // 見つからなければ親へ進むか
 
   // S_LKDONE で読み書きするインスタンス変数: GETIV / SETIV は self、attr_* は受け手 (R[a])。
   // Object かプログラムのクラスのインスタンスで、番号が見出しの数より小さいこと
@@ -558,7 +580,12 @@ module mrb_core
   logic [PC_BITS-1:0]  npc;
   logic                halt, err;
   logic                do_call, do_ret, set_const, set_up, pop_len, set_lam, do_frame, do_enter, go_enter, set_table;
-  logic                go_block, go_array, go_set, go_unwind, go_unwind_ret, go_sleep, go_walk, go_lwalk, go_lookup;
+  logic                go_block, go_array, go_set, go_sleep, go_walk, go_lwalk, go_lookup;
+  // 例外と巻き戻しを始める (S_XSTART へ)。x_*_n は巻き戻しの種類・行き先・運ぶ値・続ける塊
+  logic                go_x, set_exc, clr_exc, set_htable;
+  logic [2:0]          x_kind_n;
+  logic [15:0]         x_target_n;
+  logic [VAL_BITS-1:0] xval_n, x_brk_n, exc_n;
   logic                go_string, go_slice, go_sym;
   logic [15:0]         lk_sym_n;    // 探すシンボル
   logic [6:0]          lk_argc_n;
@@ -608,8 +635,15 @@ module mrb_core
     go_set    = 1'b0;
     set_push  = 1'b0;
     set_aset  = 1'b0;
-    go_unwind = 1'b0;
-    go_unwind_ret = 1'b0;
+    go_x      = 1'b0;
+    set_exc   = 1'b0;
+    clr_exc   = 1'b0;
+    set_htable = 1'b0;
+    x_kind_n  = X_RAISE;
+    x_target_n = '0;
+    xval_n    = V_NIL;
+    x_brk_n   = V_NIL;
+    exc_n     = V_NIL;
     go_sleep  = 1'b0;
     go_walk   = 1'b0;
     go_lwalk  = 1'b0;
@@ -750,6 +784,14 @@ module mrb_core
           npc     = pr_info[PC_BITS-1:0];
           err     = prim_argc_bad || !ra_proc || !(ia + blk_win + 17'(lk_kw) < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
         end
+        PR_RAISE: begin
+          // 例外 (引数) を投げる: 今の pc から表を引く
+          wr       = 1'b0;
+          go_x     = 1'b1;
+          set_exc  = 1'b1;
+          exc_n    = ra1;
+          err      = prim_argc_bad;
+        end
         default: err = 1'b1;
       endcase
     end else begin
@@ -770,6 +812,33 @@ module mrb_core
         OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
         OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
         OP_TABLE:     begin set_table = 1'b1; err = a > 8'(PC_BITS); end
+        OP_HTABLE:    set_htable = 1'b1;
+        // 例外: R[a] = exc (exc は nil に)
+        OP_EXCEPT:    begin wr = 1'b1; wval = exc; clr_exc = 1'b1; end
+        OP_RESCUE: begin
+          // R[b] = R[a].is_a?(R[b]) (ISA の行を1回引き、S_LKDONE で R[b] に書く)
+          go_lookup = 1'b1;
+          lk_mode_n = LM_RESCUE;
+          lk_cls_n  = ISA_BIT | recv_cls;
+          lk_sym_n  = rb[15:0];
+          err       = !b_ok || tag_of(rb) != TAG_CLASS;
+        end
+        OP_RAISEIF: begin
+          // nil なら何もしない。巻き戻しの塊ならその続き、ほかは例外として投げる
+          if (tag_of(ra) != TAG_NIL) begin
+            go_x = 1'b1;
+            if (ra_brk) begin
+              x_kind_n   = brk_w1[18:16];
+              x_target_n = brk_w1[15:0];
+              xval_n     = brk_val;
+              x_brk_n    = ra;
+            end else begin
+              set_exc = 1'b1;
+              exc_n   = ra;
+            end
+          end
+        end
+        OP_JMPUW: begin go_x = 1'b1; x_kind_n = BRK_JUMP; x_target_n = b; end
         OP_STRING:    go_string = 1'b1;
         OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
         // ヒープのオブジェクトはピンに出せない
@@ -888,7 +957,13 @@ module mrb_core
           err      = !(17'(a) > ag_top) || !a1_ok || (ag_r != 17'd0 && !ag_rest_ary);
         end
         OP_RETURN, OP_RETNIL: begin
-          if (sp == '0) halt = 1'b1;
+          if (hcount != 16'd0) begin
+            // 例外の表があれば、ensure に覆われていないかを見ながら戻る
+            go_x       = 1'b1;
+            x_kind_n   = BRK_RET;
+            x_target_n = 16'(bp);
+            xval_n     = op == OP_RETURN ? ra : V_NIL;
+          end else if (sp == '0) halt = 1'b1;
           else begin
             do_ret = 1'b1;
             npc    = ret_pc[top];
@@ -897,11 +972,15 @@ module mrb_core
         end
         OP_BREAK: begin
           if (sp == '0) err = 1'b1;
-          else if (c == 16'd0) begin
+          else if (c == 16'd0 && hcount != 16'd0) begin
+            go_x = 1'b1; x_kind_n = BRK_BRK0; x_target_n = b; xval_n = ra;
+          end else if (c == 16'd0) begin
             // フレームを1つ畳んで b へ
             do_ret = 1'b1;
             npc    = b[PC_BITS-1:0];
             wval   = ra;
+          end else if (cp_lam && hcount != 16'd0) begin
+            go_x = 1'b1; x_kind_n = BRK_RET; x_target_n = 16'(bp); xval_n = ra;
           end else if (cp_lam) begin
             // lambda の中の break は lambda から戻る
             do_ret = 1'b1;
@@ -977,7 +1056,8 @@ module mrb_core
     if (err) begin
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
-      do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0;
+      do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_sleep = 1'b0;
+      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
@@ -1027,6 +1107,7 @@ module mrb_core
           LM_GETIV: begin m_we = 1'b1; m_wdata = lk_hitr ? heap[iv_addr] : V_NIL; end
           LM_ISA, LM_RESPOND: begin m_we = 1'b1; m_wdata = mk_bool(lk_hitr); end
           LM_NAME: begin m_we = 1'b1; m_wdata = lk_hitr ? mk(TAG_SYM, {16'd0, lk_tgt}) : V_NIL; end
+          LM_RESCUE: begin m_we = 1'b1; m_waddr = 8'(ib[RB-1:0]); m_wdata = mk_bool(lk_hitr); end
           default: ;
         endcase
       end
@@ -1042,11 +1123,9 @@ module mrb_core
         if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
         if (m_aset) begin m_we = 1'b1; m_wdata = regs[m_val[RB-1:0]]; end
       end
-      S_UNWIND: if (sp != '0 && tag_of(env) == TAG_NIL && ret_bp[top] == target) begin
-        m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold;
-      end
-      S_UNWIND_RET: if (bp == target && sp != '0 && tag_of(env) == TAG_NIL) begin
-        m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold;
+      // 巻き戻しを終えるフレーム: 呼び出し元の R[a] (= このフレームの R0) に値を置く (new の initialize から戻る時は置かない)
+      S_XPOP: if (x_deliver && !(x_kind == BRK_RET && ret_ctor[top])) begin
+        m_we = 1'b1; m_waddr = 8'(bp); m_wdata = xval;
       end
       S_SLEEP: if (remain == 0) begin m_we = 1'b1; m_wdata = hold; end
       S_UPOP: if (fb_heap) begin
@@ -1077,7 +1156,11 @@ module mrb_core
         root_end = gi == 8'(sp) * 8'd2;
         if (!root_end) begin root = gi[0] ? ret_env[gi[SB-1:1]] : ret_cp[gi[SB-1:1]]; root_live = 1'b1; end
       end
-      default: begin root_end = gi == 8'd2; if (!root_end) begin root = gi[0] ? env : cp; root_live = 1'b1; end end
+      // cp、env、exc、xval の順
+      default: begin
+        root_end = gi == 8'd4;
+        if (!root_end) begin root = gi[1] ? (gi[0] ? xval : exc) : (gi[0] ? env : cp); root_live = 1'b1; end
+      end
     endcase
   end
   logic [VAL_BITS-1:0] fw_obj; // 写すものの見出し (転送済みなら FWD)
@@ -1091,7 +1174,9 @@ module mrb_core
 
   assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
                     state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
-                    state == S_SYMRD ? symtab + PC_BITS'(val_of(ra)) : pc;
+                    state == S_SYMRD ? symtab + PC_BITS'(val_of(ra)) :
+                    state == S_XSTART ? hbase :
+                    state == S_XSCAN ? hbase + PC_BITS'(hi) + PC_BITS'(1) : pc;
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
@@ -1128,6 +1213,10 @@ module mrb_core
       tlog    <= '0;
       tbase   <= '0;
       symtab  <= '0;
+      hbase   <= '0;
+      hcount  <= '0;
+      exc     <= V_NIL;
+      xval    <= V_NIL;
     end else if (state == S_INIT) begin
       // レジスタファイルは一括ではリセットしない (ブロック RAM にできるように)
       regs[clr_ptr[RB-1:0]] <= V_NIL;
@@ -1156,6 +1245,11 @@ module mrb_core
               tbase <= b[PC_BITS-1:0];
               symtab <= c[PC_BITS-1:0];
             end
+            if (set_htable) begin
+              hbase  <= b[PC_BITS-1:0];
+              hcount <= c;
+            end
+            if (clr_exc) exc <= V_NIL;
             gc_done <= 1'b0;
             if (err) state <= S_ERROR;
             else if (halt) state <= S_HALT;
@@ -1373,10 +1467,15 @@ module mrb_core
               m_val  <= set_push ? ia1[RB:0] : ia2[RB:0];
               m_i    <= set_push ? arr_len : idx_adj[15:0];
               state  <= S_SET1;
-            end else if (go_unwind_ret) begin
-              hold   <= ra;
-              target <= bp;
-              state  <= S_UNWIND_RET;
+            end else if (go_x) begin
+              // 例外か巻き戻し: 今の pc から例外の表を引く
+              if (set_exc) exc <= exc_n;
+              x_kind   <= x_kind_n;
+              x_target <= x_target_n;
+              xval     <= xval_n;
+              x_brk    <= x_brk_n;
+              xpc      <= pc;
+              state    <= S_XSTART;
             end else if (go_walk) begin
               walk_p    <= cp;
               walk_left <= fb_k - 4'd1;
@@ -1519,6 +1618,7 @@ module mrb_core
                 MO_ARRAY: state <= S_AHDR;
                 MO_OBJ:   state <= S_OBJ;
                 MO_EHASH: state <= S_EHASH;
+                MO_BRK:   state <= S_BRKW;
                 default:  state <= S_GROW;
               endcase
             end else if (!gc_done) begin
@@ -1546,8 +1646,12 @@ module mrb_core
                 3'd1: consts[gi[CB-1:0]] <= mk(tag_of(root), val_of(fw_obj));
                 3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
                       else ret_cp[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
-                default: if (gi[0]) env <= mk(tag_of(root), val_of(fw_obj));
-                         else cp <= mk(tag_of(root), val_of(fw_obj));
+                default: case (gi[1:0])
+                  2'd0: cp <= mk(tag_of(root), val_of(fw_obj));
+                  2'd1: env <= mk(tag_of(root), val_of(fw_obj));
+                  2'd2: exc <= mk(tag_of(root), val_of(fw_obj));
+                  default: xval <= mk(tag_of(root), val_of(fw_obj));
+                endcase
               endcase
               gi <= gi + 8'd1;
             end else begin
@@ -1586,8 +1690,12 @@ module mrb_core
                 3'd1: consts[gi[CB-1:0]] <= mk(fw_tag, 32'(gfree));
                 3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
                       else ret_cp[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
-                3'd3: if (gi[0]) env <= mk(fw_tag, 32'(gfree));
-                      else cp <= mk(fw_tag, 32'(gfree));
+                3'd3: case (gi[1:0])
+                  2'd0: cp <= mk(fw_tag, 32'(gfree));
+                  2'd1: env <= mk(fw_tag, 32'(gfree));
+                  2'd2: exc <= mk(fw_tag, 32'(gfree));
+                  default: xval <= mk(fw_tag, 32'(gfree));
+                endcase
                 default: heap[scan[HB-1:0]] <= mk(fw_tag, 32'(gfree));
               endcase
               if (gphase == 3'd4) begin
@@ -1649,10 +1757,13 @@ module mrb_core
           // ---- ブロックの中の return: 深さ 0 から c-1 の Proc のうち、一番内側の lambda の深さ (無ければ c)
           S_LWALK: begin
             if (lw_k == c[3:0] || (walk_proc && heap[ha(val_of(walk_p)) + HB'(1)][23])) begin
-              hold <= ra;
               if (lw_k == 4'd0) begin
-                target <= bp;
-                state  <= S_UNWIND_RET;
+                x_kind   <= BRK_RET;
+                x_target <= 16'(bp);
+                xval     <= ra;
+                x_brk    <= V_NIL;
+                xpc      <= pc;
+                state    <= S_XSTART;
               end else begin
                 walk_p    <= cp;
                 walk_left <= lw_k - 4'd1;
@@ -1826,44 +1937,88 @@ module mrb_core
             state <= S_FETCH;
           end
 
-          // ---- break (動的): Proc を作ったフレームへ戻るまで1段ずつ畳む
-          S_UNWIND: begin
-            if (sp == '0) state <= S_ERROR;
-            else if (tag_of(env) != TAG_NIL) begin
-              m_k   <= '0;
-              dcont <= S_UNWIND;
-              state <= S_DETACH;
+          // ---- 例外と巻き戻し (ref_vm.rb の unwind)。xpc を覆う handler を表の順に探す (X_RAISE は rescue と ensure、
+          //      ほかは ensure だけ)。S_XSTART で表の1語目を出し、S_XSCAN で1語ずつ比べて次の語を出す
+          S_XSTART: begin
+            hi    <= '0;
+            state <= hcount == 16'd0 ? S_XMISS : S_XSCAN;
+          end
+          S_XSCAN: begin
+            if ((x_kind == X_RAISE || rom_data[47] == CATCH_ENSURE) &&
+                16'(xpc) >= rom_data[31:16] && 16'(xpc) < rom_data[15:0]) begin
+              h_tgt <= rom_data[32 +: PC_BITS];
+              h_beg <= rom_data[31:16];
+              h_end <= rom_data[15:0];
+              state <= S_XHIT;
+            end else if (hi + 16'd1 == hcount) state <= S_XMISS;
+            else hi <= hi + 16'd1;
+          end
+          S_XHIT: begin
+            if (x_kind == X_RAISE) begin
+              xval  <= V_NIL;
+              pc    <= h_tgt;
+              state <= S_FETCH;
+            end else if (x_kind == BRK_JUMP && x_target >= h_beg && x_target <= h_end) begin
+              // 行き先がその ensure の中: ただ飛ぶ
+              exc   <= V_NIL;
+              xval  <= V_NIL;
+              pc    <= x_target[PC_BITS-1:0];
+              state <= S_FETCH;
+            end else if (tag_of(x_brk) == TAG_NIL) begin
+              // ensure を走らせる: 巻き戻しの塊を作って exc に置く (確保で GC が走ってよい。xval は根)
+              need    <= 17'd3;
+              mop     <= MO_BRK;
+              gc_done <= 1'b0;
+              state   <= S_ALLOC;
             end else begin
-              bp  <= ret_bp[top];
-              cp  <= ret_cp[top];
-              env <= ret_env[top];
-              fn  <= ret_fn[top];
-              mcls <= ret_mcls[top];
-              sp  <= sp - SB'(1);
-              if (ret_bp[top] == target) begin
-                pc    <= ret_pc[top];
-                state <= S_FETCH;
-              end
+              exc   <= x_brk;
+              xval  <= V_NIL;
+              pc    <= h_tgt;
+              state <= S_FETCH;
             end
           end
-          // ---- ブロックの中の return: 囲むメソッドのフレームまで畳み、そこから戻る
-          S_UNWIND_RET: begin
-            if (sp == '0) state <= S_ERROR;
+          S_BRKW: begin
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_BRK, 16'd2});
+            heap[p_new[HB-1:0] + HB'(1)] <= mk_int({13'd0, x_kind, x_target});
+            heap[p_new[HB-1:0] + HB'(2)] <= xval;
+            exc   <= mk(TAG_OBJ, 32'(p_new));
+            xval  <= V_NIL;
+            pc    <= h_tgt;
+            state <= S_FETCH;
+          end
+          S_XMISS: begin
+            // このフレームに handler が無い。JUMP は行き先へ。ほかは畳む (最後のフレームなら値を置いて終える)
+            x_deliver <= x_kind == BRK_BRK0 || (x_kind == BRK_RET && 16'(bp) == x_target) ||
+                         (x_kind == BRK_BRK && sp != '0 && 16'(ret_bp[top]) == x_target);
+            if (x_kind == BRK_JUMP) begin
+              exc   <= V_NIL;
+              xval  <= V_NIL;
+              pc    <= x_target[PC_BITS-1:0];
+              state <= S_FETCH;
+            end else if (x_kind == BRK_RET && 16'(bp) == x_target && sp == '0) state <= S_HALT;
+            else if (sp == '0) state <= S_ERROR; // 一番外まで捕まらなかった例外など
             else if (tag_of(env) != TAG_NIL) begin
               m_k   <= '0;
-              dcont <= S_UNWIND_RET;
+              dcont <= S_XPOP;
               state <= S_DETACH;
+            end else state <= S_XPOP;
+          end
+          S_XPOP: begin
+            // フレームを畳む (値を置くのは m_we)。終えるなら戻り先 (BRK0 は行き先) へ、続けるなら呼び出し元の pc で探す
+            bp   <= ret_bp[top];
+            cp   <= ret_cp[top];
+            env  <= ret_env[top];
+            fn   <= ret_fn[top];
+            mcls <= ret_mcls[top];
+            sp   <= sp - SB'(1);
+            if (x_deliver) begin
+              exc   <= V_NIL;
+              xval  <= V_NIL;
+              pc    <= x_kind == BRK_BRK0 ? x_target[PC_BITS-1:0] : ret_pc[top];
+              state <= S_FETCH;
             end else begin
-              bp  <= ret_bp[top];
-              cp  <= ret_cp[top];
-              env <= ret_env[top];
-              fn  <= ret_fn[top];
-              mcls <= ret_mcls[top];
-              sp  <= sp - SB'(1);
-              if (bp == target) begin
-                pc    <= ret_pc[top];
-                state <= S_FETCH;
-              end
+              xpc   <= ret_pc[top] - PC_BITS'(1);
+              state <= S_XSTART;
             end
           end
 
@@ -1891,14 +2046,14 @@ module mrb_core
                 pc    <= pc + PC_BITS'(1);
                 state <= S_FETCH;
               end
-            end else if (op == OP_BREAK) begin
-              hold   <= ra;
-              target <= fb_base;
-              state  <= S_UNWIND;
-            end else if (op == OP_RETURN_BLK) begin
-              hold   <= ra;
-              target <= fb_base;
-              state  <= S_UNWIND_RET;
+            end else if (op == OP_BREAK || op == OP_RETURN_BLK) begin
+              // Proc を作ったフレームへの break / 囲むメソッドからの return
+              x_kind   <= op == OP_BREAK ? BRK_BRK : BRK_RET;
+              x_target <= 16'(fb_base);
+              xval     <= ra;
+              x_brk    <= V_NIL;
+              xpc      <= pc;
+              state    <= S_XSTART;
             end else if (!u_ok) state <= S_ERROR;
             else begin
               if (op == OP_SETUPVAR) regs[iu[RB-1:0]] <= ra;

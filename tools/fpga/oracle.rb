@@ -25,6 +25,17 @@ module FpgaOracle
     end
   RUBY
 
+  # CRuby 3.3 の Exception#inspect (メッセージが無くても #<TypeError: TypeError>) を PicoRuby の形 (TypeError) にする。
+  # PicoRuby はメッセージが nil か空の時にクラスの名前だけを出す。CRuby ではメッセージが無いとクラスの名前になるので、それで見分ける
+  EXC_INSPECT = <<~'RUBY'
+    class Exception
+      def inspect
+        m = to_s
+        m.empty? || m == self.class.name ? self.class.name : "#<#{self.class.name}: #{m}>"
+      end
+    end
+  RUBY
+
   # [[port, value], ...] (value は Integer / true / false / nil)。console ポートは除く (cruby_run の2つ目)
   def cruby_writes(src_path, limit:)
     cruby_run(src_path, limit: limit)[0]
@@ -35,7 +46,7 @@ module FpgaOracle
     outs = FpgaIoMap.pins_out
     # 時間待ちは待たずに引数を返す (コアと参照インタプリタも値はそうしている。待つ長さはボードエミュレーターで見る)
     script = +"require \"stringio\"\ndef sleep_ms(n) = n\ndef sleep(n) = n\n$__w = []\n"
-    script << HASH_INSPECT
+    script << HASH_INSPECT << EXC_INSPECT
     outs.each do |p|
       script << "trace_var(:#{p.name}) { |v| $__w << [#{p.num}, v]; throw :__stop if $__w.size >= #{limit} }\n"
     end
