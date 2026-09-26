@@ -67,7 +67,7 @@ module FpgaIsa
     GETUPVAR SETUPVAR BREAK
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
     CLASS EXEC SDEF TABLE GETIV SETIV SUPER
-    ARYCAT ARYPUSH APOST ARGARY
+    ARYCAT ARYPUSH APOST ARGARY STRING
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
@@ -79,7 +79,10 @@ module FpgaIsa
   #   RETTRUE / RETFALSE  LOADTRUE / LOADFALSE R0 と RETURN R0 (戻り値は呼び出し先の R0 に入るので同じ)
   #   GETCV / SETCV クラス変数は定数と同じ番号 (GETCONST / SETCONST)
   #   GETMCNST / SETMCNST  A::X は変換時に解いて CLASS / GETCONST / SETCONST
-  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST].freeze
+  #   STRCAT        SEND a+1 :to_s と SEND a :<< (式展開は新しい STRING から始まるので R[a] を伸ばしてよい)
+  #   LOADL         32bit に収まる整数は LOADI32
+  #   JMPUW         catch handler の無い irep ではただの JMP (while の中の break)
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL JMPUW].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
   # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
@@ -88,6 +91,8 @@ module FpgaIsa
   NIVARS_SYM = 0xFFFE
   # (ISA_BIT | クラス, 祖先の番号) があれば is_a? が真 (親はたどらない)
   ISA_BIT = 0x4000
+  # (クラス, NAME_SYM) の飛び先はクラスの名前のシンボルの番号 (Module#name)
+  NAME_SYM = 0xFFFD
   # 飛び先の上位 2bit: 0 = メソッドの先頭 pc、1 = primitive の番号 (下の PRIMS)、
   # 2 = インスタンス変数の番号 (GETIV / SETIV、attr_reader)、3 = インスタンス変数の番号 (attr_writer: R[a+1] を書いて返す)
   TGT_PC    = 0
@@ -120,7 +125,11 @@ module FpgaIsa
     ["Array", "size", 0, "SIZE"], ["Array", "length", 0, "LENGTH"], ["Array", "empty?", 0, "EMPTY"],
     ["Array", "first", 0, "FIRST"], ["Array", "last", 0, "LAST"], ["Array", "pop", 0, "POP"],
     ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "[]", 1, "AGET"], ["Array", "[]=", 2, "ASET"],
-    ["Proc", "call", -1, "CALL"]
+    ["Proc", "call", -1, "CALL"],
+    # String (Array と同じ形で、1語に1バイト)。ほかのメソッドはプレリュード。__ で始まるものはプレリュードの中身
+    ["String", "bytesize", 0, "SBYTES"], ["String", "getbyte", 1, "SGETB"], ["String", "__aset", 2, "SASET"],
+    ["String", "__push", 1, "SPUSH"], ["String", "__slice", 2, "SSLICE"], ["Symbol", "to_s", 0, "SYMSTR"],
+    ["Module", "__name_sym", 0, "NAMESYM"]
   ].freeze
 
   def self.prim(const_name)
@@ -170,6 +179,7 @@ module FpgaIsa
   CLS_ARRAY  = 7
   CLS_PROC   = 8
   CLS_CLASS  = 9
+  CLS_STRING = 11
   CLS_DATA   = 0x7FF0
   CLS_ENV    = 0x7FF1
   FIRST_USER_CLASS = 32

@@ -53,6 +53,7 @@ module FpgaRom
     attr_reader :words, :nregs, :ireps
     attr_accessor :symbols # シンボルの名前 (番号順)
     attr_accessor :table_base, :table_size
+    attr_accessor :data_base, :symtab # 文字列とシンボルの名前のデータの先頭、シンボル表の先頭 (その間がデータ)
     attr_accessor :class_names # クラスの番号 -> 名前 (ユーザーのクラスとモジュール)
 
     def initialize(words, nregs, ireps)
@@ -62,6 +63,8 @@ module FpgaRom
       @symbols = []
       @table_base = 0
       @table_size = 0
+      @data_base = 0
+      @symtab = 0
       @class_names = {}
     end
 
@@ -75,6 +78,22 @@ module FpgaRom
     def listing
       out = ""
       words.each do |w|
+        if w.pc >= data_base && w.pc < table_base && data_base > 0
+          # データ (1語 4バイト) とシンボル表
+          if w.pc < symtab
+            out << "# data (strings and symbol names, 4 bytes per word)\n" if w.pc == data_base
+            text = ""
+            4.times do |j|
+              x = (w.value >> (8 * j)) & 0xFF
+              text << (x >= 0x20 && x < 0x7F ? x.chr : ".")
+            end
+            out << format("%4d  %s  %s\n", w.pc, w.hex, text)
+          else
+            out << "# symbol table (address, length)\n" if w.pc == symtab
+            out << format("%4d  %-5d %-5d :%s\n", w.pc, w.b, w.c, symbols[w.pc - symtab])
+          end
+          next
+        end
         if w.pc >= table_base && table_size > 0
           next if w.value == PAD
           out << "# method table (#{table_size} words)\n" if out.index("# method table").nil?
@@ -84,13 +103,14 @@ module FpgaRom
           isa = (cls & FpgaIsa::ISA_BIT) != 0
           what = if w.b == FpgaIsa::SUPER_SYM then "super #{w.c}"
                  elsif w.b == FpgaIsa::NIVARS_SYM then "ivars #{w.c}"
+                 elsif w.b == FpgaIsa::NAME_SYM then "name :#{symbols[w.c]}"
                  elsif isa then "is_a"
                  elsif kind == FpgaIsa::TGT_PRIM then "prim #{FpgaIsa::PRIMS[tgt] ? FpgaIsa::PRIMS[tgt][3] : tgt}"
                  elsif kind == FpgaIsa::TGT_IVAR then "ivar #{tgt}"
                  elsif kind == FpgaIsa::TGT_IVSET then "ivar= #{tgt}"
                  else "pc #{tgt}"
                  end
-          sym = if w.b == FpgaIsa::SUPER_SYM || w.b == FpgaIsa::NIVARS_SYM then "-"
+          sym = if w.b == FpgaIsa::SUPER_SYM || w.b == FpgaIsa::NIVARS_SYM || w.b == FpgaIsa::NAME_SYM then "-"
                 elsif isa then "class #{w.b}"
                 else ":#{symbols[w.b]}"
                 end
@@ -165,7 +185,6 @@ module FpgaRom
     ireps = flatten(top, [])
     decoded = []
     ireps.each do |ir|
-      raise Error, "#{source}: irep #{ir.index} has #{ir.plen} pool entr(ies) (strings / big literals are not supported)" if ir.plen > 0
       raise Error, "#{source}: irep #{ir.index} has catch handlers (exceptions are not supported)" if ir.clen > 0
       if max_regs && ir.nregs > max_regs
         raise Error, "#{source}: irep #{ir.index} needs #{ir.nregs} registers, the core has #{max_regs}"
@@ -183,6 +202,23 @@ module FpgaRom
     analyze(top, ctx.object, ctx)
     add_iclasses(ctx)
 
+    # pool: 文字列は ROM のデータ領域に置く (同じ中身は1つ)。整数は 32bit に収まること。Float と大きい整数は止める
+    ireps.each_with_index do |ir, i|
+      decoded[i].each do |insn|
+        next unless insn.name == "STRING" || insn.name == "LOADL"
+        e = ir.pool[insn.operands[1]]
+        raise Error, "#{source}: #{insn.name} at #{where(ir, insn)} refers to a missing pool entry" unless e
+        if insn.name == "STRING"
+          raise Error, "#{source}: STRING at #{where(ir, insn)} refers to a non-string pool entry" unless e[0] == :str
+          ctx.add_string(e[1])
+        elsif e[0] != :int
+          raise Error, "#{source}: LOADL at #{where(ir, insn)} loads a #{e[0] == :float ? 'Float' : (e[0] == :bigint ? 'big integer' : 'non-integer')} (not supported)"
+        elsif e[1] < -0x8000_0000 || e[1] > 0x7FFF_FFFF
+          raise Error, "#{source}: LOADL at #{where(ir, insn)} loads #{e[1]}, which does not fit in 32 bits"
+        end
+      end
+    end
+
     # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める。pc 0 は TABLE、クラスの本体は先頭に ENTER を足し、
     # 一番外は先頭で self (main) を作る (CLASS R0 Object、SEND R0 :new)
     base = 1
@@ -199,6 +235,9 @@ module FpgaRom
       end
       pc_of << table
     end
+    # 文字列のデータ (1語 4バイト) はプログラムの後ろ
+    data_base = base
+    ctx.place_strings(data_base)
 
     words = [nil]
     ireps.each_with_index do |ir, i|
@@ -226,7 +265,18 @@ module FpgaRom
       end
     end
 
+    ctx.strings.each { |str| words.concat(data_words(str, ctx.string_at[str])) }
+
     entries = method_entries(ctx)
+    # シンボルの名前 (データ) と、シンボル表 (番号 -> {データの語アドレス, 長さ})。Symbol#to_s が使う
+    names = ctx.symbols.keys
+    sym_addr = []
+    names.each do |n|
+      sym_addr << words.size
+      words.concat(data_words(n.to_s, words.size))
+    end
+    symtab = words.size
+    names.each_with_index { |n, i| words << Word.new(symtab + i, nil, 0, 0, sym_addr[i], n.to_s.bytesize, nil, false) }
     size = 16
     size *= 2 while size < entries.size * 2
     log2 = 0
@@ -241,7 +291,7 @@ module FpgaRom
       h = (h + 1) & (size - 1) while slots[h]
       slots[h] = [cls, sym, tgt]
     end
-    words[0] = Word.new(0, nil, FpgaIsa.op("TABLE").num, log2, tbase, 0, top, false)
+    words[0] = Word.new(0, nil, FpgaIsa.op("TABLE").num, log2, tbase, symtab, top, false)
     slots.each_with_index do |e, i|
       words << if e
                  Word.new(tbase + i, nil, e[0] >> 8, e[0] & 0xFF, e[1], e[2], nil, false)
@@ -254,6 +304,8 @@ module FpgaRom
     image.symbols = ctx.symbols.keys
     image.table_base = tbase
     image.table_size = size
+    image.data_base = data_base
+    image.symtab = symtab
     ctx.classes.each { |k| image.class_names[k.id] = k.name if k.id >= FpgaIsa::FIRST_USER_CLASS }
     image
   end
@@ -264,7 +316,7 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :cref, :globals
+                :method_names, :noops, :cref, :globals, :strings, :string_at
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
 
@@ -280,6 +332,8 @@ module FpgaRom
       @noops = {}        # クラスの本体の attr_* / include / private など (実行時は何もしない) の場所 -> true
       @cref = {}         # irep の番号 -> 字句の入れ子のクラスの名前 (内側から。一番外は含めない)。Ruby の cref
       @globals = []      # ポートでないグローバル変数の名前 (定数の表に置き、始めに nil にする)
+      @strings = []      # pool の文字列 (同じ中身は1つ、出てきた順)
+      @string_at = {}    # 文字列 -> データの語アドレス
       @scope = {}
       @bodies = {}
       @parents = {}
@@ -322,6 +376,18 @@ module FpgaRom
       cref.map { |c| "#{c}::#{name}" } + [name]
     end
 
+    def add_string(str)
+      @strings << str unless @strings.include?(str)
+    end
+
+    # 文字列のデータの語アドレスを base から順に決める (1語 4バイト)
+    def place_strings(base)
+      @strings.each do |str|
+        @string_at[str] = base
+        base += (str.bytesize + 3) / 4
+      end
+    end
+
     # 定数の番号 (無ければ振る)
     def const_slot(key, what)
       unless @consts[key]
@@ -330,6 +396,19 @@ module FpgaRom
       end
       @consts[key]
     end
+  end
+
+  # 文字列を 1語 4バイトのデータの語にする (バイト j は bit 8j から)
+  def self.data_words(str, addr)
+    out = []
+    i = 0
+    while i < str.bytesize
+      v = 0
+      4.times { |j| v |= (str.getbyte(i + j) || 0) << (8 * j) }
+      out << Word.new(addr + out.size, nil, 0, 0, (v >> 16) & 0xFFFF, v & 0xFFFF, nil, false)
+      i += 4
+    end
+    out
   end
 
   def self.site_key(irep, k)
@@ -604,6 +683,11 @@ module FpgaRom
       bang = ctx.sym_id("!")
       return [["BLKPUSH", a, len + 1, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
     end
+    # 式展開: R[a] << R[a+1].to_s (to_s は R[a+1] に、<< の結果 (self) は R[a] に)
+    if insn.name == "STRCAT"
+      a = insn.operands[0]
+      return [["SEND", a + 1, ctx.sym_id("to_s"), 0], ["SEND", a, ctx.sym_id("<<"), 1]]
+    end
     return [["LOADTRUE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETTRUE"
     return [["LOADFALSE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETFALSE"
     nil
@@ -615,6 +699,10 @@ module FpgaRom
     ctx.classes.each do |k|
       k.methods.each { |sym, m| entries << [k.id, ctx.sym_id(sym), m.base] }
       k.meta_methods.each { |sym, m| entries << [FpgaIsa::META | k.id, ctx.sym_id(sym), m.base] }
+    end
+    # クラスの名前 (Module#name)。include の写し (iclass) には無い
+    if ctx.symbols.key?("__name_sym")
+      ctx.classes.each { |k| entries << [k.id, FpgaIsa::NAME_SYM, ctx.sym_id(k.name)] unless k.origin }
     end
     # primitive: その名前がプログラムのどこかに出てくるものだけ (出ないものは呼べない)。同じクラスの def が勝つ
     FpgaIsa::PRIMS.each_with_index do |pr, i|
@@ -701,7 +789,7 @@ module FpgaRom
     end
     name = insn.name
 
-    if FpgaIsa::JUMPS.include?(name)
+    if FpgaIsa::JUMPS.include?(name) || name == "JMPUW"
       # mruby: pc は operand を読み終えた位置 (次の命令) から int16 で進む
       rel = b >= 0x8000 ? b - 0x10000 : b
       target = insn.next_addr + rel
@@ -709,6 +797,8 @@ module FpgaRom
       unless b
         raise Error, "#{source}: #{name} at #{where(irep, insn)} jumps to byte #{target}, not an instruction boundary"
       end
+      # JMPUW (while の中の break など) は ensure を畳みながら飛ぶ。catch handler の無い irep ではただの JMP
+      return Word.new(pc, insn, FpgaIsa.op("JMP").num, 0, b, 0, irep) if name == "JMPUW"
     end
 
     if name == "GETGV" || name == "SETGV"
@@ -838,6 +928,16 @@ module FpgaRom
       if a <= ((x >> 11) & 0x3F) + ((x >> 10) & 1) + ((x >> 5) & 0x1F) + 1
         raise Error, "#{source}: ARGARY at #{where(irep, insn)} writes over the arguments"
       end
+    end
+
+    # STRING: b = データの語アドレス、c = 長さ。LOADL: pool の整数を LOADI32 に
+    if name == "STRING"
+      str = irep.pool[b][1]
+      return Word.new(pc, insn, insn.op.num, a, ctx.string_at.fetch(str), str.bytesize, irep)
+    end
+    if name == "LOADL"
+      v = irep.pool[b][1] & 0xFFFF_FFFF
+      return Word.new(pc, insn, FpgaIsa.op("LOADI32").num, a, v >> 16, v & 0xFFFF, irep)
     end
 
     # LOADSYM: b = プログラム全体で振ったシンボルの番号

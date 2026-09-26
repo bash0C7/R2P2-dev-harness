@@ -1078,6 +1078,81 @@ module mrb_core_tb;
     expect_halt();
     expect_reg(1, vint(45));
 
+    // ---- String: ROM のデータ (1語 4バイト) から作る。bytesize / getbyte / __aset / __push / __slice、
+    //      Symbol#to_s (シンボル表は TABLE の c)、Module#__name_sym ((クラス, NAME_SYM) の行)
+    begin_test("strings");
+    method_entry(CLS_STRING, 40, tgt_prim(PR_SBYTES));
+    method_entry(CLS_STRING, 41, tgt_prim(PR_SGETB));
+    method_entry(CLS_STRING, 42, tgt_prim(PR_SASET));
+    method_entry(CLS_STRING, 43, tgt_prim(PR_SPUSH));
+    method_entry(CLS_STRING, 44, tgt_prim(PR_SSLICE));
+    method_entry(CLS_SYM, 45, tgt_prim(PR_SYMSTR));
+    method_entry(CLS_META | CLS_INT, 46, tgt_prim(PR_NAMESYM));
+    method_entry(CLS_META | CLS_ARRAY, 46, tgt_prim(PR_NAMESYM));
+    method_entry(CLS_INT, NAME_SYM, 16'd3);                  // Integer の名前は :s3
+    prog.push_back(w(OP_TABLE, TB_LOG, TB_BASE, 44));        // 0: シンボル表は 44
+    prog.push_back(w(OP_STRING, 1, 40, 5));                  // 1: R1 = "hello"
+    prog.push_back(w(OP_MOVE, 2, 1));                        // 2
+    prog.push_back(w(OP_SEND0, 2, 40));                      // 3: R2 = 5
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 4
+    prog.push_back(w(OP_LOADI_1, 4));                        // 5
+    prog.push_back(w(OP_SEND, 3, 41, 1));                    // 6: R3 = 'e'
+    prog.push_back(w(OP_MOVE, 4, 1));                        // 7
+    prog.push_back(w(OP_LOADI_0, 5));                        // 8
+    prog.push_back(w(OP_LOADI8, 6, 72));                     // 9
+    prog.push_back(w(OP_SEND, 4, 42, 2));                    // 10: R1[0] = 'H'
+    prog.push_back(w(OP_MOVE, 5, 1));                        // 11
+    prog.push_back(w(OP_LOADI8, 6, 33));                     // 12
+    prog.push_back(w(OP_SEND, 5, 43, 1));                    // 13: R1 << '!' (伸ばす)
+    prog.push_back(w(OP_MOVE, 6, 1));                        // 14
+    prog.push_back(w(OP_LOADI_1, 7));                        // 15
+    prog.push_back(w(OP_LOADI_3, 8));                        // 16
+    prog.push_back(w(OP_SEND, 6, 44, 2));                    // 17: R6 = "ell"
+    prog.push_back(w(OP_MOVE, 7, 6));                        // 18
+    prog.push_back(w(OP_SEND0, 7, 40));                      // 19: R7 = 3
+    prog.push_back(w(OP_MOVE, 8, 1));                        // 20
+    prog.push_back(w(OP_LOADI_5, 9));                        // 21
+    prog.push_back(w(OP_SEND, 8, 41, 1));                    // 22: R8 = '!'
+    prog.push_back(w(OP_LOADSYM, 9, 1));                     // 23
+    prog.push_back(w(OP_SEND0, 9, 45));                      // 24: R9 = :s1.to_s = "ab"
+    prog.push_back(w(OP_MOVE, 10, 9));                       // 25
+    prog.push_back(w(OP_LOADI_1, 11));                       // 26
+    prog.push_back(w(OP_SEND, 10, 41, 1));                   // 27: R10 = 'b'
+    prog.push_back(w(OP_CLASS, 11, CLS_INT));                // 28
+    prog.push_back(w(OP_SEND0, 11, 46));                     // 29: R11 = :s3
+    prog.push_back(w(OP_CLASS, 12, CLS_ARRAY));              // 30
+    prog.push_back(w(OP_SEND0, 12, 46));                     // 31: R12 = nil (行が無い)
+    prog.push_back(w(OP_MOVE, 13, 1));                       // 32
+    prog.push_back(w(OP_SEND0, 13, 40));                     // 33: R13 = 6
+    prog.push_back(w(OP_STOP));                              // 34
+    while (prog.size() < 40) prog.push_back(w(OP_NOP));
+    prog.push_back(48'h0000_6c6c_6568);                      // 40: "hell"
+    prog.push_back(48'h0000_0000_006f);                      // 41: "o"
+    prog.push_back(48'h0000_0000_6261);                      // 42: "ab"
+    prog.push_back(w(OP_NOP));                               // 43
+    prog.push_back({16'd0, 16'd40, 16'd5});                  // 44: :s0 = "hello"
+    prog.push_back({16'd0, 16'd42, 16'd2});                  // 45: :s1 = "ab"
+    run();
+    expect_halt();
+    expect_reg(2, vint(5));
+    expect_reg(3, vint(101));
+    expect_reg(4, vint(72));
+    expect_reg(7, vint(3));
+    expect_reg(8, vint(33));
+    expect_reg(10, vint(98));
+    expect_reg(11, {TAG_SYM, 32'd3});
+    expect_reg(12, VNIL);
+    expect_reg(13, vint(6));
+
+    begin_test("string byte out of range");
+    method_entry(CLS_STRING, 43, tgt_prim(PR_SPUSH));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_STRING, 1, 0, 0));                   // 1: R1 = ""
+    prog.push_back(w(OP_LOADI16, 2, 256));                   // 2
+    prog.push_back(w(OP_SEND, 1, 43, 1));                    // 3: 256 は1バイトでない
+    run();
+    expect_error(3);
+
     begin_test("upvar below the register file");
     prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い
     run();

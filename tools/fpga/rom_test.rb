@@ -37,7 +37,8 @@ class FpgaRomTest < Minitest::Test
     "LOADSELF" => %w[MOVE], "RETSELF" => %w[RETURN], "RETTRUE" => %w[LOADTRUE], "RETFALSE" => %w[LOADFALSE],
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
-    "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST] # ポートでないグローバル変数
+    "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
+    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32]
   }.freeze
 
   def check_operands(where, opname, fields, w, pc_of, image)
@@ -60,7 +61,7 @@ class FpgaRomTest < Minitest::Test
     when "LOADI8", "LOADI16", "LOADI32", "LOADINEG"
       assert_equal "R#{w.a}", fields[0], where
       value = { "LOADI8" => w.b, "LOADI16" => (w.b >= 0x8000 ? w.b - 0x10000 : w.b),
-                "LOADI32" => (w.b << 16) | w.c, "LOADINEG" => -w.b }.fetch(opname)
+                "LOADI32" => ((w.b << 16) | w.c) - (w.b >= 0x8000 ? 2**32 : 0), "LOADINEG" => -w.b }.fetch(opname)
       assert_equal value, fields[1].to_i, where
     when "ADDI", "SUBI"
       assert_equal ["R#{w.a}", w.b.to_s], fields[0, 2], where
@@ -109,12 +110,13 @@ class FpgaRomTest < Minitest::Test
     end
   end
 
-  # pc 0 は TABLE (a = メソッド表の大きさの log2、b = 表の先頭)。表はプログラムの後ろ
+  # pc 0 は TABLE (a = メソッド表の大きさの log2、b = 表の先頭、c = シンボル表の先頭)。
+  # 並びはプログラム、データ (文字列とシンボルの名前)、シンボル表、メソッド表
   def test_rom_starts_with_the_table_word
     image = FpgaRom.from_binary(rite([op("LOADI32"), 1, 0x12, 0x34, 0x56, 0x78, op("STOP")]))
     assert_equal "TABLE", FpgaIsa::OPS[image.words[0].op].name
-    assert_equal [image.table_size.bit_length - 1, image.table_base], [image.words[0].a, image.words[0].b]
-    assert_equal 5, image.table_base
+    assert_equal [image.table_size.bit_length - 1, image.table_base, image.symtab], [image.words[0].a, image.words[0].b, image.words[0].c]
+    assert_equal [5, image.symtab + image.symbols.size], [image.data_base, image.table_base]
     assert_equal image.table_base + image.table_size, image.words.size
     assert_equal %w[CLASS SEND0], image.words[1, 2].map { |w| FpgaIsa::OPS[w.op].name } # main を作る
     assert_equal "0f0112345678", image.words[3].hex
@@ -293,9 +295,25 @@ class FpgaRomTest < Minitest::Test
     end
   end
 
-  def test_rejects_pool
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], plen: 1)) }
-    assert_match(/pool/, e.message)
+  # pool: 文字列はデータ領域 (同じ中身は1つ) に置き STRING の b / c がその場所と長さ。LOADL は 32bit の整数だけ
+  def test_pool_strings_and_integers
+    image = FpgaRom.from_binary(rite([op("STRING"), 1, 0, op("STRING"), 2, 1, op("STRING"), 3, 0, op("LOADL"), 4, 3, op("STOP")],
+                                     pool: ["hello", "", "hello", -7]))
+    s1, s2, s3, l = image.words[3, 4]
+    assert_equal [image.data_base, 5], [s1.b, s1.c]
+    assert_equal [s1.b, 5], [s3.b, s3.c] # 同じ中身
+    assert_equal 0, s2.c
+    assert_equal ["LOADI32", 0xFFFF, 0xFFF9], [FpgaIsa::OPS[l.op].name, l.b, l.c]
+    assert_equal [0x6c6c6568, 0x6f], [image.words[s1.b].value & 0xFFFF_FFFF, image.words[s1.b + 1].value] # バイト j は bit 8j から
+    # シンボル表: {データの語アドレス, 長さ}
+    sym = image.symbols.index("initialize")
+    e = image.words[image.symtab + sym]
+    assert_equal "initi", [image.words[e.b].value, image.words[e.b + 1].value].pack("VV")[0, 5]
+    assert_equal 10, e.c
+    { :float => /Float/, 2**40 => /does not fit in 32 bits/ }.each do |v, msg|
+      e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [v])) }
+      assert_match msg, e.message
+    end
   end
 
   # io_map.rb に無いグローバル変数は定数の表に置き、一番外の先頭で nil にする (代入前に読むと nil)

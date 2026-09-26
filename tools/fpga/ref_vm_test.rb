@@ -44,18 +44,21 @@ class FpgaRefVmTest < Minitest::Test
     assert_equal [0, 0, 1, 1], reads # step 0, 2, 4, 6
   end
 
-  # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、出力ポートへの代入の系列を比べる。
-  # 入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
+  # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、ピンへの代入の系列を比べる。止まるプログラムは
+  # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
       next if File.file?(File.join(CORPUS, "#{name}.stim"))
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
-      trace = FpgaRefVm.new(words).run(20_000)
+      trace = FpgaRefVm.new(words).run(60_000)
       ours = FpgaCompare.outputs(trace)
-      refute_empty ours, name
-      cruby = FpgaOracle.cruby_writes(src, limit: ours.size)
+      console = FpgaCompare.console(trace)
+      refute(ours.empty? && console.empty?, name)
+      halted = trace.last.start_with?("H ")
+      cruby, stdout = FpgaOracle.cruby_run(src, limit: halted ? 1_000_000 : ours.size)
       assert_equal cruby, ours, name
+      assert_equal stdout, console, name if halted
     end
   end
 
@@ -67,10 +70,12 @@ class FpgaRefVmTest < Minitest::Test
       name = File.basename(src, ".rb")
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
       vm = FpgaRefVm.new(words)
-      trace = vm.run(20_000)
+      trace = vm.run(60_000)
       next unless trace.last.start_with?("H ")
-      ours = FpgaIoMap::PORTS.select { |p| p.dir == :out }.to_h { |p| [p.num, FpgaCompare.decode(*vm.io[p.num])] }
-      assert_equal FpgaOracle.picoruby_final(src, picoruby: PICORUBY), ours, name
+      ours = FpgaIoMap.pins_out.to_h { |p| [p.num, FpgaCompare.decode(*vm.io[p.num])] }
+      final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)
+      assert_equal final, ours, name
+      assert_equal stdout, FpgaCompare.console(trace), name
       checked += 1
     end
     assert_operator checked, :>=, 2

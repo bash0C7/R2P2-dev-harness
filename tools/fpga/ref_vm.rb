@@ -125,6 +125,23 @@ class FpgaRefVm
     ref?(r) && obj_class(r) == FpgaIsa::CLS_ARRAY
   end
 
+  def str?(r)
+    ref?(r) && obj_class(r) == FpgaIsa::CLS_STRING
+  end
+
+  # ROM の語 (ROM の大きさで折り返す。無い所は全 bit 1)
+  def rom_word(addr)
+    @rom[addr % (1 << FpgaIsa::PC_BITS)] || FpgaRom::PAD
+  end
+
+  # ROM のデータ (1語 4バイト、バイト j は bit 8j から) の len バイトから String を作る
+  def rom_string(addr, len)
+    @stats[:string] += 1
+    p = new_array(Array.new(len), FpgaIsa::CLS_STRING)
+    len.times { |k| @heap[p + 4 + k] = int((rom_word(addr + k / 4) >> (8 * (k % 4))) & 0xFF) }
+    [FpgaIsa::TAG_OBJ, p]
+  end
+
   def proc?(r)
     ref?(r) && obj_class(r) == FpgaIsa::CLS_PROC
   end
@@ -224,10 +241,10 @@ class FpgaRefVm
   end
 
   # 配列: 見出し p、長さ p+1、中身の参照 p+2。中身 d: 見出し d、要素 d+1..
-  def new_array(values)
+  def new_array(values, cls = FpgaIsa::CLS_ARRAY)
     cap = values.size
     p = alloc(4 + cap)
-    @heap[p] = hdr(FpgaIsa::CLS_ARRAY, 2)
+    @heap[p] = hdr(cls, 2)
     @heap[p + 1] = int(cap)
     @heap[p + 2] = [FpgaIsa::TAG_OBJ, p + 3]
     @heap[p + 3] = hdr(FpgaIsa::CLS_DATA, cap)
@@ -429,6 +446,7 @@ class FpgaRefVm
       fault! if a > FpgaIsa::PC_BITS
       @tsize = 1 << a
       @tbase = b
+      @symtab = c
     when "EXEC"
       fault! unless ok?(a + 1)
       frame(pc, a, 0, false, @mcls)
@@ -456,6 +474,9 @@ class FpgaRefVm
       fault! unless r && (r[0] >> 14) == FpgaIsa::TGT_IVAR
       @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)] = reg(a) # ヒープへの書き込みはトレースに出さない
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
+    when "STRING"
+      fault! unless ok?(a)
+      set(step, a, rom_string(b, c))
     when "LOADTRUE" then set(step, a, bool(true))
     when "LOADFALSE" then set(step, a, bool(false))
     when "GETGV"
@@ -619,7 +640,7 @@ class FpgaRefVm
   end
 
   def index(arr, idx)
-    fault! unless ary?(arr) && int?(idx)
+    fault! unless (ary?(arr) || str?(arr)) && int?(idx)
     i = signed(idx[1])
     len = ary_len(arr)
     i += len if i < 0
@@ -882,6 +903,42 @@ class FpgaRefVm
     pc + 1
   end
 
+  # String の primitive (受け手は String、Symbol#to_s は Symbol)。1語に1バイト (Integer 0..255)。範囲の外はエラー
+  # (負の添字や範囲の丸めはプレリュードがする)
+  def string_prim(step, name, a, x)
+    if name == "SYMSTR"
+      fault! unless x[0] == FpgaIsa::TAG_SYM
+      w = rom_word((@symtab || 0) + x[1])
+      return set(step, a, rom_string((w >> 16) & 0xFFFF, w & 0xFFFF))
+    end
+    fault! unless str?(x)
+    len = ary_len(x)
+    byte = ->(v) { int?(v) && v[1] <= 0xFF }
+    case name
+    when "SBYTES" then set(step, a, int(len))
+    when "SGETB"
+      fault! unless int?(reg(a + 1))
+      set(step, a, index(x, reg(a + 1)))
+    when "SASET"
+      i = reg(a + 1)
+      fault! unless int?(i) && i[1] < len && byte.(reg(a + 2))
+      ary_set(a, i[1], a + 2)
+      set(step, a, reg(a + 2))
+    when "SPUSH"
+      fault! unless byte.(reg(a + 1)) && len < 0xFFFF
+      ary_set(a, len, a + 1)
+      set(step, a, reg(a))
+    when "SSLICE"
+      i = reg(a + 1)
+      n = reg(a + 2)
+      fault! unless int?(i) && int?(n) && i[1] + n[1] <= len # 負の数は 32bit の大きな値なので外れる
+      p = new_array(Array.new(n[1]), FpgaIsa::CLS_STRING)
+      src = reg(a) # 確保で GC が走ると動く
+      n[1].times { |k| @heap[p + 4 + k] = ary_get(src, i[1] + k) }
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
+    end
+  end
+
   # Class#new: インスタンス変数の数を (クラス, NIVARS_SYM) で引き (無ければ 0)、確保して R[a] に置き、initialize を送る。
   # Object とプログラムのクラスだけ。initialize が見つからなければそのまま (プレリュードが Object#initialize を持つ)
   def new_object(step, pc, a, argc, blk)
@@ -906,6 +963,13 @@ class FpgaRefVm
   def builtin(step, name, a, argc)
     x = reg(a)
     y = argc == 1 ? reg(a + 1) : nil
+    return string_prim(step, name, a, x) if %w[SBYTES SGETB SASET SPUSH SSLICE SYMSTR].include?(name)
+    if name == "NAMESYM"
+      # (クラス, NAME_SYM) を親をたどらずに引く。無ければ nil
+      fault! unless x[0] == FpgaIsa::TAG_CLASS
+      r = lookup(x[1], FpgaIsa::NAME_SYM, walk: false)
+      return set(step, a, r ? [FpgaIsa::TAG_SYM, r[0]] : NIL)
+    end
     if %w[SIZE LENGTH EMPTY FIRST LAST POP PUSH APUSH].include?(name)
       fault! unless ary?(x)
       value = case name

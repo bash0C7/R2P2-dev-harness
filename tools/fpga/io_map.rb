@@ -22,7 +22,8 @@ module FpgaIoMap
   PORTS = [
     Port.new("$LED",    0, :out),  # PERIDOT-Air USER_LED[0]
     Port.new("$LED2",   1, :out),  # PERIDOT-Air USER_LED[1]
-    Port.new("$BUTTON", 2, :in)    # PERIDOT-Air D[0]
+    Port.new("$BUTTON", 2, :in),   # PERIDOT-Air D[0]
+    Port.new("$CONSOLE", 3, :out)  # console (UART の TX)。puts / print / p が1バイトずつ書く
   ].freeze
 
   BY_NAME = {}
@@ -37,6 +38,13 @@ module FpgaIoMap
 
   def self.fetch(name)
     BY_NAME[name]
+  end
+
+  CONSOLE = 3
+
+  # 出力ポートのうちピン (console でないもの)。参照との突き合わせは代入の系列で、console はバイト列で比べる
+  def self.pins_out
+    PORTS.select { |p| p.dir == :out && p.num != CONSOLE }
   end
 
   def self.port(num)
