@@ -67,6 +67,11 @@ module mrb_core_tb;
     table_w[h] = {cls, sym, tgt};
   endtask
 
+  // +dumprom=<dir>: 各ケースの ROM を <dir>/<番号>.hex (名前は <dir>/cases.txt) に書く。rake fpga:tb:ref が
+  // 参照インタプリタで走らせて終わりの状態を出す (期待値は先にそれで確かめてから書く)
+  int    ncase = 0;
+  string dumpdir;
+
   task automatic begin_test(input string n);
     name = n;
     prog.delete();
@@ -78,6 +83,14 @@ module mrb_core_tb;
     #1; // mrb_soc の initial (ROM を全 bit 1 で埋める) より後に書く
     for (int i = 0; i < 2**PC_BITS; i++) dut.rom[i] = (i < prog.size()) ? prog[i] : '1;
     for (int i = 0; i < TB_SIZE; i++) dut.rom[TB_BASE + i] = table_w[i];
+    if ($value$plusargs("dumprom=%s", dumpdir)) begin
+      int fd;
+      $writememh($sformatf("%s/%0d.hex", dumpdir, ncase), dut.rom);
+      fd = $fopen($sformatf("%s/cases.txt", dumpdir), ncase == 0 ? "w" : "a");
+      $fdisplay(fd, "%0d %s", ncase, name);
+      $fclose(fd);
+      ncase++;
+    end
     rst_n = 1'b0;
     repeat (2) @(posedge clk);
     #1 rst_n = 1'b1;
@@ -499,31 +512,33 @@ module mrb_core_tb;
     method_entry(CLS_OBJECT, 24, tgt_prim(PR_LAMBDA));
     method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
     prog.push_back(w_table());                               // 0
-    prog.push_back(w(OP_BLOCK, 1, 8, (3 << 8) | 1));         // 1: R1 = proc { |x| x + 1 }
+    prog.push_back(w(OP_BLOCK, 1, 8));                       // 1: R1 = proc { |x| x + 1 }
     prog.push_back(w(OP_LOADI_4, 2));                        // 2
     prog.push_back(w(OP_SEND, 1, 23, 1));                    // 3: R1 = R1.call(4) = 5
-    prog.push_back(w(OP_BLOCK, 3, 8, (3 << 8) | 1));         // 4: R3 = 同じブロック
+    prog.push_back(w(OP_BLOCK, 3, 8));                       // 4: R3 = 同じブロック
     prog.push_back(w(OP_SSEND, 2, 24, 8'h80));               // 5: R2 = lambda(&R3)
-    prog.push_back(w(OP_SEND0, 2, 23));                      // 6: lambda を引数 0 個で呼ぶとエラー
+    prog.push_back(w(OP_SEND0, 2, 23));                      // 6: lambda を引数 0 個で呼ぶ
     prog.push_back(w(OP_STOP));                              // 7
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 8
-    prog.push_back(w(OP_RETURN, 1));                         // 9
+    prog.push_back(w(OP_ENTER, 1, 3));                       // 8: |x| (lambda なら数が違うとここでエラー)
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 9
+    prog.push_back(w(OP_RETURN, 1));                         // 10
     run();
-    expect_error(6);
+    expect_error(8);
     expect_reg(1, vint(5));
 
     // ---- Proc (BLOCK / BLKCALL): 外側の変数と break
     begin_test("proc, upvar and break");
     prog.push_back(w(OP_LOADI_5, 1));                        // 0: 外側の R1 = 5
-    prog.push_back(w(OP_BLOCK, 3, 6, (4 << 8) | 0));         // 1: R3 = Proc (先頭 pc 6、引数 0、nregs 4)
+    prog.push_back(w(OP_BLOCK, 3, 6));                       // 1: R3 = Proc (先頭 pc 6)
     prog.push_back(w(OP_BLKCALL, 3, 0));                     // 2: ブロックのフレームは bp + 3
     prog.push_back(w(OP_LOADI_7, 2));                        // 3: (break で飛ばされる)
     prog.push_back(w(OP_STOP));                              // 4: break の出口
     prog.push_back(w(OP_STOP));                              // 5
-    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 6: R1 = 作ったフレームの R1
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 7
-    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 8: 作ったフレームの R1 = 6
-    prog.push_back(w(OP_BREAK, 1, 4, 0));                    // 9: 値 6 を持って出口 (pc 4) へ
+    prog.push_back(w(OP_ENTER, 0, 4));                       // 6: 引数 0、nregs 4
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 7: R1 = 作ったフレームの R1
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 8
+    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 9: 作ったフレームの R1 = 6
+    prog.push_back(w(OP_BREAK, 1, 4, 0));                    // 10: 値 6 を持って出口 (pc 4) へ
     run();
     expect_halt();
     expect_reg(1, vint(6));
@@ -535,15 +550,16 @@ module mrb_core_tb;
     begin_test("yield through a method and dynamic break");
     method_entry(CLS_NIL, 20, 16'd5);
     prog.push_back(w_table());                               // 0
-    prog.push_back(w(OP_BLOCK, 2, 8, (3 << 8) | 1));         // 1: R2 = Proc (先頭 pc 8、引数 1)
+    prog.push_back(w(OP_BLOCK, 2, 8));                       // 1: R2 = Proc (先頭 pc 8)
     prog.push_back(w(OP_SSEND, 1, 20, 8'h80 | 0));           // 2: m(&blk)。ブロックの枠 (R1 + 1) を残す
     prog.push_back(w(OP_STOP));                              // 3: break の戻り先
     prog.push_back(w(OP_STOP));                              // 4
     prog.push_back(w(OP_BLKPUSH, 2, 1, 0));                  // 5: m: R2 = 自分のブロック (枠 1)
     prog.push_back(w(OP_LOADI_4, 3));                        // 6: yield 4
     prog.push_back(w(OP_BLKCALL, 2, 1));                     // 7
-    prog.push_back(w(OP_ADDI, 1, 2));                        // 8: ブロック: R1 (= 4) + 2
-    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 9: Proc を作ったフレームまで畳む
+    prog.push_back(w(OP_ENTER, 1, 3));                       // 8: ブロック |x|
+    prog.push_back(w(OP_ADDI, 1, 2));                        // 9: R1 (= 4) + 2
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 10: Proc を作ったフレームまで畳む
     run();
     expect_halt();
     expect_reg(1, vint(6));                                  // m(...) の結果が break の値
@@ -686,12 +702,13 @@ module mrb_core_tb;
     prog.push_back(w(OP_STOP));                              // 2
     prog.push_back(w(OP_STOP));                              // 3
     prog.push_back(w(OP_LOADI_1, 1));                        // 4: m
-    prog.push_back(w(OP_BLOCK, 2, 9, 3 << 8));               // 5
+    prog.push_back(w(OP_BLOCK, 2, 9));                       // 5
     prog.push_back(w(OP_BLKCALL, 2, 0));                     // 6
     prog.push_back(w(OP_LOADI_7, 1));                        // 7: (通らない)
     prog.push_back(w(OP_RETURN, 1));                         // 8
-    prog.push_back(w(OP_LOADI8, 1, 9));                      // 9: ブロック: return 9
-    prog.push_back(w(OP_RETURN_BLK, 1, 0, 1));               // 10: 1段外のメソッドから戻る
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 9: ブロック
+    prog.push_back(w(OP_LOADI8, 1, 9));                      // 10: return 9
+    prog.push_back(w(OP_RETURN_BLK, 1, 0, 1));               // 11: 1段外のメソッドから戻る
     run();
     expect_halt();
     expect_reg(1, vint(9));
@@ -745,12 +762,13 @@ module mrb_core_tb;
     prog.push_back(w(OP_STOP));                              // 7
     prog.push_back(w(OP_ENTER, 0, 3));                       // 8: m (nregs 3: env に写すのは R0..R2)
     prog.push_back(w(OP_LOADI_5, 1));                        // 9: R1 = 5
-    prog.push_back(w(OP_BLOCK, 2, 12, 3 << 8));              // 10: R2 = Proc (env を作る)
+    prog.push_back(w(OP_BLOCK, 2, 12));                      // 10: R2 = Proc (env を作る)
     prog.push_back(w(OP_RETURN, 2));                         // 11: 戻る時に env へ R0..R2 を写す
-    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 12: ブロック: R1 = env の R1
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 13
-    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 14: env の R1 = R1 (ヒープへ)
-    prog.push_back(w(OP_RETURN, 1));                         // 15
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 12: ブロック
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 13: R1 = env の R1
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 14
+    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 15: env の R1 = R1 (ヒープへ)
+    prog.push_back(w(OP_RETURN, 1));                         // 16
     run();
     expect_halt();
     expect_reg(6, vint(6));
@@ -763,44 +781,50 @@ module mrb_core_tb;
     prog.push_back(w(OP_BLKCALL, 1, 0));                     // 2: break の行き先のフレームはもう無い
     prog.push_back(w(OP_STOP));                              // 3
     prog.push_back(w(OP_ENTER, 0, 3));                       // 4: m
-    prog.push_back(w(OP_BLOCK, 2, 7, 3 << 8));               // 5
+    prog.push_back(w(OP_BLOCK, 2, 7));                       // 5
     prog.push_back(w(OP_RETURN, 2));                         // 6
-    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 7
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 7
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 8
     run();
-    expect_error(7);
+    expect_error(8);
 
-    // ---- lambda: 引数の数を調べ、break / return は lambda から戻る
+    // ---- lambda: 引数の数を (先頭の ENTER が) 調べ、break / return は lambda から戻る
     begin_test("lambda checks the number of arguments");
-    prog.push_back(w(OP_BLOCK, 1, 2, (3 << 8) | 8'h80 | 1)); // 0: lambda { |x| }
+    prog.push_back(w(OP_BLOCK, 1, 3, 8'h80));                // 0: lambda { |x| }
     prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: 引数 0 個
     prog.push_back(w(OP_RETNIL));                            // 2
+    prog.push_back(w(OP_ENTER, 1, 3));                       // 3: ここでエラー
+    prog.push_back(w(OP_RETNIL));                            // 4
     run();
-    expect_error(1);
+    expect_error(3);
 
     begin_test("break in a lambda");
-    prog.push_back(w(OP_BLOCK, 1, 5, (3 << 8) | 8'h80 | 1)); // 0: lambda { |x| break x + 1 }
+    prog.push_back(w(OP_BLOCK, 1, 5, 8'h80));                // 0: lambda { |x| break x + 1 }
     prog.push_back(w(OP_LOADI_4, 2));                        // 1
     prog.push_back(w(OP_BLKCALL, 1, 1));                     // 2: R1 = 5
     prog.push_back(w(OP_LOADI_7, 3));                        // 3: 通る (lambda から戻っただけ)
     prog.push_back(w(OP_STOP));                              // 4
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 5
-    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 6
+    prog.push_back(w(OP_ENTER, 1, 3));                       // 5
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 6
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 7
     run();
     expect_halt();
     expect_reg(1, vint(5));
     expect_reg(3, vint(7));
 
     begin_test("return in a proc inside a lambda");
-    prog.push_back(w(OP_BLOCK, 1, 4, (4 << 8) | 8'h80));     // 0: l = lambda { proc { return 9 }.call; 1 }
+    prog.push_back(w(OP_BLOCK, 1, 4, 8'h80));                // 0: l = lambda { proc { return 9 }.call; 1 }
     prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: R1 = 9
     prog.push_back(w(OP_LOADI_7, 2));                        // 2
     prog.push_back(w(OP_STOP));                              // 3
-    prog.push_back(w(OP_BLOCK, 2, 8, 3 << 8));               // 4: lambda の中: proc
-    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5
-    prog.push_back(w(OP_LOADI_1, 1));                        // 6: (通らない)
-    prog.push_back(w(OP_RETURN, 1));                         // 7
-    prog.push_back(w(OP_LOADI8, 1, 9));                      // 8: proc の中
-    prog.push_back(w(OP_RETURN_BLK, 1, 0, 2));               // 9: 深さ 1 の lambda から戻る
+    prog.push_back(w(OP_ENTER, 0, 4));                       // 4: lambda の中
+    prog.push_back(w(OP_BLOCK, 2, 9));                       // 5: proc
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 6
+    prog.push_back(w(OP_LOADI_1, 1));                        // 7: (通らない)
+    prog.push_back(w(OP_RETURN, 1));                         // 8
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 9: proc の中
+    prog.push_back(w(OP_LOADI8, 1, 9));                      // 10
+    prog.push_back(w(OP_RETURN_BLK, 1, 0, 2));               // 11: 深さ 1 の lambda から戻る
     run();
     expect_halt();
     expect_reg(1, vint(9));
@@ -927,6 +951,132 @@ module mrb_core_tb;
     prog.push_back(w(OP_SEND0, 1, 44));                      // Integer.new は作れない
     run();
     expect_error(2);
+
+    // ---- 引数: f(a, b = 5, *r, c) は ((a * 10 + b) * 10 + r.size) * 10 + c。ENTER の c = o | r << 5 | m2 << 6、
+    //      後ろに省略可能な引数の JMP の表 (o + 1 語)。splat の呼び出しは引数の数 15 (R[a+1] が配列)
+    begin_test("optional, rest and post arguments, splat call");
+    method_entry(CLS_NIL, 20, 16'd16);
+    method_entry(CLS_ARRAY, 40, tgt_prim(PR_SIZE));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_1, 2));                        // 1
+    prog.push_back(w(OP_LOADI_2, 3));                        // 2
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 3: R1 = f(1, 2) (b = 5)
+    prog.push_back(w(OP_LOADI_1, 3));                        // 4
+    prog.push_back(w(OP_LOADI_2, 4));                        // 5
+    prog.push_back(w(OP_LOADI_3, 5));                        // 6
+    prog.push_back(w(OP_LOADI_4, 6));                        // 7
+    prog.push_back(w(OP_LOADI_5, 7));                        // 8
+    prog.push_back(w(OP_SSEND, 2, 20, 5));                   // 9: R2 = f(1, 2, 3, 4, 5)
+    prog.push_back(w(OP_LOADI_7, 4));                        // 10
+    prog.push_back(w(OP_LOADI8, 5, 8));                      // 11
+    prog.push_back(w(OP_LOADI8, 6, 9));                      // 12
+    prog.push_back(w(OP_ARRAY, 4, 3));                       // 13: R4 = [7, 8, 9]
+    prog.push_back(w(OP_SSEND, 3, 20, 15));                  // 14: R3 = f(*R4)
+    prog.push_back(w(OP_STOP));                              // 15
+    prog.push_back(w(OP_ENTER, 1, 8, 1 | (1 << 5) | (1 << 6))); // 16: f
+    prog.push_back(w(OP_JMP, 0, 19));                        // 17: b を渡されていない
+    prog.push_back(w(OP_JMP, 0, 20));                        // 18: 渡された
+    prog.push_back(w(OP_LOADI_5, 2));                        // 19: b = 5
+    prog.push_back(w(OP_MOVE, 6, 1));                        // 20: R5 はブロックの枠
+    prog.push_back(w(OP_LOADI8, 7, 10));                     // 21
+    prog.push_back(w(OP_MUL, 6));                            // 22
+    prog.push_back(w(OP_MOVE, 7, 2));                        // 23
+    prog.push_back(w(OP_ADD, 6));                            // 24
+    prog.push_back(w(OP_LOADI8, 7, 10));                     // 25
+    prog.push_back(w(OP_MUL, 6));                            // 26
+    prog.push_back(w(OP_MOVE, 7, 3));                        // 27
+    prog.push_back(w(OP_SEND0, 7, 40));                      // 28: r.size
+    prog.push_back(w(OP_ADD, 6));                            // 29
+    prog.push_back(w(OP_LOADI8, 7, 10));                     // 30
+    prog.push_back(w(OP_MUL, 6));                            // 31
+    prog.push_back(w(OP_MOVE, 7, 4));                        // 32
+    prog.push_back(w(OP_ADD, 6));                            // 33
+    prog.push_back(w(OP_RETURN, 6));                         // 34
+    run();
+    expect_halt();
+    expect_reg(1, vint(1502));
+    expect_reg(2, vint(1225));
+    expect_reg(3, vint(7809));
+
+    begin_test("too few arguments");
+    method_entry(CLS_NIL, 20, 16'd3);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 1: f() に必須が 1 つ
+    prog.push_back(w(OP_STOP));                              // 2
+    prog.push_back(w(OP_ENTER, 1, 4, 1 << 5));               // 3: f(a, *r)
+    prog.push_back(w(OP_RETNIL));                            // 4
+    run();
+    expect_error(3);
+
+    // ---- 配列の展開: [*a] (ARYCAT)、[*a, x] (ARYPUSH)、a, *b, c = v (APOST)
+    begin_test("array splats");
+    prog.push_back(w(OP_LOADI_1, 1));                        // 0
+    prog.push_back(w(OP_LOADI_2, 2));                        // 1
+    prog.push_back(w(OP_ARRAY, 1, 2));                       // 2: R1 = [1, 2]
+    prog.push_back(w(OP_LOADNIL, 2));                        // 3
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 4
+    prog.push_back(w(OP_ARYCAT, 2));                         // 5: R2 = [*R1] (写し)
+    prog.push_back(w(OP_LOADI_3, 3));                        // 6
+    prog.push_back(w(OP_LOADI_4, 4));                        // 7
+    prog.push_back(w(OP_ARYPUSH, 2, 2));                     // 8: R2 = [1, 2, 3, 4]
+    prog.push_back(w(OP_MOVE, 3, 2));                        // 9
+    prog.push_back(w(OP_LOADI_5, 4));                        // 10
+    prog.push_back(w(OP_ARYCAT, 3));                         // 11: R3 = [*R2, *5] = [1, 2, 3, 4, 5]
+    prog.push_back(w(OP_MOVE, 4, 3));                        // 12
+    prog.push_back(w(OP_APOST, 4, 1, 2));                    // 13: _, *R4, R5, R6 = R3 -> [2, 3], 4, 5
+    prog.push_back(w(OP_LOADI_7, 7));                        // 14
+    prog.push_back(w(OP_APOST, 7, 0, 1));                    // 15: *R7, R8 = 7 -> [], 7
+    prog.push_back(w(OP_AREF, 9, 4, 1));                     // 16: R9 = R4[1]
+    prog.push_back(w(OP_AREF, 10, 3, 4));                    // 17: R10 = R3[4]
+    prog.push_back(w(OP_AREF, 11, 7, 0));                    // 18: R11 = R7[0] (空)
+    prog.push_back(w(OP_AREF, 12, 1, 1));                    // 19: R12 = R1[1] (元は変わらない)
+    prog.push_back(w(OP_STOP));                              // 20
+    run();
+    expect_halt();
+    expect_reg(5, vint(4));
+    expect_reg(6, vint(5));
+    expect_reg(8, vint(7));
+    expect_reg(9, vint(3));
+    expect_reg(10, vint(5));
+    expect_reg(11, VNIL);
+    expect_reg(12, vint(2));
+
+    // ---- 引数なしの super の引数 (ARGARY): g(a, *r) の中で R4 = [a, *r]、R5 = ブロック
+    begin_test("argary");
+    method_entry(CLS_NIL, 20, 16'd7);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_1, 2));                        // 1
+    prog.push_back(w(OP_LOADI_2, 3));                        // 2
+    prog.push_back(w(OP_LOADI_3, 4));                        // 3
+    prog.push_back(w(OP_SSEND, 1, 20, 3));                   // 4: R1 = g(1, 2, 3)
+    prog.push_back(w(OP_AREF, 2, 1, 2));                     // 5: R2 = R1[2]
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_ENTER, 1, 6, 1 << 5));               // 7: g(a, *r)
+    prog.push_back(w(OP_ARGARY, 4, (1 << 11) | (1 << 10)));  // 8: 1:1:0:0
+    prog.push_back(w(OP_RETURN, 4));                         // 9
+    run();
+    expect_halt();
+    expect_reg(2, vint(3));
+
+    // ---- proc は引数が1つの配列なら展開する (|a, b| に [4, 5])。lambda は展開しない
+    begin_test("proc auto-splat");
+    prog.push_back(w(OP_BLOCK, 1, 7));                       // 0: proc { |a, b| a * 10 + b }
+    prog.push_back(w(OP_LOADI_4, 2));                        // 1
+    prog.push_back(w(OP_LOADI_5, 3));                        // 2
+    prog.push_back(w(OP_ARRAY, 2, 2));                       // 3: R2 = [4, 5]
+    prog.push_back(w(OP_BLKCALL, 1, 1));                     // 4: R1 = 45
+    prog.push_back(w(OP_STOP));                              // 5
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_ENTER, 2, 5));                       // 7: R1 = a、R2 = b、R3 はブロックの枠
+    prog.push_back(w(OP_MOVE, 4, 2));                        // 8
+    prog.push_back(w(OP_LOADI8, 2, 10));                     // 9
+    prog.push_back(w(OP_MUL, 1));                            // 10: R1 = a * 10
+    prog.push_back(w(OP_MOVE, 2, 4));                        // 11
+    prog.push_back(w(OP_ADD, 1));                            // 12
+    prog.push_back(w(OP_RETURN, 1));                         // 13
+    run();
+    expect_halt();
+    expect_reg(1, vint(45));
 
     begin_test("upvar below the register file");
     prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い

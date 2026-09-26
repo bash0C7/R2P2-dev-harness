@@ -587,6 +587,7 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake test:fpga` | `tools/fpga/*_test.rb` (minitest)。シミュレータ不要。picoruby が要るものは無ければ skip。CI の `host` job でも回す |
 | `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
+| `rake fpga:tb:ref` | `mrb_core_tb` の各ケースの ROM (`+dumprom`) を参照インタプリタで走らせ、終わり方とレジスタを出す。ケースの期待値は先にこれで確かめてから書く |
 | `rake fpga:check` | `fpga/corpus/*.hex` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
 | `rake fpga:fuzz[count,seed]` | ランダムな ROM を参照とシミュレーションで走らせ、トレースを全行比べる (差分ファズ) |
 | `rake fpga:gap[verbose]` | 実在の PicoRuby プログラム (gem の example、`examples/`、コーパス) を変換器とコアに通し、範囲内の何本が動くか、残りを止めている理由 (全部) を多い順に出す。一覧は `build/fpga/gap.txt`。進め方の指標 ([計画](superpowers/plans/2026-09-26-fpga-full-picoruby.md)) |
@@ -637,7 +638,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 感度が広がるだけで結果は変わらない。型付きの `parameter string` は上位から渡せないので、
 `ROM_FILE` は型を付けない。可変 index の packed 配列をさらに部分選択すると内部エラーで落ちる
 (`out_val[p][33:32]` のような形は一度変数に受ける)。**`always_comb` の中で2回書いてから読む変数と、`if` の条件の関数の
-呼び出し (`is_ref(ra)` など) は、Icarus が時刻を進めなくなる原因になった** (Verilator は通る)。前もって `assign` で wire にする。rake はコンパイラの出力を
+呼び出し (`is_ref(ra)` など)、`if` の中でヒープを2段たどって読む三項演算子 (APOST の値) は、Icarus が時刻を進めなくなる
+原因になった** (Verilator は通る)。前もって `assign` で wire にする。rake はコンパイラの出力を
 `build/fpga/**/build.log` に落とし、失敗した時だけ表示する。
 
 **テストベンチから ROM を書くのは `#1` 待ってから。** `mrb_soc` の `initial` が ROM を全 bit 1 で埋めるので、
@@ -669,7 +671,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **定数 (`GETCONST` `SETCONST`) は 64 個まで。** 名前は変換時に字句の入れ子 (`A::B::X`、`A::X`、`X` の順) で探して番号にする。
   クラスの名前なら `CLASS` (クラスの即値) にする。代入前に読むとエラー
 - **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** 文字列・Hash・Range は無い
-- **引数は必須のものと `&blk` だけ。** 省略可能・残り・キーワード引数と、呼び出し側のキーワード引数・splat は変換時に止める
+- **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`、呼び出しの splat (`f(*a)`)。** キーワード引数 (定義側も呼び出し側も)
+  は変換時に止める (Hash が要るので P3 の後。下の「引数 (P1d)」)
 - **pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
@@ -691,9 +694,9 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **呼び出し (`SEND` / `SEND0` / `SSEND` / `SSEND0`)。** b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。
   `SSEND` は R0 (self) を R[a] に写してから引く。メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、
   R[1..引数の数] = 引数、その次がブロックの枠。ブロックを渡さなければ nil) を作って飛び、primitive なら S_PRIM でその場で実行する。
+  引数の数 15 は splat (R[1] が引数の配列、ブロックの枠は R[2])。primitive は `new` と Proc#`call` だけが受ける。
   呼び出しの深さは 16 まで
-- **メソッドの先頭の `ENTER`** が引数の数を調べ (合わなければエラー)、bp + nregs がレジスタファイルに収まるかを見て、
-  ブロックの枠より後ろを nregs まで nil で埋める (S_CLEAR)。a = 必須の引数の数、b = nregs。
+- **メソッドとブロックの先頭の `ENTER`** が引数を調べて並べ (下の「引数 (P1d)」)、nregs までを nil で埋める (S_CLEAR)。
   クラスの本体は mruby が `ENTER` を出さないので、変換器が先頭に足す
 - **クラスの定義は実行時にも本体を走らせる。** `CLASS` は R[a] = クラスの即値、`EXEC` はそれを self にして本体を呼ぶ
   (本体の中の定数の代入のため)。`TDEF` / `SDEF` は実行時には R[a] = :名前 だけ (表は変換時に作った)。
@@ -724,6 +727,26 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   `respond_to?` は普通の探索 (親を辿る) で見つかるか
 - **クラス変数 (`@@x`)** は、代入するクラスのうち一番上の祖先を持ち主にした定数 (`Foo::@@x`) にする
 - **一番外の self は Object のインスタンス (main)。** 変換器が一番外の irep の先頭に `CLASS R0 Object` と `SEND0 R0 :new` を足す
+
+### 引数 (P1d)
+
+mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`enter`) と RTL (S_ENLATCH .. S_ENFIN) が同じ順にする。
+
+- **`ENTER` の語。** a = 必須 m1、b = nregs、c = 省略可能 o | 残り r << 5 | 後ろの必須 m2 << 6。len = m1 + o + r + m2。
+  後ろに省略可能な引数の既定値へ飛ぶ `JMP` の表 (o + 1 語) が続き、渡された省略可能な引数の数だけ飛ばす
+- **引数は R[1..argc]、argc = 15 なら R[1] の配列の中身。** メソッドと lambda (今の Proc が無いか lambda) は、
+  数が m1 + m2 より少ないか、残りが無くて m1 + o + m2 より多ければエラー。proc は調べず、引数が1つの配列で len > 1 なら展開する
+- **並べ終えた形:** R[1..m1+o] 前、R[m1+o+1] 残りの配列、その後ろに m2、R[len+1] ブロック、nregs まで nil。
+  足りない所は nil (後ろの必須は、前を埋めてから余った分)
+- **順序:** 残りの配列を確保して写す (GC が走ってよい。まだ何も動かしていない) → ブロックと配列の中身の位置を覚える →
+  後ろの必須を動かす (レジスタの上へ動く時は後ろから) → 前 → 残りの配列とブロックを置く → nil で埋める。
+  書き込みはトレースに出さない。必須だけで数が合う時は、前と同じく埋めるだけ (S_CLEAR)
+- **配列の展開の命令。** `ARYCAT` (R[a] = splat(R[a]) + splat(R[a+1])。splat は、配列は中身、nil は空、Proc と即値は1要素、
+  ほかのオブジェクトは to_a を持つかもしれないのでエラー)、`ARYPUSH` (R[a] + [R[a+1..a+b]])、
+  `APOST` (a, *b, c = v: R[a] = 真ん中の配列、R[a+1..a+c] = 後ろ。配列でなければ [v])、
+  `ARGARY` (引数なしの super: R[a] = 今のメソッドの引数の配列、R[a+1] = ブロック。b は mruby のまま)。
+  どれも新しい配列を作る (mruby は ARYCAT / ARYPUSH で R[a] を伸ばすが、R[a] は同じ式の中で作った配列なので違いは見えない)
+- **変換時に止めるもの:** キーワード引数 (`ENTER` の key / kdict、呼び出しの nk、`ARGARY` の kd)、ブロックの外のフレームの `ARGARY`
 
 ### プレリュード
 
@@ -786,8 +809,9 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 - **iterator はプレリュードのメソッド。** `times` `upto` `downto` `each` `each_with_index` `map` `loop` は `yield` する
   普通のメソッドで、ブロックは `SENDB` (ブロックを渡す印付きの `SEND`) で渡る。
 - **`proc { }` はプレリュード、`lambda { }` は Proc に lambda の印を付けて返す primitive、`-> { }` は印付きの `BLOCK`。**
-  `.call(...)` は Proc#call (primitive、`BLKCALL` と同じ)。ブロックのフレームの R0 は Proc を作った時の self。proc は引数の数を調べず
-  (足りなければ nil、多ければ捨てる。ブロックの `ENTER` は `NOP` にする)、**lambda は数が違えばエラー**。
+  `.call(...)` は Proc#call (primitive、`BLKCALL` と同じ)。ブロックのフレームの R0 は Proc を作った時の self。`BLKCALL` は
+  フレームを作るだけで、引数はブロックの先頭の `ENTER` が並べる。proc は数を調べず (足りなければ nil、多ければ捨てる、
+  配列1つなら展開する)、**lambda は数が違えばエラー**。
   lambda の中の `break` と `return` は lambda から戻る (`return` は、囲むメソッドまでの間で一番内側の lambda から)
 - **メソッドへのブロック** は呼び出しの c に印 (0x80) を付け、呼び出し先のブロックの枠 (引数の後ろ) に置いたまま呼ぶ。
   `yield` は `BLKPUSH` (枠から Proc を取る) + `BLKCALL`、`&blk` は引数として受け、`block_given?` は `BLKPUSH` の後に `!` を2回
@@ -807,7 +831,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 - **オブジェクト。** 見出し (タグ 8、値 = クラスの番号 << 16 | 語数) の後ろに中身。クラスの番号は
   `tools/fpga/isa.rb` の `CLASSES` (組み込み) と、ヒープの中だけの塊 (配列の中身 `CLS_DATA`、env `CLS_ENV`)。
   配列は `[見出し] [長さ] [中身への参照]` と、別の塊 `[見出し] [要素 × 容量]`。
-  Proc は `[見出し] [先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc] [作ったフレームの self]`。
+  Proc は `[見出し] [先頭 pc | lambda << 23] [env] [外側の Proc] [作ったフレームの self]`。
   env は `[見出し] [生きている間の bp か nil] [レジスタ × nregs]`。配列の中身と env への参照も Object のタグで指す
   (レジスタには出ない。種類は見出しで分かる)
 - **配列を伸ばす** (`a[i] = v` で i が容量以上、`push`) 時は、容量 max(i + 1, 2 倍, 4) の塊を新しく取り、写して付け替える。

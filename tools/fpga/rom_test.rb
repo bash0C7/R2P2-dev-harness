@@ -79,7 +79,8 @@ class FpgaRomTest < Minitest::Test
     when "SEND", "SEND0", "SSEND", "SSEND0"
       assert_equal "R#{w.a}", fields[0], where
       assert_equal fields[1], ":#{image.symbols[w.b]}", where
-      assert_equal (opname.end_with?("0") ? 0 : fields[2].delete("n=").to_i), w.c & 0x7F, where
+      n = opname.end_with?("0") ? "0" : fields[2].delete("n=")
+      assert_equal (n == "*" ? 15 : n.to_i), w.c & 0x7F, where # n=* は splat (R[a+1] が引数の配列)
     when "CLASS"
       assert_equal "R#{w.a}", fields[0], where
       assert_equal fields[1].delete(":"), image.class_names[w.b] || FpgaIsa::CLASSES.to_h.invert[w.b], where
@@ -91,9 +92,16 @@ class FpgaRomTest < Minitest::Test
       assert_equal "R#{w.a}", fields[0], where
     when "SETIV"
       assert_equal [fields[0], fields[1]], [image.symbols[w.b], "R#{w.a}"], where
+    when "APOST"
+      assert_equal ["R#{w.a}", w.b.to_s, w.c.to_s], fields[0, 3], where
+    when "ARYPUSH"
+      assert_equal ["R#{w.a}", w.b.to_s], fields[0, 2], where
+    when "ARGARY" # b は mruby のまま (m1:r:m2:lv)
+      assert_equal ["R#{w.a}", [(w.b >> 11) & 0x3F, (w.b >> 10) & 1, (w.b >> 5) & 0x1F, w.b & 0xF].join(":")], fields[0, 2], where
     # super は b = 今のメソッドの名前、c = 引数の数 | 0x80 (ブロックの枠は必ず渡す)
     when "SUPER"
-      assert_equal ["R#{w.a}", fields[1].delete("n=").to_i | 0x80], [fields[0], w.c], where
+      n = fields[1].delete("n=")
+      assert_equal ["R#{w.a}", (n == "*" ? 15 : n.to_i) | 0x80], [fields[0], w.c], where
       refute_nil image.symbols[w.b], where
     else
       assert_equal "R#{w.a}", fields[0], where
@@ -128,8 +136,8 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_unsupported_instruction_with_location
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("ARYCAT"), 1, op("STOP")])) }
-    assert_match(/unsupported instruction\(s\): ARYCAT at byte 001/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("HASH"), 1, 0, op("STOP")])) }
+    assert_match(/unsupported instruction\(s\): HASH at byte 001/, e.message)
   end
 
   # 呼び出しは b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。演算の落ち先のシンボルは 0 から固定
@@ -165,10 +173,15 @@ class FpgaRomTest < Minitest::Test
     assert_equal image.ireps[2].base, lookup(image, FpgaIsa::CLS_OBJECT, "f")
   end
 
-  def test_rejects_optional_parameters
-    opt = irep_record([op("ENTER"), 0x04, 0x20, 0x00, op("RETNIL")]) # 1:1:... (optional 1)
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [opt])) }
-    assert_match(/only required parameters and &block are supported/, e.message)
+  # ENTER: a = 必須、b = nregs、c = 省略可能 | 残り << 5 | 後ろの必須 << 6。キーワード引数は止める
+  def test_enter_carries_the_parameter_shape
+    params = irep_record([op("ENTER"), 0x04, 0x30, 0x80, op("RETNIL")], nregs: 7) # 1:1:1:1:0:0:0 (m1 o r m2)
+    image = FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [params]))
+    enter = image.words.find { |w| FpgaIsa::OPS[w.op]&.name == "ENTER" }
+    assert_equal [1, 7, 1 | (1 << 5) | (1 << 6)], [enter.a, enter.b, enter.c]
+    kw = irep_record([op("ENTER"), 0x00, 0x00, 0x04, op("RETNIL")]) # 0:0:0:0:1:0:0 (key 1)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [kw])) }
+    assert_match(/takes keyword parameters/, e.message)
   end
 
   # クラス: CLASS は R[a] = クラスの即値、本体の EXEC は b = 本体の先頭 (変換器が足した ENTER)。
@@ -213,18 +226,19 @@ class FpgaRomTest < Minitest::Test
     assert_match(/return inside a block at irep 1 byte 004 is not inside a method or a lambda/, e.message)
   end
 
-  # lambda { } と -> { } は lambda の印 (c の 0x80) を付けた BLOCK。一番外の lambda の中の return は通す
+  # lambda { } と -> { } は lambda の印 (c の 0x80) を付けた BLOCK (引数と nregs はブロックの ENTER が持つ)。
+  # 一番外の lambda の中の return は通す
   def test_lambdas_are_marked
     blk = irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN_BLK"), 1], nregs: 3) # |x| return x
     bin = rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["lambda"], reps: [blk])
     words = FpgaRom.from_binary(bin).words
-    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[3].op].name, words[3].c]
+    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[3].op].name, words[3].c]
     words = FpgaRom.from_binary(rite([op("LAMBDA"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[3].op].name, words[3].c]
+    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[3].op].name, words[3].c]
     words = FpgaRom.from_binary(rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["proc"], reps: [
       irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN"), 1], nregs: 3)
     ])).words
-    assert_equal 1 | (3 << 8), words[3].c # proc は印なし
+    assert_equal 0, words[3].c # proc は印なし
   end
 
   # インスタンス変数は子クラスが親の並びの後ろに足す。(cls, :@x) と attr の (cls, :x) (cls, :x=) は
@@ -381,9 +395,9 @@ class FpgaRomTest < Minitest::Test
   def test_picoruby_converter_stops_with_the_location
     with_picoruby do |dir|
       e = assert_raises(FpgaConverter::Error) do
-        picoruby_convert(dir, rite([op("NOP"), op("ARYCAT"), 1, op("STOP")]))
+        picoruby_convert(dir, rite([op("NOP"), op("HASH"), 1, 0, op("STOP")]))
       end
-      assert_match(/unsupported instruction\(s\): ARYCAT at byte 001/, e.message)
+      assert_match(/unsupported instruction\(s\): HASH at byte 001/, e.message)
       e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
       assert_match(/needs 17 registers/, e.message)
     end

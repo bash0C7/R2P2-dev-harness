@@ -243,7 +243,7 @@
  231  012  JMP       a=0   b=228   c=0      260000e40000
  232  015  RETNIL    a=0   b=0     c=0      400000000000
 # irep 11  nregs 4
- 233  000  ENTER     a=0   b=4     c=1      390000040001
+ 233  000  ENTER     a=0   b=4     c=0      390000040000
  234  004  MOVE      a=2   b=1     c=0      010200010000
  235  007  RETURN    a=2   b=0     c=0      3d0200000000
 # irep 12  nregs 2
@@ -298,12 +298,12 @@
  281       RETURN    a=0   b=0     c=0      3d0000000000  <- RETTRUE
 # irep 16  nregs 5
  282  000  ENTER     a=1   b=5     c=0      390100050000
- 283  004  BLOCK     a=4   b=287   c=1537   6204011f0601
+ 283  004  BLOCK     a=4   b=287   c=0      6204011f0000
  284  007  SSEND     a=3   b=30    c=128    2f03001e0080  <- SSENDB
  285  011  LOADFALSE a=0   b=0     c=0      140000000000  <- RETFALSE
  286       RETURN    a=0   b=0     c=0      3d0000000000  <- RETFALSE
 # irep 17  nregs 6
- 287  000  NOP       a=0   b=0     c=0      000000000000  <- ENTER
+ 287  000  ENTER     a=1   b=6     c=0      390100060000
  288  004  MOVE      a=3   b=1     c=0      010300010000
  289  007  GETUPVAR  a=4   b=1     c=1      210400010001
  290  011  EQ        a=3   b=0     c=0      4d0300000000

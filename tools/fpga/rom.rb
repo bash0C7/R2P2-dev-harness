@@ -405,7 +405,6 @@ module FpgaRom
         block = irep.reps[ops[1]]
         ctx.parents[block.index] = irep
         ctx.lambdas[block.index] = true if insn.name == "LAMBDA"
-        block_params(block, ctx.decoded[block.index], source)
         analyze(block, scope, ctx)
       when "SETCONST"
         name = irep.syms[ops[1]]
@@ -513,18 +512,6 @@ module FpgaRom
     list
   end
 
-  # ブロックの引数の数 (先頭の ENTER)。必須の引数だけを受け付ける
-  def self.block_params(block, insns, source)
-    enter = insns[0]
-    return 0 unless enter && enter.name == "ENTER"
-    aspec = enter.operands[0]
-    if (aspec & ~(0x1F << 18)) != 0
-      raise Error, "#{source}: block at #{where(block, enter)} takes optional, rest, keyword or block parameters " \
-                   "(only required parameters are supported)"
-    end
-    (aspec >> 18) & 0x1F
-  end
-
   # irep がブロックなら、それを囲むメソッド (か一番外) まで何段あるか。ブロックでなければ 0
   def self.block_depth(irep, ctx)
     d = 0
@@ -546,6 +533,14 @@ module FpgaRom
     false
   end
 
+  # 先頭の ENTER の引数の枠の数 (必須 + 省略可能 + 残り + 後ろの必須)。ブロックの枠はその次
+  def self.params_len(insns)
+    enter = insns[0]
+    return 0 unless enter && enter.name == "ENTER"
+    x = enter.operands[0]
+    ((x >> 18) & 0x1F) + ((x >> 13) & 0x1F) + ((x >> 12) & 1) + ((x >> 7) & 0x1F)
+  end
+
   # 誰も def していない名前か (block_given? を下げてよいか)
   def self.defined_anywhere?(ctx, sym)
     ctx.classes.each { |k| return true if k.methods[sym] || k.meta_methods[sym] }
@@ -556,12 +551,12 @@ module FpgaRom
   def self.lowered(insn, ir, k, pc, ctx)
     if (insn.name == "SSEND0" || insn.name == "SSEND") && ir.syms[insn.operands[1]] == "block_given?" &&
        !defined_anywhere?(ctx, "block_given?")
-      # block_given? は、囲むメソッドのブロックの枠 (必須の引数の次) を BLKPUSH で読み、!! で true / false にする
+      # block_given? は、囲むメソッドのブロックの枠 (引数の次、R[len+1]) を BLKPUSH で読み、!! で true / false にする
       depth, method = block_depth(ir, ctx)
-      m1 = method.index == 0 ? 0 : block_params(method, ctx.decoded[method.index], ctx.source)
+      len = method.index == 0 ? 0 : params_len(ctx.decoded[method.index])
       a = insn.operands[0]
       bang = ctx.sym_id("!")
-      return [["BLKPUSH", a, m1 + 1, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
+      return [["BLKPUSH", a, len + 1, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
     end
     return [["LOADTRUE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETTRUE"
     return [["LOADFALSE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETFALSE"
@@ -702,7 +697,7 @@ module FpgaRom
     # super: b = 今のメソッドの名前、c = 引数の数 | ブロックの枠を渡す印 (いつも)
     if name == "SUPER"
       argc = ops[1] & 0xF
-      raise Error, "#{source}: super at #{where(irep, insn)} with keyword arguments or a splat is not supported yet" if (ops[1] >> 4) != 0 || argc == 15
+      raise Error, "#{source}: super at #{where(irep, insn)} with keyword arguments is not supported yet" if (ops[1] >> 4) != 0
       return Word.new(pc, insn, insn.op.num, a, ctx.sym_id(ctx.method_names[irep.index]), argc | 0x80, irep)
     end
 
@@ -747,42 +742,51 @@ module FpgaRom
     return Word.new(pc, insn, FpgaIsa.op("MOVE").num, a, 0, 0, irep) if name == "LOADSELF"
     return Word.new(pc, insn, FpgaIsa.op("RETURN").num, 0, 0, 0, irep) if name == "RETSELF"
 
-    # メソッドの呼び出し: b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。SSEND は self に送る
+    # メソッドの呼び出し: b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。SSEND は self に送る。
+    # 引数の数 15 は splat (R[a+1] が引数の配列)
     if %w[SEND SEND0 SENDB SSEND SSEND0 SSENDB].include?(name)
       sym = irep.syms[ops[1]]
       argc = name.end_with?("0") ? 0 : ops[2] & 0xF
       kw = name.end_with?("0") ? 0 : ops[2] >> 4
-      if kw != 0 || argc == 15
-        raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with keyword arguments or a splat (not supported yet)"
+      if kw != 0
+        raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with keyword arguments (not supported yet)"
       end
       blk = name.end_with?("B")
       op = name.start_with?("SS") ? (blk ? "SSEND" : name) : (blk ? "SEND" : name)
       return Word.new(pc, insn, FpgaIsa.op(op).num, a, ctx.sym_id(sym), argc | (blk ? 0x80 : 0), irep)
     end
 
-    # ENTER: 必須の引数 (と &blk) だけ。a = 必須の引数の数、b = nregs (ENTER が残りのレジスタを nil で埋める)、
-    # c = &blk を受けるか。ブロックの ENTER は NOP にする (Proc は BLKCALL が埋め、引数の数は lambda だけ調べる)
+    # ENTER: a = 必須 m1、b = nregs、c = 省略可能 o | 残り r << 5 | 後ろの必須 m2 << 6 (&blk は印が要らない。
+    # ブロックはいつも R[len+1] に置く)。メソッドもブロックも同じ (proc かどうかはコアが今の Proc で見る)
     if name == "ENTER"
       aspec = ops[0]
-      m1 = (aspec >> 18) & 0x1F
-      if (aspec & ~((0x1F << 18) | 1)) != 0
-        raise Error, "#{source}: method at #{where(irep, insn)} takes optional, rest or keyword parameters " \
-                     "(only required parameters and &block are supported)"
+      if (aspec >> 1) & 0x3F != 0
+        raise Error, "#{source}: #{ctx.parents[irep.index] ? 'block' : 'method'} at #{where(irep, insn)} takes keyword parameters (not supported yet)"
       end
-      return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if ctx.parents[irep.index]
-      a = m1
+      a = (aspec >> 18) & 0x1F
       b = irep.nregs
-      c = aspec & 1
+      c = ((aspec >> 13) & 0x1F) | (((aspec >> 12) & 1) << 5) | (((aspec >> 7) & 0x1F) << 6)
+    end
+
+    # ARGARY (引数なしの super): b は mruby のまま (m1 << 11 | r << 10 | m2 << 5 | kd << 4 | lv)。
+    # ブロックの中 (lv > 0) とキーワード引数は止める (super はブロックの中では止めている)
+    if name == "ARGARY"
+      x = ops[1]
+      raise Error, "#{source}: super at #{where(irep, insn)} forwards keyword parameters (not supported yet)" if (x >> 4) & 1 != 0
+      raise Error, "#{source}: ARGARY at #{where(irep, insn)} reaches an outer frame" if (x & 0xF) != 0
+      if a <= ((x >> 11) & 0x3F) + ((x >> 10) & 1) + ((x >> 5) & 0x1F) + 1
+        raise Error, "#{source}: ARGARY at #{where(irep, insn)} writes over the arguments"
+      end
     end
 
     # LOADSYM: b = プログラム全体で振ったシンボルの番号
     b = ctx.sym_id(irep.syms[ops[1]]) if name == "LOADSYM"
 
-    # BLOCK / LAMBDA: Proc を作る。b = ブロックの irep の先頭 pc、c = 引数の数 | lambda << 7 | nregs << 8
+    # BLOCK / LAMBDA: Proc を作る。b = ブロックの irep の先頭 pc、c = lambda << 7 (引数と nregs はブロックの ENTER が持つ)
     if name == "BLOCK" || name == "LAMBDA"
       block = irep.reps[ops[1]]
       b = block.base
-      c = block_params(block, ctx.decoded[block.index], source) | (ctx.lambdas[block.index] ? 0x80 : 0) | (block.nregs << 8)
+      c = ctx.lambdas[block.index] ? 0x80 : 0
       return Word.new(pc, insn, FpgaIsa.op("BLOCK").num, a, b, c, irep)
     end
 

@@ -202,6 +202,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_SEND0      = 8'd51; // BB
   localparam logic [7:0] OP_BLKCALL    = 8'd54; // BB
   localparam logic [7:0] OP_SUPER      = 8'd55; // BB
+  localparam logic [7:0] OP_ARGARY     = 8'd56; // BS
   localparam logic [7:0] OP_ENTER      = 8'd57; // W
   localparam logic [7:0] OP_RETURN     = 8'd61; // B
   localparam logic [7:0] OP_RETURN_BLK = 8'd62; // B
@@ -223,7 +224,10 @@ package mrb_pkg;
   localparam logic [7:0] OP_GE         = 8'd81; // B
   localparam logic [7:0] OP_ARRAY      = 8'd82; // BB
   localparam logic [7:0] OP_ARRAY2     = 8'd83; // BBB
+  localparam logic [7:0] OP_ARYCAT     = 8'd84; // B
+  localparam logic [7:0] OP_ARYPUSH    = 8'd85; // BB
   localparam logic [7:0] OP_AREF       = 8'd87; // BBB
+  localparam logic [7:0] OP_APOST      = 8'd89; // BBB
   localparam logic [7:0] OP_BLOCK      = 8'd98; // BB
   localparam logic [7:0] OP_CLASS      = 8'd103; // BB
   localparam logic [7:0] OP_EXEC       = 8'd105; // BB

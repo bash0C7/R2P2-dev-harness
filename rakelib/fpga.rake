@@ -184,6 +184,39 @@ namespace :fpga do
     end
   end
 
+  namespace :tb do
+    desc "Run each mrb_core_tb case's ROM on the reference interpreter and print how it ends (to write expectations)"
+    task :ref do
+      require_fpga_tools!
+      tb, path = fpga_testbench_path("mrb_core_tb")
+      dir = File.join(FPGA_BUILD_DIR, "tbref")
+      FileUtils.rm_rf dir
+      FileUtils.mkdir_p dir
+      vvp = File.join(dir, "#{tb}.vvp")
+      fpga_quiet_sh(File.join(dir, "build.log"), "iverilog", "-g2012", "-o", vvp, "-s", tb, *fpga_rtl_sources, path)
+      system("vvp", "-n", vvp, "+dumprom=#{dir}", out: File::NULL) # 途中のケースで止まっても、そこまでは書いてある
+      nregs = File.read(path)[/localparam int NREGS\s*=\s*(\d+)/, 1].to_i
+      File.readlines(File.join(dir, "cases.txt"), chomp: true).each do |line|
+        n, name = line.split(" ", 2)
+        words = File.read(File.join(dir, "#{n}.hex")).gsub(%r{//[^\n]*}, "").split.map(&:hex) # $writememh は1行に数語、注釈つき
+        vm = FpgaRefVm.new(words, nregs: nregs)
+        last = vm.run(100_000).last
+        show = lambda do |(tag, x)|
+          case tag
+          when FpgaIsa::TAG_INT then (x >= 2**31 ? x - 2**32 : x).to_s
+          when FpgaIsa::TAG_TRUE then "true"
+          when FpgaIsa::TAG_FALSE then "false"
+          when FpgaIsa::TAG_SYM then ":#{x}"
+          when FpgaIsa::TAG_CLASS then "C#{x}"
+          else "@#{x}"
+          end
+        end
+        regs = vm.regs.each_with_index.map { |v, i| v == FpgaRefVm::NIL ? nil : "R#{i}=#{show.(v)}" }.compact
+        puts "#{name}: #{last}\n  #{regs.join(' ')}"
+      end
+    end
+  end
+
   desc "Run every fpga/tb/*_tb.sv with Verilator and Icarus Verilog"
   task :tb do
     require_fpga_tools!

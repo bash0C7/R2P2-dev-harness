@@ -437,7 +437,7 @@ class FpgaRefVm
       @stats[:super_call] += 1
       # 今のメソッドが見つかったクラスの親から、同じ名前 (b) を引く。受け手は self、ブロックの枠はそのまま渡す
       argc = c & 0x7F
-      fault! unless ok?(a + argc + 1)
+      fault! unless ok?(a + window(argc))
       @regs[@bp + a] = @regs[@bp]
       r = lookup(@mcls, b, super_first: true)
       fault! unless r
@@ -496,12 +496,7 @@ class FpgaRefVm
       set(step, a, int(name == "ADDILV" ? reg(a)[1] + d : reg(a)[1] - d))
     when "SEND", "SEND0" then return send(step, pc, a, b, c, false)
     when "SSEND", "SSEND0" then return send(step, pc, a, b, c, true)
-    when "ENTER"
-      # 引数の数を調べ、nregs (b) までのレジスタを nil で埋める (R0、引数、ブロックの枠は残す)
-      fault! unless @argc == a
-      fault! if @bp + b > @regs.size
-      @fn = b
-      ((a + 2)...b).each { |i| @regs[@bp + i] = NIL }
+    when "ENTER" then return enter(pc, a, b, c)
     when "RETURN", "RETNIL" then return ret(step, name == "RETURN" ? reg(a) : NIL)
     when "STOP" then return :halt
     when "BREAK" then return brk(step, a, b, c)
@@ -516,8 +511,61 @@ class FpgaRefVm
       end
     when "BLOCK"
       fault! unless ok?(a)
-      set(step, a, [FpgaIsa::TAG_OBJ, new_proc((b & 0xFFFF) | ((c & 0xFF) << 16) | ((c >> 8) << 24))])
-    when "BLKCALL" then return blkcall(pc, a, b)
+      set(step, a, [FpgaIsa::TAG_OBJ, new_proc((b & 0xFFFF) | ((c & 0x80) << 16))])
+    when "BLKCALL" then return blkcall(pc, a, b, false)
+    when "ARYCAT"
+      # R[a] = splat(R[a]) + splat(R[a+1])。splat: 配列は中身、nil は空、Proc と即値は1要素。
+      # ほかのオブジェクトは to_a を持つかもしれないので止める
+      fault! unless ok?(a + 1)
+      x = reg(a)
+      y = reg(a + 1)
+      fault! unless x == NIL || ary?(x)
+      fault! if ref?(y) && !ary?(y) && !proc?(y)
+      n1 = x == NIL ? 0 : ary_len(x)
+      n2 = ary?(y) ? ary_len(y) : (y == NIL ? 0 : 1)
+      p = new_array(Array.new(n1 + n2))
+      x = reg(a) # 確保で GC が走ると動く
+      y = reg(a + 1)
+      n1.times { |k| @heap[p + 4 + k] = ary_get(x, k) }
+      n2.times { |k| @heap[p + 4 + n1 + k] = ary?(y) ? ary_get(y, k) : y }
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
+    when "ARYPUSH"
+      # R[a] = R[a] + [R[a+1] .. R[a+b]] (新しい配列にする。R[a] は同じ式の中で作った配列だけ)
+      fault! unless ok?(a + b) && ary?(reg(a))
+      n1 = ary_len(reg(a))
+      p = new_array(Array.new(n1 + b))
+      x = reg(a)
+      n1.times { |k| @heap[p + 4 + k] = ary_get(x, k) }
+      b.times { |k| @heap[p + 4 + n1 + k] = reg(a + 1 + k) }
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
+    when "APOST"
+      # a, *r, x = v: R[a] = v[b...len-c] (配列)、R[a+1..a+c] = 後ろの c 個。配列でなければ [v] として
+      fault! unless ok?(a + c)
+      len = ary?(reg(a)) ? ary_len(reg(a)) : 1
+      rn = [len - b - c, 0].max
+      p = new_array(Array.new(rn))
+      v = reg(a)
+      el = ->(j) { ary?(v) ? ary_get(v, j) : v }
+      rn.times { |k| @heap[p + 4 + k] = el.(b + k) }
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
+      c.times do |i|
+        j = len > b + c ? len - c + i : b + i
+        set(step, a + 1 + i, j < len ? el.(j) : NIL)
+      end
+    when "ARGARY"
+      # 引数なしの super: R[a] = 今のメソッドの引数の配列 (前 m1、残り、後ろ m2)、R[a+1] = ブロック (先に、トレースなし)
+      m1 = (b >> 11) & 0x3F
+      r = (b >> 10) & 1
+      m2 = (b >> 5) & 0x1F
+      fault! unless a > m1 + r + m2 + 1 && ok?(a + 1)
+      fault! if r == 1 && !ary?(reg(m1 + 1))
+      @regs[@bp + a + 1] = reg(m1 + r + m2 + 1)
+      rl = r == 1 ? ary_len(reg(m1 + 1)) : 0
+      p = new_array(Array.new(m1 + rl + m2))
+      m1.times { |k| @heap[p + 4 + k] = reg(1 + k) }
+      rl.times { |k| @heap[p + 4 + m1 + k] = ary_get(reg(m1 + 1), k) }
+      m2.times { |k| @heap[p + 4 + m1 + rl + k] = reg(m1 + r + 1 + k) }
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
     when "ARRAY"
       fault! unless b.zero? || ok?(a + b - 1)
       p = new_array(Array.new(b))
@@ -582,7 +630,7 @@ class FpgaRefVm
   # メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、R[1..引数の数] = 引数、その次がブロックの枠)、primitive ならその場で
   def send(step, pc, a, sym, c, self_call)
     argc = c & 0x7F
-    fault! unless ok?(a + argc + 1)
+    fault! unless ok?(a + window(argc))
     @regs[@bp + a] = @regs[@bp] if self_call # self を受け手の場所へ (トレースに出さない)
     r = lookup(class_of(reg(a)), sym)
     fault! unless r
@@ -626,7 +674,7 @@ class FpgaRefVm
     fault! if @stack.size >= FpgaIsa::STACK_DEPTH
     @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, ctor])
     @bp += a
-    @regs[@bp + argc + 1] = NIL unless blk
+    @regs[@bp + window(argc)] = NIL unless blk
     @cp = NIL
     @env = NIL
     @fn = 0
@@ -634,31 +682,81 @@ class FpgaRefVm
     @argc = argc
   end
 
-  # ブロックのフレームに入る (BLKCALL)。R0 は Proc を作った時の self、引数の後ろは nregs まで nil
-  def enter_frame(pc, a, nregs, keep, new_cp)
-    new_bp = @bp + a
-    fault! if new_bp + [nregs, keep + 1].max > @regs.size || @stack.size >= FpgaIsa::STACK_DEPTH
-    @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, false])
-    @regs[new_bp] = @heap[new_cp[1] + 4]
-    ((keep + 1)...nregs).each { |i| @regs[new_bp + i] = NIL }
-    @bp = new_bp
-    @cp = new_cp
-    @env = NIL
-    @fn = nregs
+  # 引数の後ろのブロックの枠の位置 (argc = 15 は R[1] に引数の配列)
+  def window(argc)
+    argc == 15 ? 2 : argc + 1
   end
 
-  # Proc を呼ぶ (yield / blk.call / iterator)。R[a] の Proc を、R[a+1].. の n 個の値で。
-  # Proc の引数の数より少なければ残りは nil、多ければ捨てる。lambda は数が違えばエラー
-  def blkcall(pc, a, n)
+  # Proc を呼ぶ (yield / blk.call / iterator)。R[a] の Proc を、R[a+1].. の n 個の値で (15 は配列)。
+  # フレームの R0 は Proc を作った時の self、ブロックの枠は blk でなければ nil。数の検査と並べ替えは Proc の先頭の ENTER
+  def blkcall(pc, a, n, blk)
     pr = reg(a)
     fault! unless proc?(pr)
-    ok?(a + n) || fault!
-    info = @heap[pr[1] + 1][1]
-    m1 = (info >> 16) & 0x7F
-    nregs = (info >> 24) & 0xFF
-    fault! if lambda?(pr) && n != m1
-    enter_frame(pc, a, nregs, [n, m1].min, pr)
-    info & 0xFFFF
+    fault! unless ok?(a + window(n)) && @stack.size < FpgaIsa::STACK_DEPTH
+    @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, false])
+    @bp += a
+    @regs[@bp] = @heap[pr[1] + 4]
+    @regs[@bp + window(n)] = NIL unless blk
+    @cp = pr
+    @env = NIL
+    @fn = 0
+    @argc = n
+    @heap[pr[1] + 1][1] & 0xFFFF
+  end
+
+  # ENTER (mruby 3.3 の OP_ENTER と同じ並べ方)。a = 必須 m1、b = nregs、c = 省略可能 o | 残り r << 5 | 後ろの必須 m2 << 6。
+  # 引数は R[1..argc]、argc = 15 なら R[1] の配列の中身 (ブロックの枠は R[2])。メソッドと lambda は数を調べ、
+  # proc は調べずに、引数が1つの配列で len > 1 なら展開する。並べ終えると R[1..m1+o] 前、R[m1+o+1] 残りの配列、
+  # その後ろに m2、R[len+1] ブロック、その先 nregs まで nil。省略可能な引数は、渡された数だけ後ろの JMP の表を飛ばす。
+  # 書き込みはトレースに出さない (ハードウェアも同じ順に書く)
+  def enter(pc, a, b, c)
+    m1 = a
+    o = c & 0x1F
+    r = (c >> 5) & 1
+    m2 = (c >> 6) & 0x1F
+    len = m1 + o + r + m2
+    fault! if @bp + [b, len + 2].max > @regs.size
+    strict = !proc?(@cp) || lambda?(@cp)
+    heap = @argc == 15 || (!strict && @argc == 1 && len > 1 && ary?(reg(1)))
+    fault! if heap && !ary?(reg(1))
+    cnt = heap ? ary_len(reg(1)) : @argc
+    fault! if strict && (cnt < m1 + m2 || (r.zero? && cnt > m1 + o + m2))
+    if cnt < len
+      mlen = cnt < m1 + m2 ? [cnt - m1, 0].max : m2
+      front = cnt - mlen
+      ps = front
+      pm = mlen
+      rn = 0
+      skip = o > 0 && cnt > m1 + m2 ? cnt - m1 - m2 : 0
+      desc = !heap # 後ろの必須は上へ動く
+    else
+      rn = r.zero? ? 0 : cnt - m1 - o - m2
+      front = m1 + o
+      ps = m1 + o + rn
+      pm = m2
+      skip = o
+      desc = false
+    end
+    # 1. 残りの配列 (確保で GC が走ってよい。まだ何も動かしていない)
+    if r == 1
+      @stats[:rest] += 1
+      p = new_array(Array.new(rn))
+      rn.times { |k| @heap[p + 4 + k] = heap ? ary_get(reg(1), m1 + o + k) : reg(1 + m1 + o + k) }
+    end
+    # 2. 以後は確保しない。ブロックと、配列から読むならその中身の位置を覚えてから動かす
+    blk = @regs[@bp + (heap ? 2 : @argc + 1)]
+    src = heap ? reg(1) : nil
+    get = ->(j) { heap ? ary_get(src, j) : @regs[@bp + 1 + j] }
+    (desc ? (m2 - 1).downto(0) : 0.upto(m2 - 1)).each do |k|
+      @regs[@bp + m1 + o + r + 1 + k] = k < pm ? get.(ps + k) : NIL
+    end
+    ((heap ? 0 : front)...(m1 + o)).each { |i| @regs[@bp + 1 + i] = i < front ? get.(i) : NIL }
+    @regs[@bp + m1 + o + 1] = [FpgaIsa::TAG_OBJ, p] if r == 1
+    @regs[@bp + len + 1] = blk
+    ((len + 2)...b).each { |i| @regs[@bp + i] = NIL }
+    @fn = b
+    @stats[:enter_skip] += 1 if skip > 0
+    pc + 1 + skip
   end
 
   # 戻り: 呼び出し先の R0 (= 呼び出し元の R[a]) に値を置いて戻る。フレームが無ければ停止
@@ -731,7 +829,7 @@ class FpgaRefVm
     fault! unless pr
     fault! unless pr[2] == -1 || pr[2] == argc
     name = pr[3]
-    return blkcall(pc, a, argc) if name == "CALL"
+    return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
     x = reg(a)
     case name
