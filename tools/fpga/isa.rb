@@ -46,15 +46,18 @@ module FpgaIsa
 
   OPS = []
   ALL.each_with_index { |(name, fmt), i| OPS << Op.new(name, i, fmt) }
+  # FPGA だけの命令 (mruby の番号の外)。TABLE は ROM の先頭の語: a = メソッド表の大きさの log2、b = 表の先頭の語アドレス
+  EXTRA = [["TABLE", 0xF0, "BS"]].freeze
+  EXTRA.each { |name, num, fmt| OPS[num] = Op.new(name, num, fmt) }
   OPS.freeze
 
   BY_NAME = {}
-  OPS.each { |o| BY_NAME[o.name] = o }
+  OPS.each { |o| BY_NAME[o.name] = o if o }
   BY_NAME.freeze
 
-  # CPU コアが実行する命令 (docs/spec.md §10「対応命令」)。fpga/corpus/*.rb に出る命令と、
-  # 同じ族で回路がほぼ増えないもの (LOADI_n 全部、比較4種、ADDI/SUBI、JMPIF/JMPNIL) まで。
-  # メソッド (TDEF/SSEND/SSEND0/ENTER) は変換時に呼び出し先を静的に解決する。SEND/SEND0 は下の BUILTINS だけ。
+  # CPU コアが実行する命令 (docs/spec.md §10「対応命令」)。
+  # SEND / SEND0 / SSEND / SSEND0 はメソッド表を引く動的な呼び出し (b = シンボルの番号、c = 引数の数 | ブロック << 7)。
+  # CLASS は R[a] = クラス b の即値、EXEC は R[a] を self にしてクラスの本体 (pc b) を呼ぶ。TDEF / SDEF は R[a] = :名前
   SUPPORTED = %w[
     NOP MOVE LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5
     LOADI_6 LOADI_7 LOADI16 LOADI32 LOADNIL LOADTRUE LOADFALSE GETGV SETGV
@@ -63,20 +66,59 @@ module FpgaIsa
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
     GETUPVAR SETUPVAR BREAK
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
+    CLASS EXEC SDEF TABLE
   ].freeze
 
-  # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令に下げる (docs/spec.md §10「ブロック」)
-  #   SENDB SSENDB  iterator (times / each / map ...) はループと BLKCALL に展開し、proc / lambda は Proc をそのまま返す。
-  #                 def したメソッドへのブロック付き呼び出しは SSEND (ブロックを渡す印付き) にする
-  #   LAMBDA        -> (x) { } は lambda の印を付けた BLOCK にする
-  LOWERED = %w[SENDB SSENDB LAMBDA].freeze
+  # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
+  #   SENDB SSENDB  ブロックを渡す印 (c の 0x80) を付けた SEND / SSEND
+  #   LAMBDA        -> (x) { } は lambda の印を付けた BLOCK
+  #   MODULE        CLASS と同じ (モジュールもクラスの番号を持つ)
+  #   LOADSELF      MOVE a, R0
+  #   RETSELF       RETURN R0
+  #   RETTRUE / RETFALSE  LOADTRUE / LOADFALSE R0 と RETURN R0 (戻り値は呼び出し先の R0 に入るので同じ)
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE].freeze
 
-  # ブロックを取る組み込み: [名前, SENDB か SSENDB か, 引数の数]
-  ITERATORS = [
-    ["times", "SENDB", 0], ["upto", "SENDB", 1], ["downto", "SENDB", 1], ["loop", "SSENDB", 0],
-    ["each", "SENDB", 0], ["each_with_index", "SENDB", 0], ["map", "SENDB", 0],
-    ["proc", "SSENDB", 0], ["lambda", "SSENDB", 0]
+  # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
+  # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
+  SUPER_SYM = 0xFFFF
+  # 飛び先の上位 2bit: 0 = メソッドの先頭 pc、1 = primitive の番号 (下の PRIMS)
+  TGT_PC   = 0
+  TGT_PRIM = 1
+  # 親クラスをたどる段数の上限 (ランダムな表で輪になっても止まるように)
+  MAX_SUPER_DEPTH = 32
+
+  # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
+  OP_SYMS = %w[+ - * / == < <= > >= [] []=].freeze
+
+  def self.table_hash(cls, sym, mask)
+    (cls * 5 + sym) & mask
+  end
+
+  # 回路が持つメソッド (primitive): [クラス, 名前, 引数の数 (-1 は何個でも), 定数名]。番号は並び順
+  PRIMS = [
+    ["Integer", "+", 1, "IADD"], ["Integer", "-", 1, "ISUB"], ["Integer", "*", 1, "IMUL"], ["Integer", "/", 1, "IDIV"],
+    ["Integer", "<", 1, "ILT"], ["Integer", "<=", 1, "ILE"], ["Integer", ">", 1, "IGT"], ["Integer", ">=", 1, "IGE"],
+    ["Integer", "==", 1, "IEQ"],
+    ["Integer", "%", 1, "MOD"], ["Integer", "-@", 0, "NEG"], ["Integer", "<<", 1, "SHL"], ["Integer", ">>", 1, "SHR"],
+    ["Integer", "&", 1, "AND"], ["Integer", "|", 1, "OR"], ["Integer", "^", 1, "XOR"], ["Integer", "~", 0, "INV"],
+    ["Integer", "abs", 0, "ABS"], ["Integer", "zero?", 0, "ZERO"], ["Integer", "even?", 0, "EVEN"], ["Integer", "odd?", 0, "ODD"],
+    ["Object", "!", 0, "NOT"], ["Object", "==", 1, "OEQ"], ["Object", "class", 0, "CLASSOF"],
+    ["Object", "sleep_ms", 1, "SLEEPMS"], ["Object", "sleep", 1, "SLEEP"], ["Object", "lambda", 0, "LAMBDA"],
+    ["Array", "size", 0, "SIZE"], ["Array", "length", 0, "LENGTH"], ["Array", "empty?", 0, "EMPTY"],
+    ["Array", "first", 0, "FIRST"], ["Array", "last", 0, "LAST"], ["Array", "pop", 0, "POP"],
+    ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "[]", 1, "AGET"], ["Array", "[]=", 2, "ASET"],
+    ["Proc", "call", -1, "CALL"]
   ].freeze
+
+  def self.prim(const_name)
+    PRIMS.each_with_index { |pr, i| return i if pr[3] == const_name }
+    raise ArgumentError, "unknown primitive #{const_name}"
+  end
+
+  def self.class_id(name)
+    CLASSES.each { |n, id| return id if n == name }
+    nil
+  end
 
   JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
 
@@ -124,27 +166,11 @@ module FpgaIsa
 
   INT_BITS = 32
 
-  # SEND / SEND0 で呼べる組み込みメソッド: [名前, 引数の数]。番号は並び順で、ROM の b に入る。
-  # 受け手は Integer (「!」と「!=」は何でも、size..include? と「<<」は Array でもよい)。それ以外の SEND は変換時に止める
-  BUILTINS = [
-    ["%", 1], ["!=", 1], ["-@", 0], ["<<", 1], [">>", 1], ["&", 1], ["|", 1], ["^", 1],
-    ["~", 0], ["!", 0], ["abs", 0], ["zero?", 0], ["even?", 0], ["odd?", 0],
-    ["size", 0], ["length", 0], ["empty?", 0], ["first", 0], ["last", 0], ["pop", 0], ["push", 1], ["include?", 1],
-    ["sleep_ms", 1], ["sleep", 1]
-  ].freeze
-
-  # 受け手を書かずに呼ぶ (SSEND) 組み込み。変換器が SEND の組み込みに直す
-  SELF_BUILTINS = %w[sleep_ms sleep].freeze
-
-  # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数
+  # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数、ROM の語数
   RF_SIZE     = 128
   STACK_DEPTH = 16
-  NCONST      = 16
-
-  def self.builtin(name, argc)
-    BUILTINS.each_with_index { |(n, a), i| return i if n == name && a == argc }
-    nil
-  end
+  NCONST      = 64
+  PC_BITS     = 13
 
   def self.op(name_or_num)
     o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]
@@ -162,8 +188,4 @@ module FpgaIsa
     SUPPORTED.include?(name) || LOWERED.include?(name)
   end
 
-  def self.iterator(name, kind, argc)
-    ITERATORS.each { |it| return it if it[0] == name && it[1] == kind && it[2] == argc }
-    nil
-  end
 end

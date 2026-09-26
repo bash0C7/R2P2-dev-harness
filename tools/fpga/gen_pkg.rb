@@ -37,12 +37,29 @@ module FpgaGenPkg
     lines << "  localparam int STACK_DEPTH = #{FpgaIsa::STACK_DEPTH};"
     lines << "  localparam int NCONST      = #{FpgaIsa::NCONST};"
     lines << ""
-    lines << "  // SEND / SEND0 の組み込みメソッド (tools/fpga/isa.rb の BUILTINS)。ROM の b に入る番号"
-    lines << "  localparam int NBUILTIN = #{FpgaIsa::BUILTINS.size};"
-    FpgaIsa::BUILTINS.each_with_index do |(n, k), i|
-      lines << format("  localparam logic [7:0] BI_%-6s = 8'd%d; // %s (%d arg)", builtin_const(n), i, n, k)
+    lines << "  // メソッド表 (tools/fpga/isa.rb)。1語 = {クラス, シンボル, 飛び先}。飛び先の上位 2bit が種類"
+    lines << "  localparam logic [15:0] SUPER_SYM = 16'h#{FpgaIsa::SUPER_SYM.to_s(16)};"
+    lines << "  localparam int MAX_SUPER_DEPTH = #{FpgaIsa::MAX_SUPER_DEPTH};"
+    lines << "  localparam logic [1:0] TGT_PC = 2'd#{FpgaIsa::TGT_PC};"
+    lines << "  localparam logic [1:0] TGT_PRIM = 2'd#{FpgaIsa::TGT_PRIM};"
+    lines << "  // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)"
+    FpgaIsa::OP_SYMS.each_with_index do |s, i|
+      lines << format("  localparam logic [15:0] SYM_%-4s = 16'd%d; // %s", OP_SYM_NAMES.fetch(s), i, s)
     end
-    lines << "  localparam logic [NBUILTIN-1:0] BI_ARGC1 = #{FpgaIsa::BUILTINS.size}'b#{FpgaIsa::BUILTINS.reverse.map { |_, k| k }.join};"
+    lines << ""
+    lines << "  // primitive (tools/fpga/isa.rb の PRIMS)。メソッド表の飛び先の番号"
+    FpgaIsa::PRIMS.each_with_index do |(cls, n, k, const), i|
+      lines << format("  localparam logic [13:0] PR_%-8s = 14'd%d; // %s#%s (%s)", const, i, cls, n, k < 0 ? "any" : "#{k} arg")
+    end
+    lines << "  // 引数の数 (8'hff は何個でも)"
+    lines << "  function automatic logic [7:0] prim_nargs(input logic [13:0] p);"
+    lines << "    case (p)"
+    FpgaIsa::PRIMS.each do |(_, _, k, const)|
+      lines << format("      PR_%-8s: return 8'h%02x;", const, k & 0xFF)
+    end
+    lines << "      default: return 8'h00;"
+    lines << "    endcase"
+    lines << "  endfunction"
     lines << ""
     lines << "  // I/O"
     lines << "  localparam int NPORTS = #{FpgaIoMap::NPORTS};"
@@ -59,17 +76,11 @@ module FpgaGenPkg
     lines.join("\n") + "\n"
   end
 
-  # 組み込みメソッドの名前を SystemVerilog の識別子にする
-  BUILTIN_NAMES = {
-    "%" => "MOD", "!=" => "NEQ", "-@" => "NEG", "<<" => "SHL", ">>" => "SHR", "&" => "AND", "|" => "OR",
-    "^" => "XOR", "~" => "INV", "!" => "NOT", "abs" => "ABS", "zero?" => "ZERO", "even?" => "EVEN", "odd?" => "ODD",
-    "size" => "SIZE", "length" => "LENGTH", "empty?" => "EMPTY", "first" => "FIRST", "last" => "LAST", "pop" => "POP",
-    "push" => "PUSH", "include?" => "INCL", "sleep_ms" => "SLEEPMS", "sleep" => "SLEEP"
+  # 演算の落ち先のシンボルの名前を SystemVerilog の識別子にする
+  OP_SYM_NAMES = {
+    "+" => "ADD", "-" => "SUB", "*" => "MUL", "/" => "DIV", "==" => "EQ", "<" => "LT", "<=" => "LE", ">" => "GT",
+    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET"
   }.freeze
-
-  def builtin_const(name)
-    BUILTIN_NAMES.fetch(name)
-  end
 
   def write
     File.write(PATH, render)

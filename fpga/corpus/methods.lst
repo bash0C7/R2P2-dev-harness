@@ -1,80 +1,381 @@
+   0       TABLE     a=7   b=264   c=0      f00701080000  (added)
 # irep 0  nregs 6
-   0  000  TDEF      a=1   b=0     c=0      6b0100000000
-   1  004  TDEF      a=1   b=0     c=0      6b0100000000
-   2  008  TDEF      a=1   b=0     c=0      6b0100000000
-   3  012  TDEF      a=1   b=0     c=0      6b0100000000
-   4  016  TDEF      a=1   b=0     c=0      6b0100000000
-   5  020  LOADI8    a=2   b=40    c=0      030200280000
-   6  023  LOADI_2   a=3   b=0     c=0      080300000000
-   7  025  SSEND     a=1   b=34    c=1794   2f0100220702
-   8  029  SETGV     a=1   b=0     c=0      160100000000
-   9  032  LOADI8    a=2   b=10    c=0      0302000a0000
-  10  035  SSEND     a=1   b=39    c=2049   2f0100270801
-  11  039  SETGV     a=1   b=0     c=0      160100000000
-  12  042  LOADINEG  a=2   b=5     c=0      040200050000
-  13  045  SSEND     a=1   b=54    c=1537   2f0100360601
-  14  049  SETGV     a=1   b=0     c=0      160100000000
-  15  052  LOADI_0   a=2   b=0     c=0      060200000000
-  16  054  SSEND     a=1   b=54    c=1537   2f0100360601
-  17  058  SETGV     a=1   b=0     c=0      160100000000
-  18  061  LOADI8    a=2   b=9     c=0      030200090000
-  19  064  SSEND     a=1   b=54    c=1537   2f0100360601
-  20  068  SETGV     a=1   b=0     c=0      160100000000
-  21  071  SSEND0    a=1   b=69    c=768    300100450300
-  22  074  SSEND0    a=3   b=69    c=768    300300450300
-  23  077  LOADI_1   a=4   b=0     c=0      070400000000
-  24  079  SSEND     a=2   b=34    c=1794   2f0200220702
-  25  083  ADD       a=1   b=0     c=0      450100000000
-  26  085  SETGV     a=1   b=0     c=0      160100000000
-  27  088  SSEND0    a=1   b=72    c=768    300100480300
-  28  091  SETGV     a=1   b=0     c=0      160100000000
-  29  094  LOADI_1   a=2   b=0     c=0      070200000000
-  30  096  SSEND     a=1   b=39    c=2049   2f0100270801
-  31  100  SETGV     a=1   b=1     c=0      160100010000
-  32  103  RETURN    a=1   b=0     c=0      3d0100000000
-  33  105  STOP      a=0   b=0     c=0      760000000000
-# irep 1  nregs 7
-  34  000  ENTER     a=2   b=0     c=0      390200000000
-  35  004  MOVE      a=4   b=1     c=0      010400010000
-  36  007  MOVE      a=5   b=2     c=0      010500020000
-  37  010  ADD       a=4   b=0     c=0      450400000000
-  38  012  RETURN    a=4   b=0     c=0      3d0400000000
-# irep 2  nregs 8
-  39  000  ENTER     a=1   b=0     c=0      390100000000
-  40  004  MOVE      a=3   b=1     c=0      010300010000
-  41  007  LOADI_2   a=4   b=0     c=0      080400000000
-  42  009  LT        a=3   b=0     c=0      4e0300000000
-  43  011  JMPNOT    a=3   b=46    c=0      2803002e0000
-  44  015  MOVE      a=3   b=1     c=0      010300010000
-  45  018  JMP       a=0   b=53    c=0      260000350000
-  46  021  MOVE      a=4   b=1     c=0      010400010000
-  47  024  SUBI      a=4   b=1     c=0      480400010000
-  48  027  SSEND     a=3   b=39    c=2049   2f0300270801
-  49  031  MOVE      a=5   b=1     c=0      010500010000
-  50  034  SUBI      a=5   b=2     c=0      480500020000
-  51  037  SSEND     a=4   b=39    c=2049   2f0400270801
-  52  041  ADD       a=3   b=0     c=0      450300000000
-  53  043  RETURN    a=3   b=0     c=0      3d0300000000
-# irep 3  nregs 6
-  54  000  ENTER     a=1   b=0     c=0      390100000000
-  55  004  MOVE      a=3   b=1     c=0      010300010000
-  56  007  LOADI_0   a=4   b=0     c=0      060400000000
-  57  009  LT        a=3   b=0     c=0      4e0300000000
-  58  011  JMPNOT    a=3   b=61    c=0      2803003d0000
-  59  015  LOADI__1  a=3   b=0     c=0      050300000000
-  60  017  RETURN    a=3   b=0     c=0      3d0300000000
-  61  019  MOVE      a=3   b=1     c=0      010300010000
-  62  022  LOADI_0   a=4   b=0     c=0      060400000000
-  63  024  EQ        a=3   b=0     c=0      4d0300000000
-  64  026  JMPNOT    a=3   b=67    c=0      280300430000
-  65  030  LOADI_0   a=3   b=0     c=0      060300000000
-  66  032  RETURN    a=3   b=0     c=0      3d0300000000
-  67  034  LOADI_1   a=3   b=0     c=0      070300000000
-  68  036  RETURN    a=3   b=0     c=0      3d0300000000
-# irep 4  nregs 3
-  69  000  ENTER     a=0   b=0     c=0      390000000000
-  70  004  LOADI_7   a=2   b=0     c=0      0d0200000000
-  71  006  RETURN    a=2   b=0     c=0      3d0200000000
-# irep 5  nregs 3
-  72  000  ENTER     a=0   b=0     c=0      390000000000
-  73  004  RETNIL    a=0   b=0     c=0      400000000000
+   1  000  LOADNIL   a=1   b=0     c=0      110100000000
+   2  002  LOADNIL   a=2   b=0     c=0      110200000000
+   3  004  CLASS     a=1   b=5     c=0      670100050000
+   4  007  EXEC      a=1   b=55    c=0      690100370000
+   5  010  LOADNIL   a=1   b=0     c=0      110100000000
+   6  012  LOADNIL   a=2   b=0     c=0      110200000000
+   7  014  CLASS     a=1   b=7     c=0      670100070000
+   8  017  EXEC      a=1   b=99    c=0      690100630000
+   9  020  LOADNIL   a=1   b=0     c=0      110100000000
+  10  022  LOADNIL   a=2   b=0     c=0      110200000000
+  11  024  CLASS     a=1   b=1     c=0      670100010000
+  12  027  EXEC      a=1   b=150   c=0      690100960000
+  13  030  LOADNIL   a=1   b=0     c=0      110100000000
+  14  032  LOADNIL   a=2   b=0     c=0      110200000000
+  15  034  CLASS     a=1   b=1     c=0      670100010000
+  16  037  EXEC      a=1   b=163   c=0      690100a30000
+  17  040  LOADNIL   a=1   b=0     c=0      110100000000
+  18  042  LOADNIL   a=2   b=0     c=0      110200000000
+  19  044  CLASS     a=1   b=7     c=0      670100070000
+  20  047  EXEC      a=1   b=171   c=0      690100ab0000
+  21  050  TDEF      a=1   b=11    c=0      6b01000b0000
+  22  054  TDEF      a=1   b=12    c=0      6b01000c0000
+  23  058  TDEF      a=1   b=13    c=0      6b01000d0000
+  24  062  TDEF      a=1   b=14    c=0      6b01000e0000
+  25  066  TDEF      a=1   b=15    c=0      6b01000f0000
+  26  070  LOADI8    a=2   b=40    c=0      030200280000
+  27  073  LOADI_2   a=3   b=0     c=0      080300000000
+  28  075  SSEND     a=1   b=11    c=2      2f01000b0002
+  29  079  SETGV     a=1   b=0     c=0      160100000000
+  30  082  LOADI8    a=2   b=10    c=0      0302000a0000
+  31  085  SSEND     a=1   b=12    c=1      2f01000c0001
+  32  089  SETGV     a=1   b=0     c=0      160100000000
+  33  092  LOADINEG  a=2   b=5     c=0      040200050000
+  34  095  SSEND     a=1   b=13    c=1      2f01000d0001
+  35  099  SETGV     a=1   b=0     c=0      160100000000
+  36  102  LOADI_0   a=2   b=0     c=0      060200000000
+  37  104  SSEND     a=1   b=13    c=1      2f01000d0001
+  38  108  SETGV     a=1   b=0     c=0      160100000000
+  39  111  LOADI8    a=2   b=9     c=0      030200090000
+  40  114  SSEND     a=1   b=13    c=1      2f01000d0001
+  41  118  SETGV     a=1   b=0     c=0      160100000000
+  42  121  SSEND0    a=1   b=14    c=0      3001000e0000
+  43  124  SSEND0    a=3   b=14    c=0      3003000e0000
+  44  127  LOADI_1   a=4   b=0     c=0      070400000000
+  45  129  SSEND     a=2   b=11    c=2      2f02000b0002
+  46  133  ADD       a=1   b=0     c=0      450100000000
+  47  135  SETGV     a=1   b=0     c=0      160100000000
+  48  138  SSEND0    a=1   b=15    c=0      3001000f0000
+  49  141  SETGV     a=1   b=0     c=0      160100000000
+  50  144  LOADI_1   a=2   b=0     c=0      070200000000
+  51  146  SSEND     a=1   b=12    c=1      2f01000c0001
+  52  150  SETGV     a=1   b=1     c=0      160100010000
+  53  153  RETURN    a=1   b=0     c=0      3d0100000000
+  54  155  STOP      a=0   b=0     c=0      760000000000
+# irep 1  nregs 2
+  55       ENTER     a=0   b=2     c=0      390000020000  (added)
+  56  000  TDEF      a=1   b=16    c=0      6b0100100000
+  57  004  TDEF      a=1   b=17    c=0      6b0100110000
+  58  008  TDEF      a=1   b=18    c=0      6b0100120000
+  59  012  RETURN    a=1   b=0     c=0      3d0100000000
+# irep 2  nregs 6
+  60  000  ENTER     a=0   b=6     c=0      390000060000
+  61  004  LOADI_0   a=2   b=0     c=0      060200000000
+  62  006  MOVE      a=3   b=2     c=0      010300020000
+  63  009  MOVE      a=4   b=0     c=0      010400000000  <- LOADSELF
+  64  011  LT        a=3   b=0     c=0      4e0300000000
+  65  013  JMPNOT    a=3   b=72    c=0      280300480000
+  66  017  NOP       a=0   b=0     c=0      000000000000
+  67  018  MOVE      a=4   b=2     c=0      010400020000
+  68  021  BLKPUSH   a=3   b=1     c=0      440300010000
+  69  025  BLKCALL   a=3   b=1     c=0      360300010000
+  70  028  ADDILV    a=2   b=3     c=1      490200030001
+  71  032  JMP       a=0   b=62    c=0      2600003e0000
+  72  035  RETURN    a=0   b=0     c=0      3d0000000000  <- RETSELF
+# irep 3  nregs 7
+  73  000  ENTER     a=1   b=7     c=0      390100070000
+  74  004  MOVE      a=3   b=0     c=0      010300000000  <- LOADSELF
+  75  006  MOVE      a=4   b=3     c=0      010400030000
+  76  009  MOVE      a=5   b=1     c=0      010500010000
+  77  012  LE        a=4   b=0     c=0      4f0400000000
+  78  014  JMPNOT    a=4   b=85    c=0      280400550000
+  79  018  NOP       a=0   b=0     c=0      000000000000
+  80  019  MOVE      a=5   b=3     c=0      010500030000
+  81  022  BLKPUSH   a=4   b=2     c=0      440400020000
+  82  026  BLKCALL   a=4   b=1     c=0      360400010000
+  83  029  ADDILV    a=3   b=4     c=1      490300040001
+  84  033  JMP       a=0   b=75    c=0      2600004b0000
+  85  036  RETURN    a=0   b=0     c=0      3d0000000000  <- RETSELF
+# irep 4  nregs 7
+  86  000  ENTER     a=1   b=7     c=0      390100070000
+  87  004  MOVE      a=3   b=0     c=0      010300000000  <- LOADSELF
+  88  006  MOVE      a=4   b=3     c=0      010400030000
+  89  009  MOVE      a=5   b=1     c=0      010500010000
+  90  012  GE        a=4   b=0     c=0      510400000000
+  91  014  JMPNOT    a=4   b=98    c=0      280400620000
+  92  018  NOP       a=0   b=0     c=0      000000000000
+  93  019  MOVE      a=5   b=3     c=0      010500030000
+  94  022  BLKPUSH   a=4   b=2     c=0      440400020000
+  95  026  BLKCALL   a=4   b=1     c=0      360400010000
+  96  029  SUBILV    a=3   b=4     c=1      4a0300040001
+  97  033  JMP       a=0   b=88    c=0      260000580000
+  98  036  RETURN    a=0   b=0     c=0      3d0000000000  <- RETSELF
+# irep 5  nregs 2
+  99       ENTER     a=0   b=2     c=0      390000020000  (added)
+ 100  000  TDEF      a=1   b=19    c=0      6b0100130000
+ 101  004  TDEF      a=1   b=20    c=0      6b0100140000
+ 102  008  TDEF      a=1   b=21    c=0      6b0100150000
+ 103  012  RETURN    a=1   b=0     c=0      3d0100000000
+# irep 6  nregs 7
+ 104  000  ENTER     a=0   b=7     c=0      390000070000
+ 105  004  LOADI_0   a=2   b=0     c=0      060200000000
+ 106  006  MOVE      a=3   b=2     c=0      010300020000
+ 107  009  SSEND0    a=4   b=22    c=0      300400160000
+ 108  012  LT        a=3   b=0     c=0      4e0300000000
+ 109  014  JMPNOT    a=3   b=117   c=0      280300750000
+ 110  018  NOP       a=0   b=0     c=0      000000000000
+ 111  019  MOVE      a=5   b=2     c=0      010500020000
+ 112  022  SSEND     a=4   b=9     c=1      2f0400090001
+ 113  026  BLKPUSH   a=3   b=1     c=0      440300010000
+ 114  030  BLKCALL   a=3   b=1     c=0      360300010000
+ 115  033  ADDILV    a=2   b=3     c=1      490200030001
+ 116  037  JMP       a=0   b=106   c=0      2600006a0000
+ 117  040  RETURN    a=0   b=0     c=0      3d0000000000  <- RETSELF
+# irep 7  nregs 7
+ 118  000  ENTER     a=0   b=7     c=0      390000070000
+ 119  004  LOADI_0   a=2   b=0     c=0      060200000000
+ 120  006  MOVE      a=3   b=2     c=0      010300020000
+ 121  009  SSEND0    a=4   b=22    c=0      300400160000
+ 122  012  LT        a=3   b=0     c=0      4e0300000000
+ 123  014  JMPNOT    a=3   b=132   c=0      280300840000
+ 124  018  NOP       a=0   b=0     c=0      000000000000
+ 125  019  MOVE      a=5   b=2     c=0      010500020000
+ 126  022  SSEND     a=4   b=9     c=1      2f0400090001
+ 127  026  MOVE      a=5   b=2     c=0      010500020000
+ 128  029  BLKPUSH   a=3   b=1     c=0      440300010000
+ 129  033  BLKCALL   a=3   b=2     c=0      360300020000
+ 130  036  ADDILV    a=2   b=3     c=1      490200030001
+ 131  040  JMP       a=0   b=120   c=0      260000780000
+ 132  043  RETURN    a=0   b=0     c=0      3d0000000000  <- RETSELF
+# irep 8  nregs 9
+ 133  000  ENTER     a=0   b=9     c=0      390000090000
+ 134  004  ARRAY     a=2   b=0     c=0      520200000000
+ 135  007  LOADI_0   a=3   b=0     c=0      060300000000
+ 136  009  MOVE      a=4   b=3     c=0      010400030000
+ 137  012  SSEND0    a=5   b=22    c=0      300500160000
+ 138  015  LT        a=4   b=0     c=0      4e0400000000
+ 139  017  JMPNOT    a=4   b=149   c=0      280400950000
+ 140  021  NOP       a=0   b=0     c=0      000000000000
+ 141  022  MOVE      a=4   b=2     c=0      010400020000
+ 142  025  MOVE      a=7   b=3     c=0      010700030000
+ 143  028  SSEND     a=6   b=9     c=1      2f0600090001
+ 144  032  BLKPUSH   a=5   b=1     c=0      440500010000
+ 145  036  BLKCALL   a=5   b=1     c=0      360500010000
+ 146  039  SEND      a=4   b=23    c=1      320400170001
+ 147  043  ADDILV    a=3   b=4     c=1      490300040001
+ 148  047  JMP       a=0   b=136   c=0      260000880000
+ 149  050  RETURN    a=2   b=0     c=0      3d0200000000
+# irep 9  nregs 2
+ 150       ENTER     a=0   b=2     c=0      390000020000  (added)
+ 151  000  TDEF      a=1   b=24    c=0      6b0100180000
+ 152  004  TDEF      a=1   b=25    c=0      6b0100190000
+ 153  008  RETURN    a=1   b=0     c=0      3d0100000000
+# irep 10  nregs 4
+ 154  000  ENTER     a=0   b=4     c=0      390000040000
+ 155  004  NOP       a=0   b=0     c=0      000000000000
+ 156  005  BLKPUSH   a=2   b=1     c=0      440200010000
+ 157  009  BLKCALL   a=2   b=0     c=0      360200000000
+ 158  012  JMP       a=0   b=155   c=0      2600009b0000
+ 159  015  RETNIL    a=0   b=0     c=0      400000000000
+# irep 11  nregs 4
+ 160  000  ENTER     a=0   b=4     c=1      390000040001
+ 161  004  MOVE      a=2   b=1     c=0      010200010000
+ 162  007  RETURN    a=2   b=0     c=0      3d0200000000
+# irep 12  nregs 2
+ 163       ENTER     a=0   b=2     c=0      390000020000  (added)
+ 164  000  TDEF      a=1   b=26    c=0      6b01001a0000
+ 165  004  RETURN    a=1   b=0     c=0      3d0100000000
+# irep 13  nregs 6
+ 166  000  ENTER     a=1   b=6     c=0      390100060000
+ 167  004  MOVE      a=4   b=1     c=0      010400010000
+ 168  007  SSEND     a=3   b=4     c=1      2f0300040001
+ 169  011  SEND0     a=3   b=27    c=0      3303001b0000
+ 170  014  RETURN    a=3   b=0     c=0      3d0300000000
+# irep 14  nregs 2
+ 171       ENTER     a=0   b=2     c=0      390000020000  (added)
+ 172  000  TDEF      a=1   b=4     c=0      6b0100040000
+ 173  004  TDEF      a=1   b=28    c=0      6b01001c0000
+ 174  008  RETURN    a=1   b=0     c=0      3d0100000000
+# irep 15  nregs 8
+ 175  000  ENTER     a=1   b=8     c=0      390100080000
+ 176  004  MOVE      a=4   b=1     c=0      010400010000
+ 177  007  SEND0     a=4   b=29    c=0      3304001d0000
+ 178  010  CLASS     a=5   b=7     c=0      670500070000  <- GETCONST
+ 179  013  EQ        a=4   b=0     c=0      4d0400000000
+ 180  015  JMPIF     a=4   b=183   c=0      270400b70000
+ 181  019  LOADFALSE a=0   b=0     c=0      140000000000  <- RETFALSE
+ 182       RETURN    a=0   b=0     c=0      3d0000000000  <- RETFALSE
+ 183  020  SSEND0    a=4   b=22    c=0      300400160000
+ 184  023  MOVE      a=5   b=1     c=0      010500010000
+ 185  026  SEND0     a=5   b=22    c=0      330500160000
+ 186  029  EQ        a=4   b=0     c=0      4d0400000000
+ 187  031  JMPIF     a=4   b=190   c=0      270400be0000
+ 188  035  LOADFALSE a=0   b=0     c=0      140000000000  <- RETFALSE
+ 189       RETURN    a=0   b=0     c=0      3d0000000000  <- RETFALSE
+ 190  036  LOADI_0   a=3   b=0     c=0      060300000000
+ 191  038  MOVE      a=4   b=3     c=0      010400030000
+ 192  041  SSEND0    a=5   b=22    c=0      300500160000
+ 193  044  LT        a=4   b=0     c=0      4e0400000000
+ 194  046  JMPNOT    a=4   b=207   c=0      280400cf0000
+ 195  050  NOP       a=0   b=0     c=0      000000000000
+ 196  051  MOVE      a=5   b=3     c=0      010500030000
+ 197  054  SSEND     a=4   b=9     c=1      2f0400090001
+ 198  058  MOVE      a=5   b=1     c=0      010500010000
+ 199  061  MOVE      a=6   b=3     c=0      010600030000
+ 200  064  GETIDX    a=5   b=0     c=0      230500000000
+ 201  066  EQ        a=4   b=0     c=0      4d0400000000
+ 202  068  JMPIF     a=4   b=205   c=0      270400cd0000
+ 203  072  LOADFALSE a=4   b=0     c=0      140400000000
+ 204  074  RETURN_BLK a=4   b=0     c=0      3e0400000000
+ 205  076  ADDILV    a=3   b=4     c=1      490300040001
+ 206  080  JMP       a=0   b=191   c=0      260000bf0000
+ 207  083  LOADTRUE  a=0   b=0     c=0      130000000000  <- RETTRUE
+ 208       RETURN    a=0   b=0     c=0      3d0000000000  <- RETTRUE
+# irep 16  nregs 5
+ 209  000  ENTER     a=1   b=5     c=0      390100050000
+ 210  004  BLOCK     a=4   b=214   c=1537   620400d60601
+ 211  007  SSEND     a=3   b=19    c=128    2f0300130080  <- SSENDB
+ 212  011  LOADFALSE a=0   b=0     c=0      140000000000  <- RETFALSE
+ 213       RETURN    a=0   b=0     c=0      3d0000000000  <- RETFALSE
+# irep 17  nregs 6
+ 214  000  NOP       a=0   b=0     c=0      000000000000  <- ENTER
+ 215  004  MOVE      a=3   b=1     c=0      010300010000
+ 216  007  GETUPVAR  a=4   b=1     c=1      210400010001
+ 217  011  EQ        a=3   b=0     c=0      4d0300000000
+ 218  013  JMPNOT    a=3   b=222   c=0      280300de0000
+ 219  017  LOADTRUE  a=3   b=0     c=0      130300000000
+ 220  019  RETURN_BLK a=3   b=0     c=1      3e0300000001
+ 221  021  JMP       a=0   b=223   c=0      260000df0000
+ 222  024  LOADNIL   a=3   b=0     c=0      110300000000
+ 223  026  RETURN    a=3   b=0     c=0      3d0300000000
+# irep 18  nregs 7
+ 224  000  ENTER     a=2   b=7     c=0      390200070000
+ 225  004  MOVE      a=4   b=1     c=0      010400010000
+ 226  007  MOVE      a=5   b=2     c=0      010500020000
+ 227  010  ADD       a=4   b=0     c=0      450400000000
+ 228  012  RETURN    a=4   b=0     c=0      3d0400000000
+# irep 19  nregs 8
+ 229  000  ENTER     a=1   b=8     c=0      390100080000
+ 230  004  MOVE      a=3   b=1     c=0      010300010000
+ 231  007  LOADI_2   a=4   b=0     c=0      080400000000
+ 232  009  LT        a=3   b=0     c=0      4e0300000000
+ 233  011  JMPNOT    a=3   b=236   c=0      280300ec0000
+ 234  015  MOVE      a=3   b=1     c=0      010300010000
+ 235  018  JMP       a=0   b=243   c=0      260000f30000
+ 236  021  MOVE      a=4   b=1     c=0      010400010000
+ 237  024  SUBI      a=4   b=1     c=0      480400010000
+ 238  027  SSEND     a=3   b=12    c=1      2f03000c0001
+ 239  031  MOVE      a=5   b=1     c=0      010500010000
+ 240  034  SUBI      a=5   b=2     c=0      480500020000
+ 241  037  SSEND     a=4   b=12    c=1      2f04000c0001
+ 242  041  ADD       a=3   b=0     c=0      450300000000
+ 243  043  RETURN    a=3   b=0     c=0      3d0300000000
+# irep 20  nregs 6
+ 244  000  ENTER     a=1   b=6     c=0      390100060000
+ 245  004  MOVE      a=3   b=1     c=0      010300010000
+ 246  007  LOADI_0   a=4   b=0     c=0      060400000000
+ 247  009  LT        a=3   b=0     c=0      4e0300000000
+ 248  011  JMPNOT    a=3   b=251   c=0      280300fb0000
+ 249  015  LOADI__1  a=3   b=0     c=0      050300000000
+ 250  017  RETURN    a=3   b=0     c=0      3d0300000000
+ 251  019  MOVE      a=3   b=1     c=0      010300010000
+ 252  022  LOADI_0   a=4   b=0     c=0      060400000000
+ 253  024  EQ        a=3   b=0     c=0      4d0300000000
+ 254  026  JMPNOT    a=3   b=257   c=0      280301010000
+ 255  030  LOADI_0   a=3   b=0     c=0      060300000000
+ 256  032  RETURN    a=3   b=0     c=0      3d0300000000
+ 257  034  LOADI_1   a=3   b=0     c=0      070300000000
+ 258  036  RETURN    a=3   b=0     c=0      3d0300000000
+# irep 21  nregs 3
+ 259  000  ENTER     a=0   b=3     c=0      390000030000
+ 260  004  LOADI_7   a=2   b=0     c=0      0d0200000000
+ 261  006  RETURN    a=2   b=0     c=0      3d0200000000
+# irep 22  nregs 3
+ 262  000  ENTER     a=0   b=3     c=0      390000030000
+ 263  004  RETNIL    a=0   b=0     c=0      400000000000
+# method table (128 words)
+ 268  class 32769 -                  super 9
+ 273  class 1     :==                prim OEQ
+ 274  class 2     -                  super 1
+ 275  class 32770 -                  super 32769
+ 278  class 3     -                  super 1
+ 279  class 32771 -                  super 32769
+ 280  class 1     :add               pc 224
+ 281  class 1     :fib               pc 229
+ 282  class 1     :sign              pc 244
+ 283  class 1     :seven             pc 259
+ 284  class 1     :nothing           pc 262
+ 285  class 4     -                  super 1
+ 286  class 32772 -                  super 32769
+ 288  class 5     -                  super 1
+ 289  class 5     :+                 prim IADD
+ 290  class 5     :-                 prim ISUB
+ 291  class 5     :*                 prim IMUL
+ 292  class 5     :/                 prim IDIV
+ 293  class 1     :loop              pc 154
+ 294  class 1     :proc              pc 160
+ 295  class 1     :!=                pc 166
+ 296  class 5     :<                 prim ILT
+ 297  class 5     :<=                prim ILE
+ 298  class 5     :>                 prim IGT
+ 299  class 5     :>=                prim IGE
+ 300  class 5     :==                prim IEQ
+ 301  class 1     :!                 prim NOT
+ 302  class 1     :class             prim CLASSOF
+ 303  class 7     :==                pc 175
+ 304  class 32773 -                  super 32769
+ 305  class 5     :times             pc 60
+ 306  class 5     :upto              pc 73
+ 307  class 5     :downto            pc 86
+ 308  class 7     :[]                prim AGET
+ 309  class 7     :[]=               prim ASET
+ 310  class 6     -                  super 1
+ 311  class 32774 -                  super 32769
+ 312  class 5     :<<                prim SHL
+ 313  class 7     -                  super 1
+ 314  class 32775 -                  super 32769
+ 315  class 8     -                  super 1
+ 316  class 32776 -                  super 32769
+ 317  class 9     -                  super 1
+ 318  class 7     :each              pc 104
+ 319  class 7     :each_with_index   pc 118
+ 320  class 7     :map               pc 133
+ 321  class 7     :size              prim SIZE
+ 322  class 7     :<<                prim APUSH
+ 323  class 32777 -                  super 32769
+ 324  class 10    -                  super 1
+ 325  class 32778 -                  super 32769
+ 326  class 11    -                  super 1
+ 327  class 7     :include?          pc 209
+ 328  class 32779 -                  super 32769
+ 329  class 12    -                  super 1
+ 330  class 32780 -                  super 32769
+ 331  class 13    -                  super 1
+ 332  class 32781 -                  super 32769
+ 333  class 14    -                  super 1
+ 334  class 32782 -                  super 32769
+ 338  class 15    -                  super 1
+ 339  class 32783 -                  super 32769
+# symbols
+   0  :+
+   1  :-
+   2  :*
+   3  :/
+   4  :==
+   5  :<
+   6  :<=
+   7  :>
+   8  :>=
+   9  :[]
+  10  :[]=
+  11  :add
+  12  :fib
+  13  :sign
+  14  :seven
+  15  :nothing
+  16  :times
+  17  :upto
+  18  :downto
+  19  :each
+  20  :each_with_index
+  21  :map
+  22  :size
+  23  :<<
+  24  :loop
+  25  :proc
+  26  :!=
+  27  :!
+  28  :include?
+  29  :class

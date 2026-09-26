@@ -49,6 +49,8 @@ class FpgaRefVm
     @env = NIL  # 今のフレームの env (中で Proc を作った時にできる)
     @fn = 0     # 今のフレームの nregs (env に写す数。一番外は戻らないので 0)
     @argc = 0
+    @tbase = 0  # メソッド表 (TABLE で決まる)
+    @tsize = 0
     # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
     @stim = FpgaCompare.sort_stim(stim)
     @trace = []
@@ -57,7 +59,8 @@ class FpgaRefVm
 
   attr_reader :trace, :regs, :io, :consts, :heap, :stats
 
-  # 珍しい経路を通った回数 (ファズがそこまで届いているかを見るため)。:gc, :detach, :env_heap, :lambda_exit, :aref
+  # 珍しい経路を通った回数 (ファズがそこまで届いているかを見るため)。:gc, :detach, :env_heap, :lambda_exit, :aref,
+  # :found (メソッド表で見つかった呼び出し), :super (親クラスへたどった段)
   def gcs
     @stats[:gc]
   end
@@ -266,11 +269,11 @@ class FpgaRefVm
     @heap[a[1] + 1] = int(i + 1) if i >= len
   end
 
-  # Proc: 見出し p、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc。
-  # 今のフレームに env が無ければ、Proc と一緒に1回で確保する (env が先、中身は nil)
+  # Proc: 見出し p、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc、
+  # 作ったフレームの self。今のフレームに env が無ければ、Proc と一緒に1回で確保する (env が先、中身は nil)
   def new_proc(entry_word)
     fresh = @env[0] == FpgaIsa::TAG_NIL
-    p = alloc((fresh ? 2 + @fn : 0) + 4)
+    p = alloc((fresh ? 2 + @fn : 0) + 5)
     if fresh
       @heap[p] = hdr(FpgaIsa::CLS_ENV, 1 + @fn)
       @heap[p + 1] = int(@bp)
@@ -278,11 +281,52 @@ class FpgaRefVm
       @env = [FpgaIsa::TAG_OBJ, p]
       p += 2 + @fn
     end
-    @heap[p] = hdr(FpgaIsa::CLS_PROC, 3)
+    @heap[p] = hdr(FpgaIsa::CLS_PROC, 4)
     @heap[p + 1] = int(entry_word)
     @heap[p + 2] = @env
     @heap[p + 3] = @cp
+    @heap[p + 4] = @regs[@bp]
     p
+  end
+
+  # ---- メソッド表
+
+  # 値のクラスの番号 (Class の即値はそのメタクラス)
+  def class_of(v)
+    case v[0]
+    when FpgaIsa::TAG_NIL then FpgaIsa::CLS_NIL
+    when FpgaIsa::TAG_FALSE then FpgaIsa::CLS_FALSE
+    when FpgaIsa::TAG_TRUE then FpgaIsa::CLS_TRUE
+    when FpgaIsa::TAG_INT then FpgaIsa::CLS_INT
+    when FpgaIsa::TAG_SYM then FpgaIsa::CLS_SYM
+    when FpgaIsa::TAG_CLASS then FpgaIsa::META | (v[1] & 0x7FFF)
+    else obj_class(v)
+    end
+  end
+
+  # (クラス, シンボル) の飛び先。表の空きか、表を一周したら nil
+  def probe(cls, sym)
+    mask = @tsize - 1
+    h = FpgaIsa.table_hash(cls, sym, mask)
+    @tsize.times do |i|
+      w = @rom[(@tbase + ((h + i) & mask)) % (1 << FpgaIsa::PC_BITS)] || FpgaRom::PAD # ROM の大きさで折り返す
+      return nil if w == FpgaRom::PAD
+      return w & 0xFFFF if (w >> 32) == cls && ((w >> 16) & 0xFFFF) == sym
+    end
+    nil
+  end
+
+  # メソッド探索: 見つからなければ親クラス (SUPER_SYM の飛び先) へ。MAX_SUPER_DEPTH 段で諦める
+  def lookup(cls, sym)
+    return nil if @tsize.zero?
+    FpgaIsa::MAX_SUPER_DEPTH.times do
+      t = probe(cls, sym)
+      return t if t
+      cls = probe(cls, FpgaIsa::SUPER_SYM)
+      return nil unless cls
+      @stats[:super] += 1
+    end
+    nil
   end
 
   def lambda?(pr)
@@ -353,7 +397,7 @@ class FpgaRefVm
     name = FpgaIsa::OPS[op]&.name
     return :error unless name && FpgaIsa.supported?(name)
     nxt = pc + 1
-    return :error if !ok?(a) && !%w[NOP JMP RETNIL STOP].include?(name)
+    return :error if !ok?(a) && !%w[NOP JMP RETNIL STOP TABLE].include?(name)
 
     case name
     when "NOP" then nil
@@ -364,7 +408,17 @@ class FpgaRefVm
     when /\ALOADI_(\d)\z/ then set(step, a, int(Regexp.last_match(1).to_i))
     when "LOADI16"  then set(step, a, int(sext16(b)))
     when "LOADI32"  then set(step, a, int((b << 16) | c))
-    when "LOADNIL", "TDEF" then set(step, a, NIL)
+    when "LOADNIL" then set(step, a, NIL)
+    when "TDEF", "SDEF" then set(step, a, [FpgaIsa::TAG_SYM, b])
+    when "CLASS" then set(step, a, [FpgaIsa::TAG_CLASS, b])
+    when "TABLE"
+      fault! if a > FpgaIsa::PC_BITS
+      @tsize = 1 << a
+      @tbase = b
+    when "EXEC"
+      fault! unless ok?(a + 1)
+      frame(pc, a, 0, false)
+      return b
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "LOADTRUE" then set(step, a, bool(true))
     when "LOADFALSE" then set(step, a, bool(false))
@@ -388,18 +442,30 @@ class FpgaRefVm
     when "JMPIF"  then return(truthy?(reg(a)) ? b : nxt)
     when "JMPNOT" then return(truthy?(reg(a)) ? nxt : b)
     when "JMPNIL" then return(reg(a)[0] == FpgaIsa::TAG_NIL ? b : nxt)
-    when "ADD", "SUB", "MUL", "DIV", "EQ", "LT", "LE", "GT", "GE" then binop(step, name, a)
+    when "ADD", "SUB", "MUL", "DIV", "EQ", "LT", "LE", "GT", "GE"
+      t = binop(step, pc, name, a)
+      return t if t
     when "ADDI", "SUBI"
-      fault! unless int?(reg(a))
       d = b & 0xFF
+      unless int?(reg(a))
+        # 整数でなければ R[a+1] = b にして + / - を送る (mruby と同じ)
+        fault! unless ok?(a + 1)
+        @regs[@bp + a + 1] = int(d)
+        return send_op(step, pc, a, name == "ADDI" ? "+" : "-", 1)
+      end
       set(step, a, int(name == "ADDI" ? reg(a)[1] + d : reg(a)[1] - d))
     when "ADDILV", "SUBILV"
       fault! unless int?(reg(a))
       d = c & 0xFF
       set(step, a, int(name == "ADDILV" ? reg(a)[1] + d : reg(a)[1] - d))
-    when "SEND", "SEND0" then builtin(step, b, a, c)
-    when "SSEND", "SSEND0" then return call(pc, a, b, c)
-    when "ENTER" then return(@argc == a ? nxt : :error)
+    when "SEND", "SEND0" then return send(step, pc, a, b, c, false)
+    when "SSEND", "SSEND0" then return send(step, pc, a, b, c, true)
+    when "ENTER"
+      # 引数の数を調べ、nregs (b) までのレジスタを nil で埋める (R0、引数、ブロックの枠は残す)
+      fault! unless @argc == a
+      fault! if @bp + b > @regs.size
+      @fn = b
+      ((a + 2)...b).each { |i| @regs[@bp + i] = NIL }
     when "RETURN", "RETNIL" then return ret(step, name == "RETURN" ? reg(a) : NIL)
     when "STOP" then return :halt
     when "BREAK" then return brk(step, a, b, c)
@@ -426,23 +492,46 @@ class FpgaRefVm
       p = new_array(Array.new(c))
       c.times { |i| @heap[p + 4 + i] = reg(b + i) }
       set(step, a, [FpgaIsa::TAG_OBJ, p])
-    when "GETIDX" then set(step, a, index(reg(a), reg(a + 1)))
-    when "GETIDX0" then set(step, a, index(reg(b), int(0)))
+    when "GETIDX"
+      return send_op(step, pc, a, "[]", 1) unless ary?(reg(a))
+      set(step, a, index(reg(a), reg(a + 1)))
+    when "GETIDX0"
+      v = reg(b)
+      unless ary?(v)
+        # 配列でなければ R[a] = 受け手、R[a+1] = 0 にして [] を送る
+        fault! unless ok?(a + 1)
+        @regs[@bp + a] = v
+        @regs[@bp + a + 1] = int(0)
+        return send_op(step, pc, a, "[]", 1)
+      end
+      set(step, a, index(v, int(0)))
     when "AREF" # 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
       v = reg(b)
       @stats[:aref] += 1
       set(step, a, ary?(v) ? index(v, int(c & 0xFF)) : (c.zero? ? v : NIL))
     when "SETIDX"
-      arr = reg(a)
-      idx = reg(a + 1)
       reg(a + 2)
-      fault! unless ary?(arr) && int?(idx)
-      i = signed(idx[1])
-      i += ary_len(arr) if i < 0
-      fault! if i < 0 || i >= 0x10000
-      ary_set(a, i, a + 2)
+      return send_op(step, pc, a, "[]=", 2) unless ary?(reg(a))
+      aset(a)
     end
     nxt
+  end
+
+  # R[a][R[a+1]] = R[a+2] (R[a] は配列)
+  def aset(a)
+    arr = reg(a)
+    idx = reg(a + 1)
+    reg(a + 2)
+    fault! unless int?(idx)
+    i = signed(idx[1])
+    i += ary_len(arr) if i < 0
+    fault! if i < 0 || i >= 0x10000
+    ary_set(a, i, a + 2)
+  end
+
+  # 演算の落ち先: isa.rb の OP_SYMS の番号でメソッドを送る
+  def send_op(step, pc, a, name, argc)
+    send(step, pc, a, FpgaIsa::OP_SYMS.index(name), argc, false)
   end
 
   def index(arr, idx)
@@ -453,21 +542,39 @@ class FpgaRefVm
     i >= 0 && i < len ? ary_get(arr, i) : NIL
   end
 
-  # 呼び出し: 呼び出し先のフレームの底は bp + a。R0 に self を写し、引数より後ろを nil で埋める。
-  # c = (nregs << 8) | ブロックを渡す印 (0x80) | 引数の数。ブロックを渡す時はその枠 (引数の次) を残す
-  def call(pc, a, target, c)
+  # メソッドの呼び出し: R[a] (SSEND は R0 を R[a] に写してから) のクラスで b を引く。c = 引数の数 | ブロックを渡す印 << 7。
+  # メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、R[1..引数の数] = 引数、その次がブロックの枠)、primitive ならその場で
+  def send(step, pc, a, sym, c, self_call)
     argc = c & 0x7F
-    keep = argc + ((c & 0x80).zero? ? 0 : 1)
-    enter_frame(pc, a, c >> 8, keep, NIL)
-    @argc = argc
-    target
+    fault! unless ok?(a + argc + 1)
+    @regs[@bp + a] = @regs[@bp] if self_call # self を受け手の場所へ (トレースに出さない)
+    t = lookup(class_of(reg(a)), sym)
+    fault! unless t
+    @stats[:found] += 1
+    return prim(step, pc, t & 0x3FFF, a, argc) if (t >> 14) == FpgaIsa::TGT_PRIM
+    fault! unless (t >> 14) == FpgaIsa::TGT_PC
+    frame(pc, a, argc, (c & 0x80) != 0)
+    t & 0x3FFF
   end
 
+  # メソッドのフレームに入る。残りのレジスタは呼ばれた側の ENTER が埋める。ブロックを渡さなければその枠は nil
+  def frame(pc, a, argc, blk)
+    fault! if @stack.size >= FpgaIsa::STACK_DEPTH
+    @stack.push([pc + 1, @bp, @cp, @env, @fn])
+    @bp += a
+    @regs[@bp + argc + 1] = NIL unless blk
+    @cp = NIL
+    @env = NIL
+    @fn = 0
+    @argc = argc
+  end
+
+  # ブロックのフレームに入る (BLKCALL)。R0 は Proc を作った時の self、引数の後ろは nregs まで nil
   def enter_frame(pc, a, nregs, keep, new_cp)
     new_bp = @bp + a
     fault! if new_bp + [nregs, keep + 1].max > @regs.size || @stack.size >= FpgaIsa::STACK_DEPTH
     @stack.push([pc + 1, @bp, @cp, @env, @fn])
-    @regs[new_bp] = @regs[@bp]
+    @regs[new_bp] = @heap[new_cp[1] + 4]
     ((keep + 1)...nregs).each { |i| @regs[new_bp + i] = NIL }
     @bp = new_bp
     @cp = new_cp
@@ -553,18 +660,64 @@ class FpgaRefVm
     s >= 0 ? int(x << s) : int(x >> -s)
   end
 
-  def builtin(step, id, a, argc)
-    name, want = FpgaIsa::BUILTINS[id]
-    fault! unless name && want == argc
+  # primitive (isa.rb の PRIMS)。受け手の型が違えばエラー (表が壊れていても同じ結果になるように)
+  def prim(step, pc, id, a, argc)
+    pr = FpgaIsa::PRIMS[id]
+    fault! unless pr
+    fault! unless pr[2] == -1 || pr[2] == argc
+    name = pr[3]
+    return blkcall(pc, a, argc) if name == "CALL"
+    x = reg(a)
+    case name
+    when "AGET"
+      fault! unless ary?(x)
+      set(step, a, index(x, reg(a + 1)))
+      return pc + 1
+    when "ASET"
+      fault! unless ary?(x)
+      aset(a)
+      set(step, a, reg(a + 2)) # 伸ばす時の GC で動くので後で読む
+      return pc + 1
+    when "OEQ"
+      set(step, a, bool(x == reg(a + 1))) # 同じものか
+      return pc + 1
+    when "IADD", "ISUB", "IMUL", "IDIV", "ILT", "ILE", "IGT", "IGE"
+      # 整数の演算をメソッドとして呼んだもの (self * 2 など)。引数も整数でなければエラー
+      fault! unless int?(x) && int?(reg(a + 1))
+      binop(step, pc, { "IADD" => "ADD", "ISUB" => "SUB", "IMUL" => "MUL", "IDIV" => "DIV",
+                        "ILT" => "LT", "ILE" => "LE", "IGT" => "GT", "IGE" => "GE" }[name], a)
+      return pc + 1
+    when "IEQ"
+      fault! unless int?(x)
+      set(step, a, bool(x == reg(a + 1)))
+      return pc + 1
+    when "CLASSOF"
+      c = class_of(x)
+      set(step, a, [FpgaIsa::TAG_CLASS, (c & FpgaIsa::META).zero? ? c : FpgaIsa::CLS_CLASS])
+      return pc + 1
+    end
+    if name == "LAMBDA"
+      b = reg(a + 1) # 引数 0 個なのでブロックの枠
+      fault! unless proc?(b)
+      @heap[b[1] + 1] = int(@heap[b[1] + 1][1] | (1 << 23))
+      set(step, a, b)
+      return pc + 1
+    end
+    builtin(step, name, a, argc)
+    pc + 1
+  end
+
+  def builtin(step, name, a, argc)
     x = reg(a)
     y = argc == 1 ? reg(a + 1) : nil
-    if ary?(x)
+    if %w[SIZE LENGTH EMPTY FIRST LAST POP PUSH APUSH].include?(name)
+      fault! unless ary?(x)
       value = case name
-              when "size", "length" then int(ary_len(x))
-              when "empty?" then bool(ary_len(x).zero?)
-              when "first" then ary_len(x).zero? ? NIL : ary_get(x, 0)
-              when "last" then ary_len(x).zero? ? NIL : ary_get(x, ary_len(x) - 1)
-              when "pop"
+              when "SIZE", "LENGTH" then int(ary_len(x))
+              when "EMPTY" then bool(ary_len(x).zero?)
+              when "FIRST" then ary_len(x).zero? ? NIL : ary_get(x, 0)
+              when "LAST" then ary_len(x).zero? ? NIL : ary_get(x, ary_len(x) - 1)
+              when "POP"
                 len = ary_len(x)
                 if len.zero?
                   NIL
@@ -572,23 +725,16 @@ class FpgaRefVm
                   @heap[x[1] + 1] = int(len - 1)
                   ary_get(x, len - 1)
                 end
-              when "push", "<<"
+              when "PUSH", "APUSH"
                 fault! if ary_len(x) >= 0xFFFF
                 ary_set(a, ary_len(x), a + 1)
                 reg(a)
-              when "include?"
-                fault! if ary?(y)
-                bool((0...ary_len(x)).any? { |i| equal?(ary_get(x, i), y) })
-              when "!" then bool(false)
-              when "!=" then bool(!equal?(x, y))
-              else fault!
               end
       return set(step, a, value)
     end
     value = case name
-            when "!" then bool(!truthy?(x))
-            when "!=" then bool(!equal?(x, y))
-            when "sleep_ms", "sleep"
+            when "NOT" then bool(!truthy?(x))
+            when "SLEEPMS", "SLEEP"
               # 時間はハードウェア (ボードエミュレーター) だけが持つ。値は待った量 (CRuby の sleep と同じく n)
               fault! unless int?(y) && signed(y[1]) >= 0
               y
@@ -597,20 +743,20 @@ class FpgaRefVm
               sx = signed(x[1])
               sy = y && signed(y[1])
               case name
-              when "%"
+              when "MOD"
                 fault! if sy.zero?
                 int(sx % sy) # Ruby の % は floor 側に丸めた余り
-              when "-@" then int(-sx)
-              when "<<" then shift_left(sx, sy)
-              when ">>" then shift_left(sx, -sy)
-              when "&" then int(sx & sy)
-              when "|" then int(sx | sy)
-              when "^" then int(sx ^ sy)
-              when "~" then int(~sx)
-              when "abs" then int(sx.abs)
-              when "zero?" then bool(sx.zero?)
-              when "even?" then bool(sx.even?)
-              when "odd?" then bool(sx.odd?)
+              when "NEG" then int(-sx)
+              when "SHL" then shift_left(sx, sy)
+              when "SHR" then shift_left(sx, -sy)
+              when "AND" then int(sx & sy)
+              when "OR" then int(sx | sy)
+              when "XOR" then int(sx ^ sy)
+              when "INV" then int(~sx)
+              when "ABS" then int(sx.abs)
+              when "ZERO" then bool(sx.zero?)
+              when "EVEN" then bool(sx.even?)
+              when "ODD" then bool(sx.odd?)
               else fault!
               end
             end
@@ -618,16 +764,23 @@ class FpgaRefVm
   end
 
   # == : Integer 同士は値、配列同士はエラー (中身の比較はしない)、それ以外は型と値 (参照は同じものか)
+  # ヒープのオブジェクトでない値同士の == (型が同じで、整数・シンボル・クラスは値も)
   def equal?(x, y)
-    fault! if ary?(x) && ary?(y)
     x[0] == y[0] && ([FpgaIsa::TAG_INT, FpgaIsa::TAG_SYM, FpgaIsa::TAG_CLASS].include?(x[0]) || ref?(x) ? x[1] == y[1] : true)
   end
 
-  def binop(step, name, a)
+  # 整数同士なら計算し、そうでなければ同名のメソッドを送る (その時は飛び先を返す)。
+  # == はどちらもヒープのオブジェクトでなければ値を比べ、そうでなければ == を送る
+  def binop(step, pc, name, a)
     x = reg(a)
     y = reg(a + 1)
-    return set(step, a, bool(equal?(x, y))) if name == "EQ"
-    fault! unless int?(x) && int?(y)
+    if name == "EQ"
+      return send_op(step, pc, a, "==", 1) if ref?(x) || ref?(y)
+      set(step, a, bool(equal?(x, y)))
+      return nil
+    end
+    ops = { "ADD" => "+", "SUB" => "-", "MUL" => "*", "DIV" => "/", "LT" => "<", "LE" => "<=", "GT" => ">", "GE" => ">=" }
+    return send_op(step, pc, a, ops[name], 1) unless int?(x) && int?(y)
     sx = signed(x[1])
     sy = signed(y[1])
     value = case name
@@ -643,5 +796,6 @@ class FpgaRefVm
             when "GE"  then bool(sx >= sy)
             end
     set(step, a, value)
+    nil
   end
 end

@@ -1,18 +1,20 @@
 require_relative "test_helper"
 require_relative "converter"
 require "tmpdir"
+require "open3"
 
 class FpgaRomTest < Minitest::Test
   include FpgaTestHelper
 
-  # fpga/corpus/<name>.dump (mrbc -v の命令行) と、変換結果を1命令ずつ突き合わせる
+  # fpga/corpus/<name>.dump (mrbc -v の命令行、プレリュード込み) と、変換結果を1命令ずつ突き合わせる
   def test_corpus_matches_mrbc_dump
     names = Dir[File.join(CORPUS, "*.mrb")].map { |p| File.basename(p, ".mrb") }.sort
     refute_empty names
     names.each do |name|
       image = FpgaRom.from_binary(File.binread(File.join(CORPUS, "#{name}.mrb")))
       dump = File.readlines(File.join(CORPUS, "#{name}.dump"), chomp: true).map { |l| l.split(/\s+/, 4) }
-      # 元の命令ごとの先頭の語 (iterator は数語に展開される)。dump の irep の順は ROM の並びと同じ
+      # 元の命令ごとの先頭の語 (block_given? は数語になり、TABLE・本体の ENTER・メソッド表は変換器が足す)。
+      # dump の irep の順は ROM の並びと同じ
       firsts = image.words.select(&:first)
       pc_of = firsts.to_h { |w| [[w.irep.index, w.insn.addr], w.pc] }
       assert_equal dump.size, firsts.size, name
@@ -21,21 +23,22 @@ class FpgaRomTest < Minitest::Test
         assert_equal addr.to_i, w.insn.addr, where
         # mrbc -v は ARRAY2 も "ARRAY" と表示する
         assert_equal opname, w.insn.name == "ARRAY2" ? "ARRAY" : w.insn.name, where
-        unless FpgaIsa::LOWERED.include?(opname)
-          got = FpgaIsa::OPS[w.op].name
-          assert_includes [w.insn.name, *REWRITTEN[w.insn.name]], got, where
-        end
+        got = FpgaIsa::OPS[w.op].name
+        assert_includes [w.insn.name, *REWRITTEN[w.insn.name]], got, where
         fields = rest.to_s.split(/[\t ]+/).reject { |f| f.start_with?(";") }
-        check_operands(where, opname, fields, w, pc_of)
+        check_operands(where, opname, fields, w, pc_of, image)
       end
     end
   end
 
-  # 別の命令に置き換わるもの: ブロックの ENTER は NOP、sleep_ms / sleep は SEND、block_given? は BLKPUSH、.call は BLKCALL
-  REWRITTEN = { "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SSEND" => %w[SEND], "SSEND0" => %w[SEND0 SEND BLKPUSH], "SEND" => %w[BLKCALL],
-                "SEND0" => %w[BLKCALL] }.freeze
+  # 別の命令に置き換わるもの
+  REWRITTEN = {
+    "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SENDB" => %w[SEND], "SSENDB" => %w[SSEND], "MODULE" => %w[CLASS],
+    "LOADSELF" => %w[MOVE], "RETSELF" => %w[RETURN], "RETTRUE" => %w[LOADTRUE], "RETFALSE" => %w[LOADFALSE],
+    "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH]
+  }.freeze
 
-  def check_operands(where, opname, fields, w, pc_of)
+  def check_operands(where, opname, fields, w, pc_of, image)
     return if FpgaIsa::OPS[w.op].name != w.insn.name # 置き換えたものの中身は fpga:check と ref_vm_test が見る
 
     case opname
@@ -63,22 +66,22 @@ class FpgaRomTest < Minitest::Test
       assert_equal ["R#{w.a}", "R#{w.b}", w.c.to_s], fields[0, 3], where
     when "NOP", "RETNIL", "STOP"
       assert_equal 0, w.a, where
-    when "SENDB", "SSENDB", "BLOCK"
-      nil # 下げた命令 (展開の中身は fpga:check と ref_vm_test が見る)
     when "BREAK"
       assert_equal "R#{w.a}", fields[0], where
     when "ENTER"
       assert_equal fields[0].split(":").first.to_i, w.a, where # 必須の引数の数
-    when "TDEF"
-      assert_equal ["R#{w.a}", 0, 0], ["R#{w.a}", w.b, w.c], where
-    when "SSEND", "SSEND0"
+      assert_equal w.irep.nregs, w.b, where                    # 埋める nregs
+    when "TDEF", "SDEF"
+      assert_equal ["R#{w.a}", fields[1]], ["R#{w.a}", ":#{image.symbols[w.b]}"], where
+    when "LOADSYM"
+      assert_equal ["R#{w.a}", ":#{image.symbols[w.b]}"], fields[0, 2], where
+    when "SEND", "SEND0", "SSEND", "SSEND0"
       assert_equal "R#{w.a}", fields[0], where
-      assert_equal (opname == "SSEND" ? fields[2].delete("n=").to_i : 0), w.c & 0xFF, where
-    when "SEND", "SEND0"
+      assert_equal fields[1], ":#{image.symbols[w.b]}", where
+      assert_equal (opname.end_with?("0") ? 0 : fields[2].delete("n=").to_i), w.c & 0x7F, where
+    when "CLASS"
       assert_equal "R#{w.a}", fields[0], where
-      assert_equal fields[1].delete(":"), FpgaIsa::BUILTINS[w.b][0], where
-    when "GETCONST"
-      assert_equal "R#{w.a}", fields[0], where
+      assert_equal fields[1].delete(":"), image.class_names[w.b] || FpgaIsa::CLASSES.to_h.invert[w.b], where
     when "SETCONST"
       assert_equal "R#{w.a}", fields[1], where
     else
@@ -86,25 +89,30 @@ class FpgaRomTest < Minitest::Test
     end
   end
 
-  def test_words_are_48_bits
+  # pc 0 は TABLE (a = メソッド表の大きさの log2、b = 表の先頭)。表はプログラムの後ろ
+  def test_rom_starts_with_the_table_word
     image = FpgaRom.from_binary(rite([op("LOADI32"), 1, 0x12, 0x34, 0x56, 0x78, op("STOP")]))
-    assert_equal "0f0112345678", image.words[0].hex
-    assert_equal "760000000000", image.words[1].hex
+    assert_equal "TABLE", FpgaIsa::OPS[image.words[0].op].name
+    assert_equal [image.table_size.bit_length - 1, image.table_base], [image.words[0].a, image.words[0].b]
+    assert_equal 3, image.table_base
+    assert_equal image.table_base + image.table_size, image.words.size
+    assert_equal "0f0112345678", image.words[1].hex
+    assert_equal "760000000000", image.words[2].hex
   end
 
   def test_jump_becomes_absolute_word_address
-    # 0: JMP +1 (byte 3 -> byte 4), 3: NOP, 4: STOP
+    # 0: JMP +1 (byte 3 -> byte 4), 3: NOP, 4: STOP  (pc は TABLE の分 1 ずれる)
     image = FpgaRom.from_binary(rite([op("JMP"), 0x00, 0x01, op("NOP"), op("STOP")]))
-    assert_equal 2, image.words[0].b
+    assert_equal 3, image.words[1].b
     # 後ろ向き: 0: NOP, 1: JMP -4 (byte 4 -> byte 0)
     image = FpgaRom.from_binary(rite([op("NOP"), op("JMP"), 0xFF, 0xFC]))
-    assert_equal 0, image.words[1].b
+    assert_equal 1, image.words[2].b
   end
 
   def test_gvar_becomes_port
     image = FpgaRom.from_binary(rite([op("GETGV"), 1, 0, op("SETGV"), 1, 1, op("STOP")], syms: ["$BUTTON", "$LED2"]))
-    assert_equal 2, image.words[0].b
-    assert_equal 1, image.words[1].b
+    assert_equal 2, image.words[1].b
+    assert_equal 1, image.words[2].b
   end
 
   def test_rejects_unsupported_instruction_with_location
@@ -112,53 +120,71 @@ class FpgaRomTest < Minitest::Test
     assert_match(/unsupported instruction\(s\): ARYCAT at byte 001/, e.message)
   end
 
-  def test_rejects_unknown_methods
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("SEND0"), 1, 0, op("STOP")], syms: ["puts"])) }
-    assert_match(/\.puts with 0 argument\(s\) at byte 000 is not a supported method/, e.message)
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("SSEND0"), 1, 0, op("STOP")], syms: ["foo"])) }
-    assert_match(/foo at byte 000 is not a method defined with def/, e.message)
+  # 呼び出しは b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。演算の落ち先のシンボルは 0 から固定
+  def test_calls_carry_symbol_numbers
+    image = FpgaRom.from_binary(rite([op("SEND0"), 1, 0, op("SSEND"), 1, 1, 2, op("STOP")], syms: %w[puts foo]))
+    assert_equal FpgaIsa::OP_SYMS, image.symbols[0, FpgaIsa::OP_SYMS.size]
+    assert_equal ["SEND0", "puts", 0], [FpgaIsa::OPS[image.words[1].op].name, image.symbols[image.words[1].b], image.words[1].c]
+    assert_equal ["SSEND", "foo", 2], [FpgaIsa::OPS[image.words[2].op].name, image.symbols[image.words[2].b], image.words[2].c]
+    blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
+    bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["select"], reps: [blk])
+    w = FpgaRom.from_binary(bin).words[3]
+    assert_equal ["SEND", 0x80], [FpgaIsa::OPS[w.op].name, w.c]
   end
 
-  # def two; 2; end; two  →  子 irep は親の後ろに並び、SSEND0 の b はその先頭 pc、c は (nregs << 8) | 引数の数
-  def test_methods_are_laid_out_after_the_caller_and_resolved
+  # def two; 2; end; two  →  (Object, :two) → メソッドの先頭 pc がメソッド表に入る。ENTER の b は nregs
+  def test_methods_go_into_the_table
     child = irep_record([op("ENTER"), 0, 0, 0, op("LOADI_2"), 2, op("RETURN"), 2], nregs: 3)
     bin = rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["two"], reps: [child])
     image = FpgaRom.from_binary(bin)
-    assert_equal %w[TDEF SSEND0 STOP ENTER LOADI_2 RETURN], image.words.map { |w| w.insn.name }
-    assert_equal 3, image.words[1].b
-    assert_equal (3 << 8) | 0, image.words[1].c
-    assert_equal [0, 3], image.ireps.map(&:base)
-    assert_match(/# irep 1  nregs 3\n   3  000  ENTER/, image.listing)
+    assert_equal %w[TABLE TDEF SSEND0 STOP ENTER LOADI_2 RETURN], image.words.first(7).map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal [0, 3], [image.words[4].a, image.words[4].b]
+    assert_equal 4, lookup(image, FpgaIsa::CLS_OBJECT, "two")
+    assert_equal 4, lookup(image, FpgaIsa::CLS_INT, "two") # Integer から親の Object へ
+    assert_match(/# irep 1  nregs 3\n   4  000  ENTER/, image.listing)
   end
 
-  def test_rejects_optional_parameters_and_redefinition
+  # 同じ名前を2回 def したら後の定義 (静的に決める)
+  def test_later_definition_wins
+    one = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
+    two = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
+    bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("STOP")], syms: ["f"], reps: [one, two])
+    image = FpgaRom.from_binary(bin)
+    assert_equal image.ireps[2].base, lookup(image, FpgaIsa::CLS_OBJECT, "f")
+  end
+
+  def test_rejects_optional_parameters
     opt = irep_record([op("ENTER"), 0x04, 0x20, 0x00, op("RETNIL")]) # 1:1:... (optional 1)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [opt])) }
     assert_match(/only required parameters and &block are supported/, e.message)
-    plain = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
-    bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("STOP")], syms: ["f"], reps: [plain, plain])
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
-    assert_match(/f is defined twice/, e.message)
   end
 
-def test_blocks_are_lowered_only_for_the_known_iterators
-    blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
-    # 3.select { } は受け付けない (ブロックを渡せるのは def したメソッドと決まった iterator だけ)
-    bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["select"], reps: [blk])
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
-    assert_match(/select with a block at byte 005 is not supported/, e.message)
-    # 3.times { } は展開される: BLOCK で Proc を作り、カウンタのループで BLKCALL する。
-    # ループを抜けたら式の値 (受け手) のまま次へ、break の出口 (pc 13) はブロックのフレームの R0 を結果へ
-    bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["times"], reps: [blk])
-    words = FpgaRom.from_binary(bin).words
-    assert_equal %w[LOADI_3 BLOCK LOADI_0 MOVE MOVE LT JMPNOT MOVE MOVE BLKCALL ADDI JMP JMP MOVE STOP NOP RETNIL],
-                 words.map { |w| FpgaIsa::OPS[w.op].name }
-    assert_equal [15, 3 << 8], [words[1].b, words[1].c] # 先頭 pc と (nregs << 8) | 引数の数
-    assert_equal [4, 1], [words[9].a, words[9].b]
-    assert_equal [1, 4], [words[13].a, words[13].b]
-    # 渡さずに値にした BLOCK (proc や &blk) はそのまま Proc になる
-    words = FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal %w[BLOCK STOP NOP RETNIL], words.map { |w| FpgaIsa::OPS[w.op].name }
+  # クラス: CLASS は R[a] = クラスの即値、本体の EXEC は b = 本体の先頭 (変換器が足した ENTER)。
+  # クラスメソッドはメタクラス (番号 | META)、親クラスへの輪、定数の字句の入れ子
+  def test_classes_and_constants
+    with_mrbc do
+      image = compile(<<~RUBY)
+        class Foo
+          X = 1
+          def self.make = X
+          def get = X
+        end
+        class Bar < Foo
+          def get = 2
+        end
+        $LED = Bar.make
+      RUBY
+      foo = image.class_names.key("Foo")
+      bar = image.class_names.key("Bar")
+      assert_equal [FpgaIsa::FIRST_USER_CLASS, FpgaIsa::FIRST_USER_CLASS + 1], [foo, bar]
+      exec = image.words.find { |w| FpgaIsa::OPS[w.op]&.name == "EXEC" }
+      assert_equal "ENTER", FpgaIsa::OPS[image.words[exec.b].op].name
+      assert lookup(image, FpgaIsa::META | foo, "make")
+      assert_equal lookup(image, FpgaIsa::META | foo, "make"), lookup(image, FpgaIsa::META | bar, "make")
+      refute_equal lookup(image, foo, "get"), lookup(image, bar, "get")
+      # Bar は GETCONST ではなくクラスの即値 (CLASS)
+      assert(image.words.any? { |w| FpgaIsa::OPS[w.op]&.name == "CLASS" && w.b == bar && w.insn&.name == "GETCONST" })
+    end
   end
 
   # ブロックの外の変数は GETUPVAR c = 深さ + 1 で読む。深さを超える参照と、ブロックの外の break / return は止める
@@ -169,7 +195,7 @@ def test_blocks_are_lowered_only_for_the_known_iterators
     assert_match(/GETUPVAR at byte 000 reaches 1 levels out, the block is 0 deep/, e.message)
     blk = irep_record([op("ENTER"), 0, 0, 0, op("GETUPVAR"), 1, 1, 0, op("RETURN"), 1], nregs: 3)
     words = FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[3].op].name, words[3].a, words[3].b, words[3].c]
+    assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[4].op].name, words[4].a, words[4].b, words[4].c]
     top_return = irep_record([op("ENTER"), 0, 0, 0, op("RETURN_BLK"), 1], nregs: 3)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [top_return])) }
     assert_match(/return inside a block at irep 1 byte 004 is not inside a method or a lambda/, e.message)
@@ -180,23 +206,13 @@ def test_blocks_are_lowered_only_for_the_known_iterators
     blk = irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN_BLK"), 1], nregs: 3) # |x| return x
     bin = rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["lambda"], reps: [blk])
     words = FpgaRom.from_binary(bin).words
-    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[0].op].name, words[0].c]
+    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[1].op].name, words[1].c]
     words = FpgaRom.from_binary(rite([op("LAMBDA"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[0].op].name, words[0].c]
+    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[1].op].name, words[1].c]
     words = FpgaRom.from_binary(rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["proc"], reps: [
       irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN"), 1], nregs: 3)
     ])).words
-    assert_equal 1 | (3 << 8), words[0].c # proc は印なし
-  end
-
-  # sleep_ms / sleep は self への呼び出しでも組み込み (SEND) にする。.call は BLKCALL
-  def test_sleep_and_call_become_builtins
-    bin = rite([op("LOADI_1"), 2, op("SSEND"), 1, 0, 1, op("MOVE"), 2, 1, op("SEND"), 2, 1, 0, op("STOP")],
-               syms: %w[sleep_ms call])
-    words = FpgaRom.from_binary(bin).words
-    assert_equal %w[LOADI_1 SEND MOVE BLKCALL STOP], words.map { |w| FpgaIsa::OPS[w.op].name }
-    assert_equal [1, FpgaIsa.builtin("sleep_ms", 1), 1], [words[1].a, words[1].b, words[1].c]
-    assert_equal [2, 0], [words[3].a, words[3].b]
+    assert_equal 1 | (3 << 8), words[1].c # proc は印なし
   end
 
   def test_rejects_pool
@@ -222,7 +238,7 @@ def test_blocks_are_lowered_only_for_the_known_iterators
   # commit 済みの .hex / .lst は PicoRuby で走らせた変換器の出力。同じ file を CRuby で読んでも同じになること
   def test_committed_rom_matches_the_converter_on_cruby
     Dir[File.join(CORPUS, "*.mrb")].sort.each do |mrb|
-      image = FpgaRom.from_binary(File.binread(mrb), mrb, 16)
+      image = FpgaRom.from_binary(File.binread(mrb), mrb, FpgaIsa::RF_SIZE)
       assert_equal File.read(mrb.sub(/\.mrb\z/, ".hex")), image.hex, mrb
       assert_equal File.read(mrb.sub(/\.mrb\z/, ".lst")), image.listing, mrb
     end
@@ -231,6 +247,47 @@ def test_blocks_are_lowered_only_for_the_known_iterators
   def with_picoruby
     skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
     Dir.mktmpdir { |dir| yield dir }
+  end
+
+  def with_mrbc
+    skip "vendor/picoruby/bin/mrbc is not built" unless File.executable?(MRBC)
+    yield
+  end
+
+  # プレリュード無しで compile して変換する
+  def compile(src)
+    Dir.mktmpdir do |dir|
+      rb = File.join(dir, "in.rb")
+      out = File.join(dir, "in.mrb")
+      File.write(rb, src)
+      _o, err, st = Open3.capture3(MRBC, "-o", out, rb)
+      raise err unless st.success?
+      FpgaRom.from_binary(File.binread(out))
+    end
+  end
+
+  # メソッド表を ref_vm.rb と同じ手順で引く (見つからなければ nil)
+  def lookup(image, cls, name)
+    sym = image.symbols.index(name)
+    return nil unless sym
+    mask = image.table_size - 1
+    FpgaIsa::MAX_SUPER_DEPTH.times do
+      t = probe(image, cls, sym, mask)
+      return t & 0x3FFF if t
+      cls = probe(image, cls, FpgaIsa::SUPER_SYM, mask)
+      return nil unless cls
+    end
+    nil
+  end
+
+  def probe(image, cls, sym, mask)
+    h = FpgaIsa.table_hash(cls, sym, mask)
+    image.table_size.times do |i|
+      w = image.words[image.table_base + ((h + i) & mask)].value
+      return nil if w == FpgaRom::PAD
+      return w & 0xFFFF if (w >> 32) == cls && ((w >> 16) & 0xFFFF) == sym
+    end
+    nil
   end
 
   def picoruby_convert(dir, bin, max_regs: nil)

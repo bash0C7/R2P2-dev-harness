@@ -1,5 +1,5 @@
 // mruby バイトコード (RITE0400) を直接実行する CPU コア。多サイクル、1命令は FETCH -> EXEC の 2 cycle が基本で、
-// ヒープを触る命令・呼び出し・GC・sleep はマイクロ状態で数 cycle かける。
+// メソッド探索・ヒープを触る命令・呼び出し・GC・sleep はマイクロ状態で数 cycle かける。
 //
 // ROM は tools/fpga/rom.rb (PicoRuby の変換器) が作る 48bit 固定長語 ({op, a, b, c})。命令の意味は
 // tools/fpga/ref_vm.rb と同じ (docs/spec.md §10)。ずれたら rake fpga:check / fpga:fuzz が落ちる。
@@ -10,6 +10,10 @@
 // env は今のフレームの中で Proc を作った時にできるヒープのオブジェクトで、フレームが生きている間は bp を指し、
 // フレームから戻る時に fn 本 (フレームの nregs) のレジスタを写し取る (S_DETACH)。
 //
+// メソッドの呼び出し (SEND / SSEND、演算の命令の落ち先) は、ROM の後ろのメソッド表を (受け手のクラス, シンボル) で
+// 引く (S_LOOKUP / S_PROBE)。見つからなければ親クラスへ。飛び先がメソッドならフレームを作り、primitive なら S_PRIM で実行する。
+// 実行中の命令は ir に取っておく (探索の間 ROM の出力は表の語になるため)。
+//
 // en が 0 の cycle は何も進まない (CPU を遅く回すためのクロックイネーブル)。ms_tick は 1ms ごとの 1 cycle のパルスで、
 // sleep_ms / sleep だけが使う (en に関係なく数える)。
 `timescale 1ns / 1ps
@@ -19,7 +23,7 @@ module mrb_core
   import mrb_pkg::*;
 #(
   parameter int NREGS   = RF_SIZE, // レジスタファイルの大きさ (全フレームで共有)
-  parameter int PC_BITS = 10
+  parameter int PC_BITS = 13
 ) (
   input  logic                clk,
   input  logic                rst_n,
@@ -63,13 +67,14 @@ module mrb_core
     S_BLOCK,              // Proc を書く
     S_AHDR, S_AELEM,      // 配列リテラル: 見出し / 要素
     S_SET1, S_GROW, S_FILL, S_PUT, // 配列への代入・push
-    S_INCL,               // include?
     S_UNWIND, S_UNWIND_RET, // break (動的) / ブロックの中の return
     S_SLEEP,
     S_WALK, S_UPOP,       // Proc の連鎖をたどって外側のフレームの底を求め、命令を仕上げる
     S_ENV,                // Proc と一緒に env を作る (中身を nil で埋める)
     S_DETACH, S_RETFIN,   // 戻る前に env へレジスタを写す / 写した後に戻る
-    S_LWALK               // ブロックの中の return: 一番内側の lambda を探す
+    S_LWALK,              // ブロックの中の return: 一番内側の lambda を探す
+    S_LOOKUP, S_PROBE,    // メソッド表を引く: 最初の位置を出す / 語を比べて次の位置を出す
+    S_PRIM                // 見つかった primitive を実行する
   } state_t;
   state_t state;
 
@@ -78,12 +83,13 @@ module mrb_core
   mop_t mop;
 
   logic [PC_BITS-1:0]  pc;
+  logic [47:0]         ir;        // 実行中の命令 (EXEC で ROM から取る)
   logic [VAL_BITS-1:0] regs [NREGS];
   logic [RB-1:0]       bp;
   logic [7:0]          argc;
   logic [VAL_BITS-1:0] cp;
   logic [VAL_BITS-1:0] env;       // 今のフレームの env (無ければ nil)
-  logic [7:0]          fn;        // 今のフレームの nregs (env に写す数)
+  logic [7:0]          fn;        // 今のフレームの nregs (env に写す数。メソッドは ENTER が決める)
 
   // コールスタック: 戻り先の pc、呼び出し元の bp・Proc・env・nregs
   logic [PC_BITS-1:0]  ret_pc [STACK_DEPTH];
@@ -100,6 +106,17 @@ module mrb_core
   logic [VAL_BITS-1:0] consts [NCONST];
   logic [NCONST-1:0]   cvalid;
 
+  // メソッド表 (TABLE で決まる) と探索
+  logic                t_on;      // TABLE を実行したか (していなければどの探索も見つからない)
+  logic [3:0]          tlog;      // 表の大きさの log2
+  logic [PC_BITS-1:0]  tbase;
+  logic [15:0]         lk_cls, lk_sym;
+  logic [6:0]          lk_argc;
+  logic                lk_blk, lk_super;
+  logic [5:0]          lk_depth;
+  logic [PC_BITS-1:0]  lk_i;      // 何語目を比べているか
+  logic [13:0]         prim;
+
   // ヒープ
   logic [VAL_BITS-1:0] heap [HEAP_SIZE];
   logic                space;     // 使っている半分
@@ -109,7 +126,7 @@ module mrb_core
   logic                gc_done;   // この確保で GC を済ませたか
 
   // GC
-  logic [2:0]          gphase;    // 0 レジスタ、1 定数、2 スタックの Proc、3 cp、4 走査
+  logic [2:0]          gphase;    // 0 レジスタ、1 定数、2 スタックの Proc と env、3 cp と env、4 走査
   logic [7:0]          gi;
   logic [HB:0]         gfree, scan;
   logic [HB:0]         fw_src, fw_k, fw_size;
@@ -121,7 +138,7 @@ module mrb_core
   logic [7:0]          m_n;
   logic [HB:0]         m_k;
   logic [15:0]         m_i, m_len, m_cap;
-  logic                m_push, m_found;
+  logic                m_push, m_aset;
   logic [VAL_BITS-1:0] hold;
   logic [RB-1:0]       target;
   logic [41:0]         remain;
@@ -157,45 +174,50 @@ module mrb_core
     return v[HB-1:0];
   endfunction
 
-  // == : Integer は値、参照は同じものか、それ以外は型。配列同士はエラー (eq_err)
+  // == (どちらもヒープのオブジェクトでない時): 型が同じで、Integer・Symbol・Class は値も
   function automatic logic eq_of(input logic [VAL_BITS-1:0] x, input logic [VAL_BITS-1:0] y);
     if (tag_of(x) != tag_of(y)) return 1'b0;
-    if (tag_of(x) == TAG_INT || tag_of(x) == TAG_SYM || tag_of(x) == TAG_CLASS || is_ref(x)) return val_of(x) == val_of(y);
+    if (tag_of(x) == TAG_INT || tag_of(x) == TAG_SYM || tag_of(x) == TAG_CLASS) return val_of(x) == val_of(y);
     return 1'b1;
   endfunction
 
-  // ---- decode
+  // ---- decode (EXEC では ROM から、ほかの状態では取っておいた ir から)
+  logic [47:0] cur;
+  assign cur = (state == S_EXEC) ? rom_data : ir;
   logic [7:0]  op, a;
   logic [15:0] b, c;
-  assign op = rom_data[47:40];
-  assign a  = rom_data[39:32];
-  assign b  = rom_data[31:16];
-  assign c  = rom_data[15:0];
+  assign op = cur[47:40];
+  assign a  = cur[39:32];
+  assign b  = cur[31:16];
+  assign c  = cur[15:0];
 
   // レジスタファイルでの番号と、範囲に収まっているか (ref_vm.rb の ok?)
-  logic [16:0] ia, ia1, ia2, ib;
+  logic [16:0] ia, ia1, ia2, ia3, ib;
   assign ia  = 17'(bp) + 17'(a);
   assign ia1 = ia + 17'd1;
   assign ia2 = ia + 17'd2;
+  assign ia3 = ia + 17'd3;
   assign ib  = 17'(bp) + 17'(b);
 
-  logic a_ok, a1_ok, a2_ok, b_ok;
+  logic a_ok, a1_ok, a2_ok, a3_ok, b_ok;
   assign a_ok  = ia  < 17'(NREGS);
   assign a1_ok = ia1 < 17'(NREGS);
   assign a2_ok = ia2 < 17'(NREGS);
+  assign a3_ok = ia3 < 17'(NREGS);
   assign b_ok  = ib  < 17'(NREGS);
 
-  logic [VAL_BITS-1:0] ra, ra1, rb;
+  logic [VAL_BITS-1:0] ra, ra1, ra2, rb;
   assign ra  = regs[ia[RB-1:0]];
   assign ra1 = regs[ia1[RB-1:0]];
+  assign ra2 = regs[ia2[RB-1:0]];
   assign rb  = regs[ib[RB-1:0]];
 
-  logic ra_int, ra1_int, ra_truthy, ra_ary, ra1_ary;
+  logic ra_int, ra1_int, ra_truthy, ra_ary, ra1_proc;
   assign ra_int    = tag_of(ra) == TAG_INT;
   assign ra1_int   = tag_of(ra1) == TAG_INT;
   // オブジェクトのクラスは見出しの上位 16bit
   assign ra_ary    = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_ARRAY;
-  assign ra1_ary   = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_ARRAY;
+  assign ra1_proc  = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_PROC;
   logic ra_proc, rb_ary, cp_proc, walk_proc;
   assign ra_proc   = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_PROC;
   assign rb_ary    = tag_of(rb) == TAG_OBJ && heap[ha(val_of(rb))][31:16] == CLS_ARRAY;
@@ -206,9 +228,11 @@ module mrb_core
   assign x = val_of(ra);
   assign y = val_of(ra1);
 
-  logic eq, eq_err;
-  assign eq     = eq_of(ra, ra1);
-  assign eq_err = ra_ary && ra1_ary;
+  logic eq, eq_ref;
+  assign eq = eq_of(ra, ra1);
+  // == でどちらかがヒープのオブジェクトなら == を送る。(Icarus は always_comb の if の条件に関数の呼び出しがあると
+  // 時刻 0 のまま回り続けることがあるので、wire にしておく)
+  assign eq_ref = tag_of(ra) == TAG_OBJ || tag_of(ra1) == TAG_OBJ;
 
   // Ruby の / と % (floor 側に丸める)。y = 0 は呼ぶ側でエラーにする。INT_MIN / -1 は折り返す
   logic signed [INT_BITS-1:0] q_trunc, r_trunc, q_floor, r_floor;
@@ -240,23 +264,52 @@ module mrb_core
   assign arr_len = lo16(heap[arr_p + HB'(1)]);
   assign arr_d   = ha(val_of(heap[arr_p + HB'(2)]));
 
-  // 添字 (GETIDX / SETIDX): 負なら後ろから
+  // 添字 (GETIDX / SETIDX / Array#[] / Array#[]=): 負なら後ろから
   logic signed [INT_BITS-1:0] idx_raw, idx_adj;
   logic [VAL_BITS-1:0]        idx_recv;
   logic [HB-1:0]              idx_p, idx_d;
   logic [15:0]                idx_len;
   always_comb begin
-    idx_recv = (op == OP_GETIDX0 || op == OP_AREF) ? rb : ra;
-    idx_raw  = op == OP_GETIDX0 ? '0 : op == OP_AREF ? INT_BITS'(c[7:0]) : y;
+    idx_recv = (state == S_EXEC && (op == OP_GETIDX0 || op == OP_AREF)) ? rb : ra;
+    idx_raw  = (state == S_EXEC && op == OP_GETIDX0) ? '0 : (state == S_EXEC && op == OP_AREF) ? INT_BITS'(c[7:0]) : y;
     idx_p    = ha(val_of(idx_recv));
     idx_len  = lo16(heap[idx_p + HB'(1)]);
     idx_d    = ha(val_of(heap[idx_p + HB'(2)]));
     idx_adj  = idx_raw < 0 ? idx_raw + INT_BITS'(idx_len) : idx_raw;
   end
   logic [VAL_BITS-1:0] idx_val;
-  logic idx_recv_ary;
-  assign idx_recv_ary = tag_of(idx_recv) == TAG_OBJ && heap[ha(val_of(idx_recv))][31:16] == CLS_ARRAY;
   assign idx_val = (idx_adj >= 0 && idx_adj < INT_BITS'(idx_len)) ? heap[idx_d + HB'(1) + ha(idx_adj)] : V_NIL;
+
+  // ---- メソッド探索: 受け手のクラス (SSEND は self、GETIDX0 の落ち先は R[b]、ほかは R[a])
+  // (Icarus は always_comb の中で2回書いてから読む変数があると時刻 0 から進まないので、1つの式で)
+  logic [VAL_BITS-1:0] recv_v;
+  logic [15:0]         recv_cls;
+  assign recv_v = (state == S_EXEC && (op == OP_SSEND || op == OP_SSEND0)) ? regs[bp] :
+                  (state == S_EXEC && op == OP_GETIDX0) ? rb : ra;
+  logic [TAG_BITS-1:0] recv_tag;
+  logic [VAL_BITS-1:0] recv_hdr;
+  assign recv_tag = recv_v[VAL_BITS-1 -: TAG_BITS];
+  assign recv_hdr = heap[recv_v[HB-1:0]];
+  assign recv_cls = recv_tag == TAG_NIL   ? CLS_NIL :
+                    recv_tag == TAG_FALSE ? CLS_FALSE :
+                    recv_tag == TAG_TRUE  ? CLS_TRUE :
+                    recv_tag == TAG_INT   ? CLS_INT :
+                    recv_tag == TAG_SYM   ? CLS_SYM :
+                    recv_tag == TAG_CLASS ? (CLS_META | {1'b0, recv_v[14:0]}) : // クラスのメタクラス
+                                            recv_hdr[31:16];
+  // 表の位置: (クラス * 5 + シンボル) & (大きさ - 1) から順に。S_PROBE では次の語を先に出しておく
+  logic [PC_BITS-1:0] t_mask, lk_h, probe_addr;
+  logic [15:0]        lk_key;
+  logic [18:0]        lk_hash;
+  assign t_mask     = PC_BITS'((20'd1 << tlog) - 20'd1);
+  assign lk_key     = lk_super ? SUPER_SYM : lk_sym;
+  assign lk_hash    = 19'(lk_cls) * 19'd5 + 19'(lk_key);
+  assign lk_h       = PC_BITS'(lk_hash) & t_mask;
+  assign probe_addr = tbase + ((lk_h + (state == S_PROBE ? lk_i + PC_BITS'(1) : '0)) & t_mask);
+  logic lk_empty, lk_hit, lk_last;
+  assign lk_empty = rom_data == '1;
+  assign lk_hit   = rom_data[47:32] == lk_cls && rom_data[31:16] == lk_key;
+  assign lk_last  = lk_i == t_mask;
 
   // 深さ k のフレームの底 (0 は今のフレーム、1 は今の Proc を作ったフレーム、2 はその外側 ...) は、
   // S_WALK で Proc の連鎖を 1 cycle に1段ずつたどって求める (k = 0 は EXEC でそのまま bp)
@@ -291,34 +344,43 @@ module mrb_core
   assign pr_p    = ha(val_of(ra));
   assign pr_info = val_of(heap[pr_p + HB'(1)]);
 
-  // ---- 呼び出し (SSEND / SSEND0 / BLKCALL)
-  logic [7:0]  call_nregs, call_keep;
+  // ---- ブロックの呼び出し (BLKCALL と Proc#call): フレームは bp + a、引数 blk_n 個
+  logic        is_blk;
+  logic [7:0]  blk_n;
+  logic [7:0]  call_nregs, call_keep, call_need;
   logic [RB:0] call_bp, call_clr_from, call_clr_to;
-  logic [7:0]  call_need;
+  assign is_blk = (state == S_EXEC && op == OP_BLKCALL) || (state == S_PRIM && prim == PR_CALL);
+  assign blk_n  = state == S_PRIM ? {1'b0, lk_argc} : b[7:0];
   always_comb begin
-    if (op == OP_BLKCALL) begin
-      call_nregs = pr_info[31:24];
-      call_keep  = b[7:0] < {1'b0, pr_info[22:16]} ? b[7:0] : {1'b0, pr_info[22:16]};
-    end else begin
-      call_nregs = c[15:8];
-      call_keep  = {1'b0, c[6:0]} + (c[7] ? 8'd1 : 8'd0); // ブロックを渡すならその枠を残す
-    end
-    call_need = call_nregs > call_keep ? call_nregs : call_keep + 8'd1;
+    call_nregs = pr_info[31:24];
+    call_keep  = blk_n < {1'b0, pr_info[22:16]} ? blk_n : {1'b0, pr_info[22:16]};
+    call_need  = call_nregs > call_keep ? call_nregs : call_keep + 8'd1;
   end
   assign call_bp       = {1'b0, ia[RB-1:0]};
   assign call_clr_from = call_bp + (RB+1)'(call_keep) + (RB+1)'(1);
   assign call_clr_to   = call_bp + (RB+1)'(call_nregs);
 
-  // ---- execute (組み合わせ)
+  // ---- execute (組み合わせ)。EXEC は命令、S_PRIM は見つかった primitive
   logic                wr;          // R[a] に wval を書く
   logic [VAL_BITS-1:0] wval;
   logic                iow;
   logic [PC_BITS-1:0]  npc;
   logic                halt, err;
-  logic                do_call, do_ret, set_const, set_up, pop_len;
-  logic                go_block, go_array, go_set, go_incl, go_unwind, go_unwind_ret, go_sleep, go_walk, go_lwalk;
+  logic                do_call, do_ret, set_const, set_up, pop_len, set_lam, do_frame, do_enter, set_table;
+  logic                go_block, go_array, go_set, go_unwind, go_unwind_ret, go_sleep, go_walk, go_lwalk, go_lookup;
+  logic [15:0]         lk_sym_n;    // 探すシンボル
+  logic [6:0]          lk_argc_n;
+  logic                lk_blk_n;
+  logic                pre_self;    // 探す前に R[a] = self (SSEND)
+  logic                pre_a1;      // 探す前に R[a+1] = pre_a1v (ADDI / SUBI / GETIDX0 の落ち先)
+  logic [VAL_BITS-1:0] pre_a1v;
+  logic                pre_arb;     // 探す前に R[a] = R[b] (GETIDX0 の落ち先)
+  logic                set_push, set_aset; // go_set の種類: push / Array#[]=
   logic                ret_now; // 戻る。env があれば先に S_DETACH で写すので、この cycle には書かない
   assign ret_now = do_ret && tag_of(env) == TAG_NIL;
+  // primitive の引数の数が違う (8'hff は何個でも)
+  logic prim_argc_bad;
+  assign prim_argc_bad = prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc};
 
   assign io_addr  = b[7:0];
   assign io_wdata = ra;
@@ -332,192 +394,308 @@ module mrb_core
     err       = 1'b0;
     do_call   = 1'b0;
     do_ret    = 1'b0;
+    do_frame  = 1'b0;
+    do_enter  = 1'b0;
     set_const = 1'b0;
     set_up    = 1'b0;
+    set_lam   = 1'b0;
+    set_table = 1'b0;
     pop_len   = 1'b0;
     go_block  = 1'b0;
     go_array  = 1'b0;
     go_set    = 1'b0;
-    go_incl   = 1'b0;
+    set_push  = 1'b0;
+    set_aset  = 1'b0;
     go_unwind = 1'b0;
     go_unwind_ret = 1'b0;
     go_sleep  = 1'b0;
     go_walk   = 1'b0;
     go_lwalk  = 1'b0;
+    go_lookup = 1'b0;
+    lk_sym_n  = b;
+    lk_argc_n = 7'd1;
+    lk_blk_n  = 1'b0;
+    pre_self  = 1'b0;
+    pre_a1    = 1'b0;
+    pre_a1v   = V_NIL;
+    pre_arb   = 1'b0;
 
-    case (op)
-      OP_NOP: ;
-      OP_MOVE:      begin wr = 1'b1; wval = rb; err = !b_ok; end
-      OP_LOADI8:    begin wr = 1'b1; wval = mk_int({24'd0, b[7:0]}); end
-      OP_LOADINEG:  begin wr = 1'b1; wval = mk_int(-{24'd0, b[7:0]}); end
-      OP_LOADI__1:  begin wr = 1'b1; wval = mk_int(-32'sd1); end
-      OP_LOADI_0, OP_LOADI_1, OP_LOADI_2, OP_LOADI_3,
-      OP_LOADI_4, OP_LOADI_5, OP_LOADI_6, OP_LOADI_7:
-                    begin wr = 1'b1; wval = mk_int({24'd0, op - OP_LOADI_0}); end
-      OP_LOADI16:   begin wr = 1'b1; wval = mk_int({{16{b[15]}}, b}); end
-      OP_LOADI32:   begin wr = 1'b1; wval = mk_int({b, c}); end
-      OP_LOADNIL, OP_TDEF: begin wr = 1'b1; wval = V_NIL; end
-      OP_LOADSYM:   begin wr = 1'b1; wval = mk(TAG_SYM, {16'd0, b}); end
-      OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
-      OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
-      OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
-      // 配列や Proc はピンに出せない
-      OP_SETGV:     begin iow = 1'b1; err = b[7:0] >= 8'(NPORTS) || is_ref(ra); end
-      OP_GETCONST: begin
-        wr   = 1'b1;
-        wval = consts[b[CB-1:0]];
-        err  = b >= 16'(NCONST) || !cvalid[b[CB-1:0]];
-      end
-      OP_SETCONST: begin set_const = 1'b1; err = b >= 16'(NCONST); end
-      OP_JMP:       npc = b[PC_BITS-1:0];
-      OP_JMPIF:     if (ra_truthy) npc = b[PC_BITS-1:0];
-      OP_JMPNOT:    if (!ra_truthy) npc = b[PC_BITS-1:0];
-      OP_JMPNIL:    if (tag_of(ra) == TAG_NIL) npc = b[PC_BITS-1:0];
-      OP_EQ:        begin wr = 1'b1; err = !a1_ok || eq_err; wval = mk_bool(eq); end
-      OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_LT, OP_LE, OP_GT, OP_GE: begin
-        wr  = 1'b1;
-        err = !a1_ok || !(ra_int && ra1_int) || (op == OP_DIV && y == 0);
-        case (op)
-          OP_ADD:  wval = mk_int(x + y);
-          OP_SUB:  wval = mk_int(x - y);
-          OP_MUL:  wval = mk_int(x * y);
-          OP_DIV:  wval = mk_int(q_floor);
-          OP_LT:   wval = mk_bool(x < y);
-          OP_LE:   wval = mk_bool(x <= y);
-          OP_GT:   wval = mk_bool(x > y);
-          default: wval = mk_bool(x >= y);
-        endcase
-      end
-      OP_ADDI:   begin wr = 1'b1; err = !ra_int; wval = mk_int(x + {24'd0, b[7:0]}); end
-      OP_SUBI:   begin wr = 1'b1; err = !ra_int; wval = mk_int(x - {24'd0, b[7:0]}); end
-      OP_ADDILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x + {24'd0, c[7:0]}); end
-      OP_SUBILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x - {24'd0, c[7:0]}); end
-      OP_SEND, OP_SEND0: begin
-        wr = 1'b1;
-        // 組み込みメソッドの番号と引数の数が合っていること
-        if (b >= 16'(NBUILTIN) || c != {15'd0, BI_ARGC1[b[4:0]]}) err = 1'b1;
-        else if (c == 16'd1 && !a1_ok) err = 1'b1;
-        else if (ra_ary) begin
-          case (b[7:0])
-            BI_SIZE, BI_LENGTH: wval = mk_int({16'd0, arr_len});
-            BI_EMPTY: wval = mk_bool(arr_len == 0);
-            BI_FIRST: wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(1)];
-            BI_LAST:  wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(arr_len)];
-            BI_POP: begin
-              wval    = arr_len == 0 ? V_NIL : heap[arr_d + HB'(arr_len)];
-              pop_len = arr_len != 0;
-            end
-            BI_PUSH, BI_SHL: begin wr = 1'b0; go_set = 1'b1; err = arr_len >= 16'hFFFF; end
-            BI_INCL: begin wr = 1'b0; go_incl = 1'b1; err = ra1_ary; end
-            BI_NOT: wval = mk_bool(1'b0);
-            BI_NEQ: begin wval = mk_bool(!eq); err = eq_err; end
-            default: err = 1'b1;
+    if (state == S_PRIM) begin
+      // ---- primitive (isa.rb の PRIMS)。受け手の型が違えばエラー
+      wr = 1'b1;
+      case (prim)
+        PR_IADD, PR_ISUB, PR_IMUL, PR_IDIV, PR_ILT, PR_ILE, PR_IGT, PR_IGE: begin
+          err = prim_argc_bad || !(ra_int && ra1_int) || (prim == PR_IDIV && y == 0);
+          case (prim)
+            PR_IADD: wval = mk_int(x + y);
+            PR_ISUB: wval = mk_int(x - y);
+            PR_IMUL: wval = mk_int(x * y);
+            PR_IDIV: wval = mk_int(q_floor);
+            PR_ILT:  wval = mk_bool(x < y);
+            PR_ILE:  wval = mk_bool(x <= y);
+            PR_IGT:  wval = mk_bool(x > y);
+            default: wval = mk_bool(x >= y);
           endcase
         end
-        else if (b[7:0] == BI_NOT) wval = mk_bool(!ra_truthy);
-        else if (b[7:0] == BI_NEQ) begin wval = mk_bool(!eq); err = eq_err; end
-        else if (b[7:0] == BI_SLEEPMS || b[7:0] == BI_SLEEP) begin
+        PR_IEQ: begin err = prim_argc_bad || !ra_int; wval = mk_bool(ra == ra1); end
+        PR_MOD, PR_NEG, PR_SHL, PR_SHR, PR_AND, PR_OR, PR_XOR, PR_INV, PR_ABS, PR_ZERO, PR_EVEN, PR_ODD: begin
+          err = prim_argc_bad || !ra_int || (lk_argc == 7'd1 && !ra1_int);
+          case (prim)
+            PR_MOD:  begin err = prim_argc_bad || !ra_int || !ra1_int || y == 0; wval = mk_int(r_floor); end
+            PR_NEG:  wval = mk_int(-x);
+            PR_SHL:  wval = mk_int(shift(x, {y[INT_BITS-1], y}));
+            PR_SHR:  wval = mk_int(shift(x, -{y[INT_BITS-1], y}));
+            PR_AND:  wval = mk_int(x & y);
+            PR_OR:   wval = mk_int(x | y);
+            PR_XOR:  wval = mk_int(x ^ y);
+            PR_INV:  wval = mk_int(~x);
+            PR_ABS:  wval = mk_int(x < 0 ? -x : x);
+            PR_ZERO: wval = mk_bool(x == 0);
+            PR_EVEN: wval = mk_bool(!x[0]);
+            default: wval = mk_bool(x[0]);
+          endcase
+        end
+        PR_NOT:     begin err = prim_argc_bad; wval = mk_bool(!ra_truthy); end
+        PR_OEQ:     begin err = prim_argc_bad; wval = mk_bool(ra == ra1); end // 同じものか
+        PR_CLASSOF: begin err = prim_argc_bad; wval = mk(TAG_CLASS, {16'd0, recv_cls[15] ? CLS_CLASS : recv_cls}); end
+        PR_SLEEPMS, PR_SLEEP: begin
           // 時間を待ってから R[a] = 引数
           wr       = 1'b0;
-          err      = !ra1_int || y < 0;
+          err      = prim_argc_bad || !ra1_int || y < 0;
           go_sleep = 1'b1;
         end
-        else if (!ra_int || (c == 16'd1 && !ra1_int)) err = 1'b1;
-        else begin
-          case (b[7:0])
-            BI_MOD:  begin err = y == 0; wval = mk_int(r_floor); end
-            BI_NEG:  wval = mk_int(-x);
-            BI_SHL:  wval = mk_int(shift(x, {y[INT_BITS-1], y}));
-            BI_SHR:  wval = mk_int(shift(x, -{y[INT_BITS-1], y}));
-            BI_AND:  wval = mk_int(x & y);
-            BI_OR:   wval = mk_int(x | y);
-            BI_XOR:  wval = mk_int(x ^ y);
-            BI_INV:  wval = mk_int(~x);
-            BI_ABS:  wval = mk_int(x < 0 ? -x : x);
-            BI_ZERO: wval = mk_bool(x == 0);
-            BI_EVEN: wval = mk_bool(!x[0]);
-            BI_ODD:  wval = mk_bool(x[0]);
-            default: err = 1'b1;
-          endcase
+        PR_LAMBDA: begin
+          // 引数 0 個なのでブロックの枠 (R[a+1]) の Proc に lambda の印を付けて返す
+          err     = prim_argc_bad || !ra1_proc;
+          set_lam = 1'b1;
+          wval    = ra1;
         end
-      end
-      OP_SSEND, OP_SSEND0, OP_BLKCALL: begin
-        do_call = 1'b1;
-        npc     = op == OP_BLKCALL ? pr_info[PC_BITS-1:0] : b[PC_BITS-1:0];
-        err     = (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
-                  (op == OP_BLKCALL && (!ra_proc || !(ia + 17'(b[7:0]) < 17'(NREGS)) ||
-                                        (pr_info[23] && b[7:0] != {1'b0, pr_info[22:16]}))); // lambda は引数の数を調べる
-      end
-      OP_ENTER: err = argc != a;
-      OP_RETURN, OP_RETNIL: begin
-        if (sp == '0) halt = 1'b1;
-        else begin
-          do_ret = 1'b1;
-          npc    = ret_pc[top];
-          wval   = op == OP_RETURN ? ra : V_NIL;
+        PR_SIZE, PR_LENGTH: begin err = prim_argc_bad || !ra_ary; wval = mk_int({16'd0, arr_len}); end
+        PR_EMPTY: begin err = prim_argc_bad || !ra_ary; wval = mk_bool(arr_len == 0); end
+        PR_FIRST: begin err = prim_argc_bad || !ra_ary; wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(1)]; end
+        PR_LAST:  begin err = prim_argc_bad || !ra_ary; wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(arr_len)]; end
+        PR_POP: begin
+          err     = prim_argc_bad || !ra_ary;
+          wval    = arr_len == 0 ? V_NIL : heap[arr_d + HB'(arr_len)];
+          pop_len = arr_len != 0;
         end
-      end
-      OP_BREAK: begin
-        if (sp == '0) err = 1'b1;
-        else if (c == 16'd0) begin
-          // iterator に直接渡したブロック: フレームを1つ畳んで出口 (b) へ
-          do_ret = 1'b1;
-          npc    = b[PC_BITS-1:0];
-          wval   = ra;
-        end else if (cp_lam) begin
-          // lambda の中の break は lambda から戻る
-          do_ret = 1'b1;
-          npc    = ret_pc[top];
-          wval   = ra;
-        end else begin
-          // Proc を作ったフレームまで畳む (そのフレームの底を S_WALK で求める)
-          go_walk = 1'b1;
+        PR_PUSH, PR_APUSH: begin wr = 1'b0; go_set = 1'b1; set_push = 1'b1; err = prim_argc_bad || !ra_ary || arr_len >= 16'hFFFF; end
+        PR_AGET: begin err = prim_argc_bad || !ra_ary || !ra1_int; wval = idx_val; end
+        PR_ASET: begin
+          wr       = 1'b0;
+          go_set   = 1'b1;
+          set_aset = 1'b1;
+          err      = prim_argc_bad || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
         end
-      end
-      OP_RETURN_BLK: begin
-        // 一番内側の lambda (無ければ深さ c のメソッド) を S_LWALK で探してから畳む
-        err      = c > 16'd15;
-        go_lwalk = 1'b1;
-      end
-      OP_GETUPVAR, OP_BLKPUSH: begin
-        err = c > 16'd15;
-        if (fb_now) begin wr = 1'b1; wval = regs[iu[RB-1:0]]; err = !u_ok; end
-        else go_walk = 1'b1;
-      end
-      OP_SETUPVAR: begin
-        err = c > 16'd15;
-        if (fb_now) begin set_up = 1'b1; wval = ra; err = !u_ok; end
-        else go_walk = 1'b1;
-      end
-      OP_BLOCK:  go_block = 1'b1;
-      OP_ARRAY:  begin go_array = 1'b1; err = b[7:0] != 0 && !(ia + 17'(b[7:0]) - 17'd1 < 17'(NREGS)); end
-      OP_ARRAY2: begin go_array = 1'b1; err = c[7:0] != 0 && !(17'(bp) + 17'(b[7:0]) + 17'(c[7:0]) - 17'd1 < 17'(NREGS)); end
-      OP_AREF: begin
-        // 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
-        wr   = 1'b1;
-        err  = !b_ok;
-        wval = rb_ary ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
-      end
-      OP_GETIDX, OP_GETIDX0: begin
-        wr   = 1'b1;
-        wval = idx_val;
-        err  = (op == OP_GETIDX && !a1_ok) || (op == OP_GETIDX0 && !b_ok) || !idx_recv_ary ||
-               (op == OP_GETIDX && !ra1_int);
-      end
-      OP_SETIDX: begin
-        go_set = 1'b1;
-        err    = !a2_ok || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
-      end
-      OP_STOP: halt = 1'b1;
-      default: err = 1'b1;
-    endcase
+        PR_CALL: begin
+          wr      = 1'b0;
+          do_call = 1'b1;
+          npc     = pr_info[PC_BITS-1:0];
+          err     = prim_argc_bad || (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
+                    !ra_proc || !(ia + 17'(blk_n) < 17'(NREGS)) || (pr_info[23] && blk_n != {1'b0, pr_info[22:16]});
+        end
+        default: err = 1'b1;
+      endcase
+    end else begin
+      case (op)
+        OP_NOP: ;
+        OP_MOVE:      begin wr = 1'b1; wval = rb; err = !b_ok; end
+        OP_LOADI8:    begin wr = 1'b1; wval = mk_int({24'd0, b[7:0]}); end
+        OP_LOADINEG:  begin wr = 1'b1; wval = mk_int(-{24'd0, b[7:0]}); end
+        OP_LOADI__1:  begin wr = 1'b1; wval = mk_int(-32'sd1); end
+        OP_LOADI_0, OP_LOADI_1, OP_LOADI_2, OP_LOADI_3,
+        OP_LOADI_4, OP_LOADI_5, OP_LOADI_6, OP_LOADI_7:
+                      begin wr = 1'b1; wval = mk_int({24'd0, op - OP_LOADI_0}); end
+        OP_LOADI16:   begin wr = 1'b1; wval = mk_int({{16{b[15]}}, b}); end
+        OP_LOADI32:   begin wr = 1'b1; wval = mk_int({b, c}); end
+        OP_LOADNIL:   begin wr = 1'b1; wval = V_NIL; end
+        OP_TDEF, OP_SDEF, OP_LOADSYM: begin wr = 1'b1; wval = mk(TAG_SYM, {16'd0, b}); end
+        OP_CLASS:     begin wr = 1'b1; wval = mk(TAG_CLASS, {16'd0, b}); end
+        OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
+        OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
+        OP_TABLE:     begin set_table = 1'b1; err = a > 8'(PC_BITS); end
+        OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
+        // ヒープのオブジェクトはピンに出せない
+        OP_SETGV:     begin iow = 1'b1; err = b[7:0] >= 8'(NPORTS) || is_ref(ra); end
+        OP_GETCONST: begin
+          wr   = 1'b1;
+          wval = consts[b[CB-1:0]];
+          err  = b >= 16'(NCONST) || !cvalid[b[CB-1:0]];
+        end
+        OP_SETCONST: begin set_const = 1'b1; err = b >= 16'(NCONST); end
+        OP_JMP:       npc = b[PC_BITS-1:0];
+        OP_JMPIF:     if (ra_truthy) npc = b[PC_BITS-1:0];
+        OP_JMPNOT:    if (!ra_truthy) npc = b[PC_BITS-1:0];
+        OP_JMPNIL:    if (tag_of(ra) == TAG_NIL) npc = b[PC_BITS-1:0];
+        OP_EQ: begin
+          if (eq_ref) begin
+            go_lookup = 1'b1; lk_sym_n = SYM_EQ; err = !a2_ok;
+          end else begin
+            wr = 1'b1; err = !a1_ok; wval = mk_bool(eq);
+          end
+        end
+        OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_LT, OP_LE, OP_GT, OP_GE: begin
+          if (!a1_ok) err = 1'b1;
+          else if (!(ra_int && ra1_int)) begin
+            // 整数同士でなければ同名のメソッドを送る
+            go_lookup = 1'b1;
+            err       = !a2_ok;
+            case (op)
+              OP_ADD:  lk_sym_n = SYM_ADD;
+              OP_SUB:  lk_sym_n = SYM_SUB;
+              OP_MUL:  lk_sym_n = SYM_MUL;
+              OP_DIV:  lk_sym_n = SYM_DIV;
+              OP_LT:   lk_sym_n = SYM_LT;
+              OP_LE:   lk_sym_n = SYM_LE;
+              OP_GT:   lk_sym_n = SYM_GT;
+              default: lk_sym_n = SYM_GE;
+            endcase
+          end else begin
+            wr  = 1'b1;
+            err = op == OP_DIV && y == 0;
+            case (op)
+              OP_ADD:  wval = mk_int(x + y);
+              OP_SUB:  wval = mk_int(x - y);
+              OP_MUL:  wval = mk_int(x * y);
+              OP_DIV:  wval = mk_int(q_floor);
+              OP_LT:   wval = mk_bool(x < y);
+              OP_LE:   wval = mk_bool(x <= y);
+              OP_GT:   wval = mk_bool(x > y);
+              default: wval = mk_bool(x >= y);
+            endcase
+          end
+        end
+        OP_ADDI, OP_SUBI: begin
+          if (ra_int) begin
+            wr   = 1'b1;
+            wval = mk_int(op == OP_ADDI ? x + {24'd0, b[7:0]} : x - {24'd0, b[7:0]});
+          end else begin
+            // 整数でなければ R[a+1] = b にして + / - を送る
+            go_lookup = 1'b1;
+            lk_sym_n  = op == OP_ADDI ? SYM_ADD : SYM_SUB;
+            pre_a1    = 1'b1;
+            pre_a1v   = mk_int({24'd0, b[7:0]});
+            err       = !a2_ok;
+          end
+        end
+        OP_ADDILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x + {24'd0, c[7:0]}); end
+        OP_SUBILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x - {24'd0, c[7:0]}); end
+        OP_SEND, OP_SEND0, OP_SSEND, OP_SSEND0: begin
+          go_lookup = 1'b1;
+          lk_argc_n = c[6:0];
+          lk_blk_n  = c[7];
+          pre_self  = op == OP_SSEND || op == OP_SSEND0;
+          err       = !(ia + 17'(c[6:0]) + 17'd1 < 17'(NREGS));
+        end
+        OP_BLKCALL: begin
+          do_call = 1'b1;
+          npc     = pr_info[PC_BITS-1:0];
+          err     = (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
+                    !ra_proc || !(ia + 17'(blk_n) < 17'(NREGS)) ||
+                    (pr_info[23] && blk_n != {1'b0, pr_info[22:16]}); // lambda は引数の数を調べる
+        end
+        OP_EXEC: begin
+          // クラスの本体を self = R[a] で呼ぶ (引数 0 個、ブロックなし)
+          do_frame = 1'b1;
+          npc      = b[PC_BITS-1:0];
+          err      = !a1_ok || sp >= SB'(STACK_DEPTH);
+        end
+        OP_ENTER: begin
+          // 引数の数を調べ、nregs (b) までのレジスタを nil で埋める
+          do_enter = 1'b1;
+          err      = argc != a || 17'(bp) + 17'(b) > 17'(NREGS);
+        end
+        OP_RETURN, OP_RETNIL: begin
+          if (sp == '0) halt = 1'b1;
+          else begin
+            do_ret = 1'b1;
+            npc    = ret_pc[top];
+            wval   = op == OP_RETURN ? ra : V_NIL;
+          end
+        end
+        OP_BREAK: begin
+          if (sp == '0) err = 1'b1;
+          else if (c == 16'd0) begin
+            // フレームを1つ畳んで b へ
+            do_ret = 1'b1;
+            npc    = b[PC_BITS-1:0];
+            wval   = ra;
+          end else if (cp_lam) begin
+            // lambda の中の break は lambda から戻る
+            do_ret = 1'b1;
+            npc    = ret_pc[top];
+            wval   = ra;
+          end else begin
+            // Proc を作ったフレームまで畳む (そのフレームの底を S_WALK で求める)
+            go_walk = 1'b1;
+          end
+        end
+        OP_RETURN_BLK: begin
+          // 一番内側の lambda (無ければ深さ c のメソッド) を S_LWALK で探してから畳む
+          err      = c > 16'd15;
+          go_lwalk = 1'b1;
+        end
+        OP_GETUPVAR, OP_BLKPUSH: begin
+          err = c > 16'd15;
+          if (fb_now) begin wr = 1'b1; wval = regs[iu[RB-1:0]]; err = !u_ok; end
+          else go_walk = 1'b1;
+        end
+        OP_SETUPVAR: begin
+          err = c > 16'd15;
+          if (fb_now) begin set_up = 1'b1; wval = ra; err = !u_ok; end
+          else go_walk = 1'b1;
+        end
+        OP_BLOCK:  go_block = 1'b1;
+        OP_ARRAY:  begin go_array = 1'b1; err = b[7:0] != 0 && !(ia + 17'(b[7:0]) - 17'd1 < 17'(NREGS)); end
+        OP_ARRAY2: begin go_array = 1'b1; err = c[7:0] != 0 && !(17'(bp) + 17'(b[7:0]) + 17'(c[7:0]) - 17'd1 < 17'(NREGS)); end
+        OP_AREF: begin
+          // 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
+          wr   = 1'b1;
+          err  = !b_ok;
+          wval = rb_ary ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
+        end
+        OP_GETIDX: begin
+          if (!ra_ary) begin
+            go_lookup = 1'b1; lk_sym_n = SYM_AREF; err = !a2_ok;
+          end else begin
+            wr = 1'b1; wval = idx_val; err = !a1_ok || !ra1_int;
+          end
+        end
+        OP_GETIDX0: begin
+          if (!b_ok) err = 1'b1;
+          else if (!rb_ary) begin
+            // 配列でなければ R[a] = R[b]、R[a+1] = 0 にして [] を送る
+            go_lookup = 1'b1;
+            lk_sym_n  = SYM_AREF;
+            pre_arb   = 1'b1;
+            pre_a1    = 1'b1;
+            pre_a1v   = mk_int('0);
+            err       = !a2_ok;
+          end else begin
+            wr = 1'b1; wval = idx_val;
+          end
+        end
+        OP_SETIDX: begin
+          if (!a2_ok) err = 1'b1;
+          else if (!ra_ary) begin
+            go_lookup = 1'b1; lk_sym_n = SYM_ASET; lk_argc_n = 7'd2; err = !a3_ok;
+          end else begin
+            go_set = 1'b1;
+            err    = !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
+          end
+        end
+        OP_STOP: halt = 1'b1;
+        default: err = 1'b1;
+      endcase
+      // a を使う命令は bp + a がレジスタファイルに収まっていること (ref_vm.rb と同じ判定)
+      if (!a_ok && !(op == OP_NOP || op == OP_JMP || op == OP_RETNIL || op == OP_STOP || op == OP_TABLE)) err = 1'b1;
+    end
 
-    // a を使う命令は bp + a がレジスタファイルに収まっていること (ref_vm.rb と同じ判定)
-    if (!a_ok && !(op == OP_NOP || op == OP_JMP || op == OP_RETNIL || op == OP_STOP)) err = 1'b1;
     if (err) begin
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
-      pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_set = 1'b0; go_incl = 1'b0;
-      go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0; go_walk = 1'b0; go_lwalk = 1'b0;
+      pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
+      do_enter = 1'b0; set_table = 1'b0; go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0;
+      go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
 
@@ -539,8 +717,10 @@ module mrb_core
       S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_proc)); end
       S_RETFIN: begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
       S_AELEM: if (m_k == (HB+1)'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_PUT:   if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
-      S_INCL:  if (m_k == (HB+1)'(m_len) || m_found) begin m_we = 1'b1; m_wdata = mk_bool(m_found); end
+      S_PUT: begin
+        if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
+        if (m_aset) begin m_we = 1'b1; m_wdata = regs[m_val[RB-1:0]]; end
+      end
       S_UNWIND: if (sp != '0 && tag_of(env) == TAG_NIL && ret_bp[top] == target) begin
         m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold;
       end
@@ -586,14 +766,15 @@ module mrb_core
 
   // ---- 状態遷移
   wire exec = state == S_EXEC && en;
+  wire run  = (state == S_EXEC || state == S_PRIM) && en; // 命令か primitive の結果を書く cycle
 
-  assign rom_addr = pc;
+  assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr : pc;
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
-  assign rf_we    = (exec && (wr || ret_now || set_up)) || (en && m_we);
-  assign rf_waddr = exec ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
-  assign rf_wdata = exec ? wval : m_wdata;
+  assign rf_we    = (run && (wr || ret_now || set_up)) || (en && m_we);
+  assign rf_waddr = run ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
+  assign rf_wdata = run ? wval : m_wdata;
   assign io_we    = exec && iow;
   assign halted   = state == S_HALT;
   assign error    = state == S_ERROR;
@@ -618,6 +799,9 @@ module mrb_core
       space   <= 1'b0;
       hp      <= '0;
       remain  <= '0;
+      t_on    <= 1'b0;
+      tlog    <= '0;
+      tbase   <= '0;
     end else if (state == S_INIT) begin
       // レジスタファイルは一括ではリセットしない (ブロック RAM にできるように)
       regs[clr_ptr[RB-1:0]] <= V_NIL;
@@ -630,34 +814,76 @@ module mrb_core
         if (m_we) regs[m_waddr[RB-1:0]] <= m_wdata;
         case (state)
           S_FETCH: state <= S_EXEC;
-          S_EXEC: begin
+          S_EXEC, S_PRIM: begin
+            if (state == S_EXEC) ir <= rom_data;
             if (wr) regs[ia[RB-1:0]] <= wval;
             if (set_up) regs[iu[RB-1:0]] <= ra;
             if (pop_len) heap[arr_p + HB'(1)] <= mk_int({16'd0, arr_len - 16'd1});
+            if (set_lam) heap[ha(val_of(ra1)) + HB'(1)] <= mk_int(val_of(heap[ha(val_of(ra1)) + HB'(1)]) | 32'h0080_0000);
             if (set_const) begin
               consts[b[CB-1:0]] <= ra;
               cvalid[b[CB-1:0]] <= 1'b1;
             end
+            if (set_table) begin
+              t_on  <= 1'b1;
+              tlog  <= a[3:0];
+              tbase <= b[PC_BITS-1:0];
+            end
             gc_done <= 1'b0;
             if (err) state <= S_ERROR;
             else if (halt) state <= S_HALT;
-            else if (do_call) begin
-              ret_pc[sp[SB-2:0]] <= pc + PC_BITS'(1);
-              ret_bp[sp[SB-2:0]] <= bp;
-              ret_cp[sp[SB-2:0]] <= cp;
+            else if (go_lookup) begin
+              // メソッド探索の前の準備 (トレースに出さない書き込み)
+              if (pre_self) regs[ia[RB-1:0]] <= regs[bp];
+              if (pre_arb) regs[ia[RB-1:0]] <= rb;
+              if (pre_a1) regs[ia1[RB-1:0]] <= pre_a1v;
+              lk_cls   <= recv_cls;
+              lk_sym   <= lk_sym_n;
+              lk_argc  <= lk_argc_n;
+              lk_blk   <= lk_blk_n;
+              lk_super <= 1'b0;
+              lk_depth <= '0;
+              state    <= t_on ? S_LOOKUP : S_ERROR;
+            end else if (do_call) begin
+              // ブロックの呼び出し: R0 は Proc を作った時の self
+              ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
+              ret_bp[sp[SB-2:0]]  <= bp;
+              ret_cp[sp[SB-2:0]]  <= cp;
               ret_env[sp[SB-2:0]] <= env;
-              ret_fn[sp[SB-2:0]] <= fn;
-              env                <= V_NIL;
-              fn                 <= call_nregs;
-              sp                 <= sp + SB'(1);
-              regs[ia[RB-1:0]]   <= regs[bp]; // 呼び出し先の R0 = self
-              bp                 <= ia[RB-1:0];
-              cp                 <= op == OP_BLKCALL ? ra : V_NIL;
-              argc               <= {1'b0, c[6:0]};
-              clr_ptr            <= call_clr_from;
-              clr_end            <= call_clr_to;
-              pc                 <= npc;
-              state              <= call_clr_from < call_clr_to ? S_CLEAR : S_FETCH;
+              ret_fn[sp[SB-2:0]]  <= fn;
+              env                 <= V_NIL;
+              fn                  <= call_nregs;
+              sp                  <= sp + SB'(1);
+              regs[ia[RB-1:0]]    <= heap[pr_p + HB'(4)];
+              bp                  <= ia[RB-1:0];
+              cp                  <= ra;
+              clr_ptr             <= call_clr_from;
+              clr_end             <= call_clr_to;
+              pc                  <= npc;
+              state               <= call_clr_from < call_clr_to ? S_CLEAR : S_FETCH;
+            end else if (do_frame) begin
+              // クラスの本体: 引数 0 個、ブロックの枠は nil
+              ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
+              ret_bp[sp[SB-2:0]]  <= bp;
+              ret_cp[sp[SB-2:0]]  <= cp;
+              ret_env[sp[SB-2:0]] <= env;
+              ret_fn[sp[SB-2:0]]  <= fn;
+              sp                  <= sp + SB'(1);
+              regs[ia1[RB-1:0]]   <= V_NIL;
+              bp                  <= ia[RB-1:0];
+              cp                  <= V_NIL;
+              env                 <= V_NIL;
+              fn                  <= '0;
+              argc                <= '0;
+              pc                  <= npc;
+              state               <= S_FETCH;
+            end else if (do_enter) begin
+              // R0、引数、ブロックの枠より後ろを nregs まで nil で埋める
+              fn      <= b[7:0];
+              clr_ptr <= (RB+1)'(17'(bp) + 17'(a) + 17'd2);
+              clr_end <= (RB+1)'(17'(bp) + 17'(b));
+              pc      <= npc;
+              state   <= 17'(a) + 17'd2 < 17'(b) ? S_CLEAR : S_FETCH;
             end else if (do_ret && !ret_now) begin
               // env があるので、先にレジスタを写してから戻る
               hold   <= wval;
@@ -677,7 +903,7 @@ module mrb_core
             end else if (go_block) begin
               // env がまだ無ければ Proc と一緒に確保する (env が先)
               env_new <= tag_of(env) == TAG_NIL;
-              need    <= (HB+1)'(4) + (tag_of(env) == TAG_NIL ? (HB+1)'(fn) + (HB+1)'(2) : '0);
+              need    <= (HB+1)'(5) + (tag_of(env) == TAG_NIL ? (HB+1)'(fn) + (HB+1)'(2) : '0);
               mop     <= MO_BLOCK;
               m_dst   <= ia[RB:0];
               state   <= S_ALLOC;
@@ -693,19 +919,14 @@ module mrb_core
               m_dst <= ia[RB:0];
               state <= S_ALLOC;
             end else if (go_set) begin
+              // SETIDX / Array#[]= は R[a][R[a+1]] = R[a+2]、push / << は R[a] の最後に R[a+1]
               m_arr  <= ia[RB:0];
               m_dst  <= ia[RB:0];
-              m_push <= op != OP_SETIDX;
-              m_val  <= op == OP_SETIDX ? ia2[RB:0] : ia1[RB:0];
-              m_i    <= op == OP_SETIDX ? idx_adj[15:0] : arr_len;
+              m_push <= set_push;
+              m_aset <= set_aset;
+              m_val  <= set_push ? ia1[RB:0] : ia2[RB:0];
+              m_i    <= set_push ? arr_len : idx_adj[15:0];
               state  <= S_SET1;
-            end else if (go_incl) begin
-              m_dst   <= ia[RB:0];
-              m_len   <= arr_len;
-              m_k     <= '0;
-              m_found <= 1'b0;
-              hold    <= ra1;
-              state   <= S_INCL;
             end else if (go_unwind_ret) begin
               hold   <= ra;
               target <= bp;
@@ -717,7 +938,7 @@ module mrb_core
             end else if (go_sleep) begin
               m_dst  <= ia[RB:0];
               hold   <= ra1;
-              remain <= b[7:0] == BI_SLEEP ? 42'(unsigned'(y)) * 42'd1000 : 42'(unsigned'(y));
+              remain <= prim == PR_SLEEP ? 42'(unsigned'(y)) * 42'd1000 : 42'(unsigned'(y));
               state  <= S_SLEEP;
             end else begin
               pc    <= npc;
@@ -728,6 +949,53 @@ module mrb_core
             regs[clr_ptr[RB-1:0]] <= V_NIL;
             clr_ptr <= clr_ptr + (RB+1)'(1);
             if (clr_ptr + (RB+1)'(1) >= clr_end) state <= S_FETCH;
+          end
+
+          // ---- メソッド探索。S_LOOKUP で最初の位置を出し、S_PROBE で1語ずつ比べる
+          S_LOOKUP: begin
+            lk_i  <= '0;
+            state <= S_PROBE;
+          end
+          S_PROBE: begin
+            if (!lk_empty && lk_hit) begin
+              if (lk_super) begin
+                // 親クラスへ (MAX_SUPER_DEPTH 段で諦める)
+                if (lk_depth == 6'(MAX_SUPER_DEPTH - 1)) state <= S_ERROR;
+                else begin
+                  lk_cls   <= rom_data[15:0];
+                  lk_super <= 1'b0;
+                  lk_depth <= lk_depth + 6'd1;
+                  state    <= S_LOOKUP;
+                end
+              end else if (rom_data[15:14] == TGT_PRIM) begin
+                prim  <= rom_data[13:0];
+                state <= S_PRIM;
+              end else if (rom_data[15:14] != TGT_PC || sp >= SB'(STACK_DEPTH)) state <= S_ERROR;
+              else begin
+                // メソッド: フレームを作る (底は bp + a)。ブロックを渡さなければその枠は nil
+                ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
+                ret_bp[sp[SB-2:0]]  <= bp;
+                ret_cp[sp[SB-2:0]]  <= cp;
+                ret_env[sp[SB-2:0]] <= env;
+                ret_fn[sp[SB-2:0]]  <= fn;
+                sp                  <= sp + SB'(1);
+                if (!lk_blk) regs[RB'(ia + 17'(lk_argc) + 17'd1)] <= V_NIL;
+                bp                  <= ia[RB-1:0];
+                cp                  <= V_NIL;
+                env                 <= V_NIL;
+                fn                  <= '0;
+                argc                <= {1'b0, lk_argc};
+                pc                  <= rom_data[PC_BITS-1:0];
+                state               <= S_FETCH;
+              end
+            end else if (lk_empty || lk_last) begin
+              // 見つからない: メソッドなら親クラスを探しに、親の輪も無ければ NoMethodError
+              if (lk_super) state <= S_ERROR;
+              else begin
+                lk_super <= 1'b1;
+                state    <= S_LOOKUP;
+              end
+            end else lk_i <= lk_i + PC_BITS'(1);
           end
 
           // ---- 確保: 足りなければ一度だけ GC する
@@ -835,12 +1103,14 @@ module mrb_core
               m_k <= m_k + 1'b1;
             end
           end
-          // ---- Proc: 見出し、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc
+          // ---- Proc: 見出し、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、
+          //      外側の Proc、作ったフレームの self
           S_BLOCK: begin
-            heap[p_proc]          <= mk(TAG_HDR, {CLS_PROC, 16'd3});
+            heap[p_proc]          <= mk(TAG_HDR, {CLS_PROC, 16'd4});
             heap[p_proc + HB'(1)] <= mk_int({c, b});
             heap[p_proc + HB'(2)] <= env_new ? mk(TAG_OBJ, 32'(p_new)) : env;
             heap[p_proc + HB'(3)] <= cp;
+            heap[p_proc + HB'(4)] <= regs[bp];
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
           end
@@ -947,18 +1217,6 @@ module mrb_core
             if (m_i >= m_len) heap[s_p + HB'(1)] <= mk_int(32'(m_i) + 32'd1);
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
-          end
-
-          // ---- include?: 1 cycle に1要素
-          S_INCL: begin
-            if (m_k == (HB+1)'(m_len) || m_found) begin
-              pc    <= pc + PC_BITS'(1);
-              state <= S_FETCH;
-            end else begin
-              if (eq_of(heap[ha(val_of(heap[ha(val_of(regs[m_dst[RB-1:0]])) + HB'(2)])) + HB'(1) + m_k[HB-1:0]], hold))
-                m_found <= 1'b1;
-              m_k <= m_k + 1'b1;
-            end
           end
 
           // ---- break (動的): Proc を作ったフレームへ戻るまで1段ずつ畳む

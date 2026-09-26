@@ -4,7 +4,8 @@ class FpgaIsaTest < Minitest::Test
   include FpgaTestHelper
 
   def test_119_opcodes_in_ops_h_order
-    assert_equal 119, FpgaIsa::OPS.size
+    assert_equal 119, FpgaIsa::ALL.size
+    assert_equal "TABLE", FpgaIsa.op(0xF0).name # FPGA だけの命令は番号の外
     assert_equal 0, FpgaIsa.op("NOP").num
     assert_equal 118, FpgaIsa.op("STOP").num
   end

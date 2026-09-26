@@ -90,7 +90,7 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
 FPGA (mruby のバイトコードを直接実行する CPU、issue #4)。`.mrb` を ROM にし、SystemVerilog のコアで走らせ、
-Ruby の参照インタプリタと突き合わせる。`def` したメソッド、ブロック (`yield` / `proc` / `each` / `map` ...)、配列 (GC 付き)、
+Ruby の参照インタプリタと突き合わせる。クラスとメソッド (実行時にメソッド表を引く)、ブロック (`yield` / `proc` / `each` / `map` ...)、配列 (GC 付き)、
 `sleep_ms` まで動く (シミュレーション上)。`vendor/picoruby` は要らない。
 macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる:
 

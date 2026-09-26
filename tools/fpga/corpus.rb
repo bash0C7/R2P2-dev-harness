@@ -20,6 +20,8 @@ module FpgaCorpus
   TABLE     = File.join(ROOT, "docs", "fpga-opcodes.md")
   DUMP_LINE = /\A\s*\d+ \d{3} /
   MAX_REGS  = FpgaIsa::RF_SIZE # 1つの irep が使えるレジスタの上限 = レジスタファイルの大きさ
+  # プログラムの前に置いて一緒に compile する組み込みメソッド (Ruby で書いたもの)
+  PRELUDE   = Dir[File.join(ROOT, "fpga", "prelude", "*.rb")].sort.freeze
   KINDS     = %w[mrb dump hex lst].freeze
 
   module_function
@@ -36,12 +38,12 @@ module FpgaCorpus
     ENV["MRBC"] || File.join(ROOT, "vendor", "picoruby", "bin", "mrbc")
   end
 
-  # src -> [mrb bytes, dump lines]
+  # src -> [mrb bytes, dump lines]。プレリュードを前に付けて1つの irep にする
   def compile(src, mrbc)
     raise Error, "mrbc not found at #{mrbc}. Run `rake setup` and `rake test:host`, or set MRBC=" unless File.executable?(mrbc)
     Dir.mktmpdir do |dir|
       out = File.join(dir, "out.mrb")
-      stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, src)
+      stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, src)
       raise Error, "mrbc failed on #{src}: #{stderr}" unless st.success?
       dump = stdout.lines.grep(DUMP_LINE).map { |l| l.strip + "\n" }
       [File.binread(out), dump.join]
@@ -92,7 +94,7 @@ module FpgaCorpus
   def table(dumps)
     counts = dumps.transform_values { |d| op_counts(d) }
     used = counts.values.flat_map(&:keys).uniq
-    rows = FpgaIsa::OPS.select { |op| used.include?(op.name) || FpgaIsa.supported?(op.name) }
+    rows = FpgaIsa::OPS.compact.select { |op| used.include?(op.name) || FpgaIsa.supported?(op.name) }
     names = dumps.keys
     out = +"# FPGA コアの対応命令と、コーパスでの出現回数\n\n"
     out << "`rake fpga:corpus` が `fpga/corpus/*.rb` の `mrbc -v` から生成する。手で直さない。\n"
