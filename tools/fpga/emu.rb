@@ -60,7 +60,14 @@ module FpgaEmu
     (ms / 1000.0 * mhz * 1_000_000 / (CYCLES_PER_STEP * ce_div)).floor
   end
 
-  # 境界の前後の揺れ (リセット解除の同期、クロックイネーブルの位相) を吸収する余裕
+  # エミュレーターが実際に実行した命令の数 (END 行)。呼び出しで nil を埋める cycle があるので、
+  # 時間から計算した window_steps より少ないことがある
+  def executed_steps(events)
+    e = events.find { |ev| ev.what == "END" }
+    e && e.value
+  end
+
+  # 境界の前後の揺れ (最後の命令が END の前後どちらで数えられたか) を吸収する余裕
   STEP_SLACK = 4
 
   # 参照インタプリタを何 step 回せば ms の間の命令を全部含むか

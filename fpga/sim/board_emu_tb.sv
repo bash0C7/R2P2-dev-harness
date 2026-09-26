@@ -9,7 +9,7 @@
 //   +rom=<hex>     ROM イメージ (tools/fpga/mrb2rom.rb の出力)
 //   +ms=<n>        何 ms 分回すか (既定 1000)
 //   +mhz=<n>       クロック周波数 MHz (既定 125、Raspberry Pi Pico と同じ)。top の CLOCK_50 に入れる
-//   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"
+//   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"。最後の END 行の value は実行した命令の数
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
 `timescale 1ns / 1ps
@@ -45,6 +45,10 @@ module board_emu_tb;
   function automatic longint now_us();
     return $time * TIME_SCALE / 1000;
   endfunction
+
+  // 実行した命令の数 (END 行に書き、参照インタプリタを同じ数だけ回すのに使う)
+  longint steps = 0;
+  always @(negedge clk) if (dut.soc.core.retire) steps++;
 
   logic [1:0] led_q = 2'b00;
   bit         first = 1'b1; // リセット解除直後の状態も1回書く
@@ -102,7 +106,7 @@ module board_emu_tb;
     repeat (3) @(posedge clk);
     reset_n = 1'b1;
     #(longint'(ms) * 1000000 / TIME_SCALE);
-    $fdisplay(fd, "%0d END 0", now_us());
+    $fdisplay(fd, "%0d END %0d", now_us(), steps);
     $fclose(fd);
     $display("PASS board_emu_tb");
     $finish;

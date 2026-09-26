@@ -379,6 +379,34 @@ module mrb_core_tb;
     run();
     expect_error(0);
 
+    // ---- ブロック (変換器が iterator を SSEND に下げたもの): 外側の変数と break
+    begin_test("upvar and break");
+    prog.push_back(w(OP_LOADI_5, 1));                        // 0
+    prog.push_back(w(OP_SSEND0, 2, 4, (4 << 8) | 0));        // 1
+    prog.push_back(w(OP_LOADI_7, 3));                        // 2: (break で飛ばされる)
+    prog.push_back(w(OP_STOP));                              // 3: break の出口
+    prog.push_back(w(OP_ENTER, 0));                          // 4: ブロック (bp = 2)
+    prog.push_back(w(OP_GETUPVAR, 1, 1));                    // 5: R1 = 外側の R1 (bp - 1)
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 6
+    prog.push_back(w(OP_SETUPVAR, 1, 1));                    // 7: 外側の R1 = 6
+    prog.push_back(w(OP_BREAK, 1, 3));                       // 8: 値 6 を持って出口 (pc 3) へ
+    run();
+    expect_halt();
+    expect_reg(1, vint(6));
+    expect_reg(2, vint(6));                                  // break の値はブロックのフレームの R0 (= 外側の R2)
+    expect_reg(3, vint(6));                                  // ブロックの R1 (外側の R3 と同じ場所。pc 2 は通らない)
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after break", name, dut.core.sp, dut.core.bp);
+
+    begin_test("upvar below the register file");
+    prog.push_back(w(OP_GETUPVAR, 1, 1));                    // bp = 0 から下は無い
+    run();
+    expect_error(0);
+
+    begin_test("break outside a block");
+    prog.push_back(w(OP_BREAK, 1, 0));
+    run();
+    expect_error(0);
+
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");
     $finish;

@@ -65,6 +65,8 @@ package mrb_pkg;
   localparam logic [7:0] OP_SETGV     = 8'd22; // BB
   localparam logic [7:0] OP_GETCONST  = 8'd29; // BB
   localparam logic [7:0] OP_SETCONST  = 8'd30; // BB
+  localparam logic [7:0] OP_GETUPVAR  = 8'd33; // BBB
+  localparam logic [7:0] OP_SETUPVAR  = 8'd34; // BBB
   localparam logic [7:0] OP_JMP       = 8'd38; // S
   localparam logic [7:0] OP_JMPIF     = 8'd39; // BS
   localparam logic [7:0] OP_JMPNOT    = 8'd40; // BS
@@ -76,6 +78,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_ENTER     = 8'd57; // W
   localparam logic [7:0] OP_RETURN    = 8'd61; // B
   localparam logic [7:0] OP_RETNIL    = 8'd64; // Z
+  localparam logic [7:0] OP_BREAK     = 8'd67; // B
   localparam logic [7:0] OP_ADD       = 8'd69; // B
   localparam logic [7:0] OP_ADDI      = 8'd70; // BB
   localparam logic [7:0] OP_SUB       = 8'd71; // B

@@ -644,7 +644,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 ### 対応命令と値の表現 (#6)
 
 コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith / methods / math / blink_method) の
-`mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 48 命令。
+`mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 51 命令を
+コアが実行し、`BLOCK` `SENDB` `SSENDB` の3つは変換器がほかの命令に下げる (下の「ブロック」)。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
 - **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
@@ -662,7 +663,9 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **`*` `/` `%` は Ruby と同じく floor 側に丸める** (`-7 / 2 = -4`、`-7 % 3 = 2`)。0 で割るとエラー。
   `INT_MIN / -1` は折り返して `INT_MIN`。シフトは 32 以上ずらすと 0 (右は符号)、負の量は逆向き
 - **定数 (`GETCONST` `SETCONST`) は 16 個まで。** 名前は変換時に番号にする。代入前に読むとエラー
-- **ブロック (`BLOCK` `SENDB`、`times` `each` `loop`)、pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
+- **ブロックは `times` `upto` `downto` `loop` に直接渡すものだけ** (下の「ブロック」)。`each` などほかの iterator、
+  ブロックを値として持つこと (`proc`、`&blk`、`yield`)、ブロックからメソッドを抜ける `return` は変換時に止める
+- **pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
 
@@ -703,6 +706,20 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 - 正規表現はキャプチャ (`$1`) が取れない。`String#split(/\s+/)` は `TypeError`
 - `File.open(path, "rb") { |f| f.read }`、`getbyte` `byteslice` `unpack`、`format`、`exit`、`STDERR` は使える。
   48bit の整数も扱える (`MRB_INT64`)
+
+### ブロック
+
+ブロックを値 (Proc) にはしない。変換器が `BLOCK` + `SENDB` / `SSENDB` を、カウンタのループとブロックの irep の呼び出し
+(`SSEND` と同じ仕組み) に展開する。コアに足したのは `GETUPVAR` `SETUPVAR` `BREAK` の3命令だけ。
+
+- **展開する iterator:** `n.times { |i| }` (i = 0 から i < n)、`a.upto(b) { |i| }` (i <= b)、`a.downto(b) { |i| }` (i >= b)、
+  `loop { }`。結果は受け手 (`loop` は break の値)。ブロックの引数は必須のものだけで、iterator が渡さない分は nil
+- **フレームの置き場所:** iterator を呼んだフレームの R[a] が受け手、その後ろに引数・ブロック・カウンタを置き、さらに後ろ
+  (bp + a + 3、`upto`/`downto` は + 4、`loop` は + 2) をブロックのフレームにする。距離が変換時に決まるので、
+  外側の変数 (`GETUPVAR` / `SETUPVAR` の番号と深さ) は「bp から下へ何本目」(ROM の b) に直せる。入れ子のブロックは距離を足す
+- **`break` (`BREAK`):** ブロックのフレームを畳み (値はブロックの R0 = 呼んだ側のレジスタ)、iterator の break の出口へ飛ぶ。
+  出口の pc は変換時に決まる。`next` は普通の `RETURN` / `RETNIL`
+- `BLOCK` は `LOADNIL` にする (ROM の一覧では `<- BLOCK` と出る)。展開された語は一覧に `<- SENDB` と出る
 
 ### CPU コア (#8)
 
@@ -793,7 +810,7 @@ CPU は1命令 2 cycle なので、`CE_DIV=1` なら 125MHz で 6250 万命令/�
   (1命令あたり 10 cycle 以上は残す)、時刻を k 倍して表示する。`CE_DIV=1000` なら k=100 で、実機 2 秒分が
   0.3 秒ほどで回る。1:1 で回した結果との差は 10µs 以内だった。`FPGA_EMU_EXACT=1` で 1:1 (実機 1 秒分に 20 秒ほど)
 - **ボタン。** `<name>.buttons` (`fpga/corpus/button.buttons`) に `<ms> <0|1>` (1 = 押す) を書くと、その時刻に `D[0]` を落とす
-- **参照と突き合わせる。** 同じ時間に実行される命令数だけ参照インタプリタを回し、LED の点灯の変化の列が一致するかを見る。
+- **参照と突き合わせる。** エミュレーターが実際に実行した命令の数 (ログの END 行) だけ参照インタプリタを回し、LED の点灯の変化の列が一致するかを見る。
   窓の端は ±4 命令の揺れを許す。ボタンを押すプログラムは、時刻と命令数を対応付けられないので突き合わせない。
   「参照の先頭と一致」だけだと、LED が点きっぱなしになる壊れ方 (`SUB` を足し算にした時) を見逃したので、変化の数まで比べる
 - **見えないもの。** 点灯の極性、ピンの電気的なこと、Quartus での合成結果。これらは実機で見る

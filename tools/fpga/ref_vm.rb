@@ -7,6 +7,8 @@
 #   - 整数以外への算術・大小比較、0 での割り算は「エラー停止」(mruby ならメソッド探索や例外)
 #   - メソッド呼び出しはレジスタ窓: 呼び出し先の R0 は呼び出し元の R[a]。レジスタファイルは全フレームで共有
 #   - RETURN / RETNIL はフレームが無ければ停止、あれば呼び出し元へ戻る。STOP は停止
+#   - ブロックは変換器が iterator のループと SSEND に下げる。GETUPVAR / SETUPVAR の b は「bp から下へ何本目」、
+#     BREAK はフレームを畳んで b (iterator の break の出口) へ飛ぶ
 #
 # トレース (1行1イベント、数値は10進、値は16進8桁):
 #   X <step> <pc> <op>          命令を実行した
@@ -174,6 +176,19 @@ class FpgaRefVm
           when "SSEND", "SSEND0" then return call(pc, a, b, c)
           when "ENTER" then return(@argc == a ? nxt : :error)
           when "RETURN", "RETNIL" then return ret(step, name == "RETURN" ? reg(a) : NIL)
+          when "BREAK"
+            # ブロックのフレームを畳み、iterator の break の出口 (b) へ
+            return :error if @stack.empty?
+            ret(step, reg(a))
+            return b
+          when "GETUPVAR"
+            return :error if b > @bp
+            set(step, a, @regs[@bp - b])
+          when "SETUPVAR"
+            return :error if b > @bp
+            @regs[@bp - b] = reg(a)
+            @trace << format("W %d %d %d %08x", step, @bp - b, reg(a)[0], reg(a)[1])
+            nil
           when "STOP" then return :halt
           end
     err == :error ? :error : nxt
