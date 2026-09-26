@@ -36,35 +36,109 @@ package mrb_pkg;
   // コアの大きさ (tools/fpga/isa.rb)
   localparam int RF_SIZE     = 128;
   localparam int STACK_DEPTH = 16;
-  localparam int NCONST      = 16;
+  localparam int NCONST      = 64;
 
-  // SEND / SEND0 の組み込みメソッド (tools/fpga/isa.rb の BUILTINS)。ROM の b に入る番号
-  localparam int NBUILTIN = 24;
-  localparam logic [7:0] BI_MOD    = 8'd0; // % (1 arg)
-  localparam logic [7:0] BI_NEQ    = 8'd1; // != (1 arg)
-  localparam logic [7:0] BI_NEG    = 8'd2; // -@ (0 arg)
-  localparam logic [7:0] BI_SHL    = 8'd3; // << (1 arg)
-  localparam logic [7:0] BI_SHR    = 8'd4; // >> (1 arg)
-  localparam logic [7:0] BI_AND    = 8'd5; // & (1 arg)
-  localparam logic [7:0] BI_OR     = 8'd6; // | (1 arg)
-  localparam logic [7:0] BI_XOR    = 8'd7; // ^ (1 arg)
-  localparam logic [7:0] BI_INV    = 8'd8; // ~ (0 arg)
-  localparam logic [7:0] BI_NOT    = 8'd9; // ! (0 arg)
-  localparam logic [7:0] BI_ABS    = 8'd10; // abs (0 arg)
-  localparam logic [7:0] BI_ZERO   = 8'd11; // zero? (0 arg)
-  localparam logic [7:0] BI_EVEN   = 8'd12; // even? (0 arg)
-  localparam logic [7:0] BI_ODD    = 8'd13; // odd? (0 arg)
-  localparam logic [7:0] BI_SIZE   = 8'd14; // size (0 arg)
-  localparam logic [7:0] BI_LENGTH = 8'd15; // length (0 arg)
-  localparam logic [7:0] BI_EMPTY  = 8'd16; // empty? (0 arg)
-  localparam logic [7:0] BI_FIRST  = 8'd17; // first (0 arg)
-  localparam logic [7:0] BI_LAST   = 8'd18; // last (0 arg)
-  localparam logic [7:0] BI_POP    = 8'd19; // pop (0 arg)
-  localparam logic [7:0] BI_PUSH   = 8'd20; // push (1 arg)
-  localparam logic [7:0] BI_INCL   = 8'd21; // include? (1 arg)
-  localparam logic [7:0] BI_SLEEPMS = 8'd22; // sleep_ms (1 arg)
-  localparam logic [7:0] BI_SLEEP  = 8'd23; // sleep (1 arg)
-  localparam logic [NBUILTIN-1:0] BI_ARGC1 = 24'b111100000000000011111011;
+  // メソッド表 (tools/fpga/isa.rb)。1語 = {クラス, シンボル, 飛び先}。飛び先の上位 2bit が種類
+  localparam logic [15:0] SUPER_SYM = 16'hffff;
+  localparam int MAX_SUPER_DEPTH = 32;
+  localparam logic [1:0] TGT_PC = 2'd0;
+  localparam logic [1:0] TGT_PRIM = 2'd1;
+  // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)
+  localparam logic [15:0] SYM_ADD  = 16'd0; // +
+  localparam logic [15:0] SYM_SUB  = 16'd1; // -
+  localparam logic [15:0] SYM_MUL  = 16'd2; // *
+  localparam logic [15:0] SYM_DIV  = 16'd3; // /
+  localparam logic [15:0] SYM_EQ   = 16'd4; // ==
+  localparam logic [15:0] SYM_LT   = 16'd5; // <
+  localparam logic [15:0] SYM_LE   = 16'd6; // <=
+  localparam logic [15:0] SYM_GT   = 16'd7; // >
+  localparam logic [15:0] SYM_GE   = 16'd8; // >=
+  localparam logic [15:0] SYM_AREF = 16'd9; // []
+  localparam logic [15:0] SYM_ASET = 16'd10; // []=
+
+  // primitive (tools/fpga/isa.rb の PRIMS)。メソッド表の飛び先の番号
+  localparam logic [13:0] PR_IADD     = 14'd0; // Integer#+ (1 arg)
+  localparam logic [13:0] PR_ISUB     = 14'd1; // Integer#- (1 arg)
+  localparam logic [13:0] PR_IMUL     = 14'd2; // Integer#* (1 arg)
+  localparam logic [13:0] PR_IDIV     = 14'd3; // Integer#/ (1 arg)
+  localparam logic [13:0] PR_ILT      = 14'd4; // Integer#< (1 arg)
+  localparam logic [13:0] PR_ILE      = 14'd5; // Integer#<= (1 arg)
+  localparam logic [13:0] PR_IGT      = 14'd6; // Integer#> (1 arg)
+  localparam logic [13:0] PR_IGE      = 14'd7; // Integer#>= (1 arg)
+  localparam logic [13:0] PR_IEQ      = 14'd8; // Integer#== (1 arg)
+  localparam logic [13:0] PR_MOD      = 14'd9; // Integer#% (1 arg)
+  localparam logic [13:0] PR_NEG      = 14'd10; // Integer#-@ (0 arg)
+  localparam logic [13:0] PR_SHL      = 14'd11; // Integer#<< (1 arg)
+  localparam logic [13:0] PR_SHR      = 14'd12; // Integer#>> (1 arg)
+  localparam logic [13:0] PR_AND      = 14'd13; // Integer#& (1 arg)
+  localparam logic [13:0] PR_OR       = 14'd14; // Integer#| (1 arg)
+  localparam logic [13:0] PR_XOR      = 14'd15; // Integer#^ (1 arg)
+  localparam logic [13:0] PR_INV      = 14'd16; // Integer#~ (0 arg)
+  localparam logic [13:0] PR_ABS      = 14'd17; // Integer#abs (0 arg)
+  localparam logic [13:0] PR_ZERO     = 14'd18; // Integer#zero? (0 arg)
+  localparam logic [13:0] PR_EVEN     = 14'd19; // Integer#even? (0 arg)
+  localparam logic [13:0] PR_ODD      = 14'd20; // Integer#odd? (0 arg)
+  localparam logic [13:0] PR_NOT      = 14'd21; // Object#! (0 arg)
+  localparam logic [13:0] PR_OEQ      = 14'd22; // Object#== (1 arg)
+  localparam logic [13:0] PR_CLASSOF  = 14'd23; // Object#class (0 arg)
+  localparam logic [13:0] PR_SLEEPMS  = 14'd24; // Object#sleep_ms (1 arg)
+  localparam logic [13:0] PR_SLEEP    = 14'd25; // Object#sleep (1 arg)
+  localparam logic [13:0] PR_LAMBDA   = 14'd26; // Object#lambda (0 arg)
+  localparam logic [13:0] PR_SIZE     = 14'd27; // Array#size (0 arg)
+  localparam logic [13:0] PR_LENGTH   = 14'd28; // Array#length (0 arg)
+  localparam logic [13:0] PR_EMPTY    = 14'd29; // Array#empty? (0 arg)
+  localparam logic [13:0] PR_FIRST    = 14'd30; // Array#first (0 arg)
+  localparam logic [13:0] PR_LAST     = 14'd31; // Array#last (0 arg)
+  localparam logic [13:0] PR_POP      = 14'd32; // Array#pop (0 arg)
+  localparam logic [13:0] PR_PUSH     = 14'd33; // Array#push (1 arg)
+  localparam logic [13:0] PR_APUSH    = 14'd34; // Array#<< (1 arg)
+  localparam logic [13:0] PR_AGET     = 14'd35; // Array#[] (1 arg)
+  localparam logic [13:0] PR_ASET     = 14'd36; // Array#[]= (2 arg)
+  localparam logic [13:0] PR_CALL     = 14'd37; // Proc#call (any)
+  // 引数の数 (8'hff は何個でも)
+  function automatic logic [7:0] prim_nargs(input logic [13:0] p);
+    case (p)
+      PR_IADD    : return 8'h01;
+      PR_ISUB    : return 8'h01;
+      PR_IMUL    : return 8'h01;
+      PR_IDIV    : return 8'h01;
+      PR_ILT     : return 8'h01;
+      PR_ILE     : return 8'h01;
+      PR_IGT     : return 8'h01;
+      PR_IGE     : return 8'h01;
+      PR_IEQ     : return 8'h01;
+      PR_MOD     : return 8'h01;
+      PR_NEG     : return 8'h00;
+      PR_SHL     : return 8'h01;
+      PR_SHR     : return 8'h01;
+      PR_AND     : return 8'h01;
+      PR_OR      : return 8'h01;
+      PR_XOR     : return 8'h01;
+      PR_INV     : return 8'h00;
+      PR_ABS     : return 8'h00;
+      PR_ZERO    : return 8'h00;
+      PR_EVEN    : return 8'h00;
+      PR_ODD     : return 8'h00;
+      PR_NOT     : return 8'h00;
+      PR_OEQ     : return 8'h01;
+      PR_CLASSOF : return 8'h00;
+      PR_SLEEPMS : return 8'h01;
+      PR_SLEEP   : return 8'h01;
+      PR_LAMBDA  : return 8'h00;
+      PR_SIZE    : return 8'h00;
+      PR_LENGTH  : return 8'h00;
+      PR_EMPTY   : return 8'h00;
+      PR_FIRST   : return 8'h00;
+      PR_LAST    : return 8'h00;
+      PR_POP     : return 8'h00;
+      PR_PUSH    : return 8'h01;
+      PR_APUSH   : return 8'h01;
+      PR_AGET    : return 8'h01;
+      PR_ASET    : return 8'h02;
+      PR_CALL    : return 8'hff;
+      default: return 8'h00;
+    endcase
+  endfunction
 
   // I/O
   localparam int NPORTS = 4;
@@ -134,6 +208,10 @@ package mrb_pkg;
   localparam logic [7:0] OP_ARRAY2     = 8'd83; // BBB
   localparam logic [7:0] OP_AREF       = 8'd87; // BBB
   localparam logic [7:0] OP_BLOCK      = 8'd98; // BB
+  localparam logic [7:0] OP_CLASS      = 8'd103; // BB
+  localparam logic [7:0] OP_EXEC       = 8'd105; // BB
   localparam logic [7:0] OP_TDEF       = 8'd107; // BBB
+  localparam logic [7:0] OP_SDEF       = 8'd108; // BBB
   localparam logic [7:0] OP_STOP       = 8'd118; // Z
+  localparam logic [7:0] OP_TABLE      = 8'd240; // BS
 endpackage

@@ -14,7 +14,7 @@ module FpgaQuartus
   BOARD_DIR = File.join(ROOT, "fpga", "boards", "peridot_air")
   RTL_DIR   = File.join(ROOT, "fpga", "rtl")
   PROJECT   = "mrb_peridot_air".freeze
-  ROM_DEPTH = 1024 # mrb_soc の既定 PC_BITS = 10
+  ROM_DEPTH = 1 << FpgaIsa::PC_BITS # mrb_soc の既定 PC_BITS
 
   module_function
 

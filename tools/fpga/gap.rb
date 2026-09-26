@@ -7,6 +7,7 @@
 require "open3"
 require "tmpdir"
 require_relative "converter"
+require_relative "corpus"
 
 module FpgaGap
   module_function
@@ -56,6 +57,7 @@ module FpgaGap
     ireps.each_with_index do |ir, i|
       decoded[i].each { |insn| defined[ir.syms[insn.operands[1]]] = true if %w[TDEF DEF SDEF].include?(insn.name) }
     end
+    FpgaIsa::PRIMS.each { |pr| defined[pr[1]] = true }
     found = {}
     ireps.each_with_index do |ir, i|
       found["pool (strings / big integers)"] = true if ir.plen > 0
@@ -64,10 +66,8 @@ module FpgaGap
         found["op #{insn.name}"] = true unless FpgaIsa.convertible?(insn.name)
         next unless %w[SEND SEND0 SENDB SSEND SSEND0 SSENDB].include?(insn.name)
         sym = ir.syms[insn.operands[1]]
-        argc = insn.name.end_with?("0") ? 0 : (insn.operands[2] || 0) & 0x0F
         next if defined[sym]
-        next if FpgaIsa.builtin(sym, argc) || FpgaIsa.iterator(sym, insn.name.sub(/0\z/, ""), argc)
-        next if %w[call block_given? require].include?(sym)
+        next if %w[block_given? require].include?(sym)
         found["method #{sym}"] = true
       end
     end
@@ -80,11 +80,11 @@ module FpgaGap
     oos = out_of_scope(src)
     return { path: path, status: :out_of_scope, reasons: [oos] } if oos
 
-    mrb = File.join(dir, File.basename(path, ".rb") + ".mrb")
-    _out, err, st = Open3.capture3(mrbc, "-o", mrb, path)
-    return { path: path, status: :blocked, reasons: ["mrbc: #{err.lines.first.to_s.strip}"] } unless st.success?
-
-    bin = File.binread(mrb)
+    bin = begin
+      FpgaCorpus.compile(path, mrbc).first
+    rescue FpgaCorpus::Error => e
+      return { path: path, status: :blocked, reasons: ["mrbc: #{e.message.lines[1].to_s.strip}"] }
+    end
     reasons = requires(src).map { |r| "require #{r}" } + blockers(bin)
     return { path: path, status: :blocked, reasons: reasons } unless reasons.empty?
 

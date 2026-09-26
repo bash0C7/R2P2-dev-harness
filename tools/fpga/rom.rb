@@ -1,14 +1,18 @@
 # .mrb (RITE0400) を CPU コアの ROM イメージ ($readmemh) にする。
 #
 # ROM は1命令1語の固定長 48bit (docs/spec.md §10「ROM 形式」):
-#   [47:40] op  mruby の opcode 番号
+#   [47:40] op  mruby の opcode 番号 (FPGA だけの命令は isa.rb の EXTRA)
 #   [39:32] a
 #   [31:16] b   BB の b / BS の s / S の s / BSS の上位16bit
 #   [15:0]  c   BBB の c / BSS の下位16bit
+# 並び: pc 0 は TABLE (メソッド表の位置と大きさ)、その後に irep を親・子の順、最後にメソッド表。
 # 変換で済ませること:
 #   - ジャンプ先は mruby の「次の命令からのバイト相対」から、ROM の絶対語アドレスにする
 #   - GETGV / SETGV の Syms[b] は io_map.rb のポート番号にする
-#   - 未対応の命令・子 irep・pool・未知のグローバル変数は、場所を示して止まる
+#   - シンボルはプログラム全体で番号を振る。メソッドの呼び出し (SEND / SSEND) は b = シンボルの番号
+#   - クラスの定義 (class / module / def / def self.) を読み、メソッド表を作る (継承は親クラスへの輪で表す)
+#   - 定数は字句の入れ子で探し、クラスならクラスの即値 (CLASS)、ほかは番号 (GETCONST / SETCONST)
+#   - 未対応の命令・pool・未知のグローバル変数は、場所を示して止まる
 #
 # 変換器の一部として PicoRuby でも走る (isa.rb の注記)。isa.rb / io_map.rb / rite.rb を先に読み込んでおくこと。
 module FpgaRom
@@ -16,13 +20,14 @@ module FpgaRom
 
   WORD_BITS = 48
   HEX_DIGITS = WORD_BITS / 4
-  # ROM の空き。op 0xff は未対応命令なので、プログラムの外へ出たコアはエラーで止まる
+  # ROM の空き。op 0xff は未対応命令なので、プログラムの外へ出たコアはエラーで止まる。メソッド表の空きも同じ
   PAD = (1 << WORD_BITS) - 1
 
   class Word
     attr_reader :pc, :insn, :op, :a, :b, :c, :irep, :first
 
-    # first: 元の命令を展開した語のうち先頭か (iterator は1命令が数語になる)
+    # first: 元の命令を展開した語のうち先頭か (block_given? は1命令が数語になる)。
+    # insn が nil の語は変換器が足したもの (TABLE、クラスの本体の先頭の ENTER、メソッド表)
     def initialize(pc, insn, op, a, b, c, irep = nil, first = true)
       @pc = pc
       @insn = insn
@@ -47,12 +52,17 @@ module FpgaRom
   class Image
     attr_reader :words, :nregs, :ireps
     attr_accessor :symbols # シンボルの名前 (番号順)
+    attr_accessor :table_base, :table_size
+    attr_accessor :class_names # クラスの番号 -> 名前 (ユーザーのクラスとモジュール)
 
     def initialize(words, nregs, ireps)
       @words = words
       @nregs = nregs
       @ireps = ireps
       @symbols = []
+      @table_base = 0
+      @table_size = 0
+      @class_names = {}
     end
 
     def hex
@@ -61,22 +71,55 @@ module FpgaRom
       out
     end
 
-    # 人が読む一覧。irep ごとに見出しを付け、pc と元の iseq のバイト位置を並べる。
+    # 人が読む一覧。irep ごとに見出しを付け、pc と元の iseq のバイト位置を並べる。最後にメソッド表とシンボル
     def listing
       out = ""
       words.each do |w|
+        if w.pc >= table_base && table_size > 0
+          next if w.value == PAD
+          out << "# method table (#{table_size} words)\n" if out.index("# method table").nil?
+          cls = (w.op << 8) | w.a
+          kind = w.c >> 14
+          tgt = w.c & 0x3FFF
+          what = if w.b == FpgaIsa::SUPER_SYM then "super #{w.c}"
+                 elsif kind == FpgaIsa::TGT_PRIM then "prim #{FpgaIsa::PRIMS[tgt] ? FpgaIsa::PRIMS[tgt][3] : tgt}"
+                 else "pc #{tgt}"
+                 end
+          sym = w.b == FpgaIsa::SUPER_SYM ? "-" : ":#{symbols[w.b]}"
+          out << format("%4d  class %-5d %-18s %s\n", w.pc, cls, sym, what)
+          next
+        end
         ir = w.irep
-        out << format("# irep %d  nregs %d\n", ir.index, ir.nregs) if w.pc == ir.base
+        out << format("# irep %d  nregs %d\n", ir.index, ir.nregs) if ir && w.pc == ir.base
         name = FpgaIsa::OPS[w.op].name
-        from = name == w.insn.name ? "" : "  <- #{w.insn.name}"
-        addr = w.first ? format("%03d", w.insn.addr) : "   "
+        from = w.insn.nil? ? "  (added)" : name == w.insn.name ? "" : "  <- #{w.insn.name}"
+        addr = w.insn && w.first ? format("%03d", w.insn.addr) : "   "
         out << format("%4d  %s  %-9s a=%-3d b=%-5d c=%-5d  %s%s\n", w.pc, addr, name, w.a, w.b, w.c, w.hex, from)
+      end
+      unless class_names.empty?
+        out << "# classes\n"
+        class_names.keys.sort.each { |id| out << format("%4d  %s\n", id, class_names[id]) }
       end
       unless symbols.empty?
         out << "# symbols\n"
         symbols.each_with_index { |s, i| out << format("%4d  :%s\n", i, s) }
       end
       out
+    end
+  end
+
+  # クラスとモジュール。methods / meta_methods はメソッド名 -> 中身の irep
+  class Klass
+    attr_reader :name, :id, :methods, :meta_methods, :is_module
+    attr_accessor :super_id
+
+    def initialize(name, id, super_id, is_module)
+      @name = name
+      @id = id
+      @super_id = super_id
+      @is_module = is_module
+      @methods = {}
+      @meta_methods = {}
     end
   end
 
@@ -115,16 +158,15 @@ module FpgaRom
     end
     raise Error, "#{source}: unsupported instruction(s): #{bad.join(', ')}" unless bad.empty?
 
-    ctx = Context.new(source, methods(ireps, decoded, source), {}, {}, {}, {}, decoded)
-    ctx.lambdas = {}
-    ctx.symbols = {}
-    block_sites(ireps, decoded, ctx)
+    ctx = Context.new(source, decoded)
+    analyze(top, ctx.object, ctx)
 
-    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める (iterator などは数語に展開する)
-    base = 0
+    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める。pc 0 は TABLE、クラスの本体は先頭に ENTER を足す
+    base = 1
     pc_of = []
     ireps.each_with_index do |ir, i|
       ir.base = base
+      base += 1 if ctx.bodies[ir.index]
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
@@ -134,8 +176,9 @@ module FpgaRom
       pc_of << table
     end
 
-    words = []
+    words = [nil]
     ireps.each_with_index do |ir, i|
+      words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
       decoded[i].each_with_index do |insn, k|
         pc = pc_of[i][insn.addr]
         specs = lowered(insn, ir, k, pc, ctx)
@@ -148,51 +191,103 @@ module FpgaRom
         end
       end
     end
+
+    entries = method_entries(ctx)
+    size = 16
+    size *= 2 while size < entries.size * 2
+    log2 = 0
+    log2 += 1 while (1 << log2) < size
+    tbase = words.size
+    if tbase + size > (1 << FpgaIsa::PC_BITS)
+      raise Error, "#{source}: the program and its method table need #{tbase + size} words, the ROM has #{1 << FpgaIsa::PC_BITS}"
+    end
+    slots = Array.new(size)
+    entries.each do |cls, sym, tgt|
+      h = FpgaIsa.table_hash(cls, sym, size - 1)
+      h = (h + 1) & (size - 1) while slots[h]
+      slots[h] = [cls, sym, tgt]
+    end
+    words[0] = Word.new(0, nil, FpgaIsa.op("TABLE").num, log2, tbase, 0, top, false)
+    slots.each_with_index do |e, i|
+      words << if e
+                 Word.new(tbase + i, nil, e[0] >> 8, e[0] & 0xFF, e[1], e[2], nil, false)
+               else
+                 Word.new(tbase + i, nil, 0xFF, 0xFF, 0xFFFF, 0xFFFF, nil, false)
+               end
+    end
+
     image = Image.new(words, top.nregs, ireps)
     image.symbols = ctx.symbols.keys
+    image.table_base = tbase
+    image.table_size = size
+    ctx.classes.each { |k| image.class_names[k.id] = k.name if k.id >= FpgaIsa::FIRST_USER_CLASS }
     image
   end
 
-  # 変換中に持ち回るもの: メソッド名 -> 呼び出し先の irep、定数名 -> 番号、
-  # SENDB / SSENDB (irep と命令の番号 -> Site)、ブロックの irep の番号 -> それを作った irep、
-  # iterator に直接渡したブロックの irep の番号 -> Site (break の出口が決まる)
+  # 変換中に持ち回るもの
+  #   classes: 全クラス (組み込み + プログラムの)。scope: irep の番号 -> 字句のクラス (定数と def の持ち主)
+  #   bodies: クラスの本体の irep の番号 -> true。parents: ブロックの irep の番号 -> 作った irep
+  #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
-    attr_reader :source, :methods, :consts, :sites, :parents, :direct, :decoded
+    attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
+
+    def initialize(source, decoded)
+      @source = source
+      @decoded = decoded
+      @classes = []
+      FpgaIsa::CLASSES.each do |name, id|
+        @classes << Klass.new(name, id, name == "Object" ? nil : FpgaIsa::CLS_OBJECT, false)
+      end
+      @scope = {}
+      @bodies = {}
+      @parents = {}
+      @class_at = {}
+      @exec_at = {}
+      @consts = {}
+      @const_keys = {}
+      @lambdas = {}
+      @symbols = {}
+      FpgaIsa::OP_SYMS.each { |s| sym_id(s) } # 演算の落ち先は固定の番号
+    end
 
     def sym_id(name)
       @symbols[name] = @symbols.size unless @symbols.key?(name)
       @symbols[name]
     end
 
-    def initialize(source, methods, consts, sites, parents, direct, decoded)
-      @source = source
-      @methods = methods
-      @consts = consts
-      @sites = sites
-      @parents = parents
-      @direct = direct
-      @decoded = decoded
-    end
-  end
-
-  # ブロックを取る呼び出し。kind は iterator の名前か "method" (def したメソッドにブロックを渡す)
-  class Site
-    attr_reader :parent, :a, :kind, :argc, :callee
-    attr_accessor :brk_pc
-
-    def initialize(parent, a, kind, argc, callee)
-      @parent = parent
-      @a = a
-      @kind = kind
-      @argc = argc
-      @callee = callee
+    def object
+      @classes[0]
     end
 
-    # Proc は R[a + 引数の数 + 1]
-    def proc_reg
-      a + argc + 1
+    def klass_named(name)
+      @classes.each { |k| return k if k.name == name }
+      nil
+    end
+
+    def klass_id(id)
+      @classes.each { |k| return k if k.id == id }
+      nil
+    end
+
+    def next_id
+      id = FpgaIsa::FIRST_USER_CLASS
+      @classes.each { |k| id = k.id + 1 if k.id >= id }
+      id
+    end
+
+    # 字句の入れ子 (A::B の中なら A::B, A, 一番外) の順に、名前の候補
+    def lexical_names(scope, name)
+      names = []
+      path = scope.id == FpgaIsa::CLS_OBJECT ? "" : scope.name
+      while path != ""
+        names << "#{path}::#{name}"
+        cut = path.rindex("::")
+        path = cut ? path[0, cut] : ""
+      end
+      names << name
+      names
     end
   end
 
@@ -200,46 +295,99 @@ module FpgaRom
     "#{irep.index}:#{k}"
   end
 
-  # BLOCK が作る irep の親を覚え、SENDB / SSENDB の種類を決める
-  def self.block_sites(ireps, decoded, ctx)
+  # k 番目の命令より前で、最後に R[reg] を書いた命令 (a に書く命令だけを見る)
+  def self.prev_def(insns, k, reg)
+    i = k - 1
+    while i >= 0
+      insn = insns[i]
+      return insn if insn.operands[0] == reg && !%w[SETGV SETCONST SETIV JMP JMPIF JMPNOT JMPNIL].include?(insn.name)
+      i -= 1
+    end
+    nil
+  end
+
+  # irep を字句のクラス scope の中として読み、クラス・メソッド・定数・ブロックの親を集める
+  def self.analyze(irep, scope, ctx)
     source = ctx.source
-    ireps.each_with_index do |ir, i|
-      insns = decoded[i]
-      insns.each_with_index do |insn, k|
-        if insn.name == "BLOCK" || insn.name == "LAMBDA"
-          block = ir.reps[insn.operands[1]]
-          ctx.parents[block.index] = ir
-          ctx.lambdas[block.index] = true if insn.name == "LAMBDA"
-          block_params(block, decoded[block.index], source)
-          next
+    ctx.scope[irep.index] = scope
+    insns = ctx.decoded[irep.index]
+    insns.each_with_index do |insn, k|
+      ops = insn.operands
+      case insn.name
+      when "CLASS", "MODULE"
+        a = ops[0]
+        sym = irep.syms[ops[1]]
+        outer = prev_def(insns, k, a)
+        unless outer && outer.name == "LOADNIL"
+          raise Error, "#{source}: #{insn.name.downcase} #{sym} at #{where(irep, insn)} is nested with ::, which is not supported"
         end
-        next unless insn.name == "SENDB" || insn.name == "SSENDB"
-        a, symi, c = insn.operands
-        sym = ir.syms[symi]
-        argc = c & 0xF
-        raise Error, "#{source}: #{sym} at #{where(ir, insn)} is called with keyword arguments or a splat (not supported)" if (c >> 4) != 0 || argc == 15
-        callee = nil
-        kind = nil
-        if insn.name == "SSENDB" && ctx.methods[sym]
-          kind = "method"
-          callee = ctx.methods[sym]
-        elsif FpgaIsa.iterator(sym, insn.name, argc)
-          kind = sym
+        super_id = nil
+        if insn.name == "CLASS"
+          sup = prev_def(insns, k, a + 1)
+          if sup && sup.name == "GETCONST"
+            sname = irep.syms[sup.operands[1]]
+            sk = nil
+            ctx.lexical_names(scope, sname).each { |n| sk ||= ctx.klass_named(n) }
+            raise Error, "#{source}: superclass #{sname} of #{sym} at #{where(irep, insn)} is not a known class" unless sk
+            super_id = sk.id
+          elsif !(sup && sup.name == "LOADNIL")
+            raise Error, "#{source}: the superclass of #{sym} at #{where(irep, insn)} must be a constant"
+          end
         end
-        unless kind
-          raise Error, "#{source}: #{sym} with a block at #{where(ir, insn)} is not supported " \
-                       "(blocks go to def'd methods, times, upto, downto, loop, each, each_with_index, map, proc, lambda)"
+        full = scope.id == FpgaIsa::CLS_OBJECT ? sym : "#{scope.name}::#{sym}"
+        k2 = ctx.klass_named(full)
+        if k2
+          if super_id && k2.super_id != super_id
+            raise Error, "#{source}: superclass mismatch for #{full} at #{where(irep, insn)}"
+          end
+        else
+          k2 = Klass.new(full, ctx.next_id, insn.name == "CLASS" ? (super_id || FpgaIsa::CLS_OBJECT) : nil, insn.name == "MODULE")
+          ctx.classes << k2
         end
-        site = Site.new(ir, a, kind, argc, callee)
-        ctx.sites[site_key(ir, k)] = site
-        # 直前の BLOCK で作ったブロックを iterator に渡すなら、その break は iterator の出口へ飛ぶ
+        ctx.class_at[site_key(irep, k)] = k2
+        # 続く EXEC a I[n] が本体
+        j = k + 1
+        while j < insns.size && !(insns[j].name == "EXEC" && insns[j].operands[0] == a)
+          j += 1
+        end
+        raise Error, "#{source}: no body for #{full} at #{where(irep, insn)}" if j >= insns.size
+        body = irep.reps[insns[j].operands[1]]
+        ctx.exec_at[site_key(irep, j)] = body
+        ctx.bodies[body.index] = true
+        analyze(body, k2, ctx)
+      when "TDEF"
+        m = irep.reps[ops[2]]
+        scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
+        analyze(m, scope, ctx)
+      when "SDEF"
+        d = prev_def(insns, k, ops[0])
+        unless ctx.bodies[irep.index] && d && d.name == "LOADSELF"
+          raise Error, "#{source}: def of a singleton method at #{where(irep, insn)} is only supported as `def self.x` in a class body"
+        end
+        m = irep.reps[ops[2]]
+        scope.meta_methods[irep.syms[ops[1]]] = m
+        analyze(m, scope, ctx)
+      when "BLOCK", "LAMBDA"
+        block = irep.reps[ops[1]]
+        ctx.parents[block.index] = irep
+        ctx.lambdas[block.index] = true if insn.name == "LAMBDA"
+        block_params(block, ctx.decoded[block.index], source)
+        analyze(block, scope, ctx)
+      when "SETCONST"
+        name = irep.syms[ops[1]]
+        ctx.const_keys[scope.id == FpgaIsa::CLS_OBJECT ? name : "#{scope.name}::#{name}"] = true
+      when "SSENDB"
+        # lambda { } に渡したブロックは lambda (ブロックの中の return を通すため)
+        sym = irep.syms[ops[1]]
         prev = k > 0 ? insns[k - 1] : nil
-        if prev && prev.name == "BLOCK" && prev.operands[0] == site.proc_reg && !%w[method proc lambda].include?(kind)
-          ctx.direct[ir.reps[prev.operands[1]].index] = site
+        argc = ops[2] & 0xF
+        if sym == "lambda" && prev && prev.name == "BLOCK" && prev.operands[0] == ops[0] + argc + 1
+          ctx.lambdas[irep.reps[prev.operands[1]].index] = true
         end
-        # lambda { } に渡したブロックは lambda になる
-        if prev && prev.name == "BLOCK" && prev.operands[0] == site.proc_reg && kind == "lambda"
-          ctx.lambdas[ir.reps[prev.operands[1]].index] = true
+      when "SSEND", "SSEND0"
+        sym = irep.syms[ops[1]]
+        if ctx.bodies[irep.index] && %w[attr_reader attr_writer attr_accessor include extend private public protected].include?(sym)
+          raise Error, "#{source}: #{sym} in a class body at #{where(irep, insn)} is not supported yet"
         end
       end
     end
@@ -278,109 +426,52 @@ module FpgaRom
     false
   end
 
+  # 誰も def していない名前か (block_given? を下げてよいか)
+  def self.defined_anywhere?(ctx, sym)
+    ctx.classes.each { |k| return true if k.methods[sym] || k.meta_methods[sym] }
+    false
+  end
+
   # ほかの命令の列に下げる命令なら [[名前, a, b, c], ...] を返す。そのまま1語にするなら nil
   def self.lowered(insn, ir, k, pc, ctx)
-    site = ctx.sites[site_key(ir, k)]
-    return expand_site(site, pc, ctx) if site
-    if (insn.name == "SSEND0" || insn.name == "SSEND") && ir.syms[insn.operands[1]] == "block_given?" && !ctx.methods["block_given?"]
+    if (insn.name == "SSEND0" || insn.name == "SSEND") && ir.syms[insn.operands[1]] == "block_given?" &&
+       !defined_anywhere?(ctx, "block_given?")
       # block_given? は、囲むメソッドのブロックの枠 (必須の引数の次) を BLKPUSH で読み、!! で true / false にする
       depth, method = block_depth(ir, ctx)
       m1 = method.index == 0 ? 0 : block_params(method, ctx.decoded[method.index], ctx.source)
       a = insn.operands[0]
-      return [["BLKPUSH", a, m1 + 1, depth], ["SEND0", a, FpgaIsa.builtin("!", 0), 0], ["SEND0", a, FpgaIsa.builtin("!", 0), 0]]
+      bang = ctx.sym_id("!")
+      return [["BLKPUSH", a, m1 + 1, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
     end
+    return [["LOADTRUE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETTRUE"
+    return [["LOADFALSE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETFALSE"
     nil
   end
 
-  # iterator などを命令の列に展開する。break の飛び先 (Site#brk_pc) もここで決まる。
-  # Proc は R[s + 引数の数 + 1]、その後ろにカウンタなど、さらに後ろ (f) がブロックのフレーム
-  def self.expand_site(site, pc, ctx)
-    s = site.a
-    pr = site.proc_reg
-    out = []
-    case site.kind
-    when "method"
-      callee = site.callee
-      return [["SSEND", s, callee.base || 0, (callee.nregs << 8) | 0x80 | site.argc]]
-    when "proc", "lambda"
-      return [["MOVE", s, pr, 0]]
-    when "loop"
-      f = pr + 1
-      out << ["MOVE", f, pr, 0]
-      out << ["BLKCALL", f, 0, 0]
-      out << ["JMP", 0, pc, 0]
-      site.brk_pc = pc + out.size
-      out << ["MOVE", s, f, 0]
-      return out
+  # メソッド表の中身: [クラス, シンボル, 飛び先] の列
+  def self.method_entries(ctx)
+    entries = []
+    ctx.classes.each do |k|
+      k.methods.each { |sym, m| entries << [k.id, ctx.sym_id(sym), m.base] }
+      k.meta_methods.each { |sym, m| entries << [FpgaIsa::META | k.id, ctx.sym_id(sym), m.base] }
     end
-
-    i = pr + 1                                  # カウンタ
-    res = pr + 2                                # map の結果
-    f = site.kind == "map" ? pr + 3 : pr + 2    # ブロックのフレーム
-    array = %w[each each_with_index map].include?(site.kind)
-    out << ["ARRAY", res, 0, 0] if site.kind == "map"
-    if site.kind == "upto" || site.kind == "downto"
-      out << ["MOVE", i, s, 0]
-    else
-      out << ["LOADI_0", i, 0, 0]
+    # primitive: その名前がプログラムのどこかに出てくるものだけ (出ないものは呼べない)。同じクラスの def が勝つ
+    FpgaIsa::PRIMS.each_with_index do |pr, i|
+      next unless ctx.symbols.key?(pr[1])
+      k = ctx.klass_named(pr[0])
+      next if k.methods[pr[1]]
+      entries << [k.id, ctx.symbols[pr[1]], (FpgaIsa::TGT_PRIM << 14) | i]
     end
-    top = pc + out.size
-    # 続けるか: times は i < n、upto は i <= 引数、downto は i >= 引数、配列は i < size
-    out << ["MOVE", f, i, 0]
-    if array
-      out << ["MOVE", f + 1, s, 0]
-      out << ["SEND0", f + 1, FpgaIsa.builtin("size", 0), 0]
-    else
-      out << ["MOVE", f + 1, site.kind == "times" ? s : s + 1, 0]
-    end
-    out << [{ "upto" => "LE", "downto" => "GE" }[site.kind] || "LT", f, 0, 0]
-    jmpnot = out.size
-    out << ["JMPNOT", f, 0, 0] # 出口は後で埋める
-    nargs = 1
-    if array
-      out << ["MOVE", f, s, 0]
-      out << ["MOVE", f + 1, i, 0]
-      out << ["GETIDX", f, 0, 0]
-      out << ["MOVE", f + 1, f, 0]
-      if site.kind == "each_with_index"
-        out << ["MOVE", f + 2, i, 0]
-        nargs = 2
+    # 親クラスへの輪。メタクラスは親のメタクラスへ、Object のメタクラスは Class へ
+    ctx.classes.each do |k|
+      if k.is_module # モジュールのメタクラスの親は Module
+        entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, FpgaIsa.class_id("Module")]
+        next
       end
-    else
-      out << ["MOVE", f + 1, i, 0]
+      entries << [k.id, FpgaIsa::SUPER_SYM, k.super_id] if k.super_id
+      entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, k.super_id ? FpgaIsa::META | k.super_id : FpgaIsa::CLS_CLASS]
     end
-    out << ["MOVE", f, pr, 0]
-    out << ["BLKCALL", f, nargs, 0]
-    if site.kind == "map"
-      out << ["MOVE", f + 1, f, 0]
-      out << ["MOVE", f, res, 0]
-      out << ["SEND", f, FpgaIsa.builtin("<<", 1), 1]
-    end
-    out << [site.kind == "downto" ? "SUBI" : "ADDI", i, 1, 0]
-    out << ["JMP", 0, top, 0]
-    done = pc + out.size
-    out[jmpnot][2] = done
-    out << ["MOVE", s, res, 0] if site.kind == "map" # map の結果。ほかは受け手 (R[s]) がそのまま結果
-    out << ["JMP", 0, pc + out.size + 2, 0]
-    site.brk_pc = pc + out.size
-    out << ["MOVE", s, f, 0] # break: ブロックのフレームの R0 に置かれた値が結果
-    out
-  end
-
-  # TDEF (def) を全部拾い、メソッド名 -> 中身の irep にする。同じ名前の再定義は止める (静的に解決するため)
-  def self.methods(ireps, decoded, source)
-    table = {}
-    ireps.each_with_index do |ir, i|
-      decoded[i].each do |insn|
-        next unless insn.name == "TDEF"
-        sym = ir.syms[insn.operands[1]]
-        if table[sym]
-          raise Error, "#{source}: #{sym} is defined twice (#{where(ir, insn)}); methods are resolved statically"
-        end
-        table[sym] = ir.reps[insn.operands[2]]
-      end
-    end
-    table
+    entries
   end
 
   def self.encode(insn, pc, pc_of, irep, ctx, k = 0)
@@ -429,66 +520,59 @@ module FpgaRom
       b = port.num
     end
 
+    # 定数: 字句の入れ子の順に探す。クラスならその即値 (CLASS)、ほかは番号
     if name == "GETCONST" || name == "SETCONST"
       sym = irep.syms[b]
-      slot = ctx.consts[sym]
+      scope = ctx.scope[irep.index]
+      key = nil
+      if name == "SETCONST"
+        key = scope.id == FpgaIsa::CLS_OBJECT ? sym : "#{scope.name}::#{sym}"
+      else
+        ctx.lexical_names(scope, sym).each do |n|
+          next if key
+          kl = ctx.klass_named(n)
+          return Word.new(pc, insn, FpgaIsa.op("CLASS").num, a, kl.id, 0, irep) if kl
+          key = n if ctx.const_keys[n]
+        end
+        key ||= sym
+      end
+      slot = ctx.consts[key]
       unless slot
         slot = ctx.consts.size
         raise Error, "#{source}: too many constants (the core has #{FpgaIsa::NCONST}) at #{sym}" if slot >= FpgaIsa::NCONST
-        ctx.consts[sym] = slot
+        ctx.consts[key] = slot
       end
       b = slot
     end
 
-    # TDEF: 呼び出し先は変換時に決めたので、実行時は R[a] = nil だけ (mruby はメソッド名の Symbol)
-    if name == "TDEF"
-      b = 0
+    # クラス / モジュール: R[a] = クラスの即値。本体 (EXEC): b = 本体の先頭 pc
+    return Word.new(pc, insn, FpgaIsa.op("CLASS").num, a, ctx.class_at[site_key(irep, k)].id, 0, irep) if name == "CLASS" || name == "MODULE"
+    return Word.new(pc, insn, FpgaIsa.op("EXEC").num, a, ctx.exec_at[site_key(irep, k)].base, 0, irep) if name == "EXEC"
+
+    # def: メソッド表は変換時に作ったので、実行時は R[a] = :名前 だけ
+    if name == "TDEF" || name == "SDEF"
+      b = ctx.sym_id(irep.syms[ops[1]])
       c = 0
     end
 
-    # SSEND / SSEND0: b = 呼び出し先の先頭 pc、c = (呼び出し先の nregs << 8) | 引数の数。
-    # def したメソッドが無く、sleep_ms / sleep なら組み込み (SEND) にする
-    if name == "SSEND" || name == "SSEND0"
-      sym = irep.syms[b]
-      argc = name == "SSEND" ? c & 0xF : 0
-      if name == "SSEND" && (c >> 4) != 0
-        raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with keyword arguments (not supported)"
+    return Word.new(pc, insn, FpgaIsa.op("MOVE").num, a, 0, 0, irep) if name == "LOADSELF"
+    return Word.new(pc, insn, FpgaIsa.op("RETURN").num, 0, 0, 0, irep) if name == "RETSELF"
+
+    # メソッドの呼び出し: b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。SSEND は self に送る
+    if %w[SEND SEND0 SENDB SSEND SSEND0 SSENDB].include?(name)
+      sym = irep.syms[ops[1]]
+      argc = name.end_with?("0") ? 0 : ops[2] & 0xF
+      kw = name.end_with?("0") ? 0 : ops[2] >> 4
+      if kw != 0 || argc == 15
+        raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with keyword arguments or a splat (not supported yet)"
       end
-      raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with a splat (not supported)" if argc == 15
-      callee = ctx.methods[sym]
-      if !callee && FpgaIsa::SELF_BUILTINS.include?(sym) && FpgaIsa.builtin(sym, argc)
-        return Word.new(pc, insn, FpgaIsa.op(argc.zero? ? "SEND0" : "SEND").num, a, FpgaIsa.builtin(sym, argc), argc, irep)
-      end
-      unless callee
-        raise Error, "#{source}: #{sym} at #{where(irep, insn)} is not a method defined with def in this program " \
-                     "(methods are resolved statically; built-in methods like puts are not supported)"
-      end
-      b = callee.base
-      c = (callee.nregs << 8) | argc
+      blk = name.end_with?("B")
+      op = name.start_with?("SS") ? (blk ? "SSEND" : name) : (blk ? "SEND" : name)
+      return Word.new(pc, insn, FpgaIsa.op(op).num, a, ctx.sym_id(sym), argc | (blk ? 0x80 : 0), irep)
     end
 
-    # SEND / SEND0: b = 組み込みメソッドの番号 (isa.rb の BUILTINS)、c = 引数の数。
-    # .call は Proc の呼び出し (BLKCALL a, 引数の数)
-    if name == "SEND" || name == "SEND0"
-      sym = irep.syms[b]
-      argc = name == "SEND" ? c & 0xF : 0
-      if sym == "call" && (name == "SEND0" || (c >> 4).zero?) && argc != 15
-        return Word.new(pc, insn, FpgaIsa.op("BLKCALL").num, a, argc, 0, irep)
-      end
-      id = FpgaIsa::SELF_BUILTINS.include?(sym) ? nil : FpgaIsa.builtin(sym, argc)
-      if name == "SEND" && (c >> 4) != 0
-        id = nil
-      end
-      unless id
-        raise Error, "#{source}: .#{sym} with #{argc} argument(s) at #{where(irep, insn)} is not a supported method " \
-                     "(supported: #{FpgaIsa::BUILTINS.map { |n, k| "#{n}/#{k}" }.join(' ')} call)"
-      end
-      b = id
-      c = argc
-    end
-
-    # ENTER: 必須の引数 (と &blk) だけ。a = 必須の引数の数。ブロックの ENTER は NOP にする
-    # (Proc は引数の数を調べない。足りなければ nil、多ければ捨てる)
+    # ENTER: 必須の引数 (と &blk) だけ。a = 必須の引数の数、b = nregs (ENTER が残りのレジスタを nil で埋める)、
+    # c = &blk を受けるか。ブロックの ENTER は NOP にする (Proc は BLKCALL が埋め、引数の数は lambda だけ調べる)
     if name == "ENTER"
       aspec = ops[0]
       m1 = (aspec >> 18) & 0x1F
@@ -498,6 +582,8 @@ module FpgaRom
       end
       return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if ctx.parents[irep.index]
       a = m1
+      b = irep.nregs
+      c = aspec & 1
     end
 
     # LOADSYM: b = プログラム全体で振ったシンボルの番号
@@ -525,18 +611,11 @@ module FpgaRom
       c = x & 0xF
     end
 
-    # BREAK: iterator に直接渡したブロックなら、フレームを1つ畳んで iterator の出口 (b) へ (c = 0)。
-    # def したメソッドや Proc に渡したブロックなら、作ったフレームまで畳む (c = 1)
+    # BREAK: Proc を作ったフレームまで畳み、その呼び出しの結果にする (c = 1。c = 0 はフレームを1つ畳んで b へ)
     if name == "BREAK"
       raise Error, "#{source}: break at #{where(irep, insn)} is not inside a block" unless ctx.parents[irep.index]
-      site = ctx.direct[irep.index]
-      if site
-        b = site.brk_pc
-        c = 0
-      else
-        b = 0
-        c = 1
-      end
+      b = 0
+      c = 1
     end
 
     # RETURN_BLK: ブロックの中の return。c = 囲むメソッドのフレームの深さ (途中の lambda はコアが見つける)

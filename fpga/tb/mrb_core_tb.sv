@@ -7,7 +7,7 @@
 module mrb_core_tb;
   import mrb_pkg::*;
 
-  localparam int PC_BITS = 6;
+  localparam int PC_BITS = 8;
   localparam int NREGS   = 16;
 
   logic clk = 1'b0;
@@ -45,14 +45,39 @@ module mrb_core_tb;
     return {op, a, b, c};
   endfunction
 
+  // メソッド表: ROM の最後の TB_SIZE 語。ケースは pc 0 に w_table() を置き、method_entry で中身を足す
+  localparam int TB_LOG  = 5;
+  localparam int TB_SIZE = 2**TB_LOG;
+  localparam int TB_BASE = 2**PC_BITS - TB_SIZE;
+  logic [47:0] table_w [TB_SIZE];
+
+  function automatic logic [47:0] w_table();
+    return w(OP_TABLE, TB_LOG, TB_BASE);
+  endfunction
+
+  function automatic logic [15:0] tgt_prim(input logic [13:0] p);
+    return {TGT_PRIM, p};
+  endfunction
+
+  // (クラス, シンボル) -> 飛び先 を変換器と同じハッシュ (クラス * 5 + シンボル) と開番地法で入れる
+  task automatic method_entry(input logic [15:0] cls, input logic [15:0] sym, input logic [15:0] tgt);
+    int h;
+    h = (int'(cls) * 5 + int'(sym)) & (TB_SIZE - 1);
+    while (table_w[h] != '1) h = (h + 1) & (TB_SIZE - 1);
+    table_w[h] = {cls, sym, tgt};
+  endtask
+
   task automatic begin_test(input string n);
     name = n;
     prog.delete();
+    if ($test$plusargs("verbose")) begin $display("case: %s at %0t", n, $time); $fflush(); end
+    for (int i = 0; i < TB_SIZE; i++) table_w[i] = '1;
   endtask
 
   task automatic run();
     #1; // mrb_soc の initial (ROM を全 bit 1 で埋める) より後に書く
     for (int i = 0; i < 2**PC_BITS; i++) dut.rom[i] = (i < prog.size()) ? prog[i] : '1;
+    for (int i = 0; i < TB_SIZE; i++) dut.rom[TB_BASE + i] = table_w[i];
     rst_n = 1'b0;
     repeat (2) @(posedge clk);
     #1 rst_n = 1'b1;
@@ -276,67 +301,126 @@ module mrb_core_tb;
     run();
     expect_error(0);
 
-    // ---- メソッド呼び出し (レジスタ窓): add(3, 4)
+    // ---- メソッド呼び出し (レジスタ窓、メソッド表): add(3, 4)。一番外の self は nil なので NilClass に置く
     begin_test("call and return");
-    prog.push_back(w(OP_LOADI_3, 2));                        // 0
-    prog.push_back(w(OP_LOADI_4, 3));                        // 1
-    prog.push_back(w(OP_SSEND, 1, 4, (6 << 8) | 2));         // 2: bp 0 -> 1
-    prog.push_back(w(OP_STOP));                              // 3
-    prog.push_back(w(OP_ENTER, 2));                          // 4: add
-    prog.push_back(w(OP_MOVE, 4, 1));
-    prog.push_back(w(OP_MOVE, 5, 2));
-    prog.push_back(w(OP_ADD, 4));
-    prog.push_back(w(OP_RETURN, 4));
+    method_entry(CLS_NIL, 20, 16'd5);                        // (NilClass, :add) -> pc 5
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_3, 2));                        // 1
+    prog.push_back(w(OP_LOADI_4, 3));                        // 2
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 3: bp 0 -> 1
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_ENTER, 2, 6));                       // 5: add (引数 2、nregs 6)
+    prog.push_back(w(OP_MOVE, 4, 1));                        // 6
+    prog.push_back(w(OP_MOVE, 5, 2));                        // 7
+    prog.push_back(w(OP_ADD, 4));                            // 8
+    prog.push_back(w(OP_RETURN, 4));                         // 9
     run();
     expect_halt();
     expect_reg(1, vint(7));
     if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after return", name, dut.core.sp, dut.core.bp);
 
     begin_test("callee registers are cleared, RETNIL returns nil");
-    prog.push_back(w(OP_LOADI_5, 3));                        // 0: 呼び出し先の R2 と同じ場所
-    prog.push_back(w(OP_LOADI_1, 2));                        // 1: 引数
-    prog.push_back(w(OP_SSEND, 1, 5, (4 << 8) | 1));         // 2
-    prog.push_back(w(OP_SSEND0, 4, 7, (3 << 8) | 0));        // 3: 引数なし
-    prog.push_back(w(OP_STOP));                              // 4
-    prog.push_back(w(OP_ENTER, 1));                          // 5: 引数の後ろ (R2) は nil
-    prog.push_back(w(OP_RETURN, 2));                         // 6
-    prog.push_back(w(OP_ENTER, 0));                          // 7
-    prog.push_back(w(OP_RETNIL));                            // 8
-    prog.push_back(w(OP_LOADI_7, 4));                        // 9: (通らない)
+    method_entry(CLS_NIL, 20, 16'd8);
+    method_entry(CLS_NIL, 21, 16'd10);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_5, 3));                        // 1: 呼び出し先の R2 (ブロックの枠) の場所
+    prog.push_back(w(OP_LOADI_7, 4));                        // 2: 呼び出し先の R3 の場所
+    prog.push_back(w(OP_LOADI_1, 2));                        // 3: 引数
+    prog.push_back(w(OP_SSEND, 1, 20, 1));                   // 4: R1 = m(1)
+    prog.push_back(w(OP_LOADI_7, 5));                        // 5
+    prog.push_back(w(OP_SSEND0, 5, 21));                     // 6: R5 = n
+    prog.push_back(w(OP_STOP));                              // 7
+    prog.push_back(w(OP_ENTER, 1, 4));                       // 8: m: 枠 (R2) は呼び出しが、R3 は ENTER が nil にする
+    prog.push_back(w(OP_RETURN, 2));                         // 9
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 10: n
+    prog.push_back(w(OP_RETNIL));                            // 11
     run();
     expect_halt();
     expect_reg(1, VNIL);
+    expect_reg(3, VNIL);
     expect_reg(4, VNIL);
+    expect_reg(5, VNIL);
 
     begin_test("wrong number of arguments");
-    prog.push_back(w(OP_SSEND, 1, 2, (4 << 8) | 1));         // 0
-    prog.push_back(w(OP_STOP));                              // 1
-    prog.push_back(w(OP_ENTER, 2));                          // 2
+    method_entry(CLS_NIL, 20, 16'd3);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND, 1, 20, 1));                   // 1
+    prog.push_back(w(OP_STOP));                              // 2
+    prog.push_back(w(OP_ENTER, 2, 4));                       // 3
     run();
-    expect_error(2);
+    expect_error(3);
 
     begin_test("stack overflow");
-    prog.push_back(w(OP_SSEND0, 0, 0, (1 << 8) | 0));        // 0: 自分を呼び続ける (bp は進まない)
+    method_entry(CLS_NIL, 20, 16'd1);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 0, 20));                     // 1: 自分を呼び続ける (bp は進まない)
     run();
-    expect_error(0);
+    expect_error(1);
     if (dut.core.sp != STACK_DEPTH) $fatal(1, "%s: sp=%0d", name, dut.core.sp);
 
     begin_test("register window overflow");
-    prog.push_back(w(OP_SSEND0, 8, 0, (9 << 8) | 0));        // 0: bp を 8 ずつ進め、16 本を超える
+    method_entry(CLS_NIL, 20, 16'd1);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 8, 20));                     // 1: bp を 8 ずつ進め、16 本を超える
+    run();
+    expect_error(1);
+
+    begin_test("method missing");
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);           // nil -> Object にも無い
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 1
+    run();
+    expect_error(1);
+
+    begin_test("no method table");
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // TABLE を実行していなければどれも見つからない
     run();
     expect_error(0);
+
+    begin_test("superclass chain and class methods");
+    method_entry(16'd33, SUPER_SYM, 16'd32);                 // class B < A
+    method_entry(CLS_META | 16'd33, SUPER_SYM, CLS_META | 16'd32);
+    method_entry(CLS_META | 16'd32, 21, 16'd7);              // def A.make
+    method_entry(16'd32, 22, 16'd9);                         // def A#get
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_CLASS, 1, 33));                      // 1: R1 = B
+    prog.push_back(w(OP_SEND0, 1, 21));                      // 2: B.make (A のクラスメソッド)
+    prog.push_back(w(OP_MOVE, 4, 1));                        // 3: R4 = 7
+    prog.push_back(w(OP_CLASS, 1, 32));                      // 4
+    prog.push_back(w(OP_SEND0, 1, 22));                      // 5: A.get (インスタンスメソッドはクラスには無い)
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_LOADI_7, 2));                        // 7: A.make
+    prog.push_back(w(OP_RETURN, 2));                         // 8
+    prog.push_back(w(OP_RETNIL));                            // 9
+    run();
+    expect_error(5);
+    expect_reg(4, vint(7));
+
+    begin_test("operators send a method to non-integers");
+    method_entry(CLS_ARRAY, SYM_ADD, 16'd5);                 // Array#+ (この表では自分で定義)
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_ARRAY, 1, 0));                       // 1: R1 = []
+    prog.push_back(w(OP_LOADI_1, 2));                        // 2
+    prog.push_back(w(OP_ADD, 1));                            // 3: [] + 1 は + を送る
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 5: Array#+: 引数 + 6 を返す
+    prog.push_back(w(OP_ADDI, 3, 6));                        // 6
+    prog.push_back(w(OP_RETURN, 3));                         // 7
+    run();
+    expect_halt();
+    expect_reg(1, vint(7));
 
     // ---- 定数
     begin_test("constants");
     prog.push_back(w(OP_LOADI_6, 1));
     prog.push_back(w(OP_SETCONST, 1, 3));
     prog.push_back(w(OP_GETCONST, 2, 3));
-    prog.push_back(w(OP_TDEF, 3));                           // R3 = nil
+    prog.push_back(w(OP_TDEF, 3, 5));                        // R3 = :s5 (メソッドの名前)
     prog.push_back(w(OP_GETCONST, 4, 5));                    // 未定義
     run();
     expect_error(4);
     expect_reg(2, vint(6));
-    expect_reg(3, VNIL);
+    expect_reg(3, {TAG_SYM, 32'd5});
 
     // ---- 掛け算・割り算 (floor 側)
     begin_test("mul div");
@@ -352,18 +436,30 @@ module mrb_core_tb;
     expect_reg(5, vint(-4));
     expect_reg(7, vint(32'h8000_0000));
 
-    // ---- 組み込みメソッド (SEND の b = 番号、c = 引数の数)
+    // ---- primitive (メソッド表の飛び先が回路のメソッド)
     begin_test("builtins");
-    prog.push_back(w(OP_LOADINEG, 1, 7)); prog.push_back(w(OP_LOADI_3, 2)); prog.push_back(w(OP_SEND, 1, BI_MOD, 1));  // -7 % 3 = 2
-    prog.push_back(w(OP_LOADI_1, 3)); prog.push_back(w(OP_LOADI_4, 4)); prog.push_back(w(OP_SEND, 3, BI_SHL, 1));      // 16
-    prog.push_back(w(OP_LOADINEG, 5, 16)); prog.push_back(w(OP_LOADI_2, 6)); prog.push_back(w(OP_SEND, 5, BI_SHR, 1)); // -4
-    prog.push_back(w(OP_LOADI_5, 7)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_SEND, 7, BI_SHL, 1));     // 5 << -1 = 2
-    prog.push_back(w(OP_LOADI_6, 9)); prog.push_back(w(OP_LOADI_3, 10)); prog.push_back(w(OP_SEND, 9, BI_XOR, 1));     // 5
-    prog.push_back(w(OP_LOADI8, 11, 12)); prog.push_back(w(OP_SEND0, 11, BI_INV, 0));                                 // -13
-    prog.push_back(w(OP_LOADINEG, 12, 9)); prog.push_back(w(OP_SEND0, 12, BI_ABS, 0));                                // 9
-    prog.push_back(w(OP_LOADNIL, 13)); prog.push_back(w(OP_SEND0, 13, BI_NOT, 0));                                    // !nil = true
-    prog.push_back(w(OP_LOADNIL, 14)); prog.push_back(w(OP_LOADNIL, 15)); prog.push_back(w(OP_SEND, 14, BI_NEQ, 1));  // false
-    prog.push_back(w(OP_LOADI_6, 0)); prog.push_back(w(OP_SEND0, 0, BI_ODD, 0));                                      // false
+    method_entry(CLS_INT, 30, tgt_prim(PR_MOD));
+    method_entry(CLS_INT, 31, tgt_prim(PR_SHL));
+    method_entry(CLS_INT, 32, tgt_prim(PR_SHR));
+    method_entry(CLS_INT, 33, tgt_prim(PR_XOR));
+    method_entry(CLS_INT, 34, tgt_prim(PR_INV));
+    method_entry(CLS_INT, 35, tgt_prim(PR_ABS));
+    method_entry(CLS_INT, 37, tgt_prim(PR_ODD));
+    method_entry(CLS_OBJECT, 36, tgt_prim(PR_NOT));
+    method_entry(CLS_OBJECT, 38, tgt_prim(PR_OEQ));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_INT, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                                                                                        // 0
+    prog.push_back(w(OP_LOADINEG, 1, 7)); prog.push_back(w(OP_LOADI_3, 2)); prog.push_back(w(OP_SEND, 1, 30, 1));    // -7 % 3 = 2
+    prog.push_back(w(OP_LOADI_1, 3)); prog.push_back(w(OP_LOADI_4, 4)); prog.push_back(w(OP_SEND, 3, 31, 1));        // 16
+    prog.push_back(w(OP_LOADINEG, 5, 16)); prog.push_back(w(OP_LOADI_2, 6)); prog.push_back(w(OP_SEND, 5, 32, 1));   // -4
+    prog.push_back(w(OP_LOADI_5, 7)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_SEND, 7, 31, 1));       // 5 << -1 = 2
+    prog.push_back(w(OP_LOADI_6, 9)); prog.push_back(w(OP_LOADI_3, 10)); prog.push_back(w(OP_SEND, 9, 33, 1));       // 5
+    prog.push_back(w(OP_LOADI8, 11, 12)); prog.push_back(w(OP_SEND0, 11, 34));                                       // -13
+    prog.push_back(w(OP_LOADINEG, 12, 9)); prog.push_back(w(OP_SEND0, 12, 35));                                      // 9
+    prog.push_back(w(OP_LOADNIL, 13)); prog.push_back(w(OP_LOADNIL, 14)); prog.push_back(w(OP_SEND, 13, 38, 1));     // nil == nil (Object)
+    prog.push_back(w(OP_LOADNIL, 14)); prog.push_back(w(OP_SEND0, 14, 36));                                          // !nil = true
+    prog.push_back(w(OP_LOADI_6, 0)); prog.push_back(w(OP_SEND0, 0, 37));                                            // 6.odd? = false
     prog.push_back(w(OP_STOP));
     run();
     expect_halt();
@@ -375,21 +471,46 @@ module mrb_core_tb;
     expect_reg(11, vint(-13));
     expect_reg(12, vint(9));
     expect_reg(13, VTRUE);
-    expect_reg(14, VFALSE);
+    expect_reg(14, VTRUE);
     expect_reg(0, VFALSE);
 
     begin_test("builtin errors");
-    prog.push_back(w(OP_LOADI_1, 1)); prog.push_back(w(OP_LOADI_0, 2)); prog.push_back(w(OP_SEND, 1, BI_MOD, 1));    // 0 で割った余り
+    method_entry(CLS_INT, 30, tgt_prim(PR_MOD));
+    prog.push_back(w_table());
+    prog.push_back(w(OP_LOADI_1, 1)); prog.push_back(w(OP_LOADI_0, 2)); prog.push_back(w(OP_SEND, 1, 30, 1));        // 0 で割った余り
+    run();
+    expect_error(3);
+    begin_test("builtin with wrong argc");
+    method_entry(CLS_INT, 30, tgt_prim(PR_MOD));
+    prog.push_back(w_table());
+    prog.push_back(w(OP_LOADI_1, 1));
+    prog.push_back(w(OP_SEND0, 1, 30));
     run();
     expect_error(2);
-    begin_test("builtin on nil");
-    prog.push_back(w(OP_SEND0, 1, BI_NEG, 0));
+    begin_test("builtin on the wrong receiver");
+    method_entry(CLS_NIL, 30, tgt_prim(PR_NEG));              // 表が壊れていても型を調べる
+    prog.push_back(w_table());
+    prog.push_back(w(OP_SEND0, 1, 30));
     run();
-    expect_error(0);
-    begin_test("builtin with wrong argc");
-    prog.push_back(w(OP_SEND0, 1, BI_MOD, 0));
+    expect_error(1);
+
+    begin_test("Proc#call and lambda");
+    method_entry(CLS_PROC, 23, tgt_prim(PR_CALL));
+    method_entry(CLS_OBJECT, 24, tgt_prim(PR_LAMBDA));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_BLOCK, 1, 8, (3 << 8) | 1));         // 1: R1 = proc { |x| x + 1 }
+    prog.push_back(w(OP_LOADI_4, 2));                        // 2
+    prog.push_back(w(OP_SEND, 1, 23, 1));                    // 3: R1 = R1.call(4) = 5
+    prog.push_back(w(OP_BLOCK, 3, 8, (3 << 8) | 1));         // 4: R3 = 同じブロック
+    prog.push_back(w(OP_SSEND, 2, 24, 8'h80));               // 5: R2 = lambda(&R3)
+    prog.push_back(w(OP_SEND0, 2, 23));                      // 6: lambda を引数 0 個で呼ぶとエラー
+    prog.push_back(w(OP_STOP));                              // 7
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 8
+    prog.push_back(w(OP_RETURN, 1));                         // 9
     run();
-    expect_error(0);
+    expect_error(6);
+    expect_reg(1, vint(5));
 
     // ---- Proc (BLOCK / BLKCALL): 外側の変数と break
     begin_test("proc, upvar and break");
@@ -412,15 +533,17 @@ module mrb_core_tb;
     if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after break", name, dut.core.sp, dut.core.bp);
 
     begin_test("yield through a method and dynamic break");
-    prog.push_back(w(OP_BLOCK, 2, 7, (3 << 8) | 1));         // 0: R2 = Proc (先頭 pc 7、引数 1)
-    prog.push_back(w(OP_SSEND, 1, 4, (5 << 8) | 8'h80 | 0)); // 1: m(&blk)。ブロックの枠 (R1 + 1) を残す
-    prog.push_back(w(OP_STOP));                              // 2: break の戻り先
-    prog.push_back(w(OP_STOP));                              // 3
-    prog.push_back(w(OP_BLKPUSH, 2, 1, 0));                  // 4: m: R2 = 自分のブロック (枠 1)
-    prog.push_back(w(OP_LOADI_4, 3));                        // 5: yield 4
-    prog.push_back(w(OP_BLKCALL, 2, 1));                     // 6
-    prog.push_back(w(OP_ADDI, 1, 2));                        // 7: ブロック: R1 (= 4) + 2
-    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 8: Proc を作ったフレームまで畳む
+    method_entry(CLS_NIL, 20, 16'd5);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_BLOCK, 2, 8, (3 << 8) | 1));         // 1: R2 = Proc (先頭 pc 8、引数 1)
+    prog.push_back(w(OP_SSEND, 1, 20, 8'h80 | 0));           // 2: m(&blk)。ブロックの枠 (R1 + 1) を残す
+    prog.push_back(w(OP_STOP));                              // 3: break の戻り先
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_BLKPUSH, 2, 1, 0));                  // 5: m: R2 = 自分のブロック (枠 1)
+    prog.push_back(w(OP_LOADI_4, 3));                        // 6: yield 4
+    prog.push_back(w(OP_BLKCALL, 2, 1));                     // 7
+    prog.push_back(w(OP_ADDI, 1, 2));                        // 8: ブロック: R1 (= 4) + 2
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 9: Proc を作ったフレームまで畳む
     run();
     expect_halt();
     expect_reg(1, vint(6));                                  // m(...) の結果が break の値
@@ -428,40 +551,49 @@ module mrb_core_tb;
 
     // ---- 配列 (ヒープ)
     begin_test("arrays");
-    prog.push_back(w(OP_LOADI_3, 1));                        // 0
-    prog.push_back(w(OP_LOADI_1, 2));                        // 1
-    prog.push_back(w(OP_LOADI_4, 3));                        // 2
-    prog.push_back(w(OP_ARRAY2, 4, 1, 3));                   // 3: R4 = [3, 1, 4]
-    prog.push_back(w(OP_MOVE, 5, 4));                        // 4
-    prog.push_back(w(OP_LOADI__1, 6));                       // 5
-    prog.push_back(w(OP_GETIDX, 5));                         // 6: R5 = a[-1] = 4
-    prog.push_back(w(OP_GETIDX0, 6, 4));                     // 7: R6 = a[0] = 3
-    prog.push_back(w(OP_MOVE, 7, 4));                        // 8
-    prog.push_back(w(OP_LOADI_5, 8));                        // 9
-    prog.push_back(w(OP_LOADI_7, 9));                        // 10
-    prog.push_back(w(OP_SETIDX, 7));                         // 11: a[5] = 7 (容量を超えて伸ばす)
-    prog.push_back(w(OP_MOVE, 10, 4));                       // 12
-    prog.push_back(w(OP_SEND0, 10, BI_SIZE));                // 13: R10 = 6
-    prog.push_back(w(OP_MOVE, 11, 4));                       // 14
-    prog.push_back(w(OP_SEND0, 11, BI_POP));                 // 15: R11 = 7
-    prog.push_back(w(OP_MOVE, 12, 4));                       // 16
-    prog.push_back(w(OP_SEND0, 12, BI_LAST));                // 17: R12 = nil (a[4])
-    prog.push_back(w(OP_MOVE, 13, 4));                       // 18
-    prog.push_back(w(OP_LOADI_1, 14));                       // 19
-    prog.push_back(w(OP_SEND, 13, BI_PUSH, 1));              // 20: a.push(1) は a を返す
-    prog.push_back(w(OP_MOVE, 14, 4));                       // 21
-    prog.push_back(w(OP_SEND0, 14, BI_LENGTH));              // 22: R14 = 6
-    prog.push_back(w(OP_MOVE, 8, 4));                        // 23
-    prog.push_back(w(OP_LOADI_4, 9));                        // 24
-    prog.push_back(w(OP_SEND, 8, BI_INCL, 1));               // 25: R8 = a.include?(4) = true
-    prog.push_back(w(OP_MOVE, 1, 4));                        // 26
-    prog.push_back(w(OP_SEND0, 1, BI_FIRST));                // 27: R1 = 3
-    prog.push_back(w(OP_ARRAY, 2, 0));                       // 28: R2 = []
-    prog.push_back(w(OP_SEND0, 2, BI_EMPTY));                // 29: R2 = true
-    prog.push_back(w(OP_LOADI_5, 3));                        // 30
-    prog.push_back(w(OP_ARRAY, 3, 1));                       // 31: R3 = [5]
-    prog.push_back(w(OP_GETIDX0, 3, 3));                     // 32: R3 = 5
-    prog.push_back(w(OP_STOP));                              // 33
+    method_entry(CLS_ARRAY, 40, tgt_prim(PR_SIZE));
+    method_entry(CLS_ARRAY, 41, tgt_prim(PR_POP));
+    method_entry(CLS_ARRAY, 42, tgt_prim(PR_LAST));
+    method_entry(CLS_ARRAY, 43, tgt_prim(PR_PUSH));
+    method_entry(CLS_ARRAY, 44, tgt_prim(PR_LENGTH));
+    method_entry(CLS_ARRAY, 45, tgt_prim(PR_FIRST));
+    method_entry(CLS_ARRAY, 46, tgt_prim(PR_EMPTY));
+    method_entry(CLS_ARRAY, 47, tgt_prim(PR_AGET));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_3, 1));                        // 1
+    prog.push_back(w(OP_LOADI_1, 2));                        // 2
+    prog.push_back(w(OP_LOADI_4, 3));                        // 3
+    prog.push_back(w(OP_ARRAY2, 4, 1, 3));                   // 4: R4 = [3, 1, 4]
+    prog.push_back(w(OP_MOVE, 5, 4));                        // 5
+    prog.push_back(w(OP_LOADI__1, 6));                       // 6
+    prog.push_back(w(OP_GETIDX, 5));                         // 7: R5 = a[-1] = 4
+    prog.push_back(w(OP_GETIDX0, 6, 4));                     // 8: R6 = a[0] = 3
+    prog.push_back(w(OP_MOVE, 7, 4));                        // 9
+    prog.push_back(w(OP_LOADI_5, 8));                        // 10
+    prog.push_back(w(OP_LOADI_7, 9));                        // 11
+    prog.push_back(w(OP_SETIDX, 7));                         // 12: a[5] = 7 (容量を超えて伸ばす)
+    prog.push_back(w(OP_MOVE, 10, 4));                       // 13
+    prog.push_back(w(OP_SEND0, 10, 40));                     // 14: R10 = a.size = 6
+    prog.push_back(w(OP_MOVE, 11, 4));                       // 15
+    prog.push_back(w(OP_SEND0, 11, 41));                     // 16: R11 = a.pop = 7
+    prog.push_back(w(OP_MOVE, 12, 4));                       // 17
+    prog.push_back(w(OP_SEND0, 12, 42));                     // 18: R12 = a.last = nil (a[4])
+    prog.push_back(w(OP_MOVE, 13, 4));                       // 19
+    prog.push_back(w(OP_LOADI_1, 14));                       // 20
+    prog.push_back(w(OP_SEND, 13, 43, 1));                   // 21: a.push(1) は a を返す
+    prog.push_back(w(OP_MOVE, 14, 4));                       // 22
+    prog.push_back(w(OP_SEND0, 14, 44));                     // 23: R14 = a.length = 6
+    prog.push_back(w(OP_MOVE, 8, 4));                        // 24
+    prog.push_back(w(OP_LOADI_2, 9));                        // 25
+    prog.push_back(w(OP_SEND, 8, 47, 1));                    // 26: R8 = a[2] (Array#[]) = 4
+    prog.push_back(w(OP_MOVE, 1, 4));                        // 27
+    prog.push_back(w(OP_SEND0, 1, 45));                      // 28: R1 = a.first = 3
+    prog.push_back(w(OP_ARRAY, 2, 0));                       // 29: R2 = []
+    prog.push_back(w(OP_SEND0, 2, 46));                      // 30: R2 = [].empty? = true
+    prog.push_back(w(OP_LOADI_5, 3));                        // 31
+    prog.push_back(w(OP_ARRAY, 3, 1));                       // 32: R3 = [5]
+    prog.push_back(w(OP_GETIDX0, 3, 3));                     // 33: R3 = 5
+    prog.push_back(w(OP_STOP));                              // 34
     run();
     expect_halt();
     expect_reg(5, vint(4));
@@ -472,15 +604,47 @@ module mrb_core_tb;
     expect_reg(13, dut.core.regs[4]);                        // push は同じ配列 (同一の参照)
     if (dut.core.regs[4][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: R4 is not an array", name);
     expect_reg(14, vint(6));
-    expect_reg(8, VTRUE);
+    expect_reg(8, vint(4));
     expect_reg(1, vint(3));
     expect_reg(2, VTRUE);
     expect_reg(3, vint(5));
 
-    begin_test("array == array is an error");
+    begin_test("Array#[]= returns the value");
+    method_entry(CLS_ARRAY, 48, tgt_prim(PR_ASET));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_ARRAY, 1, 0));                       // 1: R1 = []
+    prog.push_back(w(OP_MOVE, 4, 1));                        // 2
+    prog.push_back(w(OP_LOADI_2, 2));                        // 3
+    prog.push_back(w(OP_LOADI_7, 3));                        // 4
+    prog.push_back(w(OP_SEND, 1, 48, 2));                    // 5: R1 = (a[2] = 7) = 7
+    prog.push_back(w(OP_LOADI_2, 5));                        // 6
+    prog.push_back(w(OP_GETIDX, 4));                         // 7: R4 = a[2] = 7
+    prog.push_back(w(OP_STOP));                              // 8
+    run();
+    expect_halt();
+    expect_reg(1, vint(7));
+    expect_reg(4, vint(7));
+
+    begin_test("== on objects sends ==");
+    method_entry(CLS_ARRAY, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_OBJECT, SYM_EQ, tgt_prim(PR_OEQ));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_ARRAY, 1, 0));                       // 1
+    prog.push_back(w(OP_MOVE, 2, 1));                        // 2
+    prog.push_back(w(OP_EQ, 1));                             // 3: 同じ配列 → true (Object#==)
+    prog.push_back(w(OP_ARRAY, 3, 0));                       // 4
+    prog.push_back(w(OP_ARRAY, 4, 0));                       // 5
+    prog.push_back(w(OP_EQ, 3));                             // 6: 別の配列 → false
+    prog.push_back(w(OP_STOP));                              // 7
+    run();
+    expect_halt();
+    expect_reg(1, VTRUE);
+    expect_reg(3, VFALSE);
+
+    begin_test("== on objects without a method table is an error");
     prog.push_back(w(OP_ARRAY, 1, 0));
     prog.push_back(w(OP_MOVE, 2, 1));
-    prog.push_back(w(OP_EQ, 1));                             // 配列の比較は持たない (参照の == は Ruby と違う)
+    prog.push_back(w(OP_EQ, 1));
     run();
     expect_error(2);
 
@@ -516,16 +680,18 @@ module mrb_core_tb;
 
     // ---- ブロックの中の return は、ブロックを作ったメソッドから戻る
     begin_test("return from a block");
-    prog.push_back(w(OP_SSEND0, 1, 3, 5 << 8));              // 0: R1 = m
-    prog.push_back(w(OP_STOP));                              // 1
+    method_entry(CLS_NIL, 20, 16'd4);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 1: R1 = m
     prog.push_back(w(OP_STOP));                              // 2
-    prog.push_back(w(OP_LOADI_1, 1));                        // 3: m
-    prog.push_back(w(OP_BLOCK, 2, 8, 3 << 8));               // 4
-    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5
-    prog.push_back(w(OP_LOADI_7, 1));                        // 6: (通らない)
-    prog.push_back(w(OP_RETURN, 1));                         // 7
-    prog.push_back(w(OP_LOADI8, 1, 9));                      // 8: ブロック: return 9
-    prog.push_back(w(OP_RETURN_BLK, 1, 0, 1));               // 9: 1段外のメソッドから戻る
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_LOADI_1, 1));                        // 4: m
+    prog.push_back(w(OP_BLOCK, 2, 9, 3 << 8));               // 5
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 6
+    prog.push_back(w(OP_LOADI_7, 1));                        // 7: (通らない)
+    prog.push_back(w(OP_RETURN, 1));                         // 8
+    prog.push_back(w(OP_LOADI8, 1, 9));                      // 9: ブロック: return 9
+    prog.push_back(w(OP_RETURN_BLK, 1, 0, 1));               // 10: 1段外のメソッドから戻る
     run();
     expect_halt();
     expect_reg(1, vint(9));
@@ -533,8 +699,11 @@ module mrb_core_tb;
 
     // ---- 時間待ち: sleep_ms n は ms_tick を n 回数えて n を返す
     begin_test("sleep_ms 0");
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_OBJECT, 50, tgt_prim(PR_SLEEPMS));
+    prog.push_back(w_table());
     prog.push_back(w(OP_LOADI_0, 2));                        // self (R1) は nil、引数は R2
-    prog.push_back(w(OP_SEND, 1, BI_SLEEPMS, 1));
+    prog.push_back(w(OP_SEND, 1, 50, 1));
     prog.push_back(w(OP_STOP));
     run();
     expect_halt();
@@ -542,8 +711,11 @@ module mrb_core_tb;
     base_cycles = cycles;
 
     begin_test("sleep_ms 100");
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_OBJECT, 50, tgt_prim(PR_SLEEPMS));
+    prog.push_back(w_table());
     prog.push_back(w(OP_LOADI8, 2, 100));
-    prog.push_back(w(OP_SEND, 1, BI_SLEEPMS, 1));
+    prog.push_back(w(OP_SEND, 1, 50, 1));
     prog.push_back(w(OP_STOP));
     run();
     expect_halt();
@@ -552,41 +724,50 @@ module mrb_core_tb;
       $fatal(1, "%s: waited %0d cycles more than sleep_ms 0 (ms_tick every cycle)", name, cycles - base_cycles);
 
     begin_test("sleep with a negative time");
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_OBJECT, 51, tgt_prim(PR_SLEEP));
+    prog.push_back(w_table());
     prog.push_back(w(OP_LOADI__1, 2));
-    prog.push_back(w(OP_SEND, 1, BI_SLEEP, 1));
+    prog.push_back(w(OP_SEND, 1, 51, 1));
     run();
-    expect_error(1);
+    expect_error(2);
 
     // ---- env: メソッドから戻った後も、その変数を Proc から読み書きできる
     begin_test("closure outlives its method");
-    prog.push_back(w(OP_SSEND0, 1, 7, 3 << 8));              // 0: R1 = m (Proc が返る)
-    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: R1 = 6 (env の R1 を 5 から 6 に)
-    prog.push_back(w(OP_MOVE, 6, 1));                        // 2: R6 = 6 (2本目の呼び出しのフレームより上)
-    prog.push_back(w(OP_SSEND0, 1, 7, 3 << 8));              // 3: 別の env
-    prog.push_back(w(OP_MOVE, 2, 1));                        // 4: R2 = 2本目の Proc
-    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5: R2 = 6 (1本目とは別の env)
-    prog.push_back(w(OP_STOP));                              // 6
-    prog.push_back(w(OP_LOADI_5, 1));                        // 7: m: R1 = 5
-    prog.push_back(w(OP_BLOCK, 2, 10, 3 << 8));              // 8: R2 = Proc (env を作る)
-    prog.push_back(w(OP_RETURN, 2));                         // 9: 戻る時に env へ R0..R2 を写す
-    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 10: ブロック: R1 = env の R1
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 11
-    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 12: env の R1 = R1 (ヒープへ)
-    prog.push_back(w(OP_RETURN, 1));                         // 13
+    method_entry(CLS_NIL, 20, 16'd8);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 1: R1 = m (Proc が返る)
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 2: R1 = 6 (env の R1 を 5 から 6 に)
+    prog.push_back(w(OP_MOVE, 6, 1));                        // 3: R6 = 6 (2本目の呼び出しのフレームより上)
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 4: 別の env
+    prog.push_back(w(OP_MOVE, 2, 1));                        // 5: R2 = 2本目の Proc
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 6: R2 = 6 (1本目とは別の env)
+    prog.push_back(w(OP_STOP));                              // 7
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 8: m (nregs 3: env に写すのは R0..R2)
+    prog.push_back(w(OP_LOADI_5, 1));                        // 9: R1 = 5
+    prog.push_back(w(OP_BLOCK, 2, 12, 3 << 8));              // 10: R2 = Proc (env を作る)
+    prog.push_back(w(OP_RETURN, 2));                         // 11: 戻る時に env へ R0..R2 を写す
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 12: ブロック: R1 = env の R1
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 13
+    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 14: env の R1 = R1 (ヒープへ)
+    prog.push_back(w(OP_RETURN, 1));                         // 15
     run();
     expect_halt();
     expect_reg(6, vint(6));
     expect_reg(2, vint(6));                                  // 2本目は別の env (5 から数え直す)
 
     begin_test("break to a method that has returned");
-    prog.push_back(w(OP_SSEND0, 1, 3, 3 << 8));              // 0
-    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: break の行き先のフレームはもう無い
-    prog.push_back(w(OP_STOP));                              // 2
-    prog.push_back(w(OP_BLOCK, 2, 5, 3 << 8));               // 3: m
-    prog.push_back(w(OP_RETURN, 2));                         // 4
-    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 5
+    method_entry(CLS_NIL, 20, 16'd4);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_SSEND0, 1, 20));                     // 1
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 2: break の行き先のフレームはもう無い
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 4: m
+    prog.push_back(w(OP_BLOCK, 2, 7, 3 << 8));               // 5
+    prog.push_back(w(OP_RETURN, 2));                         // 6
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 7
     run();
-    expect_error(5);
+    expect_error(7);
 
     // ---- lambda: 引数の数を調べ、break / return は lambda から戻る
     begin_test("lambda checks the number of arguments");
