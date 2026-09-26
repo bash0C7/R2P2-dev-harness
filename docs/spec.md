@@ -589,6 +589,7 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
 | `rake fpga:check` | `fpga/corpus/*.hex` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
 | `rake fpga:fuzz[count,seed]` | ランダムな ROM を参照とシミュレーションで走らせ、トレースを全行比べる (差分ファズ) |
+| `rake fpga:gap[verbose]` | 実在の PicoRuby プログラム (gem の example、`examples/`、コーパス) を変換器とコアに通し、範囲内の何本が動くか、残りを止めている理由 (全部) を多い順に出す。一覧は `build/fpga/gap.txt`。進め方の指標 ([計画](superpowers/plans/2026-09-26-fpga-full-picoruby.md)) |
 | `rake fpga:emu[src,ms,ce_div,mhz]` | PERIDOT-Air のボードエミュレーター。実機の top をクロック `mhz` (既定 125MHz) で回し、LED とボタンの変化を実時間 (秒) で表示し、参照インタプリタと突き合わせる |
 | `rake fpga:emu:check` | コーパス全部をエミュレーターで 600ms 回し、LED の変化を参照と突き合わせる |
 | `rake fpga:rom[src]` | `.rb` / `.mrb` を PicoRuby の変換器で ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
