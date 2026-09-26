@@ -46,8 +46,8 @@ class FpgaRefVmTest < Minitest::Test
 
   # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、ピンへの代入の系列を比べる。止まるプログラムは
   # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
-  # watchdog の再起動は CRuby では表せないので比べない
-  CRUBY_CANNOT = %w[watchdog].freeze
+  # watchdog の再起動と Task (区画の切り替え) は CRuby では表せないので比べない (Task は下で picoruby と比べる)
+  CRUBY_CANNOT = %w[watchdog tasks].freeze
 
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
@@ -87,5 +87,20 @@ class FpgaRefVmTest < Minitest::Test
       checked += 1
     end
     assert_operator checked, :>=, 2
+  end
+
+  # Task を使うプログラム (区画の切り替えと tick) は、picoruby host VM (mruby-task) の標準出力と比べる。
+  # host の tick は 4ms、FPGA は 1ms なので、出力の順が tick の単位に依らない書き方のものだけ置く (tasks.rb)
+  TASK_PROGRAMS = %w[tasks].freeze
+
+  def test_task_corpus_agrees_with_picoruby
+    skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
+    TASK_PROGRAMS.each do |name|
+      src = File.join(CORPUS, "#{name}.rb")
+      trace = FpgaRefVm.new(FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))).run(400_000)
+      assert trace.last.start_with?("H "), "#{name}: #{trace.last}"
+      _final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)
+      assert_equal stdout, FpgaCompare.console(trace), name
+    end
   end
 end

@@ -32,7 +32,7 @@ module FpgaCorpus
     "rng" => ["rng.rb", %w[RNG]], "irq" => ["irq.rb", %w[IRQ]], "pwm" => ["pwm.rb", %w[PWM]], "adc" => ["adc.rb", %w[ADC]],
     "watchdog" => ["watchdog.rb", %w[Watchdog]], "io/console" => ["io_console.rb", %w[STDIN]],
     "i2c" => ["i2c.rb", %w[I2C]], "spi" => ["spi.rb", %w[SPI]], "time" => ["time.rb", %w[Time]], "vram" => ["vram.rb", %w[VRAM]],
-    "bdffont" => ["bdffont.rb", %w[BDFFont]],
+    "bdffont" => ["bdffont.rb", %w[BDFFont]], "task" => ["task.rb", %w[Task]],
     # PicoRuby の mrblib をそのまま使う (Ruby だけで書かれた gem)
     "ssd1306" => [format(PICORUBY_MRBLIB, "ssd1306", "ssd1306"), %w[SSD1306]],
     "uc8151" => [format(PICORUBY_MRBLIB, "uc8151", "uc8151"), %w[UC8151]],

@@ -110,7 +110,9 @@ module FpgaIsa
 
   # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
   # initialize は new が送るメソッド、__core_error はコアの実行時エラーを例外にするプレリュードのメソッド (コアが番号を知っている)
-  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error].freeze
+  # __task_tick はタスクの割り込み (docs/spec.md §10「Task (P6)」。仮想の時計の 1ms ごとにコアが呼ぶ)、
+  # __task_main_end はタスクがある時の一番外の STOP (残りのタスクを走らせ終えてから止まる)
+  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error __task_tick __task_main_end].freeze
   # コアの実行時エラーの種類 (Integer#__core_error の受け手)。例外の表があるプログラムでだけ、コアはエラーで止まらずに
   # フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて __core_error を呼ぶ (プレリュードが例外を作って投げる)
   CERR_ZERODIV  = 1 # 0 で割った
@@ -160,7 +162,11 @@ module FpgaIsa
     ["Float", "__infinite", 0, "FINF"], ["Float", "to_s", 0, "FTOS"], ["Float", "__fmt", 2, "FFMT"],
     ["Float", "__math", 1, "FMATH"], ["Float", "__atan2", 1, "FATAN2"], ["Float", "__hypot", 1, "FHYPOT"], ["Float", "__fmod", 1, "FFMOD"],
     ["Integer", "to_f", 0, "I2F"],
-    ["String", "__strtod", 0, "STOD"]
+    ["String", "__strtod", 0, "STOD"],
+    # タスク (プレリュードの Task のスケジューラーが使う。ref_vm.rb の task_prim)
+    ["Object", "__task_init", 2, "TINIT"], ["Object", "__task_switch", 1, "TSWITCH"], ["Object", "__task_slot", 0, "TSLOT"],
+    ["Object", "__task_lock", 1, "TLOCK"], ["Object", "__task_on", 1, "TON"], ["Object", "__hw_sleep_us", 1, "HWSLEEPUS"],
+    ["Object", "__halt", 0, "HALT"]
   ].freeze
 
   def self.prim(const_name)
@@ -240,9 +246,15 @@ module FpgaIsa
 
   INT_BITS = 32
 
+  # 仮想の時計の速さ: 始めた命令 16 個で 1µs (125MHz のコアの速さの見当)。タスクの割り込みを止めている間 (Task の
+  # スケジューラー。PicoRuby では C) の命令は 256 個で 1µs。どちらも 2 の冪 (docs/spec.md §10「仮想の時計」)
+  INSNS_PER_US = 16
+  LOCKED_INSNS_PER_US = 256
+
   # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数、ROM の語数
-  RF_SIZE     = 128
-  STACK_DEPTH = 16
+  RF_SIZE     = 128 # タスク1つの区画のレジスタの数
+  TASKS       = 8   # 区画の数 (タスクの数の上限。main を含む)
+  STACK_DEPTH = 32 # コールスタックの段 (区画ごと)
   NCONST      = 64
   PC_BITS     = 14
 

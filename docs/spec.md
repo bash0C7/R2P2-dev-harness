@@ -880,7 +880,9 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **watchdog の再起動。** 期限を過ぎた tick で、コアとポートをリセットし (レジスタ・ヒープ・定数・仮想の時計が初めから)、
   デバイスも「watchdog で再起動した」印だけを残して初めからにする (UART の届いていて読んでいないバイトは捨てる)。
   トレースに `B <step>` を書き、step は数え続ける (刺激は step で与えるので)。参照と RTL で同じ
-- **仮想の時計。** 「始めた命令の数 (1命令 1µs) + `sleep_ms` / `sleep` で待った時間」。実時間ではなく、参照インタプリタと
+- **仮想の時計。** 「始めた命令の数 / 16 (16 命令で 1µs、`INSNS_PER_US`。125MHz のコアの速さの見当) + `sleep_ms` / `sleep` で
+  待った時間」。タスクの割り込みを止めている間 (Task のスケジューラーの中) に始めた命令は 256 個で 1µs (`LOCKED_INSNS_PER_US`、
+  下の「Task (P6)」)。端数は 1/256 µs 単位で持ち越す。実時間ではなく、参照インタプリタと
   RTL で一致させるための決めごと (コアが数えて mrb_dev に渡す)。エミュレーターの実時間とはずれる
 - **外からの入力は刺激** (`<name>.stim` の1行 `<step> <番地> <値>`): 0x106 / 0x107 はその step からの値、0x121 は1行が1バイトで、
   その step から届いた順に読める。**入力はテストベンチが S_FETCH (命令を始める前) で次の step のものにする** ので、
@@ -891,7 +893,7 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   今あるもの: gpio (`GPIO.new(pin, flags)`、`read` `write` `high?` `low?`、`read_at` ... ピンは 0..31)、machine
   (`uptime_us` `board_millis` `delay_ms` `sleep(deep:, source:)` ...)、uart (`write` `puts` `putc` `read` `readpartial` `getbyte`
   `ungetbyte` `gets` `bytes_available`。unit は1つ)、rng (`RNG.random_int` `uuid`、`rand`)、irq (`GPIO#irq`、`IRQ.process`、
-  `unregister`、`IRQInstance#enable` `disable`。`IRQ.start` / `stop` は Task が要るので NotImplementedError)、pwm (`frequency`
+  `unregister`、`IRQInstance#enable` `disable`、`IRQ.start` / `stop` は 1ms ごとに `IRQ.process` を呼ぶ Task)、pwm (`frequency`
   `duty` `period_us` `pulse_width_us`)、adc (`read` `read_voltage` `read_raw`)、watchdog (`enable` `disable` `update` `feed`
   `reboot` `caused_reboot?` `get_count`)、io/console (`STDIN.getch` `read_nonblock` と、何もしない `raw` `cooked`。console の入力は
   UART の RX とみなす)
@@ -948,6 +950,46 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   そのまま使う。gem の補助メソッドはプレリュードの名前 (`__write` など) とぶつからない名前にする
 - **変換器が足したもの。** クラスの本体の `alias` (同じクラスで先に def したメソッドの行を静的に足す。命令は NOP)、
   `include A::B`。プレリュードに `Proc.new`、`GC.start` (何もしない)、IOError / EOFError、1バイトの `Integer#chr`
+
+### Task (P6)
+
+PicoRuby の mruby-task (`src/task.c`、`src/task_queue.c`、`mrblib/queue.rb`) と同じ意味の協調・時分割のマルチタスク。
+スケジューラーは FPGA 版の gem (`fpga/gems/task.rb`、`Task` を使うと入る) の Ruby で、コアは区画の切り替えと tick の割り込みだけを持つ。
+
+- **区画。** レジスタファイルとコールスタックを `TASKS` (8) 個の区画に分ける (区画 t のレジスタは t × `RF_SIZE` から、
+  スタックは区画ごとに `STACK_DEPTH` (32) 段)。今の区画の外のレジスタは読めない (範囲の検査は区画の終わりまで)。
+  切り替えは pc・bp・cp・env・fn・mcls・argc・キーワードの印・exc・xval・スタックの深さを区画ごとの表 (`sv_*`) と入れ替えるだけ。
+  env は bp を指したままでよい (区画は重ならない)。main は区画 0
+- **primitive** (Object): `__task_init(区画, Proc)` (区画を空にし、切り替えたら Proc を引数なしで呼び始める。R0 は Proc の self)、
+  `__task_switch(区画)` (今の区画を止めて区画の続きへ。戻り値 nil)、`__task_slot`、`__task_lock(真偽)` (割り込みを止める / 許す。
+  前の値を返す)、`__task_on(ms か nil)` (次に割り込む仮想の時計の ms。nil は割り込まない)、`__hw_sleep_us(n)` (仮想の時計を
+  n µs 進める。回路は n / 1000 ms 待つ)、`__halt` (止まる)
+- **割り込み。** 仮想の時計が `__task_on` の ms に届き、割り込みを止めておらず、今のフレームが ENTER を済ませていれば (fn > 0)、
+  命令を始める前に今のフレームの上 (bp + fn) に受け手 (今の ms) を置いて `Integer#__task_tick` を呼ぶ (戻り値は捨て、戻ったら
+  同じ命令から。書き込みはトレースに出さない。呼んでいる間は割り込みを止める)。一番外の irep にもいつも ENTER を置く。
+  呼べなければ (表に無い、区画かスタックが足りない) その命令の区切りでは割り込まない。RTL は S_FETCH で引き、
+  デバイスの tick とテストベンチの入力は同じ step で2回目の S_FETCH ではしない (`fetching` を出さない)
+- **一番外の終わり。** タスクがある (`__task_on` に ms を渡した) 時の `STOP`、スタックが空の `RETURN`、一番外への巻き戻しは、
+  止まる前に同じく `0.__task_main_end` を呼ぶ (main を終わりにして、残りのタスクが全部終わったら割り込みを止めて戻る)。
+  戻ったらその命令をもう一度実行して止まる
+- **スケジューラーは task.c を写す。** ready / waiting / suspended / dormant の列は優先度の順 (同じ優先度は後ろへ)。
+  `switching_` を立てた API は戻る時 (VM の命令の区切り) に今のタスクを降ろし (同じ優先度の後ろへ入れ直す)、ready の先頭を
+  timeslice 10 tick で走らせる。tick (`mrb_tick`) は、ready の列の先頭が走っているタスクならその timeslice を減らし (0 で切り替え)、
+  起きる tick が来た待ちのタスクを ready へ。task.c と同じ癖も写す: `Task.new` と `resume` は列に入れた後の先頭と比べるので
+  切り替えない、列の先頭でない (優先度の高いタスクが ready の) 走っているタスクの timeslice は減らない、`Queue#push` は
+  起こせばいつも切り替える、`suspend` は ready の先頭も切り替えの理由になる、sleep 中に suspend したタスクは resume で
+  WAITING に戻る、`join` は待つ前の結果 (終わっていなければ nil) を返す
+- **tick はまとめて進める。** tick は R2P2 (Pico 2) と同じく 1ms、timeslice は 10 tick。1ms ごとに割り込むと Ruby の
+  スケジューラーが時計を食うので、次に何か起きる ms (起きるタスク、timeslice の終わり) にだけ割り込み、tick をその時にまとめて進める。
+  走れるタスクが無ければ次に起きる tick まで `__hw_sleep_us` で時計を進める
+- **スケジューラーの命令は速く数える。** 割り込みを止めて始めた命令は 256 個で 1µs (ほかは 16 個で 1µs)。PicoRuby では C の部分で、
+  1回の切り替え (Ruby で 800 命令ほど) が 3µs ほどになる。ほかの命令と同じに数えると、同じ tick に起きるタスクの順や timeslice の
+  切れ目が PicoRuby と変わり、0 にすると `Task.pass` だけで回るタスクが時計を進めない (step ばかり食う)
+- **PicoRuby と違う所 (決めごと)。** `inspect` の番地は区画の番号 (`#<Task:1 name:READY>`)、待っているタスクが無い時の
+  `Task.stat` の wakeup_tick は -1 (32bit の Integer に UINT32_MAX は入らない)、タスクは main を含めて 8 まで (区画が尽きたら
+  `Task.new` は RuntimeError)。main が `terminate` された後にほかのタスクが全部終わったら `__halt` で止まる
+- **突き合わせ。** mruby-task の examples と picoruby-mruby の example は、参照インタプリタと RTL で一致し、host の picoruby
+  (tick は 4ms、timeslice 3) とは tick の数・番地・UINT32_MAX の表し方の違いだけ (statistics.rb は `&:join` が要る)
 
 ### プレリュード
 

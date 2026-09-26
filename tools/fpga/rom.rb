@@ -251,7 +251,7 @@ module FpgaRom
       end
       ir.base = base
       base += 1 if ctx.bodies[ir.index]
-      base += 2 + 2 * ctx.globals.size + (handlers ? 1 : 0) if ir.index == 0
+      base += 2 + 2 * ctx.globals.size + 1 if ir.index == 0 # ENTER、グローバル変数、main を作る2語
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
@@ -272,9 +272,9 @@ module FpgaRom
       next unless ctx.live[i]
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
       if ir.index == 0
-        # 例外の表があれば一番外にも ENTER (fn = nregs。コアのエラーの __core_error をその上で呼ぶ)
-        e = handlers ? 1 : 0
-        words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if handlers
+        # 一番外にも ENTER (fn = nregs。コアのエラーの __core_error とタスクの割り込みの __task_tick をその上で呼ぶ)
+        e = 1
+        words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false)
         # 一般のグローバル変数を nil に (R0 を借りる)、self (main) を作る
         ctx.globals.each_with_index do |g, j|
           words << Word.new(ir.base + e + 2 * j, nil, FpgaIsa.op("LOADNIL").num, 0, 0, 0, ir, false)

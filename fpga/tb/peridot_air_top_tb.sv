@@ -60,6 +60,7 @@ module peridot_air_top_tb;
     for (int i = 0; i < 7; i++) dut.soc.rom[i] = prog[i];
     repeat (3) @(posedge clk);
     reset_n = 1'b1;
+    repeat (RF_SIZE * TASKS) @(posedge clk); // コアはまずレジスタファイル (全区画) を nil で埋める (S_INIT)
 
     // 1周 7 命令 x 2 cycle x CE_DIV
     repeat (7 * 2 * CE_DIV * 4) @(posedge clk);
@@ -76,6 +77,7 @@ module peridot_air_top_tb;
     if (led !== 2'b00) $fatal(1, "LEDs should be off in reset, got %b", led);
     repeat (3) @(posedge clk);
     reset_n = 1'b1;
+    repeat (RF_SIZE * TASKS) @(posedge clk); // コアはまずレジスタファイル (全区画) を nil で埋める (S_INIT)
     period = -1;
     last_rise = -1;
     repeat (7 * 2 * CE_DIV * 4) @(posedge clk);

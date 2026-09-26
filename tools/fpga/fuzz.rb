@@ -196,6 +196,9 @@ module FpgaFuzz
   I2F_SYM = FLOAT_SYM + FLOAT_SEND.size # Integer#to_f
   STOD_SYM = I2F_SYM + 1                # String#__strtod
   IFLT_SYMS = { "IADD" => STOD_SYM + 1, "IMUL" => STOD_SYM + 2, "ILT" => STOD_SYM + 3, "IEQ" => STOD_SYM + 4 }.freeze
+  # タスクの断片 (pick 23) の primitive (受け手は Integer) とシンボル
+  TASK_PRIM = { tinit: "TINIT", tswitch: "TSWITCH", tslot: "TSLOT", ton: "TON", tlock: "TLOCK", hwsleep: "HWSLEEPUS" }.freeze
+  TASK_SYMS = TASK_PRIM.keys.each_with_index.to_h { |k, i| [k, STOD_SYM + 5 + i] }.freeze
   # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
   FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0].freeze
   FLOAT_LITS = %w[1.5e3 -0.001 123456789012345678901234567890 1e400 1e-400 2.4703282292062328e-324 0.1 12 1. abc -].freeze
@@ -229,8 +232,9 @@ module FpgaFuzz
     words << :block
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
+    inited = [] # タスクの断片 (pick 23) が __task_init した区画 (切り替えはたいていここへ)
     body.times do
-      pick = rng.rand(23)
+      pick = rng.rand(24)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -458,6 +462,40 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("MOVE"), 13, arrs.sample(random: rng), 0)
         words << encode(FpgaIsa.op("BLKCALL"), 12, 1, 0)
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 23 # タスク (P6): 区画にタスクの本体を置く / 切り替える (本体は少し働いて区画 0 へ戻る) / 今の区画 / 割り込みの ms /
+        # 割り込みを止める / 時計を進める (割り込みは Integer#__task_tick が受ける)。たまに作っていない区画へ切り替えてエラー
+        tsend = ->(sym, n) { words << encode(FpgaIsa.op("SEND"), 12, TASK_SYMS[sym], n) }
+        words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+        case rng.rand(7)
+        when 0, 1
+          slot = 1 + rng.rand(3)
+          inited << slot
+          words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+          words << :task
+          tsend.(:tinit, 2)
+          if rng.rand(2).zero? # すぐ切り替える
+            words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+            words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+            tsend.(:tswitch, 1)
+          end
+        when 2
+          slot = inited.empty? || rng.rand(20).zero? ? rng.rand(5) : inited.sample(random: rng)
+          words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+          tsend.(:tswitch, 1)
+        when 3
+          tsend.(:tslot, 0)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        when 4
+          words << (rng.rand(3).zero? ? encode(FpgaIsa.op("LOADNIL"), 13, 0, 0) : encode(FpgaIsa.op("LOADI8"), 13, rng.rand(4), 0))
+          tsend.(:ton, 1)
+        when 5
+          words << encode(FpgaIsa.op(rng.rand(2).zero? ? "LOADTRUE" : "LOADFALSE"), 13, 0, 0)
+          tsend.(:tlock, 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        else
+          words << encode(FpgaIsa.op("LOADI16"), 13, rng.rand(3000), 0)
+          tsend.(:hwsleep, 1)
+        end
       when 10 # 多重代入 (AREF)
         words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
       when 11 # 演算の落ち先: 配列 + 整数 は Array#+ (この表ではメソッド) を送る
@@ -560,6 +598,24 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("LOADI_0"), 3, 0, 0)
     words << encode(FpgaIsa.op("DIV"), 2, 0, 0)
     words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    # タスクの本体 (区画の中): 配列を作り、今の区画を読んで区画 0 へ戻る。また切り替えられたら繰り返す
+    task_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 6, 0)
+    words << encode(FpgaIsa.op("LOADI8"), 1, rng.rand(50), 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tslot], 0)
+    words << encode(FpgaIsa.op("LOADI_0"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tswitch], 1)
+    words << encode(FpgaIsa.op("JMP"), 0, task_at + 1, 0)
+    # Integer#__task_tick (割り込み): 受け手 (今の ms) を配列にし、割り込みを止めて (nil) 許して戻る
+    tick_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 6, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 0, 1)
+    words << encode(FpgaIsa.op("LOADNIL"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:ton], 1)
+    words << encode(FpgaIsa.op("LOADFALSE"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tlock], 1)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
     # proc { |a, b| [b, a] }
     pair_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 2, 5, 0)
@@ -573,6 +629,7 @@ module FpgaFuzz
       when :block then encode(FpgaIsa.op("BLOCK"), 11, block_at, 0)
       when :inner then encode(FpgaIsa.op("BLOCK"), 3, inner_at, lam)
       when :pair then encode(FpgaIsa.op("BLOCK"), 12, pair_at, 0)
+      when :task then encode(FpgaIsa.op("BLOCK"), 14, task_at, 0)
       when :htable then encode(FpgaIsa.op("HTABLE"), 0, 0, 0) # 表の位置は後で入れる
       else w
       end
@@ -591,6 +648,8 @@ module FpgaFuzz
       [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")], [FpgaIsa::CLS_INT, S[:divz], divz_at],
       [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"), cerr_at],
       [FpgaIsa::CLS_INT, S[:ior], prim.("IOREAD")], [FpgaIsa::CLS_INT, S[:iow], prim.("IOWRITE")],
+      *TASK_SYMS.map { |k, sym| [FpgaIsa::CLS_INT, sym, prim.(TASK_PRIM[k])] },
+      [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__task_tick"), tick_at],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],

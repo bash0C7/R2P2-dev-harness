@@ -118,32 +118,32 @@ class FpgaRomTest < Minitest::Test
     end
   end
 
-  # pc 0 は TABLE (a = メソッド表の大きさの log2、b = 表の先頭、c = シンボル表の先頭)。
+  # pc 0 は TABLE (a = メソッド表の大きさの log2、b = 表の先頭、c = シンボル表の先頭)。pc 1 は一番外の ENTER (fn = nregs)。
   # 並びはプログラム、データ (文字列とシンボルの名前)、シンボル表、メソッド表
   def test_rom_starts_with_the_table_word
     image = FpgaRom.from_binary(rite([op("LOADI32"), 1, 0x12, 0x34, 0x56, 0x78, op("STOP")]))
     assert_equal "TABLE", FpgaIsa::OPS[image.words[0].op].name
     assert_equal [image.table_size.bit_length - 1, image.table_base, image.symtab], [image.words[0].a, image.words[0].b, image.words[0].c]
-    assert_equal [5, image.symtab + image.symbols.size], [image.data_base, image.table_base]
+    assert_equal [6, image.symtab + image.symbols.size], [image.data_base, image.table_base]
     assert_equal image.table_base + image.table_size, image.words.size
-    assert_equal %w[CLASS SEND0], image.words[1, 2].map { |w| FpgaIsa::OPS[w.op].name } # main を作る
-    assert_equal "0f0112345678", image.words[3].hex
-    assert_equal "760000000000", image.words[4].hex
+    assert_equal %w[ENTER CLASS SEND0], image.words[1, 3].map { |w| FpgaIsa::OPS[w.op].name } # 一番外の ENTER、main を作る
+    assert_equal "0f0112345678", image.words[4].hex
+    assert_equal "760000000000", image.words[5].hex
   end
 
   def test_jump_becomes_absolute_word_address
-    # 0: JMP +1 (byte 3 -> byte 4), 3: NOP, 4: STOP  (pc は TABLE と main を作る2語の分 3 ずれる)
+    # 0: JMP +1 (byte 3 -> byte 4), 3: NOP, 4: STOP  (pc は TABLE、一番外の ENTER、main を作る2語の分 4 ずれる)
     image = FpgaRom.from_binary(rite([op("JMP"), 0x00, 0x01, op("NOP"), op("STOP")]))
-    assert_equal 5, image.words[3].b
+    assert_equal 6, image.words[4].b
     # 後ろ向き: 0: NOP, 1: JMP -4 (byte 4 -> byte 0)
     image = FpgaRom.from_binary(rite([op("NOP"), op("JMP"), 0xFF, 0xFC]))
-    assert_equal 3, image.words[4].b
+    assert_equal 4, image.words[5].b
   end
 
   def test_gvar_becomes_port
     image = FpgaRom.from_binary(rite([op("GETGV"), 1, 0, op("SETGV"), 1, 1, op("STOP")], syms: ["$BUTTON", "$LED2"]))
-    assert_equal 2, image.words[3].b
-    assert_equal 1, image.words[4].b
+    assert_equal 2, image.words[4].b
+    assert_equal 1, image.words[5].b
   end
 
   def test_rejects_unsupported_instruction_with_location
@@ -155,11 +155,11 @@ class FpgaRomTest < Minitest::Test
   def test_calls_carry_symbol_numbers
     image = FpgaRom.from_binary(rite([op("SEND0"), 1, 0, op("SSEND"), 1, 1, 2, op("STOP")], syms: %w[puts foo]))
     assert_equal FpgaIsa::OP_SYMS, image.symbols[0, FpgaIsa::OP_SYMS.size]
-    assert_equal ["SEND0", "puts", 0], [FpgaIsa::OPS[image.words[3].op].name, image.symbols[image.words[3].b], image.words[3].c]
-    assert_equal ["SSEND", "foo", 2], [FpgaIsa::OPS[image.words[4].op].name, image.symbols[image.words[4].b], image.words[4].c]
+    assert_equal ["SEND0", "puts", 0], [FpgaIsa::OPS[image.words[4].op].name, image.symbols[image.words[4].b], image.words[4].c]
+    assert_equal ["SSEND", "foo", 2], [FpgaIsa::OPS[image.words[5].op].name, image.symbols[image.words[5].b], image.words[5].c]
     blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
     bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["select"], reps: [blk])
-    w = FpgaRom.from_binary(bin).words[5]
+    w = FpgaRom.from_binary(bin).words[6]
     assert_equal ["SEND", 0x80], [FpgaIsa::OPS[w.op].name, w.c]
   end
 
@@ -168,11 +168,11 @@ class FpgaRomTest < Minitest::Test
     child = irep_record([op("ENTER"), 0, 0, 0, op("LOADI_2"), 2, op("RETURN"), 2], nregs: 3)
     bin = rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["two"], reps: [child])
     image = FpgaRom.from_binary(bin)
-    assert_equal %w[TABLE CLASS SEND0 TDEF SSEND0 STOP ENTER LOADI_2 RETURN], image.words.first(9).map { |w| FpgaIsa::OPS[w.op].name }
-    assert_equal [0, 3], [image.words[6].a, image.words[6].b]
-    assert_equal 6, lookup(image, FpgaIsa::CLS_OBJECT, "two")
-    assert_equal 6, lookup(image, FpgaIsa::CLS_INT, "two") # Integer から親の Object へ
-    assert_match(/# irep 1  nregs 3\n   6  000  ENTER/, image.listing)
+    assert_equal %w[TABLE ENTER CLASS SEND0 TDEF SSEND0 STOP ENTER LOADI_2 RETURN], image.words.first(10).map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal [0, 3], [image.words[7].a, image.words[7].b]
+    assert_equal 7, lookup(image, FpgaIsa::CLS_OBJECT, "two")
+    assert_equal 7, lookup(image, FpgaIsa::CLS_INT, "two") # Integer から親の Object へ
+    assert_match(/# irep 1  nregs 3\n   7  000  ENTER/, image.listing)
   end
 
   # 同じ名前を2回 def したら後の定義 (静的に決める)
@@ -189,7 +189,7 @@ class FpgaRomTest < Minitest::Test
   def test_enter_carries_the_parameter_shape
     params = irep_record([op("ENTER"), 0x04, 0x30, 0x80, op("RETNIL")], nregs: 7) # 1:1:1:1:0:0:0 (m1 o r m2)
     image = FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [params]))
-    enter = image.words.find { |w| FpgaIsa::OPS[w.op]&.name == "ENTER" }
+    enter = image.words.drop(2).find { |w| FpgaIsa::OPS[w.op]&.name == "ENTER" } # pc 1 は一番外の ENTER
     assert_equal [1, 7, 1 | (1 << 5) | (1 << 6)], [enter.a, enter.b, enter.c]
     kw = irep_record([op("ENTER"), 0x00, 0x00, 0x04, op("RETNIL")]) # 0:0:0:0:1:0:0 (key 1)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [kw])) }
@@ -244,7 +244,7 @@ class FpgaRomTest < Minitest::Test
     assert_match(/GETUPVAR at byte 000 reaches 1 levels out, the block is 0 deep/, e.message)
     blk = irep_record([op("ENTER"), 0, 0, 0, op("GETUPVAR"), 1, 1, 0, op("RETURN"), 1], nregs: 3)
     words = FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[6].op].name, words[6].a, words[6].b, words[6].c]
+    assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[7].op].name, words[7].a, words[7].b, words[7].c]
     top_return = irep_record([op("ENTER"), 0, 0, 0, op("RETURN_BLK"), 1], nregs: 3)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [top_return])) }
     assert_match(/return inside a block at irep 1 byte 004 is not inside a method or a lambda/, e.message)
@@ -256,13 +256,13 @@ class FpgaRomTest < Minitest::Test
     blk = irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN_BLK"), 1], nregs: 3) # |x| return x
     bin = rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["lambda"], reps: [blk])
     words = FpgaRom.from_binary(bin).words
-    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[3].op].name, words[3].c]
+    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[4].op].name, words[4].c]
     words = FpgaRom.from_binary(rite([op("LAMBDA"), 1, 0, op("STOP")], reps: [blk])).words
-    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[3].op].name, words[3].c]
+    assert_equal ["BLOCK", 0x80], [FpgaIsa::OPS[words[4].op].name, words[4].c]
     words = FpgaRom.from_binary(rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["proc"], reps: [
       irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN"), 1], nregs: 3)
     ])).words
-    assert_equal 0, words[3].c # proc は印なし
+    assert_equal 0, words[4].c # proc は印なし
   end
 
   # インスタンス変数は子クラスが親の並びの後ろに足す。(cls, :@x) と attr の (cls, :x) (cls, :x=) は
@@ -321,7 +321,7 @@ class FpgaRomTest < Minitest::Test
   def test_pool_strings_and_integers
     image = FpgaRom.from_binary(rite([op("STRING"), 1, 0, op("STRING"), 2, 1, op("STRING"), 3, 0, op("LOADL"), 4, 3, op("STOP")],
                                      pool: ["hello", "", "hello", -7]))
-    s1, s2, s3, l = image.words[3, 4]
+    s1, s2, s3, l = image.words[4, 4]
     assert_equal [image.data_base, 5], [s1.b, s1.c]
     assert_equal [s1.b, 5], [s3.b, s3.c] # 同じ中身
     assert_equal 0, s2.c
@@ -343,10 +343,10 @@ class FpgaRomTest < Minitest::Test
   # io_map.rb に無いグローバル変数は定数の表に置き、一番外の先頭で nil にする (代入前に読むと nil)
   def test_general_globals_start_as_nil
     image = FpgaRom.from_binary(rite([op("GETGV"), 1, 0, op("SETGV"), 1, 1, op("STOP")], syms: ["$foo", "$LED2"]))
-    names = image.words.first(6).map { |w| FpgaIsa::OPS[w.op].name }
-    assert_equal %w[TABLE LOADNIL SETCONST CLASS SEND0 GETCONST], names
-    assert_equal image.words[2].b, image.words[5].b
-    assert_equal ["SETGV", 1], [FpgaIsa::OPS[image.words[6].op].name, image.words[6].b] # $LED2 はポートのまま
+    names = image.words.first(7).map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal %w[TABLE ENTER LOADNIL SETCONST CLASS SEND0 GETCONST], names
+    assert_equal image.words[3].b, image.words[6].b
+    assert_equal ["SETGV", 1], [FpgaIsa::OPS[image.words[7].op].name, image.words[7].b] # $LED2 はポートのまま
   end
 
   # A::X と class A::B は GETCONST / GETMCNST の連なりから静的に解く。知らない入れ物は止める
