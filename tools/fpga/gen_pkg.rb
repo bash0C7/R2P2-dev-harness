@@ -27,7 +27,7 @@ module FpgaGenPkg
     lines << ""
     lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = クラス << 16 | 中身の語数"
     lines << "  localparam int HEAP_SIZE = #{FpgaIsa::HEAP_SIZE};"
-    %w[OBJECT NIL TRUE FALSE INT SYM ARRAY PROC CLASS DATA ENV].each do |k|
+    %w[OBJECT NIL TRUE FALSE INT SYM ARRAY PROC CLASS STRING DATA ENV].each do |k|
       lines << format("  localparam logic [15:0] CLS_%-6s = 16'd%d;", k, FpgaIsa.const_get("CLS_#{k}"))
     end
     lines << "  localparam logic [15:0] CLS_META   = 16'h#{FpgaIsa::META.to_s(16)};"
@@ -47,6 +47,7 @@ module FpgaGenPkg
     lines << "  localparam logic [1:0] TGT_IVSET = 2'd#{FpgaIsa::TGT_IVSET};"
     lines << "  localparam logic [15:0] NIVARS_SYM = 16'h#{FpgaIsa::NIVARS_SYM.to_s(16)};"
     lines << "  localparam logic [15:0] ISA_BIT = 16'h#{FpgaIsa::ISA_BIT.to_s(16)};"
+    lines << "  localparam logic [15:0] NAME_SYM = 16'h#{FpgaIsa::NAME_SYM.to_s(16)};"
     lines << "  // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)"
     FpgaIsa::OP_SYMS.each_with_index do |s, i|
       lines << format("  localparam logic [15:0] SYM_%-4s = 16'd%d; // %s", OP_SYM_NAMES.fetch(s), i, s)

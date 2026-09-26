@@ -15,17 +15,19 @@ module Rite
   class Error < StandardError; end
 
   class Irep
-    attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :syms, :reps
+    attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :pool, :syms, :reps
     # rom.rb が並べた時の番号と、ROM での先頭の語アドレス
     attr_accessor :index, :base
 
-    def initialize(nlocals, nregs, rlen, clen, iseq, plen, syms, reps)
+    # pool: [[:str, バイト列] / [:int, 整数] / [:float] / [:bigint], ...]
+    def initialize(nlocals, nregs, rlen, clen, iseq, pool, syms, reps)
       @nlocals = nlocals
       @nregs = nregs
       @rlen = rlen
       @clen = clen
       @iseq = iseq
-      @plen = plen
+      @plen = pool.size
+      @pool = pool
       @syms = syms
       @reps = reps
     end
@@ -83,10 +85,13 @@ module Rite
     raise Error, "iseq runs past the end of the binary" unless iseq && iseq.bytesize == ilen
     pos += ilen + 13 * clen
 
-    # pool は中身を使わない (対応しないので、あれば rom.rb がエラーにする)。syms と子 irep へ進むために読み飛ばす
     plen = u16(bin, pos)
     pos += 2
-    plen.times { pos = skip_pool(bin, pos) }
+    pool = []
+    plen.times do
+      entry, pos = read_pool(bin, pos)
+      pool << entry
+    end
 
     syms = []
     slen = u16(bin, pos)
@@ -107,18 +112,25 @@ module Rite
       child, pos = read_irep(bin, pos)
       reps << child
     end
-    [Irep.new(nlocals, nregs, rlen, clen, iseq, plen, syms, reps), pos]
+    [Irep.new(nlocals, nregs, rlen, clen, iseq, pool, syms, reps), pos]
   end
 
-  # mruby の src/load.c の POOL BLOCK と同じ長さだけ進める
-  def self.skip_pool(bin, pos)
+  # mruby の src/load.c の POOL BLOCK を1つ読む。[中身, 次の位置]
+  def self.read_pool(bin, pos)
     tt = bin.getbyte(pos)
     pos += 1
     case tt
-    when 1 then pos + 4                          # IREP_TT_INT32
-    when 3, 5 then pos + 8                       # IREP_TT_INT64, IREP_TT_FLOAT
-    when 7 then pos + bin.getbyte(pos) + 2       # IREP_TT_BIGINT
-    when 0, 2 then pos + 2 + u16(bin, pos) + 1   # IREP_TT_STR, IREP_TT_SSTR
+    when 1 # IREP_TT_INT32
+      v = u32(bin, pos)
+      [[:int, v >= 0x8000_0000 ? v - 0x1_0000_0000 : v], pos + 4]
+    when 3 # IREP_TT_INT64
+      v = (u32(bin, pos) << 32) | u32(bin, pos + 4)
+      [[:int, v >= 0x8000_0000_0000_0000 ? v - 0x1_0000_0000_0000_0000 : v], pos + 8]
+    when 5 then [[:float], pos + 8]                         # IREP_TT_FLOAT
+    when 7 then [[:bigint], pos + bin.getbyte(pos) + 2]     # IREP_TT_BIGINT
+    when 0, 2                                               # IREP_TT_STR, IREP_TT_SSTR
+      len = u16(bin, pos)
+      [[:str, bin.byteslice(pos + 2, len)], pos + 2 + len + 1]
     else raise Error, "unknown pool type #{tt}"
     end
   end

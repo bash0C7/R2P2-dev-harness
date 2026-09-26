@@ -44,12 +44,22 @@ module FpgaCompare
     lines.join("\n")
   end
 
-  # O 行を人が読む形に。[port 名, 値] の列。
+  # O 行を人が読む形に。[port 番号, 値] の列 (console は除く)
   def outputs(trace)
-    trace.grep(/\AO /).map do |l|
+    trace.grep(/\AO /).filter_map do |l|
       _, _, port, tag, val = l.split
+      next if port.to_i == FpgaIoMap::CONSOLE
       [port.to_i, decode(tag.to_i, val.to_i(16))]
     end
+  end
+
+  # console ポートに書いたバイト列 (UTF-8 の String)。O 行は "O step port tag value"
+  def console(trace)
+    bytes = trace.grep(/\AO /).filter_map do |l|
+      f = l.split
+      f[4].to_i(16) & 0xFF if f[2].to_i == FpgaIoMap::CONSOLE
+    end
+    bytes.pack("C*").force_encoding("UTF-8")
   end
 
   def decode(tag, val)

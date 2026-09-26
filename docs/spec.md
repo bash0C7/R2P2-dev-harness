@@ -674,10 +674,10 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **`A::X` (`GETMCNST` / `SETMCNST`) と `class A::B`** は、入れ物を直前の `GETCONST` / `GETMCNST` の連なりから静的に解く。
   入れ物が知っているクラス・モジュールでない (`GPIO::OUT` のようにデバイスのクラスがまだ無い時も)、`A::X` がどこでも
   代入されていなければ変換時に止める。空の本体のクラス (`class E < StandardError; end`、mruby は `EXEC` を出さない) も通す
-- **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** 文字列・Hash・Range は無い
+- **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** 文字列は下の「文字列と出力 (P2)」。Hash・Range は無い
 - **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`、呼び出しの splat (`f(*a)`)。** キーワード引数 (定義側も呼び出し側も)
   は変換時に止める (Hash が要るので P3 の後。下の「引数 (P1d)」)
-- **pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
+- **pool の Float と 32bit に収まらない整数、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
 
@@ -694,7 +694,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   (メタクラスは親のメタクラスへ、Object のメタクラスは Class へ)。空きは全 bit 1
 - **開番地法のハッシュ表。** 位置は (クラス × 5 + シンボル) & (大きさ − 1) から1語ずつ。大きさは項目の2倍以上の2の冪 (16 以上)。
   コアは 1 cycle に1語比べる (S_LOOKUP / S_PROBE)。見つからなければ親の輪を引き、32 段で諦める (表が壊れていても止まる)
-- **`TABLE` (pc 0)。** a = 表の大きさの log2、b = 表の先頭の語アドレス。実行するまではどの探索も見つからない
+- **`TABLE` (pc 0)。** a = 表の大きさの log2、b = 表の先頭の語アドレス、c = シンボル表の先頭。実行するまではどの探索も見つからない
 - **呼び出し (`SEND` / `SEND0` / `SSEND` / `SSEND0`)。** b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。
   `SSEND` は R0 (self) を R[a] に写してから引く。メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、
   R[1..引数の数] = 引数、その次がブロックの枠。ブロックを渡さなければ nil) を作って飛び、primitive なら S_PRIM でその場で実行する。
@@ -752,12 +752,35 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
   どれも新しい配列を作る (mruby は ARYCAT / ARYPUSH で R[a] を伸ばすが、R[a] は同じ式の中で作った配列なので違いは見えない)
 - **変換時に止めるもの:** キーワード引数 (`ENTER` の key / kdict、呼び出しの nk、`ARGARY` の kd)、ブロックの外のフレームの `ARGARY`
 
+### 文字列と出力 (P2)
+
+- **String は Array と同じ形** (`[見出し String] [長さ] [中身への参照]`、中身は `[見出し] [バイト × 容量]`)、**1語に1バイト**
+  (Integer 0..255)。確保・伸長・写し・GC は配列と同じ回路を使う
+- **`STRING a b c`** は R[a] = ROM のデータ (b から、長さ c) の新しい String。コアは確保してから ROM を読んで写す
+  (1バイト 2 cycle、S_SROM / S_SBYTE)。同じ中身の pool の文字列はデータを1つにする
+- **`STRCAT a`** は変換器が `SEND a+1 :to_s` と `SEND a :<< 1` に下げる (式展開は必ず新しい `STRING` から始まる)。
+  **`LOADL`** は 32bit に収まる整数なら `LOADI32`。**`JMPUW`** (while の中の break) は catch handler が無い irep では `JMP`
+- **String の primitive** (受け手が String でなければエラー、範囲の外もエラー): `bytesize`、`getbyte` (Array#[] と同じ意味)、
+  `__aset(i, b)` (0 <= i < 長さ、b は 0..255)、`__push(b)` (伸ばす)、`__slice(i, n)` (新しい String)。
+  `Symbol#to_s` (SYMSTR) はシンボル表を読んで作る。`Module#__name_sym` は変換器がメソッド表に置いた
+  (クラス, `NAME_SYM` = 0xFFFD) → 名前のシンボルを親をたどらずに引く (`Module#name` はその `to_s`)
+- **ほかの String のメソッドと表示はプレリュード** (`fpga/prelude/string.rb`)。文字は UTF-8 として数える
+  (`size` `[]` `reverse` `chars` `index`)。`upcase` などは ASCII だけで、ほかの文字があれば止める。
+  `inspect` は CRuby と同じ形 (制御文字は `\uXXXX`)。`format` / `%` は `%d %i %s %p %x %X %o %b %c %%` とフラグ `- 0 + 空白`、幅
+  (精度と Float は止める)。`Object#inspect` は `#<クラス名>` (CRuby はアドレスとインスタンス変数を出すので合わない)
+- **出力は console ポート** (`$CONSOLE`、出力ポート 3) に1バイトずつ書く (`puts` `print` `p` はプレリュード)。
+  トレースは O 行のまま。参照との突き合わせ (`ref_vm_test.rb`) は、止まるプログラムの console のバイト列を
+  CRuby の標準出力と picoruby の出力 (最後の `p` の行を除く) の両方と比べる。PERIDOT-Air の top には console のピンがまだ無い
+  (UART の TX は P5)
+
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
 一緒に compile する** (`mrbc -o out.mrb fpga/prelude/core.rb prog.rb` で1つの irep になる)。コアはそれを普通のメソッドとして走らせる。
 回路を増やさずに組み込みメソッドを足すため。今あるもの: `Integer#times` `upto` `downto`、`Array#each` `each_with_index` `map`
-`==` `include?`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?`、`NilClass#nil?`、`Module#===`。CRuby / picoruby でも同じ意味になる書き方だけで書く
+`==` `include?` `join` `inspect`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?` `===` `puts` `print` `p` `format`、
+`NilClass#nil?`、`Module#===` `name`、String のメソッド (上の「文字列と出力」)。プレリュードは ROM を 4000 語ほど使う
+(使わないメソッドも全部入る)。CRuby / picoruby でも同じ意味になる書き方だけで書く
 (参照の突き合わせは CRuby の組み込みと比べる)。
 
 ### ROM 形式と変換 (#7)
@@ -776,10 +799,11 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
 
 - **ジャンプ先は絶対語アドレスにする。** mruby は「operand を読み終えた位置からのバイト相対 (int16)」
 - **`GETGV` / `SETGV` の `Syms[b]` は I/O ポート番号にする。** 対応表は `tools/fpga/io_map.rb`
-  (`$LED`=0 出力、`$LED2`=1 出力、`$BUTTON`=2 入力)。ハードウェアはシンボル表を持たない。
+  (`$LED`=0 出力、`$LED2`=1 出力、`$BUTTON`=2 入力、`$CONSOLE`=3 出力 (console))。
   入力ポートへの代入は変換時に止める。表に無いグローバル変数は一般のグローバル変数で、定数の表に置き、
   一番外の先頭で nil にする (`LOADNIL R0` + `SETCONST`、self を作る前)
-- **並び: pc 0 に `TABLE`、irep を親・子の順 (深さ優先)、最後にメソッド表。** ROM は 8192 語 (`PC_BITS` = 13)。
+- **並び: pc 0 に `TABLE`、irep を親・子の順 (深さ優先)、データ (pool の文字列とシンボルの名前、1語 4バイト)、
+  シンボル表 (シンボル番号 → {データの語アドレス, 長さ})、最後にメソッド表。** ROM は 8192 語 (`PC_BITS` = 13)。
   入り切らなければ変換時に止める
 - **シンボルはプログラム全体で番号を振る。** 演算の落ち先 (`+ - * / == < <= > >= [] []=`) は 0 から固定
   (`OP_SYMS`、コアが番号を知っている)。`SEND` 系の b、`LOADSYM` / `TDEF` / `SDEF` の b はシンボルの番号

@@ -29,6 +29,7 @@ package mrb_pkg;
   localparam logic [15:0] CLS_ARRAY  = 16'd7;
   localparam logic [15:0] CLS_PROC   = 16'd8;
   localparam logic [15:0] CLS_CLASS  = 16'd9;
+  localparam logic [15:0] CLS_STRING = 16'd11;
   localparam logic [15:0] CLS_DATA   = 16'd32752;
   localparam logic [15:0] CLS_ENV    = 16'd32753;
   localparam logic [15:0] CLS_META   = 16'h8000;
@@ -48,6 +49,7 @@ package mrb_pkg;
   localparam logic [1:0] TGT_IVSET = 2'd3;
   localparam logic [15:0] NIVARS_SYM = 16'hfffe;
   localparam logic [15:0] ISA_BIT = 16'h4000;
+  localparam logic [15:0] NAME_SYM = 16'hfffd;
   // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)
   localparam logic [15:0] SYM_ADD  = 16'd0; // +
   localparam logic [15:0] SYM_SUB  = 16'd1; // -
@@ -105,6 +107,13 @@ package mrb_pkg;
   localparam logic [13:0] PR_AGET     = 14'd39; // Array#[] (1 arg)
   localparam logic [13:0] PR_ASET     = 14'd40; // Array#[]= (2 arg)
   localparam logic [13:0] PR_CALL     = 14'd41; // Proc#call (any)
+  localparam logic [13:0] PR_SBYTES   = 14'd42; // String#bytesize (0 arg)
+  localparam logic [13:0] PR_SGETB    = 14'd43; // String#getbyte (1 arg)
+  localparam logic [13:0] PR_SASET    = 14'd44; // String#__aset (2 arg)
+  localparam logic [13:0] PR_SPUSH    = 14'd45; // String#__push (1 arg)
+  localparam logic [13:0] PR_SSLICE   = 14'd46; // String#__slice (2 arg)
+  localparam logic [13:0] PR_SYMSTR   = 14'd47; // Symbol#to_s (0 arg)
+  localparam logic [13:0] PR_NAMESYM  = 14'd48; // Module#__name_sym (0 arg)
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -150,6 +159,13 @@ package mrb_pkg;
       PR_AGET    : return 8'h01;
       PR_ASET    : return 8'h02;
       PR_CALL    : return 8'hff;
+      PR_SBYTES  : return 8'h00;
+      PR_SGETB   : return 8'h01;
+      PR_SASET   : return 8'h02;
+      PR_SPUSH   : return 8'h01;
+      PR_SSLICE  : return 8'h02;
+      PR_SYMSTR  : return 8'h00;
+      PR_NAMESYM : return 8'h00;
       default: return 8'h00;
     endcase
   endfunction
@@ -160,6 +176,7 @@ package mrb_pkg;
   localparam int PORT_LED = 0; // $LED (out)
   localparam int PORT_LED2 = 1; // $LED2 (out)
   localparam int PORT_BUTTON = 2; // $BUTTON (in)
+  localparam int PORT_CONSOLE = 3; // $CONSOLE (out)
 
   // 対応命令 (tools/fpga/isa.rb の SUPPORTED)
   localparam logic [7:0] OP_NOP        = 8'd0; // Z
@@ -228,6 +245,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_ARYPUSH    = 8'd85; // BB
   localparam logic [7:0] OP_AREF       = 8'd87; // BBB
   localparam logic [7:0] OP_APOST      = 8'd89; // BBB
+  localparam logic [7:0] OP_STRING     = 8'd92; // BB
   localparam logic [7:0] OP_BLOCK      = 8'd98; // BB
   localparam logic [7:0] OP_CLASS      = 8'd103; // BB
   localparam logic [7:0] OP_EXEC       = 8'd105; // BB

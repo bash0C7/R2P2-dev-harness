@@ -78,7 +78,9 @@ module mrb_core
     S_PRIM,               // 見つかった primitive を実行する
     S_OBJ,                // new: オブジェクトのインスタンス変数を nil で埋め、見出しを書く
     S_ENLATCH, S_ENPOST, S_ENFRONT, S_ENFIN, // ENTER: ブロックと写し元を覚える / 後ろの必須 / 前 / 残りとブロック
-    S_APOST               // a, *b, c = v: 後ろの c 個をレジスタへ
+    S_APOST,              // a, *b, c = v: 後ろの c 個をレジスタへ
+    S_SROM, S_SBYTE,      // String を ROM のデータから写す: 語を読む / 1バイト書く
+    S_SYMRD, S_SYMGO      // Symbol#to_s: シンボル表を読む / 読んだ場所から String を作る
   } state_t;
   state_t state;
 
@@ -94,7 +96,8 @@ module mrb_core
     LM_SETIV,   // SETIV (見つからなければエラー)
     LM_ISA,     // is_a? (親はたどらない)
     LM_RESPOND, // respond_to?
-    LM_NIVARS   // new のインスタンス変数の数 (親はたどらない、無ければ 0)
+    LM_NIVARS,  // new のインスタンス変数の数 (親はたどらない、無ければ 0)
+    LM_NAME     // Module#name: (クラス, NAME_SYM) -> 名前のシンボル (親はたどらない、無ければ nil)
   } lmode_t;
   lmode_t lk_mode;
 
@@ -127,6 +130,10 @@ module mrb_core
 
   // メソッド表 (TABLE で決まる) と探索
   logic                t_on;      // TABLE を実行したか (していなければどの探索も見つからない)
+  logic [PC_BITS-1:0]  symtab;    // シンボル表の先頭 (TABLE の c)
+  logic [PC_BITS-1:0]  m_rom;     // String を作る時の ROM のデータの語アドレス
+  logic [15:0]         m_cls;     // 作る配列の形のオブジェクトのクラス (Array か String)
+  logic                m_fromrom; // 要素を ROM のデータから写す (S_SROM)
   logic [3:0]          tlog;      // 表の大きさの log2
   logic [PC_BITS-1:0]  tbase;
   logic [15:0]         lk_cls, lk_sym;
@@ -260,7 +267,15 @@ module mrb_core
   // オブジェクトのクラスは見出しの上位 16bit
   assign ra_ary    = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_ARRAY;
   assign ra1_proc  = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_PROC;
-  logic ra_proc, rb_ary, cp_proc, walk_proc;
+  logic ra_proc, rb_ary, cp_proc, walk_proc, ra_str, ra1_byte, ra2_byte;
+  assign ra_str    = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_STRING;
+  assign ra1_byte  = tag_of(ra1) == TAG_INT && val_of(ra1) <= 32'd255;
+  assign ra2_byte  = tag_of(ra2) == TAG_INT && val_of(ra2) <= 32'd255;
+  logic ra2_int, s_idx_ok, s_slice_ok;
+  // String の primitive の範囲 (Icarus は always_comb の中で関数を呼ぶ式があると時刻を進めなくなることがあるので wire に)
+  assign s_idx_ok   = val_of(ra1) < 32'(arr_len);
+  assign s_slice_ok = 33'(val_of(ra1)) + 33'(val_of(ra2)) <= 33'(arr_len);
+  assign ra2_int   = tag_of(ra2) == TAG_INT;
   assign ra_proc   = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_PROC;
   assign rb_ary    = tag_of(rb) == TAG_OBJ && heap[ha(val_of(rb))][31:16] == CLS_ARRAY;
   assign cp_proc   = tag_of(cp) == TAG_OBJ && heap[ha(val_of(cp))][31:16] == CLS_PROC;
@@ -352,7 +367,7 @@ module mrb_core
   assign lk_empty = rom_data == '1;
   assign lk_hit   = rom_data[47:32] == lk_cls && rom_data[31:16] == lk_key;
   assign lk_last  = lk_i == t_mask;
-  assign lk_walk  = !(lk_mode == LM_ISA || lk_mode == LM_NIVARS); // 見つからなければ親へ進むか
+  assign lk_walk  = !(lk_mode == LM_ISA || lk_mode == LM_NIVARS || lk_mode == LM_NAME); // 見つからなければ親へ進むか
 
   // S_LKDONE で読み書きするインスタンス変数: GETIV / SETIV は self、attr_* は受け手 (R[a])。
   // Object かプログラムのクラスのインスタンスで、番号が見出しの数より小さいこと
@@ -508,6 +523,7 @@ module mrb_core
   logic                halt, err;
   logic                do_call, do_ret, set_const, set_up, pop_len, set_lam, do_frame, do_enter, go_enter, set_table;
   logic                go_block, go_array, go_set, go_unwind, go_unwind_ret, go_sleep, go_walk, go_lwalk, go_lookup;
+  logic                go_string, go_slice, go_sym;
   logic [15:0]         lk_sym_n;    // 探すシンボル
   logic [6:0]          lk_argc_n;
   logic                lk_blk_n;
@@ -547,6 +563,9 @@ module mrb_core
     pop_len   = 1'b0;
     go_block  = 1'b0;
     go_array  = 1'b0;
+    go_string = 1'b0;
+    go_slice  = 1'b0;
+    go_sym    = 1'b0;
     go_set    = 1'b0;
     set_push  = 1'b0;
     set_aset  = 1'b0;
@@ -634,6 +653,30 @@ module mrb_core
           set_aset = 1'b1;
           err      = prim_argc_bad || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
         end
+        // String (Array と同じ形で1語に1バイト)。範囲の外や型の違いはエラー (丸めはプレリュード)
+        PR_SBYTES: begin err = prim_argc_bad || !ra_str; wval = mk_int({16'd0, arr_len}); end
+        PR_SGETB:  begin err = prim_argc_bad || !ra_str || !ra1_int; wval = idx_val; end
+        PR_SASET: begin
+          wr       = 1'b0;
+          go_set   = 1'b1;
+          set_aset = 1'b1;
+          err      = prim_argc_bad || !ra_str || !ra1_int || !s_idx_ok || !ra2_byte;
+        end
+        PR_SPUSH: begin wr = 1'b0; go_set = 1'b1; set_push = 1'b1; err = prim_argc_bad || !ra_str || !ra1_byte || arr_len >= 16'hFFFF; end
+        PR_SSLICE: begin
+          wr       = 1'b0;
+          go_slice = 1'b1;
+          err      = prim_argc_bad || !ra_str || !ra1_int || !ra2_int || !s_slice_ok;
+        end
+        PR_SYMSTR: begin wr = 1'b0; go_sym = 1'b1; err = prim_argc_bad || tag_of(ra) != TAG_SYM; end
+        PR_NAMESYM: begin
+          wr        = 1'b0;
+          go_lookup = 1'b1;
+          lk_mode_n = LM_NAME;
+          lk_cls_n  = ra[15:0];
+          lk_sym_n  = NAME_SYM;
+          err       = prim_argc_bad || tag_of(ra) != TAG_CLASS;
+        end
         PR_NEW: begin
           // (クラス, NIVARS_SYM) を引いてから確保し、initialize を送る
           wr        = 1'b0;
@@ -686,6 +729,7 @@ module mrb_core
         OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
         OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
         OP_TABLE:     begin set_table = 1'b1; err = a > 8'(PC_BITS); end
+        OP_STRING:    go_string = 1'b1;
         OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
         // ヒープのオブジェクトはピンに出せない
         OP_SETGV:     begin iow = 1'b1; err = b[7:0] >= 8'(NPORTS) || is_ref(ra); end
@@ -888,7 +932,7 @@ module mrb_core
 
     if (err) begin
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
-      pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
+      pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
       do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
@@ -938,11 +982,13 @@ module mrb_core
           end
           LM_GETIV: begin m_we = 1'b1; m_wdata = lk_hitr ? heap[iv_addr] : V_NIL; end
           LM_ISA, LM_RESPOND: begin m_we = 1'b1; m_wdata = mk_bool(lk_hitr); end
+          LM_NAME: begin m_we = 1'b1; m_wdata = lk_hitr ? mk(TAG_SYM, {16'd0, lk_tgt}) : V_NIL; end
           default: ;
         endcase
       end
       S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_AELEM: if (17'(m_k) == 17'(m_n) && m_after != AF_ENTER) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
+      S_SROM: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_APOST: if (en_k < 17'(c)) begin
         m_we    = 1'b1;
         m_waddr = 8'(ia + 17'd1 + en_k);
@@ -999,7 +1045,9 @@ module mrb_core
   wire exec = state == S_EXEC && en;
   wire run  = (state == S_EXEC || state == S_PRIM) && en; // 命令か primitive の結果を書く cycle
 
-  assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr : pc;
+  assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
+                    state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
+                    state == S_SYMRD ? symtab + PC_BITS'(val_of(ra)) : pc;
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
@@ -1034,6 +1082,7 @@ module mrb_core
       t_on    <= 1'b0;
       tlog    <= '0;
       tbase   <= '0;
+      symtab  <= '0;
     end else if (state == S_INIT) begin
       // レジスタファイルは一括ではリセットしない (ブロック RAM にできるように)
       regs[clr_ptr[RB-1:0]] <= V_NIL;
@@ -1060,6 +1109,7 @@ module mrb_core
               t_on  <= 1'b1;
               tlog  <= a[3:0];
               tbase <= b[PC_BITS-1:0];
+              symtab <= c[PC_BITS-1:0];
             end
             gc_done <= 1'b0;
             if (err) state <= S_ERROR;
@@ -1137,6 +1187,8 @@ module mrb_core
               en_pm    <= e_pm;
               en_skip  <= e_skip;
               if (e_r != 17'd0) begin
+                m_cls     <= CLS_ARRAY;
+                m_fromrom <= 1'b0;
                 m_n     <= 16'(e_rn);
                 need    <= 17'd4 + e_rn;
                 sg0_k   <= e_heap ? SK_HEAP : SK_REGS;
@@ -1177,9 +1229,40 @@ module mrb_core
               walk_p <= cp;
               lw_k   <= '0;
               state  <= S_LWALK;
+            end else if (go_string) begin
+              // STRING: b = ROM のデータの語アドレス、c = 長さ
+              mop       <= MO_ARRAY;
+              m_dst     <= ia[RB:0];
+              m_after   <= AF_WRITE;
+              m_cls     <= CLS_STRING;
+              m_fromrom <= 1'b1;
+              m_rom     <= b[PC_BITS-1:0];
+              m_n       <= c;
+              need      <= 17'd4 + 17'(c);
+              state     <= S_ALLOC;
+            end else if (go_sym) begin
+              state <= S_SYMRD;
+            end else if (go_slice) begin
+              // String#__slice(i, n): 受け手の i バイト目から n バイトの新しい String
+              mop       <= MO_ARRAY;
+              m_dst     <= ia[RB:0];
+              m_after   <= AF_WRITE;
+              m_cls     <= CLS_STRING;
+              m_fromrom <= 1'b0;
+              m_n       <= ra2[15:0];
+              need      <= 17'd4 + 17'(ra2[15:0]);
+              sg0_k     <= SK_HEAP;
+              sg0_r     <= ia[RB:0];
+              sg0_o     <= ra1[15:0];
+              sg0_n     <= ra2[15:0];
+              sg1_n     <= '0;
+              sg2_n     <= '0;
+              state     <= S_ALLOC;
             end else if (go_array) begin
               // 見出し 4 語 + 要素。要素の写し元は区間 0..2
               mop     <= MO_ARRAY;
+              m_cls     <= CLS_ARRAY;
+              m_fromrom <= 1'b0;
               m_dst   <= ia[RB:0];
               m_after <= op == OP_APOST ? AF_APOST : AF_WRITE;
               sg0_o   <= '0;
@@ -1524,11 +1607,40 @@ module mrb_core
 
           // ---- 配列リテラル: 見出し 4 語、要素を1つずつ
           S_AHDR: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_ARRAY, 16'd2});
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {m_cls, 16'd2});
             heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(m_n));
             heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_OBJ, 32'(p_new) + 32'd3);
             heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, {CLS_DATA, 16'(m_n)});
-            state <= S_AELEM;
+            state <= m_fromrom ? S_SROM : S_AELEM;
+          end
+
+          // ---- String を ROM のデータ (1語 4バイト、バイト j は bit 8j から) から写す。1バイト 2 cycle
+          //      (S_SROM で語のアドレスを出し、次の cycle の rom_data から書く)。書き終えたら R[m_dst] (m_we)
+          S_SROM: begin
+            if (17'(m_k) == 17'(m_n)) begin
+              pc    <= pc + PC_BITS'(1);
+              state <= S_FETCH;
+            end else state <= S_SBYTE;
+          end
+          S_SBYTE: begin
+            heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int({24'd0, rom_data[8 * m_k[1:0] +: 8]});
+            m_k   <= m_k + 1'b1;
+            state <= S_SROM;
+          end
+
+          // ---- Symbol#to_s: S_SYMRD でシンボル表の語 {データの語アドレス, 長さ} を読み、STRING と同じに作る
+          S_SYMRD: state <= S_SYMGO;
+          S_SYMGO: begin
+            mop       <= MO_ARRAY;
+            m_dst     <= ia[RB:0];
+            m_after   <= AF_WRITE;
+            m_cls     <= CLS_STRING;
+            m_fromrom <= 1'b1;
+            m_rom     <= rom_data[16 +: PC_BITS];
+            m_n       <= rom_data[15:0];
+            need      <= 17'd4 + 17'(rom_data[15:0]);
+            gc_done   <= 1'b0;
+            state     <= S_ALLOC;
           end
           S_AELEM: begin
             if (17'(m_k) == 17'(m_n)) begin

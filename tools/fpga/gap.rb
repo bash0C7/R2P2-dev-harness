@@ -75,7 +75,10 @@ module FpgaGap
     FpgaIsa::PRIMS.each { |pr| defined[pr[1]] = true }
     found = {}
     ireps.each_with_index do |ir, i|
-      found["pool (strings / big integers)"] = true if ir.plen > 0
+      ir.pool.each do |e|
+        found["Float literal"] = true if e[0] == :float
+        found["big integer literal"] = true if e[0] == :bigint || (e[0] == :int && (e[1] < -2**31 || e[1] >= 2**31))
+      end
       found["catch handler (rescue / ensure)"] = true if ir.clen > 0
       decoded[i].each do |insn|
         found["op #{insn.name}"] = true unless FpgaIsa.convertible?(insn.name)
@@ -83,6 +86,7 @@ module FpgaGap
         sym = ir.syms[insn.operands[1]]
         next if defined[sym]
         next if %w[block_given? require].include?(sym)
+        next if sym.start_with?("__") # プレリュードの中身 (わざと未定義にして止めるものも)
         found["method #{sym}"] = true
       end
     end

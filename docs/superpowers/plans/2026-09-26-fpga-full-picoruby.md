@@ -131,12 +131,28 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 
 ### P2 文字列と出力
 
-- 文字列はヒープのオブジェクト (4 byte / 語)。pool の文字列は ROM のデータ領域に置き、`STRING` が写す
-- `STRCAT`、式展開 (`to_s`: Integer の10進変換)、`+` `*` `==` `size` `[]` `split` `to_i` `upcase` など、example に出るもの
-- `puts` / `print` / `p` / `inspect` は console ポートに1文字ずつ出す。トレースは `C <step> <byte>`、テストベンチは文字列で表示、
-  ボードエミュレーターは UART の TX として出す。`LOADL` (pool の整数)
-- 名指し: hello.rb、式展開、example の文字列を使うもの
+- 名指し: hello.rb (puts と式展開)、strings.rb (String のメソッド)、example の文字列を使うもの
 
+#### P2 の設計
+
+- **String は Array と同じ形** (`[見出し String] [長さ] [中身への参照]`、中身は `[見出し] [バイト × 容量]`、**1語に1バイト**
+  (Integer の値として))。計画の「4 byte / 語」はやめた: 配列の確保・伸長・写し (S_AELEM の区間、push) をそのまま使え、
+  RTL がほとんど増えない。ヒープは1バイト1語を食うので、足りなければ HEAP_SIZE を上げる
+- **pool の文字列は ROM のデータ領域** (プログラムとメソッド表の間) に 1語 4バイトで置く (バイト j は bit 8j から)。
+  `STRING a b c`: b = データの語アドレス、c = 長さ。コアは確保してから ROM を1語ずつ読んで写す (1バイト 2 cycle)
+- **シンボルの名前も ROM に置く。** シンボル表 (シンボル番号 → {データの語アドレス, 長さ}) の先頭を `TABLE` の c に入れる。
+  `Symbol#to_s` (primitive SYMSTR) が表を引いて `STRING` と同じに作る
+- **`STRCAT a` は変換器が下げる:** `SEND a+1 :to_s` と `SEND a :<< 1`。式展開は必ず新しい `STRING` から始まるので
+  (mrbc の出力で確かめた) R[a] を伸ばしてよい
+- **String の primitive は最小限** (受け手が String でなければエラー): `bytesize`、`getbyte` (AGET と同じ意味)、
+  `__aset` (setbyte の中身、値は 0..255)、`__push` (<< の中身、1バイト)、`__slice(i, n)` (範囲内の部分を新しい String に)。
+  Array の `size` `length` `empty?` は String も受ける。ほかの String のメソッドはプレリュード (Ruby) で書く
+  (`==` `+` `*` `<<` `size` (UTF-8 の文字数) `[]` `to_s` `inspect` `to_i` `upcase` `downcase` `split` `strip`
+  `start_with?` `include?` `index` `reverse` `chars` `each_char` `bytes` `ord`、Integer の `to_s` `chr` `inspect`、
+  nil / true / false / Symbol / Array の `to_s` `inspect`)。マルチバイトの文字は UTF-8 として数える (バイトで切って黙って違う結果にしない)
+- **出力は console ポート** (`$CONSOLE`、出力ポート 3) に1バイトずつ書く。`puts` `print` `p` はプレリュードで、
+  トレースは今の O 行のまま。参照との突き合わせは、CRuby の標準出力と console ポートに書いたバイト列を比べる
+- **`LOADL`** は 32bit に収まる整数なら `LOADI32` にする。収まらない整数、Float、BIGINT は変換時に止める
 ### P3 Hash、Range、case、Array の残り
 
 - Hash (`HASH` `HASHADD` `HASHCAT`、`[]` `[]=` `each` `keys` `fetch` ...)、Range (`RANGE_INC` `RANGE_EXC`、`each`、`include?`)
@@ -169,6 +185,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P1c オブジェクト | 49 | 17 (example は 0 / 32) | 17 | objects.rb を追加。止まる理由の上位は文字列 30、`GETMCNST` 18、`puts` 15 (`.new` は消えた) |
 | 2026-09-26 | P1d 引数 | 50 | 18 (example は 0 / 32) | 18 | args.rb を追加。止まる理由の上位は文字列 30、`GETMCNST` 18、`puts` 15。キーワード引数は P3 の後 |
 | 2026-09-26 | P1e 定数の path・グローバル変数 | 51 | 19 (example は 0 / 32) | 19 | consts.rb を追加。`GETMCNST` は止める理由から消えた (`GPIO::OUT` などは P5 でクラスができれば通る)。上位は文字列 30、`puts` 15 |
+| 2026-09-26 | P2 文字列と出力 | 53 | 23 (example は 2 / 32: picoruby-dfu の app_1 / app_2) | 23 | hello.rb、strings.rb を追加。止める理由の上位はデバイス (`start` 14、`connect` 8、`require psg` 8)、`HASH` 4、Float 3 |
 
 ## 見つけたこと
 
@@ -202,3 +219,17 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
   P4 の例外クラスで必ず要るので直した
 - P1e: 定数の字句の入れ子を名前の path から作っていたので、`class A::B` の中で `A` の定数が見えてしまう (Ruby の cref では見えない)。
   irep ごとに cref を持たせた
+- P2: 計画の「文字列は 4 byte / 語」をやめ、1語に1バイト (Array と同じ形) にした。配列の回路をそのまま使えるため。
+  ヒープを食うので、足りなくなったら HEAP_SIZE を上げる
+- P2: `while` の中の `break` は mruby が `JMPUW` (ensure を畳むジャンプ) を出す。プレリュードで初めて出た。
+  catch handler の無い irep ではただの `JMP` にした (P4 で ensure を畳む)
+- P2: `String#count` を部分文字列の数と思い込んで書いた。CRuby は文字の集合に入る文字の数。CRuby との突き合わせで見つけた。
+  `Integer#to_i` が無かった (format の中で使った)
+- P2: `fpga:gap` の事前検査が、プレリュードでわざと未定義にして止めるメソッド (`__*_not_supported`) を「止める理由」に数え、
+  全部を止まると数えた。`__` で始まる名前は数えない
+- P2: Icarus がまた時刻を進めなくなった (`always_comb` の中の `val_of(ra1) < ...`)。比べる式を wire にした
+- P2: fuzz の heap_program のメソッド表 (32 語) が項目で満杯になり、with_table が黙って項目を捨てていた (呼ぶとエラーで終わる
+  program が増えて気づいた)。heap_program の表を 64 語にした
+- P2: プレリュードが ROM を 4000 語ほど使う (使わないメソッドも全部入る)。example が入り切らなくなったら、
+  呼ばれないメソッドを落とす (名前のシンボルがどこにも出てこない def を消す)
+- P2: PERIDOT-Air の top には console のピンがまだ無いので、ボードエミュレーターは console を見ない (UART の TX は P5)
