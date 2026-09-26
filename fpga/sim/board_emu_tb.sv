@@ -11,7 +11,8 @@
 //   +ms=<n>        何 ms 分回すか (既定 1000)
 //   +mhz=<n>       クロック周波数 MHz (既定 125、Raspberry Pi Pico と同じ)。top の CLOCK_50 に入れる
 //   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"。最後の END 行の value は実行した命令の数。
-//                  デバイス (mrb_dev.sv) の GPIO のピンの値の変化は "GPIO<n>"、UART の送信は1バイトずつ "UART"
+//                  デバイス (mrb_dev.sv) の GPIO のピンの値の変化は "GPIO<n>"、UART の送信は1バイトずつ "UART"、
+//                  PWM の設定の変化は "PWM<n>" (周波数 mHz) と "PWMDUTY<n>" (1/1000 %)、watchdog の再起動は "REBOOT"
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
 `timescale 1ns / 1ps
@@ -57,6 +58,7 @@ module board_emu_tb;
   bit         first = 1'b1; // リセット解除直後の状態も1回書く
   logic       halted_q = 1'b0, error_q = 1'b0;
   logic [31:0] gpio_q = '0;
+  logic [32*32-1:0] pwm_f_q = '0, pwm_d_q = '0;
   always @(negedge clk) begin
     if (fd != 0 && reset_n) begin
       if (first || led[0] !== led_q[0]) $fdisplay(fd, "%0d LED %0d", now_us(), led[0]);
@@ -65,6 +67,13 @@ module board_emu_tb;
       for (int i = 0; i < 32; i++)
         if (dut.soc.gpio_dir[i] && dut.soc.gpio_level[i] !== gpio_q[i]) $fdisplay(fd, "%0d GPIO%0d %0d", now_us(), i, dut.soc.gpio_level[i]);
       gpio_q = dut.soc.gpio_level;
+      for (int i = 0; i < 32; i++) begin
+        if (dut.soc.dev.pwm_freq[32*i +: 32] !== pwm_f_q[32*i +: 32]) $fdisplay(fd, "%0d PWM%0d %0d", now_us(), i, dut.soc.dev.pwm_freq[32*i +: 32]);
+        if (dut.soc.dev.pwm_duty[32*i +: 32] !== pwm_d_q[32*i +: 32]) $fdisplay(fd, "%0d PWMDUTY%0d %0d", now_us(), i, dut.soc.dev.pwm_duty[32*i +: 32]);
+      end
+      pwm_f_q = dut.soc.dev.pwm_freq;
+      pwm_d_q = dut.soc.dev.pwm_duty;
+      if (dut.soc.reboot) $fdisplay(fd, "%0d REBOOT 0", now_us());
       if (dut.soc.tx_valid && dut.soc.en) $fdisplay(fd, "%0d UART %0d", now_us(), dut.soc.tx_byte);
       if (dut.soc.halted && !halted_q) $fdisplay(fd, "%0d HALT %0d", now_us(), dut.soc.core.pc);
       if (dut.soc.error && !error_q) $fdisplay(fd, "%0d ERROR %0d", now_us(), dut.soc.core.pc);

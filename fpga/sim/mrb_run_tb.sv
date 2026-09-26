@@ -30,13 +30,14 @@ module mrb_run_tb;
   logic [31:0] ext_low, ext_high;
   logic [15:0] rx_count;
   logic [7:0]  rx_bytes [256];
+  logic [11:0] adc_val [5];
   logic ms_tick = 1'b0;
 
   /* verilator lint_off PINCONNECTEMPTY */
   mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
     .clk, .rst_n, .en(1'b1), .ms_tick, .in_val, .out_val, .halted, .error,
-    .ext_low, .ext_high, .rx_count, .rx_bytes,
-    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte()
+    .ext_low, .ext_high, .rx_count, .rx_bytes, .adc_val,
+    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
@@ -56,6 +57,7 @@ task automatic update_inputs();
   for (int p = 0; p < NPORTS; p++) in_val[p] = 0;
   ext_low  = 0;
   ext_high = 0;
+  for (int i = 0; i < 5; i++) adc_val[i] = 0;
   n = 0;
   for (int i = 0; i < nstim; i++) begin
     if (stim_port[i] == 'h121) begin // UART の RX: 届いた順に並べ、届いた数
@@ -67,6 +69,7 @@ task automatic update_inputs();
       if (stim_port[i] >= 0 && stim_port[i] < NPORTS) in_val[stim_port[i]] = stim_val[i];
       if (stim_port[i] == 'h106) ext_low = stim_val[i];
       if (stim_port[i] == 'h107) ext_high = stim_val[i];
+      if (stim_port[i] >= 'h150 && stim_port[i] <= 'h154) adc_val[stim_port[i] - 'h150] = 12'(stim_val[i]);
     end
   end
 endtask
@@ -81,6 +84,8 @@ endtask
   int cur = 0;
   always @(negedge clk) begin
     if (rst_n) begin
+      // watchdog の再起動 (コアはリセットされ、この step の命令は pc 0 からやり直す)
+      if (dut.reboot) $fdisplay(fd, "B %0d", step);
       if (dut.core.retire) begin
         if (step >= max_steps) begin
           $fdisplay(fd, "L %0d", step);

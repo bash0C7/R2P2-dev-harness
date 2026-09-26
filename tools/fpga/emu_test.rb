@@ -43,4 +43,16 @@ class FpgaEmuTest < Minitest::Test
     assert_in_delta 0.0001, FpgaEmu.periods(events)["LED"], 1e-9
     assert_nil FpgaEmu.periods(events)["LED2"]
   end
+
+  def test_format_shows_pwm_settings_and_reboots
+    lines = FpgaEmu.format_events([E.new(1000, "PWM15", 440_000), E.new(1000, "PWMDUTY15", 12_500), E.new(2000, "PWM15", 0),
+                                   E.new(3000, "REBOOT", 0)])
+    assert_equal ["   0.001 s  pwm15   440.000 Hz", "   0.001 s  pwm15   duty 12.500 %", "   0.002 s  pwm15   stopped",
+                  "   0.003 s  watchdog reboot"], lines
+  end
+
+  def test_ref_pin_sequence_turns_off_at_a_watchdog_reboot
+    trace = ["O 1 0 3 00000001", "B 5", "O 9 0 3 00000002"]
+    assert_equal [false, true, false, true], FpgaEmu.ref_pin_sequence(trace, 0)
+  end
 end

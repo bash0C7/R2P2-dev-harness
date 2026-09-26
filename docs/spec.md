@@ -866,7 +866,20 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   pull up (pull down と両方なら down) > 0)、0x106 / 0x107 外から L / H にしているピン (刺激)。
   時計: 0x110 / 0x111 仮想の時計 (µs) の下位 / 上位 32bit、0x112 その / 1000 (ms)。UART: 0x120 TX (書くと1バイト送る)、
   0x121 RX (読むと受けた1バイト、無ければ -1)、0x122 受けて読んでいない数、0x123 baudrate (書くだけ)。
-  0x130 RNG (読むたびに xorshift32 の次、種は 2463534242)
+  0x130 RNG (読むたびに xorshift32 の次、種は 2463534242)。
+  PWM: 0x140 設定するピン、0x141 周波数 (mHz、0 は止める)、0x142 duty (1/1000 %)、0x143 動いているピンの bit。
+  ADC: 0x150..0x154 入力 0..3 (ピン 26..29) と 4 (温度) の 12bit (刺激で与える。無ければ 0)。
+  IRQ: 0x160 ピン、0x161 事象の mask (LEVEL_LOW 1、LEVEL_HIGH 2、EDGE_FALL 4、EDGE_RISE 8)、0x162 debounce (ms)、
+  0x163 読むと登録 (id 1..16、空きが無ければ -1)、0x164 に id を書くと解除 (0x165 で登録されていたか)、0x166 読むと事象の列の
+  先頭を取る (id << 8 | 事象、空なら -1)。watchdog: 0x170 に ms で有効、0x171 無効、0x172 feed、0x173 watchdog で再起動したか、
+  0x174 期限までの µs、0x175 に ms でその後に再起動
+- **命令の区切りでデバイスが見る (tick)。** 各命令を始める前 (参照は step の頭、RTL は S_FETCH の en の cycle) に、ピンを標本にして
+  IRQ の事象を積み (RP2040 の port と同じ: 16 枠、列は 31 で満杯。ピンの順に、そのピンの枠の mask の和で絞った事象を、
+  mask が重なる最初の枠へ。同じ事象が debounce ms 以内なら捨てる。LEVEL は条件が続く間 tick ごとに積む)、
+  watchdog の期限 (仮想の時計) を見る
+- **watchdog の再起動。** 期限を過ぎた tick で、コアとポートをリセットし (レジスタ・ヒープ・定数・仮想の時計が初めから)、
+  デバイスも「watchdog で再起動した」印だけを残して初めからにする (UART の届いていて読んでいないバイトは捨てる)。
+  トレースに `B <step>` を書き、step は数え続ける (刺激は step で与えるので)。参照と RTL で同じ
 - **仮想の時計。** 「始めた命令の数 (1命令 1µs) + `sleep_ms` / `sleep` で待った時間」。実時間ではなく、参照インタプリタと
   RTL で一致させるための決めごと (コアが数えて mrb_dev に渡す)。エミュレーターの実時間とはずれる
 - **外からの入力は刺激** (`<name>.stim` の1行 `<step> <番地> <値>`): 0x106 / 0x107 はその step からの値、0x121 は1行が1バイトで、
@@ -877,13 +890,20 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   `module Kernel`、C の port が前提の書き方が多く、変換器の範囲を広げるより同じ API を書き直す方が小さいため。
   今あるもの: gpio (`GPIO.new(pin, flags)`、`read` `write` `high?` `low?`、`read_at` ... ピンは 0..31)、machine
   (`uptime_us` `board_millis` `delay_ms` `sleep(deep:, source:)` ...)、uart (`write` `puts` `putc` `read` `readpartial` `getbyte`
-  `ungetbyte` `gets` `bytes_available`。unit は1つ)、rng (`RNG.random_int` `uuid`、`rand`)
+  `ungetbyte` `gets` `bytes_available`。unit は1つ)、rng (`RNG.random_int` `uuid`、`rand`)、irq (`GPIO#irq`、`IRQ.process`、
+  `unregister`、`IRQInstance#enable` `disable`。`IRQ.start` / `stop` は Task が要るので NotImplementedError)、pwm (`frequency`
+  `duty` `period_us` `pulse_width_us`)、adc (`read` `read_voltage` `read_raw`)、watchdog (`enable` `disable` `update` `feed`
+  `reboot` `caused_reboot?` `get_count`)、io/console (`STDIN.getch` `read_nonblock` と、何もしない `raw` `cooked`。console の入力は
+  UART の RX とみなす)
 - **`require "x"` は compile の前に解く** (`FpgaCorpus.gem_files`)。ソースの静的な `require` と、gem の定数 (`GPIO` など。
   R2P2 では require しなくても使える) をたどり、gem の file をプレリュードの後、プログラムの前に置く。実行時の `require` は
   何もしない (プレリュード)。FPGA 版の無い gem を require すると compile で止める
 - **CRuby との突き合わせ** は、CRuby に同じモデルで `__io_read` / `__io_write` を定義して同じ gem を読ませ、console と
-  ピン・デバイスへの書き込みの列を比べる (刺激を使うプログラムと時計の値は比べない)
-- **ボードエミュレーター** は、出力にした GPIO のピンの値の変化 (`gpio<n>`) と UART の送信 (行ごと) も書く。
+  ピン・デバイスへの書き込みの列を比べる (刺激を使うプログラムと時計の値、watchdog の再起動は比べない)。CRuby には命令の区切りが
+  無いので、tick は `__io_read` / `__io_write` のたびにする (出力のピンの変化は次のアクセスで見える)。gem を入れる定数は、
+  行全体の注釈の中では数えない
+- **ボードエミュレーター** は、出力にした GPIO のピンの値の変化 (`gpio<n>`)、UART の送信 (行ごと)、PWM の設定の変化
+  (`pwm<n>`。波形は出さない)、watchdog の再起動も書く。
   PERIDOT-Air の top にはまだ GPIO と UART のピンを割り当てていない (エミュレーターは soc の中を覗く)
 
 ### Float (P5b)
@@ -1052,6 +1072,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 X <step> <pc> <op>          命令を実行した
 W <step> <reg> <tag> <val>  レジスタに書いた
 O <step> <port> <tag> <val> I/O に書いた
+B <step>                    watchdog で再起動した (その step の命令は pc 0 からやり直す)
 H|E <step> <pc> [op]        止まった / エラー
 L <step>                    命令数の上限 (fpga:check は 20000)
 ```

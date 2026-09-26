@@ -76,12 +76,14 @@ module peridot_air_top
 
   logic [7:0] no_rx [256];
   always_comb for (int i = 0; i < 256; i++) no_rx[i] = 8'd0;
+  logic [11:0] no_adc [5];
+  always_comb for (int i = 0; i < 5; i++) no_adc[i] = 12'd0;
 
   mrb_soc #(.ROM_FILE(ROM_FILE)) soc (
     .clk(CLOCK_50), .rst_n, .en, .ms_tick, .in_val, .out_val, .halted(), .error(),
-    // デバイスの GPIO と UART はまだピンにつないでいない (ボードエミュレーターは soc の中を覗く)
-    .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx),
-    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte()
+    // デバイスの GPIO・UART・PWM・ADC はまだピンにつないでいない (ボードエミュレーターは soc の中を覗く)
+    .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx), .adc_val(no_adc),
+    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
