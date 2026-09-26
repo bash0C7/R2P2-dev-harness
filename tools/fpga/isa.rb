@@ -142,7 +142,9 @@ CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引
     ["String", "__push", 1, "SPUSH"], ["String", "__slice", 2, "SSLICE"], ["Symbol", "to_s", 0, "SYMSTR"],
     ["Module", "__name_sym", 0, "NAMESYM"],
     # 例外を投げる (Kernel#raise はプレリュード。引数は例外のオブジェクト)
-    ["Object", "__raise", 1, "RAISE"]
+    ["Object", "__raise", 1, "RAISE"],
+    # デバイスのレジスタ (tools/fpga/devices.rb。番地 0..3 は今のポート、0x100 から上がデバイス)
+    ["Object", "__io_read", 1, "IOREAD"], ["Object", "__io_write", 2, "IOWRITE"]
   ].freeze
 
   def self.prim(const_name)

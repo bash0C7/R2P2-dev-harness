@@ -121,3 +121,10 @@ class Module
     object.is_a?(self)
   end
 end
+
+class Object
+  # require は変換の前に解いてある (tools/fpga/corpus.rb の gem_files)。実行時は何もしない
+  def require(name)
+    true
+  end
+end

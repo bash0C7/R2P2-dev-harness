@@ -855,6 +855,37 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   「FPGA では未対応」を表すわざと未定義の呼び出し (`__*_not_supported`) は今までどおり止まる
 - `loop` は StopIteration を捕まえない
 
+### デバイスと gem (P5)
+
+- **デバイスのバス。** primitive `__io_read(addr)` / `__io_write(addr, value)` (Object)。番地は 16bit で、0..3 は今のポート
+  (`$LED` ... GETGV / SETGV と同じ)、0x100 から上はデバイス (`fpga/rtl/mrb_dev.sv`、参照モデルは `tools/fpga/devices.rb`)。
+  デバイスには Integer だけを書ける (ほかは TypeError)。書き込みはトレースの O 行 (ポート番号 = 番地) に出る。
+  知らない番地を読むと nil、書くと何もしない (O 行だけ)
+- **レジスタ。** GPIO (32 本): 0x100 DIR (1 = 出力)、0x101 OUT、0x102 PULLUP、0x103 PULLDOWN、0x104 OPEN_DRAIN、
+  0x105 LEVEL (読むだけ。出力で駆動しているピン (open drain は 0 の時だけ) は OUT、離しているピンは 外から L > 外から H >
+  pull up (pull down と両方なら down) > 0)、0x106 / 0x107 外から L / H にしているピン (刺激)。
+  時計: 0x110 / 0x111 仮想の時計 (µs) の下位 / 上位 32bit、0x112 その / 1000 (ms)。UART: 0x120 TX (書くと1バイト送る)、
+  0x121 RX (読むと受けた1バイト、無ければ -1)、0x122 受けて読んでいない数、0x123 baudrate (書くだけ)。
+  0x130 RNG (読むたびに xorshift32 の次、種は 2463534242)
+- **仮想の時計。** 「始めた命令の数 (1命令 1µs) + `sleep_ms` / `sleep` で待った時間」。実時間ではなく、参照インタプリタと
+  RTL で一致させるための決めごと (コアが数えて mrb_dev に渡す)。エミュレーターの実時間とはずれる
+- **外からの入力は刺激** (`<name>.stim` の1行 `<step> <番地> <値>`): 0x106 / 0x107 はその step からの値、0x121 は1行が1バイトで、
+  その step から届いた順に読める。**入力はテストベンチが S_FETCH (命令を始める前) で次の step のものにする** ので、
+  1命令が数 cycle かかっても (primitive がデバイスを読んでも) その命令の step の値が見える
+- **gem は FPGA 版を Ruby で書く** (`fpga/gems/<名前>.rb`)。API は PicoRuby の gem (mrblib と sig、C の port の関数) と同じで、
+  C の関数をデバイスのレジスタを読み書きする Ruby にした。PicoRuby の mrblib をそのまま使わないのは、`Object.const_defined?`、
+  `module Kernel`、C の port が前提の書き方が多く、変換器の範囲を広げるより同じ API を書き直す方が小さいため。
+  今あるもの: gpio (`GPIO.new(pin, flags)`、`read` `write` `high?` `low?`、`read_at` ... ピンは 0..31)、machine
+  (`uptime_us` `board_millis` `delay_ms` `sleep(deep:, source:)` ...)、uart (`write` `puts` `putc` `read` `readpartial` `getbyte`
+  `ungetbyte` `gets` `bytes_available`。unit は1つ)、rng (`RNG.random_int` `uuid`、`rand`)
+- **`require "x"` は compile の前に解く** (`FpgaCorpus.gem_files`)。ソースの静的な `require` と、gem の定数 (`GPIO` など。
+  R2P2 では require しなくても使える) をたどり、gem の file をプレリュードの後、プログラムの前に置く。実行時の `require` は
+  何もしない (プレリュード)。FPGA 版の無い gem を require すると compile で止める
+- **CRuby との突き合わせ** は、CRuby に同じモデルで `__io_read` / `__io_write` を定義して同じ gem を読ませ、console と
+  ピン・デバイスへの書き込みの列を比べる (刺激を使うプログラムと時計の値は比べない)
+- **ボードエミュレーター** は、出力にした GPIO のピンの値の変化 (`gpio<n>`) と UART の送信 (行ごと) も書く。
+  PERIDOT-Air の top にはまだ GPIO と UART のピンを割り当てていない (エミュレーターは soc の中を覗く)
+
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて

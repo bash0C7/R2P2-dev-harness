@@ -127,7 +127,9 @@ package mrb_pkg;
   localparam logic [13:0] PR_SYMSTR   = 14'd48; // Symbol#to_s (0 arg)
   localparam logic [13:0] PR_NAMESYM  = 14'd49; // Module#__name_sym (0 arg)
   localparam logic [13:0] PR_RAISE    = 14'd50; // Object#__raise (1 arg)
-  localparam int NPRIMS = 51;
+  localparam logic [13:0] PR_IOREAD   = 14'd51; // Object#__io_read (1 arg)
+  localparam logic [13:0] PR_IOWRITE  = 14'd52; // Object#__io_write (2 arg)
+  localparam int NPRIMS = 53;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
   localparam logic [2:0] CERR_ZERODIV  = 3'd1;
   localparam logic [2:0] CERR_NOMETHOD = 3'd2;
@@ -188,6 +190,8 @@ package mrb_pkg;
       PR_SYMSTR  : return 8'h00;
       PR_NAMESYM : return 8'h00;
       PR_RAISE   : return 8'h01;
+      PR_IOREAD  : return 8'h01;
+      PR_IOWRITE : return 8'h02;
       default: return 8'h00;
     endcase
   endfunction

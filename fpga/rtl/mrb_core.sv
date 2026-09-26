@@ -35,7 +35,9 @@ module mrb_core
   input  logic [47:0]         rom_data,
 
   // I/O (読み出しは組み合わせ)
-  output logic [7:0]          io_addr,
+  output logic [15:0]         io_addr,   // 0..3 はポート (GETGV / SETGV)、0x100 から上はデバイス (__io_read / __io_write)
+  output logic                io_re,     // __io_read で読んだ cycle (デバイスの RX と RNG は読むと進む)
+  output logic [63:0]         vtime,     // 仮想の時計 (µs): 始めた命令の数 + sleep した時間
   input  logic [VAL_BITS-1:0] io_rdata,
   output logic                io_we,
   output logic [VAL_BITS-1:0] io_wdata,
@@ -45,6 +47,7 @@ module mrb_core
 
   // トレース用: retire は命令を実行し始めた cycle (X 行)。rf_we はレジスタに書く cycle (W 行)
   output logic                retire,
+  output logic                fetching, // S_FETCH (テストベンチはここで入力を次の step のものにする)
   output logic [PC_BITS-1:0]  dbg_pc,
   output logic [7:0]          dbg_op,
   output logic                rf_we,
@@ -620,8 +623,15 @@ module mrb_core
   assign prim_argc_bad = (prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc}) ||
                          (lk_kw && prim != PR_NEW && prim != PR_CALL);
 
-  assign io_addr  = b[7:0];
-  assign io_wdata = ra;
+  logic io_prim;
+  // __io_read / __io_write の番地と値の検査 (Icarus は always_comb の if の条件に関数の呼び出しがあると止まるので wire に)
+  logic io_bad_addr, io_bad_val, io_type;
+  assign io_bad_addr = !ra1_int || ra1[31:16] != 16'd0;
+  assign io_bad_val  = tag_of(ra2) == TAG_OBJ || (ra1[31:2] == 30'd0 && IN_MASK[ra1[1:0]]);
+  assign io_type     = ra1[31:8] != 24'd0 && !ra2_int; // デバイスには Integer だけ
+  assign io_prim  = state == S_PRIM && (prim == PR_IOREAD || prim == PR_IOWRITE);
+  assign io_addr  = io_prim ? ra1[15:0] : {8'd0, b[7:0]};
+  assign io_wdata = io_prim ? ra2 : ra;
 
   always_comb begin
     wr        = 1'b0;
@@ -821,6 +831,20 @@ module mrb_core
           set_exc  = 1'b1;
           exc_n    = ra1;
           err      = prim_argc_bad;
+        end
+        // デバイスのレジスタ (tools/fpga/devices.rb、mrb_dev.sv)。番地 0..3 は GETGV / SETGV と同じポート
+        PR_IOREAD: begin
+          wval = io_rdata;
+          err  = prim_argc_bad || io_bad_addr;
+        end
+        PR_IOWRITE: begin
+          // デバイスには Integer だけ (ほかは TypeError)。ヒープのオブジェクトと入力のポートには書けない
+          iow  = 1'b1;
+          wval = ra2;
+          err  = prim_argc_bad || io_bad_addr || io_bad_val || io_type;
+          if (!prim_argc_bad && !io_bad_addr && !io_bad_val && io_type) begin
+            cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra2;
+          end
         end
         default: err = 1'b1;
       endcase
@@ -1209,6 +1233,11 @@ module mrb_core
 
   // ---- 状態遷移
   wire exec = state == S_EXEC && en;
+  // sleep_ms / sleep で進める仮想の時計の量 (µs)
+  logic [41:0] sleep_ms_n;
+  logic [63:0] sleep_us;
+  assign sleep_ms_n = prim == PR_SLEEP ? 42'(unsigned'(y)) * 42'd1000 : 42'(unsigned'(y));
+  assign sleep_us   = 64'(sleep_ms_n) * 64'd1000;
   wire run  = (state == S_EXEC || state == S_PRIM) && en; // 命令か primitive の結果を書く cycle
 
   assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
@@ -1222,7 +1251,9 @@ module mrb_core
   assign rf_we    = (run && (wr || (ret_now && !ret_ctor[top]) || set_up)) || (en && m_we);
   assign rf_waddr = run ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
   assign rf_wdata = run ? wval : m_wdata;
-  assign io_we    = exec && iow;
+  assign io_we    = (exec || (state == S_PRIM && en)) && iow;
+  assign io_re    = state == S_PRIM && en && prim == PR_IOREAD && !err;
+  assign fetching = state == S_FETCH;
   assign halted   = state == S_HALT;
   assign error    = state == S_ERROR;
 
@@ -1252,6 +1283,7 @@ module mrb_core
       tlog    <= '0;
       tbase   <= '0;
       symtab  <= '0;
+      vtime   <= '0;
       hbase   <= '0;
       hcount  <= '0;
       exc     <= V_NIL;
@@ -1264,6 +1296,9 @@ module mrb_core
     end else begin
       // sleep の残りは en に関係なく 1ms ごとに減らす
       if (state == S_SLEEP && ms_tick && remain != 0) remain <= remain - 42'd1;
+      // 仮想の時計: 命令を始めるたびに 1µs、sleep は待つ時間の分
+      if (exec) vtime <= vtime + 64'd1;
+      else if (run && go_sleep) vtime <= vtime + sleep_us;
       if (en) begin
         if (m_we) regs[m_waddr[RB-1:0]] <= m_wdata;
         case (state)

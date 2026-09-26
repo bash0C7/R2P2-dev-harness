@@ -99,11 +99,12 @@ module FpgaGap
     return { path: path, status: :out_of_scope, reasons: [oos] } if oos
 
     bin = begin
-      FpgaCorpus.compile(path, mrbc).first
+      FpgaCorpus.compile(path, mrbc, strict: false).first
     rescue FpgaCorpus::Error => e
       return { path: path, status: :blocked, reasons: ["mrbc: #{e.message.lines[1].to_s.strip}"] }
     end
-    reasons = requires(src).map { |r| "require #{r}" } + blockers(bin)
+    # FPGA 版の gem がある require は止める理由にしない (gem は compile の時に前に置いた)
+    reasons = requires(src).reject { |r| FpgaCorpus::GEMS[r] }.map { |r| "require #{r}" } + blockers(bin)
     return { path: path, status: :blocked, reasons: reasons } unless reasons.empty?
 
     image = FpgaRom.from_binary(bin, rel(path), FpgaIsa::RF_SIZE)

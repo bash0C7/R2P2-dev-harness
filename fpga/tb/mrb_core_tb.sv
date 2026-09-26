@@ -15,10 +15,16 @@ module mrb_core_tb;
   logic [NPORTS-1:0][INT_BITS-1:0] in_val = '0;
   logic [NPORTS-1:0][VAL_BITS-1:0] out_val;
   logic halted, error;
+  logic [7:0] no_rx [256];
+  initial for (int i = 0; i < 256; i++) no_rx[i] = 8'd0;
 
+  /* verilator lint_off PINCONNECTEMPTY */
   mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
-    .clk, .rst_n, .en(1'b1), .ms_tick(1'b1), .in_val, .out_val, .halted, .error
+    .clk, .rst_n, .en(1'b1), .ms_tick(1'b1), .in_val, .out_val, .halted, .error,
+    .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx),
+    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte()
   );
+  /* verilator lint_on PINCONNECTEMPTY */
 
   /* verilator lint_off BLKSEQ */
   always #5 clk = ~clk;
@@ -1356,6 +1362,38 @@ module mrb_core_tb;
       expect_val("name", dut.core.heap[d + 2], {TAG_SYM, 32'd30});
       expect_val("recv", dut.core.heap[d + 3], VNIL);
     end
+
+    // デバイス (tools/fpga/devices.rb、mrb_dev.sv): __io_write / __io_read で GPIO・RNG・UART・時計を読み書きする
+    begin_test("devices");
+    method_entry(CLS_NIL, 20, tgt_prim(PR_IOWRITE));
+    method_entry(CLS_NIL, 21, tgt_prim(PR_IOREAD));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI16, 2, 16'h100));               // 1
+    prog.push_back(w(OP_LOADI8, 3, 8'h30));                  // 2
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 3: GPIO_DIR = ピン 4, 5 を出力
+    prog.push_back(w(OP_LOADI16, 2, 16'h101));               // 4
+    prog.push_back(w(OP_LOADI8, 3, 8'h10));                  // 5
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 6: GPIO_OUT = ピン 4 を H
+    prog.push_back(w(OP_LOADI16, 5, 16'h105));               // 7
+    prog.push_back(w(OP_SSEND, 4, 21, 1));                   // 8: R4 = GPIO_LEVEL
+    prog.push_back(w(OP_LOADI16, 7, 16'h130));               // 9
+    prog.push_back(w(OP_SSEND, 6, 21, 1));                   // 10: R6 = RNG
+    prog.push_back(w(OP_LOADI16, 9, 16'h121));               // 11
+    prog.push_back(w(OP_SSEND, 8, 21, 1));                   // 12: R8 = UART_RX (無ければ -1)
+    prog.push_back(w(OP_LOADI16, 11, 16'h110));              // 13
+    prog.push_back(w(OP_SSEND, 10, 21, 1));                  // 14: R10 = 仮想の時計 (µs) = 始めた命令の数
+    prog.push_back(w(OP_LOADI_1, 13));                       // 15
+    prog.push_back(w(OP_LOADI_7, 14));                       // 16
+    prog.push_back(w(OP_SSEND, 12, 20, 2));                  // 17: 番地 1 ($LED2) = 7 (ポートにも書ける)
+    prog.push_back(w(OP_STOP));                              // 18
+    run();
+    expect_halt();
+    expect_reg(1, vint(16'h10));
+    expect_reg(4, vint(16'h10));
+    expect_reg(6, vint(32'd723471715));
+    expect_reg(8, vint(-1));
+    expect_reg(10, vint(15));
+    expect_out(1, vint(7));
 
     begin_test("rescue compares classes");
     method_entry(ISA_BIT | CLS_INT, CLS_INT, 16'd1);

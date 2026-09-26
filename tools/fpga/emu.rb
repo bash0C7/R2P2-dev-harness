@@ -1,7 +1,7 @@
 # PERIDOT-Air のボードエミュレーター (fpga/sim/board_emu_tb.sv) のログを読み、人が読む形にし、
 # 参照インタプリタ (ref_vm.rb) と LED の変化の系列を突き合わせる。rake fpga:emu が使う。
 #
-# ログは1行 "<us> <what> <value>"。what は LED / LED2 / BUTTON / HALT / ERROR / END。
+# ログは1行 "<us> <what> <value>"。what は LED / LED2 / GPIO<n> / UART (送ったバイト) / BUTTON / HALT / ERROR / END。
 require_relative "converter"
 require_relative "compare"
 
@@ -33,8 +33,25 @@ module FpgaEmu
     [ce_div / k, k]
   end
 
+  # UART の送信は、改行 (か最後) までを1行にまとめる (最初のバイトの時刻に並べる)
   def format_events(events)
-    events.map do |e|
+    out = []
+    line = nil
+    events.each do |e|
+      if e.what == "UART"
+        if line.nil?
+          line = [e.us, +""]
+          out << line
+        end
+        e.value == 10 ? line = nil : line[1] << e.value.chr
+        next
+      end
+      out << format_event(e)
+    end
+    out.compact.map { |x| x.is_a?(Array) ? format("%8.3f s  uart   %s", x[0] / 1_000_000.0, x[1].inspect) : x }
+  end
+
+  def format_event(e)
       t = format("%8.3f s", e.us / 1_000_000.0)
       case e.what
       when "LED", "LED2" then "#{t}  #{e.what.ljust(6)} #{e.value == 1 ? 'on' : 'off'}"
@@ -42,7 +59,7 @@ module FpgaEmu
       when "HALT"        then "#{t}  CPU halted at pc #{e.value}"
       when "ERROR"       then "#{t}  CPU error at pc #{e.value}"
       when "END"         then "#{t}  (end)"
-      end
+      when /\AGPIO(\d+)\z/  then "#{t}  gpio#{Regexp.last_match(1).ljust(3)} #{e.value}"
     end
   end
 

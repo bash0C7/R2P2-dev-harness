@@ -7,7 +7,7 @@ module mrb_io
 (
   input  logic                              clk,
   input  logic                              rst_n,
-  input  logic [7:0]                        addr,
+  input  logic [15:0]                       addr,
   output logic [VAL_BITS-1:0]               rdata,
   input  logic                              we,
   input  logic [VAL_BITS-1:0]               wdata,
@@ -20,7 +20,7 @@ module mrb_io
   wire [PB-1:0] p = addr[PB-1:0];
 
   always_comb begin
-    if (addr >= 8'(NPORTS)) rdata = V_NIL;
+    if (addr >= 16'(NPORTS)) rdata = V_NIL;
     else if (IN_MASK[p])    rdata = {TAG_INT, in_val[p]};
     else                    rdata = out_val[p];
   end
@@ -28,7 +28,7 @@ module mrb_io
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       for (int i = 0; i < NPORTS; i++) out_val[i] <= V_NIL;
-    end else if (we && addr < 8'(NPORTS) && !IN_MASK[p]) begin
+    end else if (we && addr < 16'(NPORTS) && !IN_MASK[p]) begin
       out_val[p] <= wdata;
     end
   end
