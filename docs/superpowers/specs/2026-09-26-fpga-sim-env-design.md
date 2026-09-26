@@ -10,7 +10,7 @@
 
 | 問い | 決定 |
 |---|---|
-| rake タスクの形 | 両方持つ。`rake fpga:test` で全テストベンチ、`rake fpga:sim[tb]` で1本（Verilator）、`rake fpga:sim:icarus[tb]` で1本（Icarus） |
+| rake タスクの形 | 両方持つ。`rake fpga:test` で全テストベンチ (後に `rake fpga:tb` へ改名し、`fpga:test` は CPU コアの突き合わせまで含む上位のタスクにした。docs/spec.md §10)、`rake fpga:sim[tb]` で1本（Verilator）、`rake fpga:sim:icarus[tb]` で1本（Icarus） |
 | シミュレータの導入 | Mac でも Linux でも動かす。`rake fpga:setup` が macOS なら `brew install`、Linux なら `apt-get install -y`（root でなければ sudo）。`rake fpga:doctor` が有無と版を見る。Surfer は任意（Linux の apt には無いので入手先を表示するだけ） |
 | CI | `.github/workflows/test.yml` に別 job `fpga` として載せる。picoruby の取得が要らないので host job と独立して軽い |
 

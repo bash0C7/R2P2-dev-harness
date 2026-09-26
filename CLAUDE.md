@@ -4,7 +4,8 @@ bash0C7 が個人で PicoRuby の装置を作るための知見と rake タス�
 PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`examples/`) は、その上に載せた実例のひとつ。
 対象は Pico 2 W (`rake rp2040:*`、`tools/pico2w/`) と ESP32 の M5Stack Chain DualKey (`rake esp32:*`、`tools/esp32/`)。
 両者が共有するコードは `tools/common/`。
-FPGA (mruby ネイティブ CPU、issue #4) の HDL とテストベンチは `fpga/`、シミュレーションは `rake fpga:*` (docs/spec.md §10)。
+FPGA (mruby ネイティブ CPU、issue #4) の HDL・テストベンチ・コーパスは `fpga/`、Ruby の道具は `tools/fpga/`、タスクは `rake fpga:*` (docs/spec.md §10)。
+FPGA も完了の線引きは実機 (PERIDOT-Air)。`rake fpga:test` が green でも、焼いて LED を目視するまで「動いた」と書かない。
 
 - 設計と決定事項は [docs/spec.md](docs/spec.md) が single source of truth。実機の罠は Pico 2 W が §6、ESP32 が §9 にまとめてある
 - 残っている作業は GitHub issues (`gh issue list`)

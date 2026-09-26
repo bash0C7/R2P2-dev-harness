@@ -562,48 +562,178 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `rake esp32:run`もDualKey実機で`.rb`→`.mrb`→転送→実行まで通した（出力`hello from mrb 3`）。
   板に戻らない`/home/app.mrb`が残っている場合の復旧は[faq.md](faq.md)
 
-## 10. FPGA のシミュレーション
+## 10. FPGA × mruby ネイティブ CPU
 
-mruby のバイトコードを直接実行する CPU を FPGA に作る (issue #4)。実機 (PERIDOT-Air) に焼く前に、
-シミュレータで万全に動かす。HDL とテストベンチは SystemVerilog、道具は Ruby (rake)。
-設計: [docs/superpowers/specs/2026-09-26-fpga-sim-env-design.md](superpowers/specs/2026-09-26-fpga-sim-env-design.md)
+mruby のバイトコード (`.mrb`、RITE0400) を、ソフト VM ではなくハードウェアのデコーダと ALU で
+1命令ずつ実行する CPU を FPGA に作る (issue #4)。実機 (PERIDOT-Air) に焼く前に、シミュレータで
+万全に動かす。HDL とテストベンチは SystemVerilog、道具は Ruby (rake)。Python は使わない。
+設計: [シミュレーション環境](superpowers/specs/2026-09-26-fpga-sim-env-design.md)、
+[CPU コアと道具立て](superpowers/specs/2026-09-26-fpga-mruby-core-design.md)
+
+```
+fpga/corpus/*.rb --mrbc--> .mrb --tools/fpga/rom.rb--> ROM (48bit/命令, $readmemh)
+                                                      |                         |
+                          tools/fpga/ref_vm.rb (参照) <-+-> fpga/rtl/mrb_core.sv (コア)
+                                     \______ rake fpga:check が I/O とトレースを突き合わせる ______/
+```
+
+### タスク
 
 | タスク | 意味 |
 |---|---|
 | `rake fpga:setup` | 足りないシミュレータを入れる。macOS は `brew install verilator icarus-verilog surfer`、Linux は `apt-get install -y verilator iverilog` (root でなければ sudo) |
 | `rake fpga:doctor` | verilator / iverilog / vvp / surfer の有無と版。必須が欠けていれば落ちる |
-| `rake fpga:test` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す。CI の `fpga` job が回す |
-| `rake fpga:sim[tb]` | 1本を Verilator で回す。波形は `build/fpga/<tb>.fst` |
-| `rake fpga:sim:icarus[tb]` | 1本を Icarus で回す。波形は `build/fpga/<tb>.icarus.fst` |
+| `rake fpga:test` | 下の `test:fpga` + `fpga:tb` + `fpga:check`。CI の `fpga` job が回す |
+| `rake test:fpga` | `tools/fpga/*_test.rb` (minitest)。シミュレータ不要。picoruby が要るものは無ければ skip。CI の `host` job でも回す |
+| `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
+| `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
+| `rake fpga:check` | `fpga/corpus/*.mrb` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
+| `rake fpga:rom[src]` | `.rb` / `.mrb` を ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
+| `rake fpga:run[src,max]` | 1本をシミュレーションで走らせ、I/O を表示する。トレースと波形を `build/fpga/rom/` に残す |
+| `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` と `docs/fpga-opcodes.md` を mrbc で作り直す / 最新かを見る |
+| `rake fpga:gen` | `fpga/rtl/mrb_pkg.sv` を `tools/fpga/isa.rb` と `io_map.rb` から作り直す |
+| `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
+| `rake fpga:flash` | 最後の `fpga:build` を openFPGALoader で SRAM に書く。**実機では未確認** |
 
-`vendor/picoruby` は要らない (`rake setup` 無しで回る)。`rake test` には含まれない。
+`fpga:*` は `vendor/picoruby` 無しで回る (コーパスの `.mrb` を commit してあるため)。`rake test` には含まれない。
+mrbc が要るのは `fpga:corpus` と、`.rb` を直接渡した `fpga:rom` / `fpga:run` / `fpga:build` だけ。
 
-**置き場所。** 回路は `fpga/rtl/**/*.sv` (全部を毎回コンパイルに渡す)、テストベンチは
-`fpga/tb/<name>_tb.sv` で top module 名を file 名と揃える。各 file に `` `timescale 1ns / 1ps `` を書く
-(1つでも書くと、書いていない module を Verilator が `TIMESCALEMOD` で落とす)。
+### 置き場所
 
-**合否。** テストベンチは合格なら最後に `PASS <tb名>` を出して `$finish`、食い違えば `$fatal`。
+- `fpga/rtl/**/*.sv`: 回路。`*_pkg.sv` を先に、全部を毎回コンパイルに渡す。`fpga/rtl/boards/` は実機の top
+- `fpga/tb/<name>_tb.sv`: 自己チェック型テストベンチ。top module 名を file 名と揃える
+- `fpga/sim/`: プログラムを走らせるテストベンチ (`mrb_run_tb.sv`)。合否は rake 側が出すので `fpga:tb` の対象外
+- `fpga/corpus/`: 対象の Ruby プログラムと、その `.mrb` / `.dump` / 入力の刺激 `.stim`
+- `fpga/boards/peridot_air/`: Quartus の設定 (`.qsf` `.sdc`)
+- `tools/fpga/`: ROM 変換・参照インタプリタ・突き合わせ・Quartus プロジェクト生成 (Ruby)
+
+各 `.sv` に `` `timescale 1ns / 1ps `` を書く (1つでも書くと、書いていない module を Verilator が
+`TIMESCALEMOD` で落とす)。
+
+### テストベンチの合否
+
+テストベンチは合格なら最後に `PASS <tb名>` を出して `$finish`、食い違えば `$fatal`。
 rake は exit status が 0 **かつ** `PASS <tb名>` 行がある時だけ合格にする。
 `+dump=<path>` が渡された時だけ `$dumpfile` / `$dumpvars` で波形を書く (`fpga/tb/counter8_tb.sv` が雛形)。
+Verilator の `$fatal` は abort() なので、rake には exit code ではなく signal 6 として返る。
 
 **Verilator だけではリセット漏れを見逃す。** Verilator は2値なので、リセットされない register は 0 から
 始まり、たまたま期待値と合う。counter8 のリセット代入を消すと、Icarus は最初の check で
 `count is X/Z` で落ちたが、Verilator は数え終わった後の非同期リセットの check まで通った。
-テストベンチはリセット直後に `$isunknown` を見る。
+テストベンチはリセット直後に `$isunknown` を見る。`fpga:tb` は両方で回す。
 
-**Verilator の -Wall。** warning は error になる。テストベンチの `always #5 clk = ~clk;` は `BLKSEQ` に
-引っかかるので、そこだけ `/* verilator lint_off BLKSEQ */` で囲む。`$fatal` は abort() なので、
-rake には exit code ではなく signal 6 として返る。
+**Verilator の -Wall。** warning は error になる。RTL は -Wall のまま通す。テストベンチは file の先頭で
+`WIDTH` `BLKSEQ` など、テストベンチの書き方で出るものだけ `/* verilator lint_off ... */` で切る
+(`lint_on` を後に書くと先頭の `lint_off` も戻るので、書かない)。`mrb_pkg.sv` は `UNUSEDPARAM` を切っている。
 
-**版。** 確認した組み合わせ: Ubuntu 24.04 の apt (Verilator 5.020 / Icarus 12.0)。
+**Icarus の癖。** `always_comb` の中の定数の部分選択に `sorry: constant selects ...` を出すが、
+感度が広がるだけで結果は変わらない。型付きの `parameter string` は上位から渡せないので、
+`ROM_FILE` は型を付けない。可変 index の packed 配列をさらに部分選択すると内部エラーで落ちる
+(`out_val[p][33:32]` のような形は一度変数に受ける)。rake はコンパイラの出力を
+`build/fpga/**/build.log` に落とし、失敗した時だけ表示する。
+
+**テストベンチから ROM を書くのは `#1` 待ってから。** `mrb_soc` の `initial` が ROM を全 bit 1 で埋めるので、
+同じ時刻 0 にテストベンチが書くと、どちらが後かはシミュレータ次第になる。
+
+### 対応命令と値の表現 (#6)
+
+コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith) の `mrbc -v` に出る命令と、
+同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 38 命令。
+一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
+
+- **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
+  (mruby なら 64bit / Bignum になる所で、コアは黙って折り返す)
+- **値 = 2bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3。偽は nil と false だけ (0 は真)
+- **`EQ`** は Integer 同士なら値、それ以外は型が同じなら等しい (nil == nil、true == true)
+- **整数以外への算術・大小比較 (`ADD` `LT` など) と `ADDI`系はエラーで止まる。** mruby ならメソッド探索に行く所
+- **`RETURN` / `RETNIL` / `STOP` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
+- **irep は1つだけ。** メソッド定義・ブロック (子 irep)、pool (文字列・大きい数)、例外 (catch handler) は変換時に止める
+- **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
+  `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
+
+### ROM 形式と変換 (#7)
+
+`tools/fpga/rite.rb` が RITE0400 を読み、`tools/fpga/rom.rb` が ROM にする。**1命令1語の固定長 48bit**:
+
+| bit | 中身 |
+|---|---|
+| [47:40] | op (mruby の opcode 番号そのまま) |
+| [39:32] | a |
+| [31:16] | b (BB の b / BS の s / S の s / BSS の上位16bit) |
+| [15:0] | c (BBB の c / BSS の下位16bit) |
+
+`LOADI32` (BSS) の 32bit が b:c にそのまま収まるので、例外の無い形にできた。変換で済ませること:
+
+- **ジャンプ先は絶対語アドレスにする。** mruby は「operand を読み終えた位置からのバイト相対 (int16)」
+- **`GETGV` / `SETGV` の `Syms[b]` は I/O ポート番号にする。** 対応表は `tools/fpga/io_map.rb`
+  (`$LED`=0 出力、`$LED2`=1 出力、`$BUTTON`=2 入力)。ハードウェアはシンボル表を持たない。
+  表に無いグローバル変数、入力ポートへの代入は変換時に止める
+- 未対応の命令は、命令名と iseq 内のバイト位置を全部並べて止める
+
+ROM の空きは全 bit 1 (op 0xff = 未対応) で、プログラムの外へ出たコアはエラーで止まる。
+`rom_test.rb` がコーパス全部について、変換結果を `.dump` (`mrbc -v`) と1命令ずつ突き合わせる。
+
+### CPU コア (#8)
+
+`fpga/rtl/mrb_core.sv`。**多サイクル、1命令 2 cycle** (FETCH で ROM を引き、EXEC で実行と書き戻し)。
+パイプラインは後回し。レジスタファイルは 16本 × 34bit (リセットで全部 nil)、`nregs` が 16 を超える
+プログラムは変換時に止める。`en` (クロックイネーブル) が 0 の cycle は何も進まない。
+`mrb_soc.sv` が ROM (1024語、同期読み出し) + コア + I/O (`mrb_io.sv`)。
+出力ポートは最後に書いた値を持ち (書く前は nil)、`GETGV` で読み戻せる。入力ポートは Integer で読める。
+`fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる。
+
+### 正しさの基準 (#9)
+
+`tools/fpga/ref_vm.rb` (参照インタプリタ) と `fpga/sim/mrb_run_tb.sv` (コアのシミュレーション) が
+**同じ書式のトレース**を出す:
+
+```
+X <step> <pc> <op>          命令を実行した
+W <step> <reg> <tag> <val>  レジスタに書いた
+O <step> <port> <tag> <val> I/O に書いた
+H|E <step> <pc> [op]        止まった / エラー
+L <step>                    命令数の上限 (fpga:check は 20000)
+```
+
+- **合否は I/O の系列 (O 行) と終わり方。** step まで一致させる。無限ループのプログラムは命令数の上限で打ち切る
+- **ずれたら、トレースで最初に食い違った step と命令を出す。** `SUB` を `x + y` に壊すと
+  `first difference at step 8, pc 8 (SUB)` と出た
+- **入力は step で与える。** `fpga/corpus/<name>.stim` に `<step> <port> <value>`。
+  その step の命令から値が変わる (参照もシミュレーションも同じ)
+- **参照インタプリタ自体は別の実装と比べる** (`ref_vm_test.rb`):
+  CRuby で同じ `.rb` を走らせ `trace_var` で拾った出力の系列 (入力を読まないプログラム)、
+  picoruby host VM に `p [$LED, $LED2]` を足して走らせた最後の値 (止まるプログラム)
+
+### PERIDOT-Air (#10 #11)
+
+**実機・Quartus・USB-Blaster はまだ無い。以下はシミュレーションまでしか確かめていない。**
+
+- **top は `fpga/rtl/boards/peridot_air_top.sv`。** `$LED`→`USER_LED[0]` (PIN_105)、`$LED2`→`USER_LED[1]` (PIN_119)、
+  値が true か 0 以外の Integer なら点灯。`$BUTTON`←`D[0]` (PIN_84、内部 pull-up、GND に落とすと 1)。
+  `RESET_N` (PIN_34、基板のリセットスイッチ) がコアのリセット。点灯の極性は未確認 (`LED_ACTIVE_LOW` で反転できる)
+- **待ち時間はクロックイネーブルで作る。** CPU を `CE_DIV` cycle (既定 1000) に1回だけ進める。
+  blink は 1回の反転に 7012 命令なので、50MHz なら約 0.28 秒ごとに反転する
+  (Quartus と同じ `ROM_FILE` 経由の `$readmemh` で、CE_DIV=1 の時 14024 cycle ごとの反転をシミュレーションで確かめた)。
+  タイマー I/O は後
+- **ピンと Quartus の設定は osafune/peridot_air (MIT) の `fpga/air_blank_top/` から写した** (`fpga/boards/peridot_air/`)
+- **合成 (`rake fpga:build`)。** `build/fpga/peridot_air/` に自己完結のプロジェクト (`.sv` の写し、全語を埋めた `rom.hex`) を作り、
+  `quartus_sh` が PATH にあればそこで、無ければ `FPGA_QUARTUS_HOST=<ssh 先>` へ rsync して
+  `quartus_sh --flow compile` → `quartus_cpf` で `.svf` まで作って戻す (`FPGA_QUARTUS_DIR` で送り先 dir)。
+  Quartus の版は決め打ちしない。Apple Silicon では UTM の Debian arm64 + Rosetta 2 で 23.1std / 24.1std の報告がある。
+  終わったら fit summary (LE・メモリ使用量) を表示する。**実測値はまだ無い** (#11 の完了条件)
+- **書き込み (`rake fpga:flash`)。** Mac ネイティブの `openFPGALoader -c usb-blaster <svf>` で SRAM へ
+  (電源を切ると消える)。`FPGA_CABLE` でケーブルを変えられる。EPCQ16 への永続書き込みはまだ無い
+- **yosys は使えなかった。** Ubuntu 24.04 の yosys 0.33 は `import pkg::*` を読めず、LE の見積もりに使えない
+
+### 版と波形
+
+確認した組み合わせ: Ubuntu 24.04 の apt (Verilator 5.020 / Icarus 12.0)。
 Homebrew は Verilator 5.052 / Icarus 13.0 / Surfer 0.7.0 (Mac での実行は未確認)。
 `--binary` は Verilator 5.002 以降。
 
-**波形を見る。** `rake fpga:sim[counter8_tb]` の後に `surfer build/fpga/counter8_tb.fst`。
+**波形を見る。** `rake fpga:sim[counter8_tb]` の後に `surfer build/fpga/counter8_tb.fst`
+(`fpga:run` は `build/fpga/rom/<name>.fst`)。
 Mac は `brew install surfer` (`rake fpga:setup` が入れる)。Linux の apt には無いので
 https://gitlab.com/surfer-project/surfer/-/releases のバイナリか
 `cargo install --git https://gitlab.com/surfer-project/surfer surfer`。
 GTKWave の Homebrew cask は 2025-10 に disable された。VSCode なら Vaporview 拡張でも開ける。
-
-**合成と実機はまだ無い。** Cyclone IV の bitstream は Intel Quartus でしか作れない (macOS 版なし)。
-道具立ては issue #10、実機は #11。

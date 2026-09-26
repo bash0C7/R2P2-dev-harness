@@ -6,7 +6,7 @@ module mrb_soc
 #(
   parameter int    NREGS    = 16,
   parameter int    PC_BITS  = 10,
-  parameter string ROM_FILE = ""
+  parameter        ROM_FILE = "" // string。型を付けると Icarus が渡せない
 ) (
   input  logic                              clk,
   input  logic                              rst_n,
@@ -18,9 +18,11 @@ module mrb_soc
 );
   logic [47:0] rom [2**PC_BITS];
 
+  // 実機 (Quartus) では ROM_FILE に ROM の全語を埋めたファイルを渡す (rake fpga:build が全 bit 1 で埋める)。
+  // シミュレーションでは ROM_FILE を空にし、テストベンチが後から書く
   initial begin
-    for (int i = 0; i < 2**PC_BITS; i++) rom[i] = '1;
     if (ROM_FILE != "") $readmemh(ROM_FILE, rom);
+    else for (int i = 0; i < 2**PC_BITS; i++) rom[i] = '1;
   end
 
   logic [PC_BITS-1:0]  rom_addr;

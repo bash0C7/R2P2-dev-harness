@@ -1,0 +1,35 @@
+# PERIDOT-Air (Cyclone IV E EP4CE6E22C8) で fpga/rtl/boards/peridot_air_top.sv を合成する設定。
+# デバイス・コンフィグ・ピンは osafune/peridot_air (MIT, Copyright (c) 2020 J-7SYSTEM WORKS LIMITED) の
+# fpga/air_blank_top/air_blank_top.qsf から、このデザインが使うものだけを写した。
+# 使う .sv と ROM_FILE / CE_DIV は rake fpga:build (tools/fpga/quartus.rb) が末尾に足す。
+set_global_assignment -name FAMILY "Cyclone IV E"
+set_global_assignment -name DEVICE EP4CE6E22C8
+set_global_assignment -name TOP_LEVEL_ENTITY peridot_air_top
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 1
+set_global_assignment -name CRC_ERROR_OPEN_DRAIN OFF
+set_global_assignment -name ENABLE_OCT_DONE OFF
+set_global_assignment -name ENABLE_CONFIGURATION_PINS OFF
+set_global_assignment -name ENABLE_BOOT_SEL_PIN OFF
+set_global_assignment -name CYCLONEIII_CONFIGURATION_SCHEME "ACTIVE SERIAL"
+set_global_assignment -name USE_CONFIGURATION_DEVICE ON
+set_global_assignment -name CYCLONEIII_CONFIGURATION_DEVICE EPCQ16
+set_global_assignment -name CONFIGURATION_VCCIO_LEVEL AUTO
+set_global_assignment -name FORCE_CONFIGURATION_VCCIO ON
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+set_global_assignment -name RESERVE_DCLK_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name CYCLONEII_RESERVE_NCEO_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name RESERVE_DATA0_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name RESERVE_DATA1_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name RESERVE_FLASH_NCE_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP "AS INPUT TRI-STATED WITH WEAK PULL-UP"
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name SDC_FILE peridot_air.sdc
+
+set_location_assignment PIN_23 -to CLOCK_50
+set_location_assignment PIN_34 -to RESET_N
+set_location_assignment PIN_105 -to USER_LED[0]
+set_location_assignment PIN_119 -to USER_LED[1]
+set_location_assignment PIN_84 -to D[0]
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to D[0]
