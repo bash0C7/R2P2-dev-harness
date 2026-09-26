@@ -68,7 +68,8 @@ def require_fpga_tools!
 end
 
 def fpga_rtl_sources
-  Dir[File.join(FPGA_RTL_DIR, "**", "*.sv")].sort
+  # package は使う側より先にコンパイルに渡す
+  Dir[File.join(FPGA_RTL_DIR, "**", "*.sv")].sort_by { |p| [p.end_with?("_pkg.sv") ? 0 : 1, p] }
 end
 
 def fpga_testbenches
@@ -177,7 +178,7 @@ namespace :fpga do
   end
 
   desc "Run every fpga/tb/*_tb.sv with Verilator and Icarus Verilog"
-  task :test do
+  task :tb do
     require_fpga_tools!
     tbs = fpga_testbenches
     raise "no testbenches in fpga/tb/" if tbs.empty?
@@ -195,5 +196,165 @@ namespace :fpga do
     end
     raise "fpga testbenches failed: #{failed.join(', ')}" unless failed.empty?
     puts "\nall #{tbs.size} testbench(es) passed on verilator and icarus"
+  end
+end
+
+# ---- mruby バイトコードを実行する CPU コア (issue #6 #7 #8 #9)
+#
+# fpga/corpus/*.rb が対象のプログラム。.mrb と .dump は commit してあり (tools/fpga/corpus.rb)、
+# CI の fpga job は picoruby 無しでそれを使う。
+require_relative "../tools/fpga/isa"
+require_relative "../tools/fpga/rom"
+require_relative "../tools/fpga/ref_vm"
+require_relative "../tools/fpga/compare"
+require_relative "../tools/fpga/corpus"
+require_relative "../tools/fpga/gen_pkg"
+
+FPGA_SIM_DIR      = File.join(FPGA_DIR, "sim")
+FPGA_ROM_DIR      = File.join(FPGA_BUILD_DIR, "rom")
+FPGA_CORE_NREGS   = 16
+FPGA_DEFAULT_STEPS = 20_000
+
+# .rb (mrbc でその場で compile) か .mrb を ROM イメージにして build/fpga/rom/ に書く。
+def fpga_rom(src)
+  name = File.basename(src, ".*")
+  bin = case File.extname(src)
+        when ".mrb" then File.binread(src)
+        when ".rb"  then FpgaCorpus.compile(src, FpgaCorpus.default_mrbc).first
+        else raise "#{src}: expected a .rb or .mrb"
+        end
+  image = FpgaRom.from_binary(bin, source: src.sub("#{HARNESS_ROOT}/", ""), max_regs: FPGA_CORE_NREGS)
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  hex = File.join(FPGA_ROM_DIR, "#{name}.hex")
+  File.write(hex, image.hex)
+  File.write(File.join(FPGA_ROM_DIR, "#{name}.lst"), image.listing)
+  [image, hex]
+end
+
+# プログラムの入力の刺激: <src と同じ場所>/<name>.stim
+def fpga_stim_path(src)
+  path = File.join(File.dirname(src), "#{File.basename(src, '.*')}.stim")
+  File.file?(path) ? path : nil
+end
+
+# fpga/sim/mrb_run_tb.sv を Verilator で1回だけ build する
+def fpga_runner
+  @fpga_runner ||= begin
+    mdir = File.join(FPGA_BUILD_DIR, "verilator", "mrb_run_tb")
+    FileUtils.rm_rf mdir
+    FileUtils.mkdir_p mdir
+    log = File.join(mdir, "build.log")
+    ok = system("verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
+                "-j", "0", "--Mdir", mdir, "--top-module", "mrb_run_tb", "-o", "mrb_run_tb",
+                *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"),
+                out: log, err: [:child, :out])
+    raise "verilator failed to build mrb_run_tb:\n#{File.read(log)}" unless ok
+    File.join(mdir, "mrb_run_tb")
+  end
+end
+
+# シミュレーションで走らせてトレースを返す
+def fpga_sim_trace(hex, stim:, max:, dump: nil)
+  trace = hex.sub(/\.hex\z/, ".sim.trace")
+  cmd = [fpga_runner, "+rom=#{hex}", "+trace=#{trace}", "+max=#{max}"]
+  if stim
+    # テストベンチの $fscanf はコメント行を読めないので、数字だけにしたものを渡す
+    plain = hex.sub(/\.hex\z/, ".stim")
+    File.write(plain, FpgaCompare.read_stim(stim).map { |r| r.join(" ") + "\n" }.join)
+    cmd << "+stim=#{plain}"
+  end
+  cmd << "+dump=#{dump}" if dump
+  out = IO.popen(cmd, err: [:child, :out], &:read)
+  raise "mrb_run_tb failed on #{hex}:\n#{out}" unless $?.success? && out.include?("PASS mrb_run_tb")
+  File.readlines(trace, chomp: true)
+end
+
+def fpga_ref_trace(image, stim:, max:)
+  vm = FpgaRefVm.new(image.words.map(&:value), nregs: FPGA_CORE_NREGS, stim: FpgaCompare.read_stim(stim))
+  vm.run(max)
+end
+
+def fpga_show_outputs(trace)
+  names = FpgaIoMap::PORTS.to_h { |p| [p.num, p.name] }
+  FpgaCompare.outputs(trace).each { |port, v| puts "  #{names[port] || port} = #{v.inspect}" }
+  puts "  (#{trace.last})"
+end
+
+namespace :fpga do
+  desc "Make a ROM image ($readmemh) from a .rb or .mrb (e.g. rake fpga:rom[fpga/corpus/blink.rb])"
+  task :rom, [:src] do |_t, args|
+    raise "usage: rake fpga:rom[<file.rb|file.mrb>]" unless args[:src]
+    image, hex = fpga_rom(args[:src])
+    print image.listing
+    puts "rom: #{hex.sub("#{HARNESS_ROOT}/", '')} (#{image.words.size} words, nregs #{image.nregs})"
+  end
+
+  desc "Run a .rb/.mrb on the simulated CPU core and print its I/O (e.g. rake fpga:run[fpga/corpus/counter.rb])"
+  task :run, [:src, :max] do |_t, args|
+    raise "usage: rake fpga:run[<file.rb|file.mrb>,<max steps>]" unless args[:src]
+    require_fpga_tools!
+    _image, hex = fpga_rom(args[:src])
+    dump = hex.sub(/\.hex\z/, ".fst")
+    trace = fpga_sim_trace(hex, stim: fpga_stim_path(args[:src]), max: (args[:max] || FPGA_DEFAULT_STEPS).to_i, dump: dump)
+    fpga_show_outputs(trace)
+    puts "trace: #{hex.sub(/\.hex\z/, '.sim.trace').sub("#{HARNESS_ROOT}/", '')}"
+    puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
+  end
+
+  desc "Run every fpga/corpus/*.mrb on the reference interpreter and the simulated core, and compare"
+  task :check do
+    require_fpga_tools!
+    mrbs = Dir[File.join(FpgaCorpus::DIR, "*.mrb")].sort
+    raise "no fpga/corpus/*.mrb. Run `rake fpga:corpus`" if mrbs.empty?
+    failed = []
+    mrbs.each do |mrb|
+      name = File.basename(mrb, ".mrb")
+      image, hex = fpga_rom(mrb)
+      stim = fpga_stim_path(mrb)
+      ref = fpga_ref_trace(image, stim: stim, max: FPGA_DEFAULT_STEPS)
+      File.write(hex.sub(/\.hex\z/, ".ref.trace"), ref.join("\n") + "\n")
+      sim = fpga_sim_trace(hex, stim: stim, max: FPGA_DEFAULT_STEPS)
+      r = FpgaCompare.compare(ref, sim)
+      if r.ok
+        puts format("ok %-10s %5d I/O writes, %s", name, r.io_count, r.ending)
+      else
+        puts "FAIL #{name}\n#{r.message}"
+        failed << name
+      end
+    end
+    raise "reference and simulation differ: #{failed.join(', ')} (traces in build/fpga/rom/)" unless failed.empty?
+  end
+
+  desc "Regenerate fpga/corpus/*.mrb, *.dump and docs/fpga-opcodes.md with mrbc"
+  task :corpus do
+    FpgaCorpus.write(FpgaCorpus.default_mrbc)
+    puts "wrote #{FpgaCorpus.names.size} program(s) and #{FpgaCorpus::TABLE.sub("#{HARNESS_ROOT}/", '')}"
+  end
+
+  namespace :corpus do
+    desc "Check that fpga/corpus/*.mrb, *.dump and docs/fpga-opcodes.md match mrbc (needs vendor/picoruby)"
+    task :check do
+      stale = FpgaCorpus.stale(FpgaCorpus.default_mrbc)
+      raise "out of date (run `rake fpga:corpus`): #{stale.join(', ')}" unless stale.empty?
+      puts "fpga corpus is up to date"
+    end
+  end
+
+  desc "Regenerate fpga/rtl/mrb_pkg.sv from tools/fpga/isa.rb and io_map.rb"
+  task :gen do
+    FpgaGenPkg.write
+    puts "wrote #{FpgaGenPkg::PATH.sub("#{HARNESS_ROOT}/", '')}"
+  end
+
+  desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation"
+  task test: ["test:fpga", "fpga:tb", "fpga:check"]
+end
+
+namespace :test do
+  desc "Run the FPGA Ruby tools' tests (tools/fpga, no simulator needed)"
+  task :fpga do
+    Dir[File.join(HARNESS_ROOT, "tools", "fpga", "*_test.rb")].sort.each do |test_file|
+      ruby test_file
+    end
   end
 end
