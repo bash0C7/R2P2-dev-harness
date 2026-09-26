@@ -47,6 +47,7 @@ class FpgaRefVm
     @bp = 0
     @cp = NIL   # 今のフレームが Proc (ブロック) ならその参照
     @env = NIL  # 今のフレームの env (中で Proc を作った時にできる)
+    @mcls = FpgaIsa::CLS_OBJECT # 今のメソッドが見つかったクラス (super の起点)
     @fn = 0     # 今のフレームの nregs (env に写す数。一番外は戻らないので 0)
     @argc = 0
     @tbase = 0  # メソッド表 (TABLE で決まる)
@@ -316,17 +317,29 @@ class FpgaRefVm
     nil
   end
 
-  # メソッド探索: 見つからなければ親クラス (SUPER_SYM の飛び先) へ。MAX_SUPER_DEPTH 段で諦める
-  def lookup(cls, sym)
+  # メソッド探索: [飛び先, 見つかったクラス] か nil。見つからなければ親クラス (SUPER_SYM の飛び先) へ進み、
+  # MAX_SUPER_DEPTH - 1 段より先へは行かない (コアと同じ数え方)。super_first は親から探し始める (super)、
+  # walk = false は親をたどらない (is_a? と new のインスタンス変数の数)
+  def lookup(cls, sym, super_first: false, walk: true)
     return nil if @tsize.zero?
-    FpgaIsa::MAX_SUPER_DEPTH.times do
-      t = probe(cls, sym)
-      return t if t
-      cls = probe(cls, FpgaIsa::SUPER_SYM)
-      return nil unless cls
-      @stats[:super] += 1
+    depth = 0
+    sup = super_first
+    loop do
+      if sup
+        s = probe(cls, FpgaIsa::SUPER_SYM)
+        return nil unless s
+        return nil if depth == FpgaIsa::MAX_SUPER_DEPTH - 1
+        cls = s
+        depth += 1
+        sup = false
+        @stats[:super] += 1
+      else
+        t = probe(cls, sym)
+        return [t, cls] if t
+        return nil unless walk
+        sup = true
+      end
     end
-    nil
   end
 
   def lambda?(pr)
@@ -385,9 +398,10 @@ class FpgaRefVm
     @heap[e + 1] = NIL
   end
 
+  # フレームを1つ畳む。@popped_ctor は畳んだフレームが new の initialize だったか
   def pop_frame
     detach
-    pc, @bp, @cp, @env, @fn = @stack.pop
+    pc, @bp, @cp, @env, @fn, @mcls, @popped_ctor = @stack.pop
     pc
   end
 
@@ -417,8 +431,30 @@ class FpgaRefVm
       @tbase = b
     when "EXEC"
       fault! unless ok?(a + 1)
-      frame(pc, a, 0, false)
+      frame(pc, a, 0, false, @mcls)
       return b
+    when "SUPER"
+      @stats[:super_call] += 1
+      # 今のメソッドが見つかったクラスの親から、同じ名前 (b) を引く。受け手は self、ブロックの枠はそのまま渡す
+      argc = c & 0x7F
+      fault! unless ok?(a + argc + 1)
+      @regs[@bp + a] = @regs[@bp]
+      r = lookup(@mcls, b, super_first: true)
+      fault! unless r
+      return dispatch(step, pc, a, argc, true, r[0], r[1])
+    when "GETIV"
+      # (self のクラス, @名前) を引く。無ければ nil
+      r = lookup(class_of(@regs[@bp]), b)
+      if r
+        fault! unless (r[0] >> 14) == FpgaIsa::TGT_IVAR
+        set(step, a, @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)])
+      else
+        set(step, a, NIL)
+      end
+    when "SETIV"
+      r = lookup(class_of(@regs[@bp]), b)
+      fault! unless r && (r[0] >> 14) == FpgaIsa::TGT_IVAR
+      @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)] = reg(a) # ヒープへの書き込みはトレースに出さない
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "LOADTRUE" then set(step, a, bool(true))
     when "LOADFALSE" then set(step, a, bool(false))
@@ -548,24 +584,53 @@ class FpgaRefVm
     argc = c & 0x7F
     fault! unless ok?(a + argc + 1)
     @regs[@bp + a] = @regs[@bp] if self_call # self を受け手の場所へ (トレースに出さない)
-    t = lookup(class_of(reg(a)), sym)
-    fault! unless t
-    @stats[:found] += 1
-    return prim(step, pc, t & 0x3FFF, a, argc) if (t >> 14) == FpgaIsa::TGT_PRIM
-    fault! unless (t >> 14) == FpgaIsa::TGT_PC
-    frame(pc, a, argc, (c & 0x80) != 0)
-    t & 0x3FFF
+    r = lookup(class_of(reg(a)), sym)
+    fault! unless r
+    dispatch(step, pc, a, argc, (c & 0x80) != 0, r[0], r[1])
   end
 
-  # メソッドのフレームに入る。残りのレジスタは呼ばれた側の ENTER が埋める。ブロックを渡さなければその枠は nil
-  def frame(pc, a, argc, blk)
+  # 見つかった飛び先へ: メソッド (フレームを作る)、primitive、インスタンス変数の読み書き (attr_*)
+  def dispatch(step, pc, a, argc, blk, t, found)
+    @stats[:found] += 1
+    tgt = t & 0x3FFF
+    case t >> 14
+    when FpgaIsa::TGT_PRIM then prim(step, pc, tgt, a, argc, blk)
+    when FpgaIsa::TGT_PC
+      frame(pc, a, argc, blk, found)
+      tgt
+    when FpgaIsa::TGT_IVAR
+      fault! unless argc.zero?
+      set(step, a, @heap[ivar_addr(reg(a), tgt)])
+      pc + 1
+    else
+      fault! unless argc == 1
+      @heap[ivar_addr(reg(a), tgt)] = reg(a + 1)
+      set(step, a, reg(a + 1))
+      pc + 1
+    end
+  end
+
+  # オブジェクト (Object かプログラムのクラスのインスタンス) の i 番目のインスタンス変数の語アドレス
+  def ivar_addr(obj, i)
+    @stats[:ivar] += 1
+    fault! unless ref?(obj)
+    cls = obj_class(obj)
+    fault! unless cls == FpgaIsa::CLS_OBJECT || (cls >= FpgaIsa::FIRST_USER_CLASS && cls < FpgaIsa::CLS_DATA)
+    fault! if i >= (@heap[obj[1]][1] & 0xFFFF)
+    obj[1] + 1 + i
+  end
+
+  # メソッドのフレームに入る。残りのレジスタは呼ばれた側の ENTER が埋める。ブロックを渡さなければその枠は nil。
+  # mcls は見つかったクラス (super の起点)、ctor は new の initialize (戻り値で R0 を上書きしない)
+  def frame(pc, a, argc, blk, mcls, ctor = false)
     fault! if @stack.size >= FpgaIsa::STACK_DEPTH
-    @stack.push([pc + 1, @bp, @cp, @env, @fn])
+    @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, ctor])
     @bp += a
     @regs[@bp + argc + 1] = NIL unless blk
     @cp = NIL
     @env = NIL
     @fn = 0
+    @mcls = mcls
     @argc = argc
   end
 
@@ -573,7 +638,7 @@ class FpgaRefVm
   def enter_frame(pc, a, nregs, keep, new_cp)
     new_bp = @bp + a
     fault! if new_bp + [nregs, keep + 1].max > @regs.size || @stack.size >= FpgaIsa::STACK_DEPTH
-    @stack.push([pc + 1, @bp, @cp, @env, @fn])
+    @stack.push([pc + 1, @bp, @cp, @env, @fn, @mcls, false])
     @regs[new_bp] = @heap[new_cp[1] + 4]
     ((keep + 1)...nregs).each { |i| @regs[new_bp + i] = NIL }
     @bp = new_bp
@@ -601,7 +666,7 @@ class FpgaRefVm
     return :halt if @stack.empty?
     callee = @bp
     pc = pop_frame
-    set_abs(step, callee, value)
+    set_abs(step, callee, value) unless @popped_ctor # initialize の戻り値は捨てる (R0 = new したオブジェクト)
     pc
   end
 
@@ -661,14 +726,26 @@ class FpgaRefVm
   end
 
   # primitive (isa.rb の PRIMS)。受け手の型が違えばエラー (表が壊れていても同じ結果になるように)
-  def prim(step, pc, id, a, argc)
+  def prim(step, pc, id, a, argc, blk = false)
     pr = FpgaIsa::PRIMS[id]
     fault! unless pr
     fault! unless pr[2] == -1 || pr[2] == argc
     name = pr[3]
     return blkcall(pc, a, argc) if name == "CALL"
+    return new_object(step, pc, a, argc, blk) if name == "NEW"
     x = reg(a)
     case name
+    when "ISA", "KINDOF"
+      # (ISA_BIT | 受け手のクラス, 引数のクラス) があるか (親はたどらない)
+      y = reg(a + 1)
+      fault! unless y[0] == FpgaIsa::TAG_CLASS
+      set(step, a, bool(!lookup(FpgaIsa::ISA_BIT | class_of(x), y[1], walk: false).nil?))
+      return pc + 1
+    when "RESPOND"
+      y = reg(a + 1)
+      fault! unless y[0] == FpgaIsa::TAG_SYM
+      set(step, a, bool(!lookup(class_of(x), y[1]).nil?))
+      return pc + 1
     when "AGET"
       fault! unless ary?(x)
       set(step, a, index(x, reg(a + 1)))
@@ -705,6 +782,27 @@ class FpgaRefVm
     end
     builtin(step, name, a, argc)
     pc + 1
+  end
+
+  # Class#new: インスタンス変数の数を (クラス, NIVARS_SYM) で引き (無ければ 0)、確保して R[a] に置き、initialize を送る。
+  # Object とプログラムのクラスだけ。initialize が見つからなければそのまま (プレリュードが Object#initialize を持つ)
+  def new_object(step, pc, a, argc, blk)
+    k = reg(a)
+    fault! unless k[0] == FpgaIsa::TAG_CLASS
+    id = k[1]
+    fault! unless id == FpgaIsa::CLS_OBJECT || (id >= FpgaIsa::FIRST_USER_CLASS && id < FpgaIsa::CLS_DATA)
+    r = lookup(id, FpgaIsa::NIVARS_SYM, walk: false)
+    n = r ? r[0] & 0x3FFF : 0
+    @stats[:object] += 1
+    p = alloc(1 + n)
+    @heap[p] = hdr(id, n)
+    n.times { |i| @heap[p + 1 + i] = NIL }
+    set(step, a, [FpgaIsa::TAG_OBJ, p])
+    init = lookup(id, FpgaIsa::OP_SYMS.index("initialize"))
+    return pc + 1 unless init
+    fault! unless (init[0] >> 14) == FpgaIsa::TGT_PC
+    frame(pc, a, argc, blk, init[1], true)
+    init[0] & 0x3FFF
   end
 
   def builtin(step, name, a, argc)

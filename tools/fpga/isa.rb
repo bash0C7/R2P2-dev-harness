@@ -66,7 +66,7 @@ module FpgaIsa
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
     GETUPVAR SETUPVAR BREAK
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
-    CLASS EXEC SDEF TABLE
+    CLASS EXEC SDEF TABLE GETIV SETIV SUPER
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
@@ -76,19 +76,28 @@ module FpgaIsa
   #   LOADSELF      MOVE a, R0
   #   RETSELF       RETURN R0
   #   RETTRUE / RETFALSE  LOADTRUE / LOADFALSE R0 と RETURN R0 (戻り値は呼び出し先の R0 に入るので同じ)
-  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE].freeze
+  #   GETCV / SETCV クラス変数は定数と同じ番号 (GETCONST / SETCONST)
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
   # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
   SUPER_SYM = 0xFFFF
-  # 飛び先の上位 2bit: 0 = メソッドの先頭 pc、1 = primitive の番号 (下の PRIMS)
-  TGT_PC   = 0
-  TGT_PRIM = 1
+  # (クラス, NIVARS_SYM) の飛び先はインスタンス変数の数 (new が使う。無ければ 0)
+  NIVARS_SYM = 0xFFFE
+  # (ISA_BIT | クラス, 祖先の番号) があれば is_a? が真 (親はたどらない)
+  ISA_BIT = 0x4000
+  # 飛び先の上位 2bit: 0 = メソッドの先頭 pc、1 = primitive の番号 (下の PRIMS)、
+  # 2 = インスタンス変数の番号 (GETIV / SETIV、attr_reader)、3 = インスタンス変数の番号 (attr_writer: R[a+1] を書いて返す)
+  TGT_PC    = 0
+  TGT_PRIM  = 1
+  TGT_IVAR  = 2
+  TGT_IVSET = 3
   # 親クラスをたどる段数の上限 (ランダムな表で輪になっても止まるように)
   MAX_SUPER_DEPTH = 32
 
   # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
-  OP_SYMS = %w[+ - * / == < <= > >= [] []=].freeze
+  # 最後の initialize は new が送るメソッド (コアが番号を知っている)
+  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize].freeze
 
   def self.table_hash(cls, sym, mask)
     (cls * 5 + sym) & mask
@@ -104,6 +113,8 @@ module FpgaIsa
     ["Integer", "abs", 0, "ABS"], ["Integer", "zero?", 0, "ZERO"], ["Integer", "even?", 0, "EVEN"], ["Integer", "odd?", 0, "ODD"],
     ["Object", "!", 0, "NOT"], ["Object", "==", 1, "OEQ"], ["Object", "class", 0, "CLASSOF"],
     ["Object", "sleep_ms", 1, "SLEEPMS"], ["Object", "sleep", 1, "SLEEP"], ["Object", "lambda", 0, "LAMBDA"],
+    ["Object", "is_a?", 1, "ISA"], ["Object", "kind_of?", 1, "KINDOF"], ["Object", "respond_to?", 1, "RESPOND"],
+    ["Class", "new", -1, "NEW"],
     ["Array", "size", 0, "SIZE"], ["Array", "length", 0, "LENGTH"], ["Array", "empty?", 0, "EMPTY"],
     ["Array", "first", 0, "FIRST"], ["Array", "last", 0, "LAST"], ["Array", "pop", 0, "POP"],
     ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "[]", 1, "AGET"], ["Array", "[]=", 2, "ASET"],

@@ -32,6 +32,7 @@ package mrb_pkg;
   localparam logic [15:0] CLS_DATA   = 16'd32752;
   localparam logic [15:0] CLS_ENV    = 16'd32753;
   localparam logic [15:0] CLS_META   = 16'h8000;
+  localparam logic [15:0] FIRST_USER_CLASS = 16'd32;
 
   // コアの大きさ (tools/fpga/isa.rb)
   localparam int RF_SIZE     = 128;
@@ -43,6 +44,10 @@ package mrb_pkg;
   localparam int MAX_SUPER_DEPTH = 32;
   localparam logic [1:0] TGT_PC = 2'd0;
   localparam logic [1:0] TGT_PRIM = 2'd1;
+  localparam logic [1:0] TGT_IVAR = 2'd2;
+  localparam logic [1:0] TGT_IVSET = 2'd3;
+  localparam logic [15:0] NIVARS_SYM = 16'hfffe;
+  localparam logic [15:0] ISA_BIT = 16'h4000;
   // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)
   localparam logic [15:0] SYM_ADD  = 16'd0; // +
   localparam logic [15:0] SYM_SUB  = 16'd1; // -
@@ -55,6 +60,7 @@ package mrb_pkg;
   localparam logic [15:0] SYM_GE   = 16'd8; // >=
   localparam logic [15:0] SYM_AREF = 16'd9; // []
   localparam logic [15:0] SYM_ASET = 16'd10; // []=
+  localparam logic [15:0] SYM_INIT = 16'd11; // initialize
 
   // primitive (tools/fpga/isa.rb の PRIMS)。メソッド表の飛び先の番号
   localparam logic [13:0] PR_IADD     = 14'd0; // Integer#+ (1 arg)
@@ -84,17 +90,21 @@ package mrb_pkg;
   localparam logic [13:0] PR_SLEEPMS  = 14'd24; // Object#sleep_ms (1 arg)
   localparam logic [13:0] PR_SLEEP    = 14'd25; // Object#sleep (1 arg)
   localparam logic [13:0] PR_LAMBDA   = 14'd26; // Object#lambda (0 arg)
-  localparam logic [13:0] PR_SIZE     = 14'd27; // Array#size (0 arg)
-  localparam logic [13:0] PR_LENGTH   = 14'd28; // Array#length (0 arg)
-  localparam logic [13:0] PR_EMPTY    = 14'd29; // Array#empty? (0 arg)
-  localparam logic [13:0] PR_FIRST    = 14'd30; // Array#first (0 arg)
-  localparam logic [13:0] PR_LAST     = 14'd31; // Array#last (0 arg)
-  localparam logic [13:0] PR_POP      = 14'd32; // Array#pop (0 arg)
-  localparam logic [13:0] PR_PUSH     = 14'd33; // Array#push (1 arg)
-  localparam logic [13:0] PR_APUSH    = 14'd34; // Array#<< (1 arg)
-  localparam logic [13:0] PR_AGET     = 14'd35; // Array#[] (1 arg)
-  localparam logic [13:0] PR_ASET     = 14'd36; // Array#[]= (2 arg)
-  localparam logic [13:0] PR_CALL     = 14'd37; // Proc#call (any)
+  localparam logic [13:0] PR_ISA      = 14'd27; // Object#is_a? (1 arg)
+  localparam logic [13:0] PR_KINDOF   = 14'd28; // Object#kind_of? (1 arg)
+  localparam logic [13:0] PR_RESPOND  = 14'd29; // Object#respond_to? (1 arg)
+  localparam logic [13:0] PR_NEW      = 14'd30; // Class#new (any)
+  localparam logic [13:0] PR_SIZE     = 14'd31; // Array#size (0 arg)
+  localparam logic [13:0] PR_LENGTH   = 14'd32; // Array#length (0 arg)
+  localparam logic [13:0] PR_EMPTY    = 14'd33; // Array#empty? (0 arg)
+  localparam logic [13:0] PR_FIRST    = 14'd34; // Array#first (0 arg)
+  localparam logic [13:0] PR_LAST     = 14'd35; // Array#last (0 arg)
+  localparam logic [13:0] PR_POP      = 14'd36; // Array#pop (0 arg)
+  localparam logic [13:0] PR_PUSH     = 14'd37; // Array#push (1 arg)
+  localparam logic [13:0] PR_APUSH    = 14'd38; // Array#<< (1 arg)
+  localparam logic [13:0] PR_AGET     = 14'd39; // Array#[] (1 arg)
+  localparam logic [13:0] PR_ASET     = 14'd40; // Array#[]= (2 arg)
+  localparam logic [13:0] PR_CALL     = 14'd41; // Proc#call (any)
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -125,6 +135,10 @@ package mrb_pkg;
       PR_SLEEPMS : return 8'h01;
       PR_SLEEP   : return 8'h01;
       PR_LAMBDA  : return 8'h00;
+      PR_ISA     : return 8'h01;
+      PR_KINDOF  : return 8'h01;
+      PR_RESPOND : return 8'h01;
+      PR_NEW     : return 8'hff;
       PR_SIZE    : return 8'h00;
       PR_LENGTH  : return 8'h00;
       PR_EMPTY   : return 8'h00;
@@ -169,6 +183,8 @@ package mrb_pkg;
   localparam logic [7:0] OP_LOADFALSE  = 8'd20; // B
   localparam logic [7:0] OP_GETGV      = 8'd21; // BB
   localparam logic [7:0] OP_SETGV      = 8'd22; // BB
+  localparam logic [7:0] OP_GETIV      = 8'd25; // BB
+  localparam logic [7:0] OP_SETIV      = 8'd26; // BB
   localparam logic [7:0] OP_GETCONST   = 8'd29; // BB
   localparam logic [7:0] OP_SETCONST   = 8'd30; // BB
   localparam logic [7:0] OP_GETUPVAR   = 8'd33; // BBB
@@ -185,6 +201,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_SEND       = 8'd50; // BBB
   localparam logic [7:0] OP_SEND0      = 8'd51; // BB
   localparam logic [7:0] OP_BLKCALL    = 8'd54; // BB
+  localparam logic [7:0] OP_SUPER      = 8'd55; // BB
   localparam logic [7:0] OP_ENTER      = 8'd57; // W
   localparam logic [7:0] OP_RETURN     = 8'd61; // B
   localparam logic [7:0] OP_RETURN_BLK = 8'd62; // B

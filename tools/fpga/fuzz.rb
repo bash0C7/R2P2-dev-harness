@@ -73,11 +73,17 @@ module FpgaFuzz
       cls = CLASS_POOL.sample(random: rng)
       sym = rng.rand(NSYMS)
       tgt = case rng.rand(20)
-            when 0 then (2 << 14) | rng.rand(16)                 # 未対応の種類
-            when 1..8 then PROLOGUE + rng.rand(len - PROLOGUE)    # メソッド
+            when 0 then (FpgaIsa::TGT_IVAR << 14) | rng.rand(4)  # インスタンス変数 (attr_reader)。範囲外もある
+            when 1 then (FpgaIsa::TGT_IVSET << 14) | rng.rand(4) # attr_writer
+            when 2..8 then PROLOGUE + rng.rand(len - PROLOGUE)    # メソッド
             else (FpgaIsa::TGT_PRIM << 14) | FUZZ_PRIMS.sample(random: rng)
             end
       entries << [cls, sym, tgt]
+    end
+    # インスタンス変数の数と is_a? の行 (ユーザーのクラス)
+    [32, 33].each do |cls|
+      entries << [cls, FpgaIsa::NIVARS_SYM, rng.rand(4)] unless rng.rand(4).zero?
+      entries << [FpgaIsa::ISA_BIT | cls, CLASS_POOL.sample(random: rng), 1] if rng.rand(2).zero?
     end
     entries
   end
@@ -138,6 +144,8 @@ module FpgaFuzz
     when "BLKCALL" then b = rng.rand(3)
     when "AREF" then b = small.call; c = rng.rand(4)
     when "LOADSYM" then b = rng.rand(NSYMS)
+    when "GETIV", "SETIV" then b = rng.rand(NSYMS)
+    when "SUPER" then b = rng.rand(NSYMS); c = rng.rand(3) | 0x80
     end
     encode(op, a, b, c)
   end
@@ -148,7 +156,11 @@ module FpgaFuzz
   HEAP_STEPS = 3000
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
-        maker: 20, call: 21 }.freeze
+        maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
+        isa: 30, respond: 31 }.freeze
+  # heap_program のクラス: P (32、@a @b) と Q (33 < P、@c を足す)。オブジェクトは定数 2 に置く
+  P_CLS = 32
+  Q_CLS = 33
 
   def heap_program(rng, body: 30)
     ints = (0..7).to_a
@@ -160,11 +172,15 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
     words << encode(FpgaIsa.op("ARRAY2"), 10, 8, 1)
     words << encode(FpgaIsa.op("SETCONST"), 8, 0, 0)
+    words << encode(FpgaIsa.op("CLASS"), 12, P_CLS, 0)
+    words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(20), 0)
+    words << encode(FpgaIsa.op("SEND"), 12, S[:new], 1)
+    words << encode(FpgaIsa.op("SETCONST"), 12, 2, 0)
     words << :block
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(13)
+      pick = rng.rand(14)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -204,6 +220,27 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
         words << encode(FpgaIsa.op("BLKCALL"), 12, wrong_argc ? 2 : 1, 0)
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 8 # オブジェクト: attr で読む、super を通して読む、attr で書く、is_a?、respond_to?
+        words << encode(FpgaIsa.op("GETCONST"), 12, 2, 0)
+        case rng.rand(5)
+        when 0, 1
+          words << encode(FpgaIsa.op("SEND0"), 12, %i[geta getb get].sample(random: rng).then { |k| S[k] }, 0)
+        when 2
+          words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:setb], 1)
+        when 3
+          words << encode(FpgaIsa.op("CLASS"), 13, [P_CLS, Q_CLS, FpgaIsa::CLS_INT, FpgaIsa::CLS_OBJECT].sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:isa], 1)
+        else
+          words << encode(FpgaIsa.op("LOADSYM"), 13, rng.rand(32), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:respond], 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 12 # オブジェクトを作る (P か Q)。前のはゴミになる
+        words << encode(FpgaIsa.op("CLASS"), 12, rng.rand(2).zero? ? P_CLS : Q_CLS, 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SEND"), 12, S[:new], 1)
+        words << encode(FpgaIsa.op("SETCONST"), 12, 2, 0)
       when 10 # 多重代入 (AREF)
         words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
       when 11 # 演算の落ち先: 配列 + 整数 は Array#+ (この表ではメソッド) を送る
@@ -243,6 +280,24 @@ module FpgaFuzz
     plus_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 1, 4, 0)
     words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    # P#initialize(x): @a = x、@b = [x]。Q#initialize は P のもの。@c は nil のまま
+    init_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 4, 0)
+    words << encode(FpgaIsa.op("SETIV"), 1, S[:ia], 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 3, 1, 1)
+    words << encode(FpgaIsa.op("SETIV"), 3, S[:ib], 0)
+    words << encode(FpgaIsa.op("RETNIL"), 0, 0, 0)
+    # P#get は @a、Q#get は super (P#get) と @c を配列にして返す
+    pget_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 3, 0)
+    words << encode(FpgaIsa.op("GETIV"), 1, S[:ia], 0)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    qget_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 4, 0)
+    words << encode(FpgaIsa.op("SUPER"), 1, S[:get], 0x80)
+    words << encode(FpgaIsa.op("GETIV"), 2, S[:ic], 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 1, 1, 2)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
     lam = rng.rand(3).zero? ? 0x80 : 0
     words = words.map do |w|
       case w
@@ -259,7 +314,17 @@ module FpgaFuzz
       [ary, S[:empty], prim.("EMPTY")], [ary, S[:aget], prim.("AGET")], [ary, S[:aset], prim.("ASET")],
       [ary, FpgaIsa::OP_SYMS.index("+"), plus_at], [ary, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT],
       [FpgaIsa::CLS_OBJECT, FpgaIsa::OP_SYMS.index("=="), prim.("OEQ")],
-      [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")]
+      [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")],
+      [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
+      [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
+      [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],
+      [P_CLS, S[:ia], (FpgaIsa::TGT_IVAR << 14) | 0], [P_CLS, S[:ib], (FpgaIsa::TGT_IVAR << 14) | 1],
+      [Q_CLS, S[:ic], (FpgaIsa::TGT_IVAR << 14) | 2],
+      [P_CLS, FpgaIsa::OP_SYMS.index("initialize"), init_at], [P_CLS, S[:get], pget_at], [Q_CLS, S[:get], qget_at],
+      [P_CLS, S[:geta], (FpgaIsa::TGT_IVAR << 14) | 0], [P_CLS, S[:getb], (FpgaIsa::TGT_IVAR << 14) | 1],
+      [P_CLS, S[:setb], (FpgaIsa::TGT_IVSET << 14) | 1],
+      [FpgaIsa::CLS_OBJECT, S[:isa], prim.("ISA")], [FpgaIsa::CLS_OBJECT, S[:respond], prim.("RESPOND")],
+      [FpgaIsa::ISA_BIT | P_CLS, P_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, Q_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, P_CLS, 1]
     ]
     with_table(words, entries)
   end
