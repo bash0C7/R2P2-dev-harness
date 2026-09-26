@@ -27,7 +27,7 @@ module FpgaGenPkg
     lines << ""
     lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = 種類 << 16 | 中身の語数"
     lines << "  localparam int HEAP_SIZE = #{FpgaIsa::HEAP_SIZE};"
-    %w[ARY DATA PROC].each { |k| lines << "  localparam int KIND_#{k} = #{FpgaIsa.const_get("KIND_#{k}")};" }
+    %w[ARY DATA PROC ENV].each { |k| lines << "  localparam int KIND_#{k} = #{FpgaIsa.const_get("KIND_#{k}")};" }
     lines << ""
     lines << "  // コアの大きさ (tools/fpga/isa.rb)"
     lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"

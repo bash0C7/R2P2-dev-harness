@@ -557,6 +557,92 @@ module mrb_core_tb;
     run();
     expect_error(1);
 
+    // ---- env: メソッドから戻った後も、その変数を Proc から読み書きできる
+    begin_test("closure outlives its method");
+    prog.push_back(w(OP_SSEND0, 1, 7, 3 << 8));              // 0: R1 = m (Proc が返る)
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: R1 = 6 (env の R1 を 5 から 6 に)
+    prog.push_back(w(OP_MOVE, 6, 1));                        // 2: R6 = 6 (2本目の呼び出しのフレームより上)
+    prog.push_back(w(OP_SSEND0, 1, 7, 3 << 8));              // 3: 別の env
+    prog.push_back(w(OP_MOVE, 2, 1));                        // 4: R2 = 2本目の Proc
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5: R2 = 6 (1本目とは別の env)
+    prog.push_back(w(OP_STOP));                              // 6
+    prog.push_back(w(OP_LOADI_5, 1));                        // 7: m: R1 = 5
+    prog.push_back(w(OP_BLOCK, 2, 10, 3 << 8));              // 8: R2 = Proc (env を作る)
+    prog.push_back(w(OP_RETURN, 2));                         // 9: 戻る時に env へ R0..R2 を写す
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 10: ブロック: R1 = env の R1
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 11
+    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 12: env の R1 = R1 (ヒープへ)
+    prog.push_back(w(OP_RETURN, 1));                         // 13
+    run();
+    expect_halt();
+    expect_reg(6, vint(6));
+    expect_reg(2, vint(6));                                  // 2本目は別の env (5 から数え直す)
+
+    begin_test("break to a method that has returned");
+    prog.push_back(w(OP_SSEND0, 1, 3, 3 << 8));              // 0
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: break の行き先のフレームはもう無い
+    prog.push_back(w(OP_STOP));                              // 2
+    prog.push_back(w(OP_BLOCK, 2, 5, 3 << 8));               // 3: m
+    prog.push_back(w(OP_RETURN, 2));                         // 4
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 5
+    run();
+    expect_error(5);
+
+    // ---- lambda: 引数の数を調べ、break / return は lambda から戻る
+    begin_test("lambda checks the number of arguments");
+    prog.push_back(w(OP_BLOCK, 1, 2, (3 << 8) | 8'h80 | 1)); // 0: lambda { |x| }
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: 引数 0 個
+    prog.push_back(w(OP_RETNIL));                            // 2
+    run();
+    expect_error(1);
+
+    begin_test("break in a lambda");
+    prog.push_back(w(OP_BLOCK, 1, 5, (3 << 8) | 8'h80 | 1)); // 0: lambda { |x| break x + 1 }
+    prog.push_back(w(OP_LOADI_4, 2));                        // 1
+    prog.push_back(w(OP_BLKCALL, 1, 1));                     // 2: R1 = 5
+    prog.push_back(w(OP_LOADI_7, 3));                        // 3: 通る (lambda から戻っただけ)
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 5
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 6
+    run();
+    expect_halt();
+    expect_reg(1, vint(5));
+    expect_reg(3, vint(7));
+
+    begin_test("return in a proc inside a lambda");
+    prog.push_back(w(OP_BLOCK, 1, 4, (4 << 8) | 8'h80));     // 0: l = lambda { proc { return 9 }.call; 1 }
+    prog.push_back(w(OP_BLKCALL, 1, 0));                     // 1: R1 = 9
+    prog.push_back(w(OP_LOADI_7, 2));                        // 2
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_BLOCK, 2, 8, 3 << 8));               // 4: lambda の中: proc
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5
+    prog.push_back(w(OP_LOADI_1, 1));                        // 6: (通らない)
+    prog.push_back(w(OP_RETURN, 1));                         // 7
+    prog.push_back(w(OP_LOADI8, 1, 9));                      // 8: proc の中
+    prog.push_back(w(OP_RETURN_BLK, 1, 0, 2));               // 9: 深さ 1 の lambda から戻る
+    run();
+    expect_halt();
+    expect_reg(1, vint(9));
+    expect_reg(2, vint(7));
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after return", name, dut.core.sp, dut.core.bp);
+
+    // ---- 多重代入 (AREF)
+    begin_test("aref");
+    prog.push_back(w(OP_LOADI_3, 1));                        // 0
+    prog.push_back(w(OP_LOADI_4, 2));                        // 1
+    prog.push_back(w(OP_ARRAY2, 3, 1, 2));                   // 2: R3 = [3, 4]
+    prog.push_back(w(OP_AREF, 4, 3, 1));                     // 3: R4 = 4
+    prog.push_back(w(OP_AREF, 5, 3, 2));                     // 4: R5 = nil (範囲外)
+    prog.push_back(w(OP_AREF, 6, 1, 0));                     // 5: R6 = 3 (配列でなければ自身)
+    prog.push_back(w(OP_AREF, 7, 1, 1));                     // 6: R7 = nil
+    prog.push_back(w(OP_STOP));                              // 7
+    run();
+    expect_halt();
+    expect_reg(4, vint(4));
+    expect_reg(5, VNIL);
+    expect_reg(6, vint(3));
+    expect_reg(7, VNIL);
+
     begin_test("upvar below the register file");
     prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い
     run();

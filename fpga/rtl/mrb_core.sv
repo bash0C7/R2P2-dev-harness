@@ -7,6 +7,8 @@
 // 値 = {tag[2:0], value[31:0]}。ARRAY / PROC はヒープ (HEAP_SIZE 語、半分ずつ使う) の語アドレス。
 // レジスタはレジスタ窓: R[i] はレジスタファイルの bp + i。呼び出し先の bp は呼び出し元の bp + a。
 // cp は今のフレームが Proc (ブロック) の時のその参照。外側の変数は Proc の連鎖でたどる。
+// env は今のフレームの中で Proc を作った時にできるヒープのオブジェクトで、フレームが生きている間は bp を指し、
+// フレームから戻る時に fn 本 (フレームの nregs) のレジスタを写し取る (S_DETACH)。
 //
 // en が 0 の cycle は何も進まない (CPU を遅く回すためのクロックイネーブル)。ms_tick は 1ms ごとの 1 cycle のパルスで、
 // sleep_ms / sleep だけが使う (en に関係なく数える)。
@@ -64,7 +66,10 @@ module mrb_core
     S_INCL,               // include?
     S_UNWIND, S_UNWIND_RET, // break (動的) / ブロックの中の return
     S_SLEEP,
-    S_WALK, S_UPOP        // Proc の連鎖をたどって外側のフレームの底を求め、命令を仕上げる
+    S_WALK, S_UPOP,       // Proc の連鎖をたどって外側のフレームの底を求め、命令を仕上げる
+    S_ENV,                // Proc と一緒に env を作る (中身を nil で埋める)
+    S_DETACH, S_RETFIN,   // 戻る前に env へレジスタを写す / 写した後に戻る
+    S_LWALK               // ブロックの中の return: 一番内側の lambda を探す
   } state_t;
   state_t state;
 
@@ -77,11 +82,15 @@ module mrb_core
   logic [RB-1:0]       bp;
   logic [7:0]          argc;
   logic [VAL_BITS-1:0] cp;
+  logic [VAL_BITS-1:0] env;       // 今のフレームの env (無ければ nil)
+  logic [7:0]          fn;        // 今のフレームの nregs (env に写す数)
 
-  // コールスタック: 戻り先の pc、呼び出し元の bp と Proc
+  // コールスタック: 戻り先の pc、呼び出し元の bp・Proc・env・nregs
   logic [PC_BITS-1:0]  ret_pc [STACK_DEPTH];
   logic [RB-1:0]       ret_bp [STACK_DEPTH];
   logic [VAL_BITS-1:0] ret_cp [STACK_DEPTH];
+  logic [VAL_BITS-1:0] ret_env [STACK_DEPTH];
+  logic [7:0]          ret_fn [STACK_DEPTH];
   logic [SB-1:0]       sp;
 
   logic [SB-2:0] top;
@@ -116,6 +125,11 @@ module mrb_core
   logic [VAL_BITS-1:0] hold;
   logic [RB-1:0]       target;
   logic [41:0]         remain;
+  state_t              dcont;     // S_DETACH の後に行く状態
+  logic [PC_BITS-1:0]  ret_to;    // S_RETFIN で戻る pc
+  logic                env_new;   // BLOCK で env も作るか
+  logic [HB-1:0]       p_proc;    // BLOCK で作る Proc の語アドレス
+  logic [3:0]          lw_k;      // S_LWALK の深さ
 
   // ---- 値の部品
   function automatic logic [TAG_BITS-1:0] tag_of(input logic [VAL_BITS-1:0] v);
@@ -227,8 +241,8 @@ module mrb_core
   logic [HB-1:0]              idx_p, idx_d;
   logic [15:0]                idx_len;
   always_comb begin
-    idx_recv = op == OP_GETIDX0 ? rb : ra;
-    idx_raw  = op == OP_GETIDX0 ? '0 : y;
+    idx_recv = (op == OP_GETIDX0 || op == OP_AREF) ? rb : ra;
+    idx_raw  = op == OP_GETIDX0 ? '0 : op == OP_AREF ? INT_BITS'(c[7:0]) : y;
     idx_p    = ha(val_of(idx_recv));
     idx_len  = lo16(heap[idx_p + HB'(1)]);
     idx_d    = ha(val_of(heap[idx_p + HB'(2)]));
@@ -245,11 +259,23 @@ module mrb_core
   assign fb_now = fb_k == 4'd0;
   logic [VAL_BITS-1:0] walk_p;
   logic [3:0]          walk_left;
-  logic [RB-1:0]       fb_base;  // S_UPOP での底
+  logic [RB-1:0]       fb_base;  // S_UPOP での底 (env が生きている時)
+  logic                fb_heap;  // S_UPOP: env は退避済み (レジスタはヒープの fb_env + 2 から)
+  logic [HB-1:0]       fb_env;
+  logic [15:0]         fb_esize; // 退避済みの env の見出しの語数 (1 + レジスタの数)
   logic [16:0]         iu;       // S_UPOP / EXEC での外側のレジスタの番号
-  logic                u_ok;
+  logic                u_ok, h_ok;
   assign iu   = (state == S_UPOP ? 17'(fb_base) : 17'(bp)) + 17'(b);
   assign u_ok = iu < 17'(NREGS);
+  assign h_ok = 17'(b) + 17'd1 < 17'(fb_esize);
+  // S_WALK の終わり: たどった Proc の env と、その生死
+  logic [HB-1:0]       walk_env;
+  logic [VAL_BITS-1:0] walk_live;
+  assign walk_env  = ha(val_of(heap[ha(val_of(walk_p)) + HB'(2)]));
+  assign walk_live = heap[walk_env + HB'(1)];
+  // 今の Proc は lambda か
+  logic cp_lam;
+  assign cp_lam = tag_of(cp) == TAG_PROC && heap[ha(val_of(cp)) + HB'(1)][23];
 
   // ---- Proc (R[a] が Proc の時): 先頭 pc、引数の数、nregs
   logic [HB-1:0]  pr_p;
@@ -264,7 +290,7 @@ module mrb_core
   always_comb begin
     if (op == OP_BLKCALL) begin
       call_nregs = pr_info[31:24];
-      call_keep  = b[7:0] < pr_info[23:16] ? b[7:0] : pr_info[23:16];
+      call_keep  = b[7:0] < {1'b0, pr_info[22:16]} ? b[7:0] : {1'b0, pr_info[22:16]};
     end else begin
       call_nregs = c[15:8];
       call_keep  = {1'b0, c[6:0]} + (c[7] ? 8'd1 : 8'd0); // ブロックを渡すならその枠を残す
@@ -282,7 +308,9 @@ module mrb_core
   logic [PC_BITS-1:0]  npc;
   logic                halt, err;
   logic                do_call, do_ret, set_const, set_up, pop_len;
-  logic                go_block, go_array, go_set, go_incl, go_unwind, go_unwind_ret, go_sleep, go_walk;
+  logic                go_block, go_array, go_set, go_incl, go_unwind, go_unwind_ret, go_sleep, go_walk, go_lwalk;
+  logic                ret_now; // 戻る。env があれば先に S_DETACH で写すので、この cycle には書かない
+  assign ret_now = do_ret && tag_of(env) == TAG_NIL;
 
   assign io_addr  = b[7:0];
   assign io_wdata = ra;
@@ -307,6 +335,7 @@ module mrb_core
     go_unwind_ret = 1'b0;
     go_sleep  = 1'b0;
     go_walk   = 1'b0;
+    go_lwalk  = 1'b0;
 
     case (op)
       OP_NOP: ;
@@ -407,7 +436,8 @@ module mrb_core
         do_call = 1'b1;
         npc     = op == OP_BLKCALL ? pr_info[PC_BITS-1:0] : b[PC_BITS-1:0];
         err     = (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
-                  (op == OP_BLKCALL && (tag_of(ra) != TAG_PROC || !(ia + 17'(b[7:0]) < 17'(NREGS))));
+                  (op == OP_BLKCALL && (tag_of(ra) != TAG_PROC || !(ia + 17'(b[7:0]) < 17'(NREGS)) ||
+                                        (pr_info[23] && b[7:0] != {1'b0, pr_info[22:16]}))); // lambda は引数の数を調べる
       end
       OP_ENTER: err = argc != a;
       OP_RETURN, OP_RETNIL: begin
@@ -425,14 +455,20 @@ module mrb_core
           do_ret = 1'b1;
           npc    = b[PC_BITS-1:0];
           wval   = ra;
+        end else if (cp_lam) begin
+          // lambda の中の break は lambda から戻る
+          do_ret = 1'b1;
+          npc    = ret_pc[top];
+          wval   = ra;
         end else begin
           // Proc を作ったフレームまで畳む (そのフレームの底を S_WALK で求める)
           go_walk = 1'b1;
         end
       end
       OP_RETURN_BLK: begin
-        err = c > 16'd15;
-        if (fb_now) go_unwind_ret = 1'b1; else go_walk = 1'b1;
+        // 一番内側の lambda (無ければ深さ c のメソッド) を S_LWALK で探してから畳む
+        err      = c > 16'd15;
+        go_lwalk = 1'b1;
       end
       OP_GETUPVAR, OP_BLKPUSH: begin
         err = c > 16'd15;
@@ -447,6 +483,12 @@ module mrb_core
       OP_BLOCK:  go_block = 1'b1;
       OP_ARRAY:  begin go_array = 1'b1; err = b[7:0] != 0 && !(ia + 17'(b[7:0]) - 17'd1 < 17'(NREGS)); end
       OP_ARRAY2: begin go_array = 1'b1; err = c[7:0] != 0 && !(17'(bp) + 17'(b[7:0]) + 17'(c[7:0]) - 17'd1 < 17'(NREGS)); end
+      OP_AREF: begin
+        // 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
+        wr   = 1'b1;
+        err  = !b_ok;
+        wval = tag_of(rb) == TAG_ARRAY ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
+      end
       OP_GETIDX, OP_GETIDX0: begin
         wr   = 1'b1;
         wval = idx_val;
@@ -466,7 +508,7 @@ module mrb_core
     if (err) begin
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_set = 1'b0; go_incl = 1'b0;
-      go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0; go_walk = 1'b0;
+      go_unwind = 1'b0; go_unwind_ret = 1'b0; go_sleep = 1'b0; go_walk = 1'b0; go_lwalk = 1'b0;
     end
   end
 
@@ -485,18 +527,24 @@ module mrb_core
     m_waddr = 8'(m_dst);
     m_wdata = V_NIL;
     case (state)
-      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_PROC, 32'(p_new)); end
+      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_PROC, 32'(p_proc)); end
+      S_RETFIN: begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
       S_AELEM: if (m_k == (HB+1)'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_ARRAY, 32'(p_new)); end
       S_PUT:   if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
       S_INCL:  if (m_k == (HB+1)'(m_len) || m_found) begin m_we = 1'b1; m_wdata = mk_bool(m_found); end
-      S_UNWIND: if (sp != '0 && ret_bp[top] == target) begin
+      S_UNWIND: if (sp != '0 && tag_of(env) == TAG_NIL && ret_bp[top] == target) begin
         m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold;
       end
-      S_UNWIND_RET: if (bp == target && sp != '0) begin
+      S_UNWIND_RET: if (bp == target && sp != '0 && tag_of(env) == TAG_NIL) begin
         m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold;
       end
       S_SLEEP: if (remain == 0) begin m_we = 1'b1; m_wdata = hold; end
-      S_UPOP: if (u_ok) begin
+      S_UPOP: if (fb_heap) begin
+        // 退避済みの env: 読むのはレジスタへ (トレースに出る)、書くのはヒープへ (出ない)
+        if ((op == OP_GETUPVAR || op == OP_BLKPUSH) && h_ok) begin
+          m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = heap[fb_env + HB'(2) + HB'(b)];
+        end
+      end else if (u_ok) begin
         if (op == OP_GETUPVAR || op == OP_BLKPUSH) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = regs[iu[RB-1:0]]; end
         if (op == OP_SETUPVAR) begin m_we = 1'b1; m_waddr = 8'(iu[RB-1:0]); m_wdata = ra; end
       end
@@ -514,8 +562,12 @@ module mrb_core
     case (gphase)
       3'd0: begin root_end = gi == 8'(NREGS); if (!root_end) begin root = regs[gi[RB-1:0]]; root_live = 1'b1; end end
       3'd1: begin root_end = gi == 8'(NCONST); if (!root_end) begin root = consts[gi[CB-1:0]]; root_live = cvalid[gi[CB-1:0]]; end end
-      3'd2: begin root_end = gi == 8'(sp); if (!root_end) begin root = ret_cp[gi[SB-2:0]]; root_live = 1'b1; end end
-      default: begin root_end = gi != 0; if (!root_end) begin root = cp; root_live = 1'b1; end end
+      // コールスタックは1段ごとに Proc、env の順
+      3'd2: begin
+        root_end = gi == 8'(sp) * 8'd2;
+        if (!root_end) begin root = gi[0] ? ret_env[gi[SB-1:1]] : ret_cp[gi[SB-1:1]]; root_live = 1'b1; end
+      end
+      default: begin root_end = gi == 8'd2; if (!root_end) begin root = gi[0] ? env : cp; root_live = 1'b1; end end
     endcase
   end
   logic [VAL_BITS-1:0] fw_obj; // 写すものの見出し (転送済みなら FWD)
@@ -530,7 +582,7 @@ module mrb_core
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
-  assign rf_we    = (exec && (wr || do_ret || set_up)) || (en && m_we);
+  assign rf_we    = (exec && (wr || ret_now || set_up)) || (en && m_we);
   assign rf_waddr = exec ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
   assign rf_wdata = exec ? wval : m_wdata;
   assign io_we    = exec && iow;
@@ -549,6 +601,8 @@ module mrb_core
       argc    <= '0;
       sp      <= '0;
       cp      <= V_NIL;
+      env     <= V_NIL;
+      fn      <= '0;
       cvalid  <= '0;
       clr_ptr <= '0;
       clr_end <= '0;
@@ -582,6 +636,10 @@ module mrb_core
               ret_pc[sp[SB-2:0]] <= pc + PC_BITS'(1);
               ret_bp[sp[SB-2:0]] <= bp;
               ret_cp[sp[SB-2:0]] <= cp;
+              ret_env[sp[SB-2:0]] <= env;
+              ret_fn[sp[SB-2:0]] <= fn;
+              env                <= V_NIL;
+              fn                 <= call_nregs;
               sp                 <= sp + SB'(1);
               regs[ia[RB-1:0]]   <= regs[bp]; // 呼び出し先の R0 = self
               bp                 <= ia[RB-1:0];
@@ -591,18 +649,33 @@ module mrb_core
               clr_end            <= call_clr_to;
               pc                 <= npc;
               state              <= call_clr_from < call_clr_to ? S_CLEAR : S_FETCH;
+            end else if (do_ret && !ret_now) begin
+              // env があるので、先にレジスタを写してから戻る
+              hold   <= wval;
+              ret_to <= npc;
+              m_k    <= '0;
+              dcont  <= S_RETFIN;
+              state  <= S_DETACH;
             end else if (do_ret) begin
               regs[bp] <= wval;
               bp       <= ret_bp[top];
               cp       <= ret_cp[top];
+              env      <= ret_env[top];
+              fn       <= ret_fn[top];
               sp       <= sp - SB'(1);
               pc       <= npc;
               state    <= S_FETCH;
             end else if (go_block) begin
-              need  <= (HB+1)'(4);
-              mop   <= MO_BLOCK;
-              m_dst <= ia[RB:0];
-              state <= S_ALLOC;
+              // env がまだ無ければ Proc と一緒に確保する (env が先)
+              env_new <= tag_of(env) == TAG_NIL;
+              need    <= (HB+1)'(4) + (tag_of(env) == TAG_NIL ? (HB+1)'(fn) + (HB+1)'(2) : '0);
+              mop     <= MO_BLOCK;
+              m_dst   <= ia[RB:0];
+              state   <= S_ALLOC;
+            end else if (go_lwalk) begin
+              walk_p <= cp;
+              lw_k   <= '0;
+              state  <= S_LWALK;
             end else if (go_array) begin
               m_n   <= op == OP_ARRAY ? b[7:0] : c[7:0];
               m_src <= op == OP_ARRAY ? ia[RB:0] : (RB+1)'(17'(bp) + 17'(b[7:0]));
@@ -655,7 +728,10 @@ module mrb_core
               hp    <= hp + need;
               m_k   <= '0;
               case (mop)
-                MO_BLOCK: state <= S_BLOCK;
+                MO_BLOCK: begin
+                  p_proc <= env_new ? hp[HB-1:0] + HB'(fn) + HB'(2) : hp[HB-1:0];
+                  state  <= env_new ? S_ENV : S_BLOCK;
+                end
                 MO_ARRAY: state <= S_AHDR;
                 default:  state <= S_GROW;
               endcase
@@ -682,8 +758,10 @@ module mrb_core
               case (gphase)
                 3'd0: regs[gi[RB-1:0]] <= mk(tag_of(root), val_of(fw_obj));
                 3'd1: consts[gi[CB-1:0]] <= mk(tag_of(root), val_of(fw_obj));
-                3'd2: ret_cp[gi[SB-2:0]] <= mk(tag_of(root), val_of(fw_obj));
-                default: cp <= mk(tag_of(root), val_of(fw_obj));
+                3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
+                      else ret_cp[gi[SB-1:1]] <= mk(tag_of(root), val_of(fw_obj));
+                default: if (gi[0]) env <= mk(tag_of(root), val_of(fw_obj));
+                         else cp <= mk(tag_of(root), val_of(fw_obj));
               endcase
               gi <= gi + 8'd1;
             end else begin
@@ -720,8 +798,10 @@ module mrb_core
               case (gphase)
                 3'd0: regs[gi[RB-1:0]] <= mk(fw_tag, 32'(gfree));
                 3'd1: consts[gi[CB-1:0]] <= mk(fw_tag, 32'(gfree));
-                3'd2: ret_cp[gi[SB-2:0]] <= mk(fw_tag, 32'(gfree));
-                3'd3: cp <= mk(fw_tag, 32'(gfree));
+                3'd2: if (gi[0]) ret_env[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
+                      else ret_cp[gi[SB-1:1]] <= mk(fw_tag, 32'(gfree));
+                3'd3: if (gi[0]) env <= mk(fw_tag, 32'(gfree));
+                      else cp <= mk(fw_tag, 32'(gfree));
                 default: heap[scan[HB-1:0]] <= mk(fw_tag, 32'(gfree));
               endcase
               if (gphase == 3'd4) begin
@@ -734,14 +814,66 @@ module mrb_core
             end
           end
 
-          // ---- Proc: 見出し、{先頭 pc | 引数の数 << 16 | nregs << 24}、作ったフレームの bp、外側の Proc
+          // ---- env: 見出し、生きている間の bp、レジスタ fn 本 (nil で埋める)
+          S_ENV: begin
+            if (m_k == (HB+1)'(fn)) begin
+              heap[p_new[HB-1:0]]          <= mk(TAG_HDR, (KIND_ENV << 16) | (32'(fn) + 32'd1));
+              heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(bp));
+              env   <= mk(TAG_ARRAY, 32'(p_new));
+              state <= S_BLOCK;
+            end else begin
+              heap[p_new[HB-1:0] + HB'(2) + m_k[HB-1:0]] <= V_NIL;
+              m_k <= m_k + 1'b1;
+            end
+          end
+          // ---- Proc: 見出し、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc
           S_BLOCK: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, (KIND_PROC << 16) | 3);
-            heap[p_new[HB-1:0] + HB'(1)] <= mk_int({c, b});
-            heap[p_new[HB-1:0] + HB'(2)] <= mk_int(32'(bp));
-            heap[p_new[HB-1:0] + HB'(3)] <= cp;
+            heap[p_proc]          <= mk(TAG_HDR, (KIND_PROC << 16) | 3);
+            heap[p_proc + HB'(1)] <= mk_int({c, b});
+            heap[p_proc + HB'(2)] <= env_new ? mk(TAG_ARRAY, 32'(p_new)) : env;
+            heap[p_proc + HB'(3)] <= cp;
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
+          end
+
+          // ---- 戻る前に env へ fn 本のレジスタを写し、env を「退避済み」(nil) にする
+          S_DETACH: begin
+            if (m_k == (HB+1)'(fn)) begin
+              heap[ha(val_of(env)) + HB'(1)] <= V_NIL;
+              env   <= V_NIL;
+              state <= dcont;
+            end else begin
+              heap[ha(val_of(env)) + HB'(2) + m_k[HB-1:0]] <= regs[bp + m_k[RB-1:0]];
+              m_k <= m_k + 1'b1;
+            end
+          end
+          S_RETFIN: begin
+            bp    <= ret_bp[top];
+            cp    <= ret_cp[top];
+            env   <= ret_env[top];
+            fn    <= ret_fn[top];
+            sp    <= sp - SB'(1);
+            pc    <= ret_to;
+            state <= S_FETCH;
+          end
+
+          // ---- ブロックの中の return: 深さ 0 から c-1 の Proc のうち、一番内側の lambda の深さ (無ければ c)
+          S_LWALK: begin
+            if (lw_k == c[3:0] || (tag_of(walk_p) == TAG_PROC && heap[ha(val_of(walk_p)) + HB'(1)][23])) begin
+              hold <= ra;
+              if (lw_k == 4'd0) begin
+                target <= bp;
+                state  <= S_UNWIND_RET;
+              end else begin
+                walk_p    <= cp;
+                walk_left <= lw_k - 4'd1;
+                state     <= S_WALK;
+              end
+            end else if (tag_of(walk_p) != TAG_PROC) state <= S_ERROR;
+            else begin
+              walk_p <= heap[ha(val_of(walk_p)) + HB'(3)];
+              lw_k   <= lw_k + 4'd1;
+            end
           end
 
           // ---- 配列リテラル: 見出し 4 語、要素を1つずつ
@@ -823,10 +955,16 @@ module mrb_core
           // ---- break (動的): Proc を作ったフレームへ戻るまで1段ずつ畳む
           S_UNWIND: begin
             if (sp == '0) state <= S_ERROR;
-            else begin
-              bp <= ret_bp[top];
-              cp <= ret_cp[top];
-              sp <= sp - SB'(1);
+            else if (tag_of(env) != TAG_NIL) begin
+              m_k   <= '0;
+              dcont <= S_UNWIND;
+              state <= S_DETACH;
+            end else begin
+              bp  <= ret_bp[top];
+              cp  <= ret_cp[top];
+              env <= ret_env[top];
+              fn  <= ret_fn[top];
+              sp  <= sp - SB'(1);
               if (ret_bp[top] == target) begin
                 pc    <= ret_pc[top];
                 state <= S_FETCH;
@@ -836,10 +974,16 @@ module mrb_core
           // ---- ブロックの中の return: 囲むメソッドのフレームまで畳み、そこから戻る
           S_UNWIND_RET: begin
             if (sp == '0) state <= S_ERROR;
-            else begin
-              bp <= ret_bp[top];
-              cp <= ret_cp[top];
-              sp <= sp - SB'(1);
+            else if (tag_of(env) != TAG_NIL) begin
+              m_k   <= '0;
+              dcont <= S_UNWIND_RET;
+              state <= S_DETACH;
+            end else begin
+              bp  <= ret_bp[top];
+              cp  <= ret_cp[top];
+              env <= ret_env[top];
+              fn  <= ret_fn[top];
+              sp  <= sp - SB'(1);
               if (bp == target) begin
                 pc    <= ret_pc[top];
                 state <= S_FETCH;
@@ -847,19 +991,31 @@ module mrb_core
             end
           end
 
-          // ---- Proc の連鎖を1段ずつ。walk_left 段たどったら、その Proc を作ったフレームの底
+          // ---- Proc の連鎖を1段ずつ。walk_left 段たどったら、その Proc を作ったフレームの env
           S_WALK: begin
             if (tag_of(walk_p) != TAG_PROC) state <= S_ERROR;
             else if (walk_left == 4'd0) begin
-              fb_base <= RB'(val_of(heap[ha(val_of(walk_p)) + HB'(2)]));
-              state   <= S_UPOP;
+              fb_env   <= walk_env;
+              fb_esize <= lo16(heap[walk_env]);
+              fb_heap  <= tag_of(walk_live) != TAG_INT;
+              fb_base  <= RB'(val_of(walk_live));
+              state    <= S_UPOP;
             end else begin
               walk_p    <= heap[ha(val_of(walk_p)) + HB'(3)];
               walk_left <= walk_left - 4'd1;
             end
           end
           S_UPOP: begin
-            if (op == OP_BREAK) begin
+            // 戻ったフレーム (退避済みの env) への break / return はエラー
+            if ((op == OP_BREAK || op == OP_RETURN_BLK) && fb_heap) state <= S_ERROR;
+            else if (fb_heap) begin
+              if (!h_ok) state <= S_ERROR;
+              else begin
+                if (op == OP_SETUPVAR) heap[fb_env + HB'(2) + HB'(b)] <= ra;
+                pc    <= pc + PC_BITS'(1);
+                state <= S_FETCH;
+              end
+            end else if (op == OP_BREAK) begin
               hold   <= ra;
               target <= fb_base;
               state  <= S_UNWIND;

@@ -22,6 +22,7 @@ package mrb_pkg;
   localparam int KIND_ARY = 1;
   localparam int KIND_DATA = 2;
   localparam int KIND_PROC = 3;
+  localparam int KIND_ENV = 4;
 
   // コアの大きさ (tools/fpga/isa.rb)
   localparam int RF_SIZE     = 128;
@@ -121,6 +122,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_GE         = 8'd81; // B
   localparam logic [7:0] OP_ARRAY      = 8'd82; // BB
   localparam logic [7:0] OP_ARRAY2     = 8'd83; // BBB
+  localparam logic [7:0] OP_AREF       = 8'd87; // BBB
   localparam logic [7:0] OP_BLOCK      = 8'd98; // BB
   localparam logic [7:0] OP_TDEF       = 8'd107; // BBB
   localparam logic [7:0] OP_STOP       = 8'd118; // Z

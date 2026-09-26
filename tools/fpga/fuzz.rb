@@ -23,7 +23,7 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("BLOCK"), 11, PROLOGUE + rng.rand(len - PROLOGUE), block_c(rng)) # R11 = Proc
     ops = FpgaIsa::SUPPORTED.map { |n| FpgaIsa.op(n) }
     # 配列と Proc の命令は多めに (GC まで届くように)
-    ops += %w[ARRAY ARRAY2 GETIDX SETIDX BLOCK BLKCALL SEND].map { |n| FpgaIsa.op(n) }
+    ops += %w[ARRAY ARRAY2 GETIDX SETIDX BLOCK BLKCALL SEND AREF].map { |n| FpgaIsa.op(n) }
     (len - PROLOGUE).times do |k|
       op = ops[rng.rand(ops.size)]
       # 止まる・戻る命令ばかりだと浅いので、3回に2回は引き直す
@@ -45,7 +45,8 @@ module FpgaFuzz
   end
 
   def block_c(rng)
-    rng.rand(3) | ((1 + rng.rand(6)) << 8) # 引数の数 | nregs << 8
+    lam = rng.rand(4).zero? ? 0x80 : 0
+    rng.rand(3) | lam | ((1 + rng.rand(6)) << 8) # 引数の数 | lambda | nregs << 8
   end
 
   def encode(op, a, b, c)
@@ -84,6 +85,7 @@ module FpgaFuzz
     when "GETIDX0" then b = small.call
     when "BLOCK" then b = PROLOGUE + rng.rand(len - PROLOGUE); c = block_c(rng)
     when "BLKCALL" then b = rng.rand(3)
+    when "AREF" then b = small.call; c = rng.rand(4)
     end
     encode(op, a, b, c)
   end
@@ -105,8 +107,9 @@ module FpgaFuzz
     block_at = nil # BLOCK の先頭 pc は最後に決める
     words << :block
     top = words.size
+    wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(9)
+      pick = rng.rand(11)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -139,6 +142,14 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("BLKCALL"), 12, 1, 0)
       when 7 # 定数に配列を置く / 読む
         words << encode(FpgaIsa.op(rng.rand(2).zero? ? "SETCONST" : "GETCONST"), arrs.sample(random: rng), 0, 0)
+      when 9 # メソッドが作った Proc を、メソッドから戻った後で呼ぶ (退避済みの env)。定数 1 にも置いて GC を越えさせる
+        words << :call_maker
+        words << encode(FpgaIsa.op("SETCONST"), 12, 1, 0) if rng.rand(2).zero?
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("BLKCALL"), 12, wrong_argc ? 2 : 1, 0)
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 10 # 多重代入 (AREF)
+        words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
       else # 整数の計算
         words << encode(FpgaIsa.op("ADDI"), ints.sample(random: rng), rng.rand(4), 0)
       end
@@ -151,7 +162,30 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("SETUPVAR"), 1, rng.rand(8), 1)
     words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 2)
     words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
-    words.map { |w| w == :block ? encode(FpgaIsa.op("BLOCK"), 11, block_at, 1 | (4 << 8)) : w }
+    # Proc を作って返すメソッド (nregs 4)。その Proc は env が退避された後に外側の R0..R3 を読み書きし、
+    # ときどき外 (R4 以降、エラー) に触り、return / break で戻る (メソッドはもう無いので lambda でなければエラー)
+    maker_at = words.size
+    words << encode(FpgaIsa.op("LOADI8"), 1, rng.rand(50), 0)
+    words << encode(FpgaIsa.op("LOADI8"), 2, rng.rand(50), 0)
+    words << :inner
+    words << encode(FpgaIsa.op("RETURN"), 3, 0, 0)
+    inner_at = words.size
+    outer = -> { rng.rand(40).zero? ? 4 + rng.rand(3) : rng.rand(3) } # R3 は Proc 自身
+    words << encode(FpgaIsa.op("GETUPVAR"), 2, outer.call, 1)
+    words << encode(FpgaIsa.op("ADD"), 1, 0, 0)
+    words << encode(FpgaIsa.op("SETUPVAR"), 1, outer.call, 1)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    last = rng.rand(24)
+    words << encode(FpgaIsa.op(last.zero? ? "RETURN_BLK" : last == 1 ? "BREAK" : "RETURN"), 1, 0, last < 2 ? 1 : 0)
+    lam = rng.rand(3).zero? ? 0x80 : 0
+    words.map do |w|
+      case w
+      when :block then encode(FpgaIsa.op("BLOCK"), 11, block_at, 1 | (4 << 8))
+      when :call_maker then encode(FpgaIsa.op("SSEND0"), 12, maker_at, 4 << 8)
+      when :inner then encode(FpgaIsa.op("BLOCK"), 3, inner_at, 1 | lam | (4 << 8))
+      else w
+      end
+    end
   end
 
   def hex(words)

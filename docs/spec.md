@@ -645,9 +645,10 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 ### 対応命令と値の表現 (#6)
 
 コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith / methods / math / blink_method /
-blocks / arrays / procs / gc / blink_sleep) の `mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの
-(`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 60 命令をコアが実行し、`SENDB` `SSENDB` の2つは
-変換器がほかの命令に下げる (下の「ブロックと Proc」)。
+blocks / arrays / procs / gc / blink_sleep / closures) の `mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの
+(`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 61 命令をコアが実行し、`SENDB` `SSENDB` `LAMBDA` の3つは
+変換器がほかの命令に下げる (下の「ブロックと Proc」)。多重代入 (`a, b = ary`) の `AREF` は、配列なら R[b][c]、
+配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
 - **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
@@ -720,34 +721,45 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 ### ブロックと Proc
 
 ブロックは Proc (ヒープのオブジェクト) になる。`BLOCK` が Proc を作り、`BLKCALL` がそれを呼ぶ。Proc は
-先頭 pc・引数の数・nregs と、**作ったフレームの bp と、そのフレームの Proc** (外側への鎖) を持つ。
+先頭 pc・引数の数・lambda の印・nregs と、**作ったフレームの env と、そのフレームの Proc** (外側への鎖) を持つ。
+
+- **env (mruby の REnv と同じ)。** フレームの中で初めて Proc を作った時に、Proc と一緒に1回で確保する。
+  フレームが生きている間は bp を指し、外側の変数はレジスタファイルを読み書きする。**フレームから戻る時
+  (`RETURN` `RETNIL`、`break` や `return` で畳む時も) に、そのフレームの nregs 本のレジスタを env に写し取り**
+  (S_DETACH、1 cycle 1本)、以後はヒープの写しを読み書きする。メソッドが返した Proc が、戻った後のメソッドの変数を数え続けられる
 
 - **iterator は変換器がループに展開する。** `SENDB` / `SSENDB` を、カウンタのループと `BLKCALL` の列に置き換える。
   `n.times { |i| }` (i = 0 から i < n)、`a.upto(b)` (i <= b)、`a.downto(b)` (i >= b)、`loop { }`、
   `ary.each { |v| }`、`ary.each_with_index { |v, i| }`、`ary.map { |v| }` (結果は新しい配列)。
   結果は受け手 (`loop` は break の値、`map` は新しい配列)。展開された語は ROM の一覧に `<- SENDB` と出る
-- **`proc { }` / `lambda { }` は Proc をそのまま返す。** `.call(...)` は `BLKCALL`。lambda も proc と同じ扱い
-  (引数の数を調べず、足りなければ nil、多ければ捨てる。ブロックの `ENTER` は `NOP` にする)
+- **`proc { }` / `lambda { }` / `-> { }` は Proc をそのまま返す。** `.call(...)` は `BLKCALL`。proc は引数の数を調べず
+  (足りなければ nil、多ければ捨てる。ブロックの `ENTER` は `NOP` にする)、**lambda は数が違えばエラー**。
+  lambda の中の `break` と `return` は lambda から戻る (`return` は、囲むメソッドまでの間で一番内側の lambda から)
 - **`def` したメソッドへのブロック** は `SSEND` の c に印 (0x80) を付け、呼び出し先のブロックの枠 (引数の後ろ) に置いたまま呼ぶ。
   `yield` は `BLKPUSH` (枠から Proc を取る) + `BLKCALL`、`&blk` は引数として受け、`block_given?` は `BLKPUSH` の後に `!` を2回
 - **外側の変数 (`GETUPVAR` / `SETUPVAR`)。** c = 何段外のフレームか (mruby の深さ + 1)。コアは今の Proc から鎖を c 段
-  たどって (1 cycle 1段、S_WALK) そのフレームの bp を得て、b 番目のレジスタを読み書きする。作ったフレームがもう無い Proc から
-  外側を触るのは仕様外 (mruby ならフレームを退避する所で、コアは退避しない)
+  たどって (1 cycle 1段、S_WALK) そのフレームの env を得て、生きていればレジスタファイル、退避済みならヒープの写しの
+  b 番目を読み書きする (写しへの書き込みはトレースに出ない)
 - **`break` (`BREAK`)。** iterator に直接渡したブロックなら、ブロックのフレームを1つ畳んで iterator の出口 (変換時に決まる b) へ
   (c = 0)。`def` したメソッドや Proc に渡したブロックなら、Proc を作ったフレームまでコールスタックを畳み、
   そのフレームから呼んだ所へ値を持って戻る (c = 1)。`next` は普通の `RETURN` / `RETNIL`
 - **ブロックの中の `return` (`RETURN_BLK`)。** c = ブロックを囲むメソッドまでの段数。そのメソッドのフレームまで畳んでから戻る。
-  メソッドの外 (一番外) のブロックの `return` は変換時に止める
+  メソッドの外 (一番外) のブロックの `return` は、間に lambda が無ければ変換時に止める
+- **もう戻ったフレームへの `break` / `return` はエラー** (Ruby の LocalJumpError)
 
 ### 配列とヒープ
 
 - **ヒープは 2048 語 (1語 = タグ + 32bit) を半分ずつ使う。** 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
   **Cheney のコピー GC** でもう半分へ写し、それでも足りなければエラーで止まる
 - **オブジェクト。** 見出し (タグ 7、値 = 種類 << 16 | 語数) の後ろに中身。
-  配列は `[見出し] [長さ] [中身への参照]` と、別の塊 `[見出し] [要素 × 容量]`。Proc は `[見出し] [先頭 pc | 引数の数 << 16 | nregs << 24] [作ったフレームの bp] [外側の Proc]`
+  配列は `[見出し] [長さ] [中身への参照]` と、別の塊 `[見出し] [要素 × 容量]`。
+  Proc は `[見出し] [先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc]`。
+  env は `[見出し] [生きている間の bp か nil] [レジスタ × nregs]`。配列の中身と env への参照は Array のタグで指す
+  (レジスタには出ない。種類は見出しで分かる)
 - **配列を伸ばす** (`a[i] = v` で i が容量以上、`push`) 時は、容量 max(i + 1, 2 倍, 4) の塊を新しく取り、写して付け替える。
   間は nil
-- **GC の根は、レジスタファイル全部 (番号順)、代入済みの定数 (番号順)、コールスタックの Proc (底から)、今の Proc。**
+- **GC の根は、レジスタファイル全部 (番号順)、代入済みの定数 (番号順)、コールスタックの Proc と env (底から1段ごとに
+  Proc、env の順)、今の Proc、今の env。**
   参照インタプリタとコアが同じ順に写すので、GC の後のアドレスまでトレースで一致する。コアは1語1 cycle で写す
 - **Array と Proc はピンに出せない** (`SETGV` でエラー)
 
@@ -802,9 +814,11 @@ L <step>                    命令数の上限 (fpga:check は 20000)
   その step の命令から値が変わる (参照もシミュレーションも同じ)
 - **差分ファズ (`rake fpga:fuzz[count,seed]`)。** 対応命令からランダムに ROM を組み (R0..R11 に乱数を入れる前置き付き、
   範囲外のレジスタ・0 で割る・深い再帰・未定義の定数・引数の数違いもわざと混ぜる)、参照とコアでトレースを1行残らず比べる。
-  4本に1本は**ヒープを突く形** (配列を作る・push・代入・添字・pop・Proc の呼び出しを並べたループで、GC を何度も起こす。
+  4本に1本は**ヒープを突く形** (配列を作る・push・代入・添字・pop・Proc の呼び出し・多重代入、Proc を返すメソッドを
+  呼んで戻った後に Proc を呼ぶ (退避済みの env、lambda、戻ったフレームへの break / return) を並べたループで、GC を何度も起こす。
   上限 3000 命令)。`sleep_ms` / `sleep` は混ぜない。
-  `fpga:test` は seed 1 で 300 本 (GC 245 回、74 本)。seed 2..7 で 400 本ずつ一致し、どの seed でも GC は 250 回以上起きた。入力の刺激の適用順 (同じ port の行の順) の
+  終わりに、珍しい経路に届いた回数 (`reached: aref, detach, env_heap, gc, lambda_exit`) を出す。
+  `fpga:test` は seed 1 で 300 本 (GC 194 回、65 本、env の退避 4140 回)。seed 1..8 で一致した。入力の刺激の適用順 (同じ port の行の順) の
   食い違いはファズが見つけた。`%` の floor 補正を壊すと、ファズもコーパスも落ちる
 - **参照インタプリタ自体は別の実装と比べる** (`ref_vm_test.rb`):
   CRuby で同じ `.rb` を走らせ `trace_var` で拾った出力の系列 (入力を読まないプログラム。`sleep_ms` / `sleep` は待たずに n を返す)、
