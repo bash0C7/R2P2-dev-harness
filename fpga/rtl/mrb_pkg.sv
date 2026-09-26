@@ -32,6 +32,7 @@ package mrb_pkg;
   localparam logic [15:0] CLS_STRING = 16'd11;
   localparam logic [15:0] CLS_HASH   = 16'd12;
   localparam logic [15:0] CLS_RANGE  = 16'd13;
+  localparam logic [15:0] CLS_FLOAT  = 16'd14;
   localparam logic [15:0] CLS_EXC    = 16'd15;
   localparam logic [15:0] CLS_DATA   = 16'd32752;
   localparam logic [15:0] CLS_ENV    = 16'd32753;
@@ -129,13 +130,42 @@ package mrb_pkg;
   localparam logic [13:0] PR_RAISE    = 14'd50; // Object#__raise (1 arg)
   localparam logic [13:0] PR_IOREAD   = 14'd51; // Object#__io_read (1 arg)
   localparam logic [13:0] PR_IOWRITE  = 14'd52; // Object#__io_write (2 arg)
-  localparam int NPRIMS = 53;
+  localparam logic [13:0] PR_FADD     = 14'd53; // Float#+ (1 arg)
+  localparam logic [13:0] PR_FSUB     = 14'd54; // Float#- (1 arg)
+  localparam logic [13:0] PR_FMUL     = 14'd55; // Float#* (1 arg)
+  localparam logic [13:0] PR_FDIV     = 14'd56; // Float#/ (1 arg)
+  localparam logic [13:0] PR_FMOD     = 14'd57; // Float#% (1 arg)
+  localparam logic [13:0] PR_FPOW     = 14'd58; // Float#** (1 arg)
+  localparam logic [13:0] PR_FLT      = 14'd59; // Float#< (1 arg)
+  localparam logic [13:0] PR_FLE      = 14'd60; // Float#<= (1 arg)
+  localparam logic [13:0] PR_FGT      = 14'd61; // Float#> (1 arg)
+  localparam logic [13:0] PR_FGE      = 14'd62; // Float#>= (1 arg)
+  localparam logic [13:0] PR_FEQ      = 14'd63; // Float#== (1 arg)
+  localparam logic [13:0] PR_FCMP     = 14'd64; // Float#<=> (1 arg)
+  localparam logic [13:0] PR_FNEG     = 14'd65; // Float#-@ (0 arg)
+  localparam logic [13:0] PR_FTOI     = 14'd66; // Float#to_i (0 arg)
+  localparam logic [13:0] PR_FFLOOR   = 14'd67; // Float#__floorf (0 arg)
+  localparam logic [13:0] PR_FCEIL    = 14'd68; // Float#__ceilf (0 arg)
+  localparam logic [13:0] PR_FROUND   = 14'd69; // Float#__roundf (0 arg)
+  localparam logic [13:0] PR_FNAN     = 14'd70; // Float#nan? (0 arg)
+  localparam logic [13:0] PR_FINF     = 14'd71; // Float#__infinite (0 arg)
+  localparam logic [13:0] PR_FTOS     = 14'd72; // Float#to_s (0 arg)
+  localparam logic [13:0] PR_FFMT     = 14'd73; // Float#__fmt (2 arg)
+  localparam logic [13:0] PR_FMATH    = 14'd74; // Float#__math (1 arg)
+  localparam logic [13:0] PR_FATAN2   = 14'd75; // Float#__atan2 (1 arg)
+  localparam logic [13:0] PR_FHYPOT   = 14'd76; // Float#__hypot (1 arg)
+  localparam logic [13:0] PR_FFMOD    = 14'd77; // Float#__fmod (1 arg)
+  localparam logic [13:0] PR_I2F      = 14'd78; // Integer#to_f (0 arg)
+  localparam logic [13:0] PR_STOD     = 14'd79; // String#__strtod (0 arg)
+  localparam int NPRIMS = 80;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
-  localparam logic [2:0] CERR_ZERODIV  = 3'd1;
-  localparam logic [2:0] CERR_NOMETHOD = 3'd2;
-  localparam logic [2:0] CERR_ARGNUM   = 3'd3;
-  localparam logic [2:0] CERR_TYPE     = 3'd4;
-  localparam logic [2:0] CERR_COMPARE  = 3'd5;
+  localparam logic [2:0] CERR_ZERODIV     = 3'd1;
+  localparam logic [2:0] CERR_NOMETHOD    = 3'd2;
+  localparam logic [2:0] CERR_ARGNUM      = 3'd3;
+  localparam logic [2:0] CERR_TYPE        = 3'd4;
+  localparam logic [2:0] CERR_COMPARE     = 3'd5;
+  localparam logic [2:0] CERR_FLOATDOMAIN = 3'd6;
+  localparam logic [2:0] CERR_RANGE       = 3'd7;
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -192,6 +222,33 @@ package mrb_pkg;
       PR_RAISE   : return 8'h01;
       PR_IOREAD  : return 8'h01;
       PR_IOWRITE : return 8'h02;
+      PR_FADD    : return 8'h01;
+      PR_FSUB    : return 8'h01;
+      PR_FMUL    : return 8'h01;
+      PR_FDIV    : return 8'h01;
+      PR_FMOD    : return 8'h01;
+      PR_FPOW    : return 8'h01;
+      PR_FLT     : return 8'h01;
+      PR_FLE     : return 8'h01;
+      PR_FGT     : return 8'h01;
+      PR_FGE     : return 8'h01;
+      PR_FEQ     : return 8'h01;
+      PR_FCMP    : return 8'h01;
+      PR_FNEG    : return 8'h00;
+      PR_FTOI    : return 8'h00;
+      PR_FFLOOR  : return 8'h00;
+      PR_FCEIL   : return 8'h00;
+      PR_FROUND  : return 8'h00;
+      PR_FNAN    : return 8'h00;
+      PR_FINF    : return 8'h00;
+      PR_FTOS    : return 8'h00;
+      PR_FFMT    : return 8'h02;
+      PR_FMATH   : return 8'h01;
+      PR_FATAN2  : return 8'h01;
+      PR_FHYPOT  : return 8'h01;
+      PR_FFMOD   : return 8'h01;
+      PR_I2F     : return 8'h00;
+      PR_STOD    : return 8'h00;
       default: return 8'h00;
     endcase
   endfunction
@@ -284,4 +341,5 @@ package mrb_pkg;
   localparam logic [7:0] OP_STOP       = 8'd118; // Z
   localparam logic [7:0] OP_TABLE      = 8'd240; // BS
   localparam logic [7:0] OP_HTABLE     = 8'd241; // BS
+  localparam logic [7:0] OP_LOADF      = 8'd242; // BS
 endpackage

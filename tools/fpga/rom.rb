@@ -229,8 +229,10 @@ module FpgaRom
         if insn.name == "STRING"
           raise Error, "#{source}: STRING at #{where(ir, insn)} refers to a non-string pool entry" unless e[0] == :str
           ctx.add_string(e[1])
+        elsif e[0] == :float
+          ctx.add_float(e[1], e[2])
         elsif e[0] != :int
-          raise Error, "#{source}: LOADL at #{where(ir, insn)} loads a #{e[0] == :float ? 'Float' : (e[0] == :bigint ? 'big integer' : 'non-integer')} (not supported)"
+          raise Error, "#{source}: LOADL at #{where(ir, insn)} loads a #{e[0] == :bigint ? 'big integer' : 'non-integer'} (not supported)"
         elsif e[1] < -0x8000_0000 || e[1] > 0x7FFF_FFFF
           raise Error, "#{source}: LOADL at #{where(ir, insn)} loads #{e[1]}, which does not fit in 32 bits"
         end
@@ -262,6 +264,7 @@ module FpgaRom
     # 文字列のデータ (1語 4バイト) はプログラムの後ろ
     data_base = base
     ctx.place_strings(data_base)
+    ctx.place_floats
 
     words = [nil]
     words << nil if handlers # HTABLE (表の位置が決まってから書く)
@@ -295,6 +298,10 @@ module FpgaRom
     end
 
     ctx.strings.each { |str| words.concat(data_words(str, ctx.string_at[str])) }
+    # Float のリテラル (上位 32bit、下位 32bit の2語)
+    ctx.floats.each do |hi, lo|
+      [hi, lo].each { |v| words << Word.new(words.size, nil, 0, 0, (v >> 16) & 0xFFFF, v & 0xFFFF, nil, false) }
+    end
 
     entries = method_entries(ctx)
     # シンボルの名前 (データ) と、シンボル表 (番号 -> {データの語アドレス, 長さ})。Symbol#to_s が使う
@@ -364,7 +371,7 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value
+                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value, :floats, :float_at
     attr_accessor :class_live # クラスの番号 -> メソッド表に行を置くか (live_classes)
     attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
@@ -384,6 +391,8 @@ module FpgaRom
       @cref = {}         # irep の番号 -> 字句の入れ子のクラスの名前 (内側から。一番外は含めない)。Ruby の cref
       @globals = []      # ポートでないグローバル変数の名前 (定数の表に置き、始めに nil にする)
       @strings = []      # pool の文字列 (同じ中身は1つ、出てきた順)
+      @floats = []       # pool の Float ([上位 32bit, 下位 32bit]、同じものは1つ)
+      @float_at = {}
       @string_at = {}    # 文字列 -> データの語アドレス
       @scope = {}
       @bodies = {}
@@ -430,12 +439,23 @@ module FpgaRom
       cref.map { |c| "#{c}::#{name}" } + [name]
     end
 
+    def add_float(hi, lo)
+      @floats << [hi, lo] unless @floats.include?([hi, lo])
+    end
+
+    # Float のリテラルは文字列の後ろに2語ずつ
+    def place_floats
+      base = @strings.empty? ? @float_base : @string_at[@strings.last] + (@strings.last.bytesize + 3) / 4
+      @floats.each_with_index { |f, i| @float_at[f] = base + 2 * i }
+    end
+
     def add_string(str)
       @strings << str unless @strings.include?(str)
     end
 
     # 文字列のデータの語アドレスを base から順に決める (1語 4バイト)
     def place_strings(base)
+      @float_base = base
       @strings.each do |str|
         @string_at[str] = base
         base += (str.bytesize + 3) / 4
@@ -1273,6 +1293,10 @@ module FpgaRom
     if name == "STRING"
       str = irep.pool[b][1]
       return Word.new(pc, insn, insn.op.num, a, ctx.string_at.fetch(str), str.bytesize, irep)
+    end
+    if name == "LOADL" && irep.pool[b][0] == :float
+      e = irep.pool[b]
+      return Word.new(pc, insn, FpgaIsa.op("LOADF").num, a, ctx.float_at.fetch([e[1], e[2]]), 0, irep)
     end
     if name == "LOADL"
       v = irep.pool[b][1] & 0xFFFF_FFFF

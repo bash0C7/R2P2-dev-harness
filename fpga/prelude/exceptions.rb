@@ -44,6 +44,7 @@ class IndexError < StandardError; end
 class KeyError < IndexError; end
 class StopIteration < IndexError; end
 class RangeError < StandardError; end
+class FloatDomainError < RangeError; end
 class LocalJumpError < StandardError; end
 
 class Object
@@ -74,9 +75,13 @@ class Integer
         elsif self == 3
           ArgumentError.new("wrong number of arguments (given #{detail}, expected #{other})")
         elsif self == 4
-          TypeError.new("can't convert #{detail.nil? ? 'nil' : detail.class} into Integer")
+          TypeError.new("#{detail.nil? ? 'nil' : detail.class} can't be coerced into #{other.class}")
+        elsif self == 5
+          ArgumentError.new("comparison of #{other.class} with #{detail.nil? ? 'nil' : detail.class} failed")
+        elsif self == 6
+          FloatDomainError.new(detail.to_s)
         else
-          ArgumentError.new("comparison of Integer with #{detail.class} failed")
+          RangeError.new("float #{detail} out of range of integer")
         end
     __raise(e)
   end

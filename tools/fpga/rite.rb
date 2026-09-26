@@ -21,7 +21,7 @@ module Rite
     # rom.rb が並べた時の番号と、ROM での先頭の語アドレス
     attr_accessor :index, :base
 
-    # pool: [[:str, バイト列] / [:int, 整数] / [:float] / [:bigint], ...]
+    # pool: [[:str, バイト列] / [:int, 整数] / [:float, 上位 32bit, 下位 32bit] / [:bigint], ...]
     def initialize(nlocals, nregs, rlen, clen, iseq, pool, syms, reps)
       @nlocals = nlocals
       @nregs = nregs
@@ -86,12 +86,12 @@ module Rite
     pos += 12
     iseq = bin.byteslice(pos, ilen)
     raise Error, "iseq runs past the end of the binary" unless iseq && iseq.bytesize == ilen
-pos += ilen
-catches = []
-clen.times do
-  catches << [bin.getbyte(pos), u32(bin, pos + 1), u32(bin, pos + 5), u32(bin, pos + 9)]
-  pos += 13
-end
+    pos += ilen
+    catches = []
+    clen.times do
+      catches << [bin.getbyte(pos), u32(bin, pos + 1), u32(bin, pos + 5), u32(bin, pos + 9)]
+      pos += 13
+    end
 
     plen = u16(bin, pos)
     pos += 2
@@ -136,7 +136,10 @@ end
     when 3 # IREP_TT_INT64
       v = (u32(bin, pos) << 32) | u32(bin, pos + 4)
       [[:int, v >= 0x8000_0000_0000_0000 ? v - 0x1_0000_0000_0000_0000 : v], pos + 8]
-    when 5 then [[:float], pos + 8]                         # IREP_TT_FLOAT
+    when 5 # IREP_TT_FLOAT: double を little endian で。[:float, 上位 32bit, 下位 32bit]
+      lo = bin.getbyte(pos) | (bin.getbyte(pos + 1) << 8) | (bin.getbyte(pos + 2) << 16) | (bin.getbyte(pos + 3) << 24)
+      hi = bin.getbyte(pos + 4) | (bin.getbyte(pos + 5) << 8) | (bin.getbyte(pos + 6) << 16) | (bin.getbyte(pos + 7) << 24)
+      [[:float, hi, lo], pos + 8]
     when 7 then [[:bigint], pos + bin.getbyte(pos) + 2]     # IREP_TT_BIGINT
     when 0, 2                                               # IREP_TT_STR, IREP_TT_SSTR
       len = u16(bin, pos)

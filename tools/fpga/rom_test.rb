@@ -45,7 +45,7 @@ class FpgaRomTest < Minitest::Test
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
-    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32],
+    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF],
     "HASH" => %w[ARRAY], "HASHADD" => %w[ARRAY], "HASHCAT" => %w[SEND], "RANGE_INC" => %w[SEND], "RANGE_EXC" => %w[SEND]
   }.freeze
 
@@ -332,10 +332,12 @@ class FpgaRomTest < Minitest::Test
     e = image.words[image.symtab + sym]
     assert_equal "initi", [image.words[e.b].value, image.words[e.b + 1].value].pack("VV")[0, 5]
     assert_equal 10, e.c
-    { :float => /Float/, 2**40 => /does not fit in 32 bits/ }.each do |v, msg|
-      e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [v])) }
-      assert_match msg, e.message
-    end
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [2**40])) }
+    assert_match(/does not fit in 32 bits/, e.message)
+    # Float は LOADF になり、b がデータの2語 (上位 32bit、下位 32bit) を指す (0.0 の double は全 bit 0)
+    image = FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [:float]))
+    f = image.words.find { |w| w.first && FpgaIsa::OPS[w.op].name == "LOADF" }
+    assert_equal [0, 0], [image.words[f.b].value, image.words[f.b + 1].value]
   end
 
   # io_map.rb に無いグローバル変数は定数の表に置き、一番外の先頭で nil にする (代入前に読むと nil)
