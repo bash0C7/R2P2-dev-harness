@@ -29,6 +29,11 @@ jobs:
       - name: Run the harness gems' picotest and compile the examples
         run: rake test
 
+      # FPGA の Ruby 道具のうち、picoruby が要るもの (ops.h との一致、picoruby host VM との突き合わせ、
+      # fpga/corpus の生成物が mrbc と一致するか) はここでだけ skip されずに回る
+      - name: Check the FPGA tools against picoruby
+        run: rake test:fpga
+
   # FPGA の HDL シミュレーション (docs/spec.md §10)。picoruby は要らないので host とは独立。
   fpga:
     runs-on: ubuntu-latest

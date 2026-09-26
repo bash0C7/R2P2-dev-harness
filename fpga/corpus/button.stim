@@ -1,0 +1,7 @@
+# rake fpga:check が button.rb に与える入力。1行 "<step> <port> <value>"
+# step 番目の命令から port (tools/fpga/io_map.rb) が value になる。port 2 = $BUTTON
+0 2 0
+40 2 1
+100 2 0
+103 2 1
+200 2 0
