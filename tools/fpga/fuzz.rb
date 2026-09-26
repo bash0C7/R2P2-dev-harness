@@ -12,7 +12,7 @@ module FpgaFuzz
   # 1本の ROM (48bit 語の配列) を作る。前置きで R0..R11 に値 (たいてい Integer) を入れ、定数を2つ決めてから、
   # ランダムな命令を並べる。前置きが無いと、ほとんどの program が nil への算術ですぐエラーになり浅い
   PROLOGUE = 14
-  STOPPERS = %w[STOP RETURN RETNIL ENTER].freeze
+  STOPPERS = %w[STOP RETURN RETNIL ENTER BREAK].freeze
 
   def program(rng, len: 40)
     words = []
@@ -66,6 +66,8 @@ module FpgaFuzz
       argc = op.name == "SSEND" ? rng.rand(3) : 0
       c = ((1 + rng.rand(8)) << 8) | argc
     when "ENTER" then a = rng.rand(3)
+    when "GETUPVAR", "SETUPVAR" then b = rng.rand(12) # bp より下 (フレームの外) も時々
+    when "BREAK" then b = PROLOGUE + rng.rand(len - PROLOGUE)
     end
     encode(op, a, b, c)
   end

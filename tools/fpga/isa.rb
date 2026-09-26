@@ -61,6 +61,17 @@ module FpgaIsa
     JMP JMPIF JMPNOT JMPNIL ADD ADDI SUB SUBI ADDILV SUBILV EQ LT LE GT GE
     RETURN RETNIL STOP
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
+    GETUPVAR SETUPVAR BREAK
+  ].freeze
+
+  # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令に下げる (docs/spec.md §10「ブロック」)
+  #   BLOCK        LOADNIL にする (ブロックは値にしない)
+  #   SENDB SSENDB times / upto / downto / loop を、カウンタのループとブロックの irep の呼び出しに展開する
+  LOWERED = %w[BLOCK SENDB SSENDB].freeze
+
+  # ブロックを取る組み込みの iterator: [名前, SENDB か SSENDB か, 引数の数, ブロックに渡す値の数]
+  ITERATORS = [
+    ["times", "SENDB", 0, 1], ["upto", "SENDB", 1, 1], ["downto", "SENDB", 1, 1], ["loop", "SSENDB", 0, 0]
   ].freeze
 
   JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
@@ -96,7 +107,18 @@ module FpgaIsa
     o
   end
 
+  # ROM に出て、コアと参照インタプリタが実行する命令か
   def self.supported?(name)
     SUPPORTED.include?(name)
+  end
+
+  # 変換器が受け付ける命令か (実行するもの + 下げるもの)
+  def self.convertible?(name)
+    SUPPORTED.include?(name) || LOWERED.include?(name)
+  end
+
+  def self.iterator(name, kind, argc)
+    ITERATORS.each { |it| return it if it[0] == name && it[1] == kind && it[2] == argc }
+    nil
   end
 end

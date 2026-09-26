@@ -91,10 +91,17 @@ module mrb_core
   assign a1_ok = ia1 < 17'(NREGS);
   assign b_ok  = ib  < 17'(NREGS);
 
-  logic [VAL_BITS-1:0] ra, ra1, rb;
+  // 外側のフレームのレジスタ (GETUPVAR / SETUPVAR): bp から下へ b 本目
+  logic [RB-1:0] iu;
+  logic        u_ok;
+  assign iu   = bp - RB'(b); // b <= bp の時だけ使う (u_ok)
+  assign u_ok = 17'(b) <= 17'(bp);
+
+  logic [VAL_BITS-1:0] ra, ra1, rb, ru;
   assign ra  = regs[ia[RB-1:0]];
   assign ra1 = regs[ia1[RB-1:0]];
   assign rb  = regs[ib[RB-1:0]];
+  assign ru  = regs[iu];
 
   logic [1:0] ra_tag, ra1_tag;
   assign ra_tag  = ra[VAL_BITS-1 -: 2];
@@ -150,7 +157,7 @@ module mrb_core
   logic                iow;
   logic [PC_BITS-1:0]  npc;
   logic                halt, err;
-  logic                do_call, do_ret, set_const;
+  logic                do_call, do_ret, set_const, set_up;
   logic [RB:0]         call_bp, call_clr_from, call_clr_to;
 
   assign io_addr  = b[7:0];
@@ -177,6 +184,7 @@ module mrb_core
     do_call   = 1'b0;
     do_ret    = 1'b0;
     set_const = 1'b0;
+    set_up    = 1'b0;
 
     case (op)
       OP_NOP: ;
@@ -262,6 +270,17 @@ module mrb_core
           wval   = op == OP_RETURN ? ra : V_NIL;
         end
       end
+      OP_BREAK: begin
+        // ブロックのフレームを畳み、iterator の break の出口 (b) へ
+        if (sp == '0) err = 1'b1;
+        else begin
+          do_ret = 1'b1;
+          npc    = b[PC_BITS-1:0];
+          wval   = ra;
+        end
+      end
+      OP_GETUPVAR: begin wr = 1'b1; wval = ru; err = !u_ok; end
+      OP_SETUPVAR: begin set_up = 1'b1; wval = ra; err = !u_ok; end
       OP_STOP: halt = 1'b1;
       default: err = 1'b1;
     endcase
@@ -275,6 +294,7 @@ module mrb_core
       do_call   = 1'b0;
       do_ret    = 1'b0;
       set_const = 1'b0;
+      set_up    = 1'b0;
     end
   end
 
@@ -286,8 +306,8 @@ module mrb_core
   assign dbg_pc   = pc;
   assign dbg_op   = op;
   // RETURN は呼び出し先の R0 (= bp) に書く
-  assign rf_we    = exec && (wr || do_ret);
-  assign rf_waddr = do_ret ? 8'(bp) : 8'(ia[RB-1:0]);
+  assign rf_we    = exec && (wr || do_ret || set_up);
+  assign rf_waddr = do_ret ? 8'(bp) : set_up ? 8'(iu) : 8'(ia[RB-1:0]);
   assign rf_wdata = wval;
   assign io_we    = exec && iow;
   assign halted   = state == S_HALT;
@@ -314,6 +334,7 @@ module mrb_core
         S_FETCH: state <= S_EXEC;
         S_EXEC: begin
           if (wr) regs[ia[RB-1:0]] <= wval;
+          if (set_up) regs[iu] <= ra;
           if (set_const) begin
             consts[b[CB-1:0]] <= ra;
             cvalid[b[CB-1:0]] <= 1'b1;

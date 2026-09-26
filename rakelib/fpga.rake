@@ -306,8 +306,9 @@ def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
     puts "  #{name}: buttons in #{fpga_rel(buttons)}, not compared with the reference interpreter"
     ok = true
   else
-    trace = fpga_ref_trace(hex, stim: nil, max: FpgaEmu.steps_for(ms, ce_div, mhz))
-    results = FpgaEmu.check_against_ref(events, trace, FpgaEmu.window_steps(ms, ce_div, mhz))
+    window = FpgaEmu.executed_steps(events) || FpgaEmu.window_steps(ms, ce_div, mhz)
+    trace = fpga_ref_trace(hex, stim: nil, max: window + FpgaEmu::STEP_SLACK)
+    results = FpgaEmu.check_against_ref(events, trace, window)
     results.each { |r_ok, msg| puts "  #{r_ok ? 'ok' : 'FAIL'} #{name} #{msg}" }
     ok = results.all?(&:first)
   end

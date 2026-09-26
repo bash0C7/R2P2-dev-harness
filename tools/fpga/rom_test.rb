@@ -12,13 +12,15 @@ class FpgaRomTest < Minitest::Test
     names.each do |name|
       image = FpgaRom.from_binary(File.binread(File.join(CORPUS, "#{name}.mrb")))
       dump = File.readlines(File.join(CORPUS, "#{name}.dump"), chomp: true).map { |l| l.split(/\s+/, 4) }
-      pc_of = image.words.to_h { |w| [w.insn.addr, w.pc] }
-      assert_equal dump.size, image.words.size, name
-      dump.zip(image.words).each do |(_line, addr, opname, rest), w|
-        where = "#{name} byte #{addr}"
+      # 元の命令ごとの先頭の語 (iterator は数語に展開される)。dump の irep の順は ROM の並びと同じ
+      firsts = image.words.select(&:first)
+      pc_of = firsts.to_h { |w| [[w.irep.index, w.insn.addr], w.pc] }
+      assert_equal dump.size, firsts.size, name
+      dump.zip(firsts).each do |(_line, addr, opname, rest), w|
+        where = "#{name} irep #{w.irep.index} byte #{addr}"
         assert_equal addr.to_i, w.insn.addr, where
         assert_equal opname, w.insn.name, where
-        assert_equal FpgaIsa.op(opname).num, w.op, where
+        assert_equal FpgaIsa.op(opname).num, w.op, where unless FpgaIsa::LOWERED.include?(opname)
         fields = rest.to_s.split(/[\t ]+/).reject { |f| f.start_with?(";") }
         check_operands(where, opname, fields, w, pc_of)
       end
@@ -28,10 +30,10 @@ class FpgaRomTest < Minitest::Test
   def check_operands(where, opname, fields, w, pc_of)
     case opname
     when "JMP"
-      assert_equal pc_of.fetch(fields[0].to_i), w.b, where
+      assert_equal pc_of.fetch([w.irep.index, fields[0].to_i]), w.b, where
     when "JMPIF", "JMPNOT", "JMPNIL"
       assert_equal "R#{w.a}", fields[0], where
-      assert_equal pc_of.fetch(fields[1].to_i), w.b, where
+      assert_equal pc_of.fetch([w.irep.index, fields[1].to_i]), w.b, where
     when "GETGV"
       assert_equal "R#{w.a}", fields[0], where
       assert_equal FpgaIoMap.fetch(fields[1]).num, w.b, where
@@ -51,6 +53,10 @@ class FpgaRomTest < Minitest::Test
       assert_equal ["R#{w.a}", "R#{w.b}", w.c.to_s], fields[0, 3], where
     when "NOP", "RETNIL", "STOP"
       assert_equal 0, w.a, where
+    when "SENDB", "SSENDB", "BLOCK"
+      nil # 下げた命令 (展開の中身は fpga:check と ref_vm_test が見る)
+    when "BREAK"
+      assert_equal "R#{w.a}", fields[0], where
     when "ENTER"
       assert_equal fields[0].split(":").first.to_i, w.a, where # 必須の引数の数
     when "TDEF"
@@ -124,6 +130,29 @@ class FpgaRomTest < Minitest::Test
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
     assert_match(/f is defined twice/, e.message)
   end
+
+def test_blocks_are_lowered_only_for_the_known_iterators
+  blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
+  # 3.each { } は受け付けない
+  bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["each"], reps: [blk])
+  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
+  assert_match(/each with a block at byte 005 is not supported/, e.message)
+  # BLOCK を SENDB 以外に渡すと止める (ブロックは値にしない)
+  bin = rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])
+  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
+  assert_match(/BLOCK at byte 000 is not passed directly/, e.message)
+  # 3.times { } は展開される: LOADNIL (BLOCK) と、カウンタのループ + SSEND
+  bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["times"], reps: [blk])
+  names = FpgaRom.from_binary(bin).words.map { |w| FpgaIsa::OPS[w.op].name }
+  assert_equal %w[LOADI_3 LOADNIL LOADI_0 MOVE MOVE LT JMPNOT SSEND ADDI JMP JMP MOVE STOP ENTER RETNIL], names
+end
+
+def test_break_and_upvar_need_an_enclosing_iterator
+  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BREAK"), 1, op("STOP")])) }
+  assert_match(/break at byte 000 is not inside a block/, e.message)
+  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("GETUPVAR"), 1, 1, 0, op("STOP")])) }
+  assert_match(/GETUPVAR at byte 000 is not inside a block/, e.message)
+end
 
   def test_rejects_pool
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], plen: 1)) }
