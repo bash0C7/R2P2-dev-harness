@@ -14,6 +14,7 @@ module peridot_air_top
   import mrb_pkg::*;
 #(
   parameter int    CE_DIV         = 1000,
+  parameter int    MS_CYCLES      = 50_000, // CLOCK_50 の 1ms の cycle 数 (sleep_ms / sleep の時計)
   parameter bit    LED_ACTIVE_LOW = 1'b0, // 点灯の極性は実機で未確認
   parameter        ROM_FILE       = "" // string。型を付けると Icarus が渡せない
 ) (
@@ -57,13 +58,29 @@ module peridot_air_top
   end
 
   /* verilator lint_off PINCONNECTEMPTY */
+  // 1ms ごとの 1 cycle のパルス
+  localparam int MW = $clog2(MS_CYCLES + 1);
+  logic [MW-1:0] ms_cnt;
+  logic          ms_tick;
+  always_ff @(posedge CLOCK_50 or negedge rst_n)
+    if (!rst_n) begin
+      ms_cnt  <= '0;
+      ms_tick <= 1'b0;
+    end else if (ms_cnt == MW'(MS_CYCLES - 1)) begin
+      ms_cnt  <= '0;
+      ms_tick <= 1'b1;
+    end else begin
+      ms_cnt  <= ms_cnt + MW'(1);
+      ms_tick <= 1'b0;
+    end
+
   mrb_soc #(.ROM_FILE(ROM_FILE)) soc (
-    .clk(CLOCK_50), .rst_n, .en, .in_val, .out_val, .halted(), .error()
+    .clk(CLOCK_50), .rst_n, .en, .ms_tick, .in_val, .out_val, .halted(), .error()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
   function automatic logic lit(input logic [VAL_BITS-1:0] v);
-    return v[VAL_BITS-1 -: 2] == TAG_TRUE || (v[VAL_BITS-1 -: 2] == TAG_INT && v[INT_BITS-1:0] != '0);
+    return v[VAL_BITS-1 -: TAG_BITS] == TAG_TRUE || (v[VAL_BITS-1 -: TAG_BITS] == TAG_INT && v[INT_BITS-1:0] != '0);
   endfunction
 
   assign USER_LED[0] = lit(out_val[PORT_LED]) ^ LED_ACTIVE_LOW;

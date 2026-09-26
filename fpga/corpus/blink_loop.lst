@@ -1,31 +1,34 @@
 # irep 0  nregs 4
    0  000  LOADI_0   a=1   b=0     c=0      060100000000
-   1  002  LOADNIL   a=3   b=0     c=0      110300000000  <- BLOCK
-   2  005  SSEND     a=4   b=7     c=1280   2f0400070500  <- SSENDB
-   3       JMP       a=0   b=2     c=0      260000020000  <- SSENDB
-   4       MOVE      a=2   b=4     c=0      010200040000  <- SSENDB
-   5  009  RETURN    a=2   b=0     c=0      3d0200000000
-   6  011  STOP      a=0   b=0     c=0      760000000000
+   1  002  BLOCK     a=3   b=8     c=1280   620300080500
+   2  005  MOVE      a=4   b=3     c=0      010400030000  <- SSENDB
+   3       BLKCALL   a=4   b=0     c=0      360400000000  <- SSENDB
+   4       JMP       a=0   b=2     c=0      260000020000  <- SSENDB
+   5       MOVE      a=2   b=4     c=0      010200040000  <- SSENDB
+   6  009  RETURN    a=2   b=0     c=0      3d0200000000
+   7  011  STOP      a=0   b=0     c=0      760000000000
 # irep 1  nregs 5
-   7  000  ENTER     a=0   b=0     c=0      390000000000
-   8  004  LOADI_1   a=2   b=0     c=0      070200000000
-   9  006  GETUPVAR  a=3   b=3     c=0      210300030000
-  10  010  SUB       a=2   b=0     c=0      470200000000
-  11  012  SETUPVAR  a=2   b=3     c=0      220200030000
-  12  016  SETGV     a=2   b=0     c=0      160200000000
-  13  019  LOADI16   a=2   b=300   c=0      0e02012c0000
-  14  023  LOADNIL   a=3   b=0     c=0      110300000000  <- BLOCK
-  15  026  LOADI_0   a=4   b=0     c=0      060400000000  <- SENDB
-  16       MOVE      a=5   b=4     c=0      010500040000  <- SENDB
-  17       MOVE      a=6   b=2     c=0      010600020000  <- SENDB
-  18       LT        a=5   b=0     c=0      4e0500000000  <- SENDB
-  19       JMPNOT    a=5   b=23    c=0      280500170000  <- SENDB
-  20       SSEND     a=5   b=26    c=768    2f05001a0300  <- SENDB
-  21       ADDI      a=4   b=1     c=0      460400010000  <- SENDB
-  22       JMP       a=0   b=16    c=0      260000100000  <- SENDB
-  23       JMP       a=0   b=25    c=0      260000190000  <- SENDB
-  24       MOVE      a=2   b=5     c=0      010200050000  <- SENDB
-  25  030  RETURN    a=2   b=0     c=0      3d0200000000
+   8  000  NOP       a=0   b=0     c=0      000000000000  <- ENTER
+   9  004  LOADI_1   a=2   b=0     c=0      070200000000
+  10  006  GETUPVAR  a=3   b=1     c=1      210300010001
+  11  010  SUB       a=2   b=0     c=0      470200000000
+  12  012  SETUPVAR  a=2   b=1     c=1      220200010001
+  13  016  SETGV     a=2   b=0     c=0      160200000000
+  14  019  LOADI16   a=2   b=300   c=0      0e02012c0000
+  15  023  BLOCK     a=3   b=29    c=768    6203001d0300
+  16  026  LOADI_0   a=4   b=0     c=0      060400000000  <- SENDB
+  17       MOVE      a=5   b=4     c=0      010500040000  <- SENDB
+  18       MOVE      a=6   b=2     c=0      010600020000  <- SENDB
+  19       LT        a=5   b=0     c=0      4e0500000000  <- SENDB
+  20       JMPNOT    a=5   b=26    c=0      2805001a0000  <- SENDB
+  21       MOVE      a=6   b=4     c=0      010600040000  <- SENDB
+  22       MOVE      a=5   b=3     c=0      010500030000  <- SENDB
+  23       BLKCALL   a=5   b=1     c=0      360500010000  <- SENDB
+  24       ADDI      a=4   b=1     c=0      460400010000  <- SENDB
+  25       JMP       a=0   b=17    c=0      260000110000  <- SENDB
+  26       JMP       a=0   b=28    c=0      2600001c0000  <- SENDB
+  27       MOVE      a=2   b=5     c=0      010200050000  <- SENDB
+  28  030  RETURN    a=2   b=0     c=0      3d0200000000
 # irep 2  nregs 3
-  26  000  ENTER     a=0   b=0     c=0      390000000000
-  27  004  RETNIL    a=0   b=0     c=0      400000000000
+  29  000  NOP       a=0   b=0     c=0      000000000000  <- ENTER
+  30  004  RETNIL    a=0   b=0     c=0      400000000000

@@ -62,34 +62,57 @@ module FpgaIsa
     RETURN RETNIL STOP
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
     GETUPVAR SETUPVAR BREAK
+    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令に下げる (docs/spec.md §10「ブロック」)
-  #   BLOCK        LOADNIL にする (ブロックは値にしない)
-  #   SENDB SSENDB times / upto / downto / loop を、カウンタのループとブロックの irep の呼び出しに展開する
-  LOWERED = %w[BLOCK SENDB SSENDB].freeze
+  #   SENDB SSENDB  iterator (times / each / map ...) はループと BLKCALL に展開し、proc / lambda は Proc をそのまま返す。
+  #                 def したメソッドへのブロック付き呼び出しは SSEND (ブロックを渡す印付き) にする
+  LOWERED = %w[SENDB SSENDB].freeze
 
-  # ブロックを取る組み込みの iterator: [名前, SENDB か SSENDB か, 引数の数, ブロックに渡す値の数]
+  # ブロックを取る組み込み: [名前, SENDB か SSENDB か, 引数の数]
   ITERATORS = [
-    ["times", "SENDB", 0, 1], ["upto", "SENDB", 1, 1], ["downto", "SENDB", 1, 1], ["loop", "SSENDB", 0, 0]
+    ["times", "SENDB", 0], ["upto", "SENDB", 1], ["downto", "SENDB", 1], ["loop", "SSENDB", 0],
+    ["each", "SENDB", 0], ["each_with_index", "SENDB", 0], ["map", "SENDB", 0],
+    ["proc", "SSENDB", 0], ["lambda", "SSENDB", 0]
   ].freeze
 
   JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
 
-  # レジスタの値の型タグ (2bit)。偽は nil と false だけ。
+  # レジスタの値の型タグ (3bit)。偽は nil と false だけ。ARRAY と PROC はヒープへの参照 (値 = 語アドレス)。
+  # FWD と HDR はヒープの中だけに出る (GC の転送先、オブジェクトの見出し)
+  TAG_BITS  = 3
   TAG_NIL   = 0
   TAG_FALSE = 1
   TAG_TRUE  = 2
   TAG_INT   = 3
+  TAG_ARRAY = 4
+  TAG_PROC  = 5
+  TAG_FWD   = 6
+  TAG_HDR   = 7
+
+  # ヒープのオブジェクトの種類 (見出しの値 = 種類 << 16 | 中身の語数)
+  #   配列  [HDR(ARY,2)] [INT 長さ] [ARRAY → 中身]      中身 [HDR(DATA,容量)] [要素 ...]
+  #   Proc  [HDR(PROC,3)] [INT 先頭 pc | 引数の数 << 16 | nregs << 24] [INT 作ったフレームの bp] [外側の Proc か nil]
+  KIND_ARY  = 1
+  KIND_DATA = 2
+  KIND_PROC = 3
+  # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
+  HEAP_SIZE = 2048
 
   INT_BITS = 32
 
   # SEND / SEND0 で呼べる組み込みメソッド: [名前, 引数の数]。番号は並び順で、ROM の b に入る。
-  # 受け手は Integer (「!」と「!=」だけは何でもよい)。それ以外の SEND は変換時に止める
+  # 受け手は Integer (「!」と「!=」は何でも、size..include? と「<<」は Array でもよい)。それ以外の SEND は変換時に止める
   BUILTINS = [
     ["%", 1], ["!=", 1], ["-@", 0], ["<<", 1], [">>", 1], ["&", 1], ["|", 1], ["^", 1],
-    ["~", 0], ["!", 0], ["abs", 0], ["zero?", 0], ["even?", 0], ["odd?", 0]
+    ["~", 0], ["!", 0], ["abs", 0], ["zero?", 0], ["even?", 0], ["odd?", 0],
+    ["size", 0], ["length", 0], ["empty?", 0], ["first", 0], ["last", 0], ["pop", 0], ["push", 1], ["include?", 1],
+    ["sleep_ms", 1], ["sleep", 1]
   ].freeze
+
+  # 受け手を書かずに呼ぶ (SSEND) 組み込み。変換器が SEND の組み込みに直す
+  SELF_BUILTINS = %w[sleep_ms sleep].freeze
 
   # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数
   RF_SIZE     = 128

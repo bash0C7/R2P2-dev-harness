@@ -2,7 +2,7 @@
 #
 # - CRuby: 同じ .rb を CRuby で走らせ、trace_var で I/O のグローバル変数への代入を拾う。
 #   入力 (in ポート) を読むプログラムは step と対応付けられないので対象外。
-#   無限ループのプログラムは、代入を limit 回拾ったところで打ち切る
+#   無限ループのプログラムは、代入を limit 回拾ったところで打ち切る。sleep_ms / sleep は待たない
 # - picoruby host VM: 同じ compiler・同じ VM の本物の意味。代入の系列は取れないので、
 #   止まるプログラムの最後の値だけを `p` で出させて比べる
 require "open3"
@@ -18,7 +18,8 @@ module FpgaOracle
   # [[port, value], ...] (value は Integer / true / false / nil)
   def cruby_writes(src_path, limit:)
     outs = FpgaIoMap::PORTS.select { |p| p.dir == :out }
-    script = +"$__w = []\n"
+    # 時間待ちは待たずに引数を返す (コアと参照インタプリタも値はそうしている。待つ長さはボードエミュレーターで見る)
+    script = +"def sleep_ms(n) = n\ndef sleep(n) = n\n$__w = []\n"
     outs.each do |p|
       script << "trace_var(:#{p.name}) { |v| $__w << [#{p.num}, v]; throw :__stop if $__w.size >= #{limit} }\n"
     end

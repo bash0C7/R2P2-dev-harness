@@ -109,10 +109,10 @@ module FpgaRom
     end
     raise Error, "#{source}: unsupported instruction(s): #{bad.join(', ')}" unless bad.empty?
 
-    ctx = Context.new(source, methods(ireps, decoded, source), {}, {}, {})
+    ctx = Context.new(source, methods(ireps, decoded, source), {}, {}, {}, {}, decoded)
     block_sites(ireps, decoded, ctx)
 
-    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める (iterator は数語に展開する)
+    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める (iterator などは数語に展開する)
     base = 0
     pc_of = []
     ireps.each_with_index do |ir, i|
@@ -120,15 +120,8 @@ module FpgaRom
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
-        site = ctx.sites[site_key(ir, k)]
-        if site
-          site.pc = base
-          words, brk = expand_iterator(site, base, 0)
-          site.brk_pc = brk
-          base += words.size
-        else
-          base += 1
-        end
+        specs = lowered(insn, ir, k, base, ctx)
+        base += specs ? specs.size : 1
       end
       pc_of << table
     end
@@ -136,15 +129,14 @@ module FpgaRom
     words = []
     ireps.each_with_index do |ir, i|
       decoded[i].each_with_index do |insn, k|
-        site = ctx.sites[site_key(ir, k)]
-        if site
-          entry = site.block.base
-          specs, _brk = expand_iterator(site, site.pc, entry)
+        pc = pc_of[i][insn.addr]
+        specs = lowered(insn, ir, k, pc, ctx)
+        if specs
           specs.each_with_index do |(name, a, b, c), n|
-            words << Word.new(site.pc + n, insn, FpgaIsa.op(name).num, a, b, c, ir, n == 0)
+            words << Word.new(pc + n, insn, FpgaIsa.op(name).num, a, b, c, ir, n == 0)
           end
         else
-          words << encode(insn, pc_of[i][insn.addr], pc_of[i], ir, ctx, k)
+          words << encode(insn, pc, pc_of[i], ir, ctx, k)
         end
       end
     end
@@ -152,78 +144,81 @@ module FpgaRom
   end
 
   # 変換中に持ち回るもの: メソッド名 -> 呼び出し先の irep、定数名 -> 番号、
-  # ブロックを渡す SENDB / SSENDB (irep と命令の番号 -> Site)、ブロックの irep の番号 -> Site
+  # SENDB / SSENDB (irep と命令の番号 -> Site)、ブロックの irep の番号 -> それを作った irep、
+  # iterator に直接渡したブロックの irep の番号 -> Site (break の出口が決まる)
   class Context
-    attr_reader :source, :methods, :consts, :sites, :blocks
+    attr_reader :source, :methods, :consts, :sites, :parents, :direct, :decoded
 
-    def initialize(source, methods, consts, sites, blocks)
+    def initialize(source, methods, consts, sites, parents, direct, decoded)
       @source = source
       @methods = methods
       @consts = consts
       @sites = sites
-      @blocks = blocks
+      @parents = parents
+      @direct = direct
+      @decoded = decoded
     end
   end
 
-  # ブロックを渡して iterator を呼ぶ所。ブロックのフレームは呼んだフレームの bp + disp に置く
+  # ブロックを取る呼び出し。kind は iterator の名前か "method" (def したメソッドにブロックを渡す)
   class Site
-    attr_reader :parent, :a, :kind, :block, :argc_given, :m1
-    attr_accessor :pc, :brk_pc
+    attr_reader :parent, :a, :kind, :argc, :callee
+    attr_accessor :brk_pc
 
-    def initialize(parent, a, kind, block, argc_given, m1)
+    def initialize(parent, a, kind, argc, callee)
       @parent = parent
       @a = a
       @kind = kind
-      @block = block
-      @argc_given = argc_given
-      @m1 = m1
+      @argc = argc
+      @callee = callee
     end
 
-    # iterator が使う作業レジスタの後ろに、ブロックのフレームを置く
-    def disp
-      a + FRAME_OFFSET[kind]
+    # Proc は R[a + 引数の数 + 1]
+    def proc_reg
+      a + argc + 1
     end
   end
-
-  # R[a] 受け手 (loop は self)、R[a+1]... 引数とブロック。その後ろにカウンタ、その後ろがブロックのフレーム
-  FRAME_OFFSET = { "times" => 3, "upto" => 4, "downto" => 4, "loop" => 2 }
 
   def self.site_key(irep, k)
     "#{irep.index}:#{k}"
   end
 
-  # BLOCK の直後の SENDB / SSENDB だけを受け付け、iterator の種類とブロックの irep を決める
+  # BLOCK が作る irep の親を覚え、SENDB / SSENDB の種類を決める
   def self.block_sites(ireps, decoded, ctx)
     source = ctx.source
     ireps.each_with_index do |ir, i|
       insns = decoded[i]
       insns.each_with_index do |insn, k|
         if insn.name == "BLOCK"
-          nxt = insns[k + 1]
-          unless nxt && (nxt.name == "SENDB" || nxt.name == "SSENDB")
-            raise Error, "#{source}: BLOCK at #{where(ir, insn)} is not passed directly to times / upto / downto / loop " \
-                         "(blocks are not values on this core)"
-          end
+          block = ir.reps[insn.operands[1]]
+          ctx.parents[block.index] = ir
+          block_params(block, decoded[block.index], source)
           next
         end
         next unless insn.name == "SENDB" || insn.name == "SSENDB"
         a, symi, c = insn.operands
         sym = ir.syms[symi]
         argc = c & 0xF
-        it = (c >> 4).zero? ? FpgaIsa.iterator(sym, insn.name, argc) : nil
-        unless it
+        raise Error, "#{source}: #{sym} at #{where(ir, insn)} is called with keyword arguments or a splat (not supported)" if (c >> 4) != 0 || argc == 15
+        callee = nil
+        kind = nil
+        if insn.name == "SSENDB" && ctx.methods[sym]
+          kind = "method"
+          callee = ctx.methods[sym]
+        elsif FpgaIsa.iterator(sym, insn.name, argc)
+          kind = sym
+        end
+        unless kind
           raise Error, "#{source}: #{sym} with a block at #{where(ir, insn)} is not supported " \
-                       "(only times, upto, downto and loop take blocks)"
+                       "(blocks go to def'd methods, times, upto, downto, loop, each, each_with_index, map, proc, lambda)"
         end
-        prev = k > 0 ? insns[k - 1] : nil
-        unless prev && prev.name == "BLOCK" && prev.operands[0] == a + argc + 1
-          raise Error, "#{source}: #{sym} at #{where(ir, insn)} is not given a literal block"
-        end
-        block = ir.reps[prev.operands[1]]
-        m1 = block_params(block, decoded[block.index], source)
-        site = Site.new(ir, a, sym, block, it[3], m1)
+        site = Site.new(ir, a, kind, argc, callee)
         ctx.sites[site_key(ir, k)] = site
-        ctx.blocks[block.index] = site
+        # 直前の BLOCK で作ったブロックを iterator に渡すなら、その break は iterator の出口へ飛ぶ
+        prev = k > 0 ? insns[k - 1] : nil
+        if prev && prev.name == "BLOCK" && prev.operands[0] == site.proc_reg && !%w[method proc lambda].include?(kind)
+          ctx.direct[ir.reps[prev.operands[1]].index] = site
+        end
       end
     end
   end
@@ -240,55 +235,104 @@ module FpgaRom
     (aspec >> 18) & 0x1F
   end
 
-  # iterator を命令の列に展開する。[[名前, a, b, c], ...] と、break の飛び先の pc を返す。
-  # entry はブロックの irep の先頭 pc。ブロックには m1 個の値を渡す (iterator が渡さない分は nil)
-  def self.expand_iterator(site, pc, entry)
+  # irep がブロックなら、それを囲むメソッド (か一番外) まで何段あるか。ブロックでなければ 0
+  def self.block_depth(irep, ctx)
+    d = 0
+    cur = irep
+    while ctx.parents[cur.index]
+      cur = ctx.parents[cur.index]
+      d += 1
+    end
+    [d, cur]
+  end
+
+  # ほかの命令の列に下げる命令なら [[名前, a, b, c], ...] を返す。そのまま1語にするなら nil
+  def self.lowered(insn, ir, k, pc, ctx)
+    site = ctx.sites[site_key(ir, k)]
+    return expand_site(site, pc, ctx) if site
+    if (insn.name == "SSEND0" || insn.name == "SSEND") && ir.syms[insn.operands[1]] == "block_given?" && !ctx.methods["block_given?"]
+      # block_given? は、囲むメソッドのブロックの枠 (必須の引数の次) を BLKPUSH で読み、!! で true / false にする
+      depth, method = block_depth(ir, ctx)
+      m1 = method.index == 0 ? 0 : block_params(method, ctx.decoded[method.index], ctx.source)
+      a = insn.operands[0]
+      return [["BLKPUSH", a, m1 + 1, depth], ["SEND0", a, FpgaIsa.builtin("!", 0), 0], ["SEND0", a, FpgaIsa.builtin("!", 0), 0]]
+    end
+    nil
+  end
+
+  # iterator などを命令の列に展開する。break の飛び先 (Site#brk_pc) もここで決まる。
+  # Proc は R[s + 引数の数 + 1]、その後ろにカウンタなど、さらに後ろ (f) がブロックのフレーム
+  def self.expand_site(site, pc, ctx)
     s = site.a
-    f = site.disp                       # ブロックのフレームの底 (呼んだフレームの R[f])
-    call_c = (site.block.nregs << 8) | site.m1
+    pr = site.proc_reg
     out = []
-    args = lambda do |value_reg|
-      site.m1.times do |j|
-        if j == 0 && site.argc_given >= 1
-          out << ["MOVE", f + 1, value_reg, 0]
-        else
-          out << ["LOADNIL", f + 1 + j, 0, 0]
-        end
-      end
-      out << ["SSEND", f, entry, call_c]
-    end
-
-    if site.kind == "loop"
-      top = pc
-      args.call(nil)
-      out << ["JMP", 0, top, 0]
-      brk = pc + out.size
+    case site.kind
+    when "method"
+      callee = site.callee
+      return [["SSEND", s, callee.base || 0, (callee.nregs << 8) | 0x80 | site.argc]]
+    when "proc", "lambda"
+      return [["MOVE", s, pr, 0]]
+    when "loop"
+      f = pr + 1
+      out << ["MOVE", f, pr, 0]
+      out << ["BLKCALL", f, 0, 0]
+      out << ["JMP", 0, pc, 0]
+      site.brk_pc = pc + out.size
       out << ["MOVE", s, f, 0]
-      return [out, brk]
+      return out
     end
 
-    # times: i = 0 から i < n、upto: i = 受け手から i <= 引数、downto: i = 受け手から i >= 引数
-    i = s + FRAME_OFFSET[site.kind] - 1 # カウンタ
-    if site.kind == "times"
-      out << ["LOADI_0", i, 0, 0]
-    else
+    i = pr + 1                                  # カウンタ
+    res = pr + 2                                # map の結果
+    f = site.kind == "map" ? pr + 3 : pr + 2    # ブロックのフレーム
+    array = %w[each each_with_index map].include?(site.kind)
+    out << ["ARRAY", res, 0, 0] if site.kind == "map"
+    if site.kind == "upto" || site.kind == "downto"
       out << ["MOVE", i, s, 0]
+    else
+      out << ["LOADI_0", i, 0, 0]
     end
     top = pc + out.size
+    # 続けるか: times は i < n、upto は i <= 引数、downto は i >= 引数、配列は i < size
     out << ["MOVE", f, i, 0]
-    out << ["MOVE", f + 1, site.kind == "times" ? s : s + 1, 0]
-    out << [{ "times" => "LT", "upto" => "LE", "downto" => "GE" }[site.kind], f, 0, 0]
+    if array
+      out << ["MOVE", f + 1, s, 0]
+      out << ["SEND0", f + 1, FpgaIsa.builtin("size", 0), 0]
+    else
+      out << ["MOVE", f + 1, site.kind == "times" ? s : s + 1, 0]
+    end
+    out << [{ "upto" => "LE", "downto" => "GE" }[site.kind] || "LT", f, 0, 0]
     jmpnot = out.size
     out << ["JMPNOT", f, 0, 0] # 出口は後で埋める
-    args.call(i)
+    nargs = 1
+    if array
+      out << ["MOVE", f, s, 0]
+      out << ["MOVE", f + 1, i, 0]
+      out << ["GETIDX", f, 0, 0]
+      out << ["MOVE", f + 1, f, 0]
+      if site.kind == "each_with_index"
+        out << ["MOVE", f + 2, i, 0]
+        nargs = 2
+      end
+    else
+      out << ["MOVE", f + 1, i, 0]
+    end
+    out << ["MOVE", f, pr, 0]
+    out << ["BLKCALL", f, nargs, 0]
+    if site.kind == "map"
+      out << ["MOVE", f + 1, f, 0]
+      out << ["MOVE", f, res, 0]
+      out << ["SEND", f, FpgaIsa.builtin("<<", 1), 1]
+    end
     out << [site.kind == "downto" ? "SUBI" : "ADDI", i, 1, 0]
     out << ["JMP", 0, top, 0]
     done = pc + out.size
     out[jmpnot][2] = done
-    out << ["JMP", 0, done + 2, 0] # 普通に終わった: 受け手 (R[s]) がそのまま結果
-    brk = pc + out.size
-    out << ["MOVE", s, f, 0]       # break: ブロックのフレームの R0 に置かれた値が結果
-    [out, brk]
+    out << ["MOVE", s, res, 0] if site.kind == "map" # map の結果。ほかは受け手 (R[s]) がそのまま結果
+    out << ["JMP", 0, pc + out.size + 2, 0]
+    site.brk_pc = pc + out.size
+    out << ["MOVE", s, f, 0] # break: ブロックのフレームの R0 に置かれた値が結果
+    out
   end
 
   # TDEF (def) を全部拾い、メソッド名 -> 中身の irep にする。同じ名前の再定義は止める (静的に解決するため)
@@ -370,7 +414,8 @@ module FpgaRom
       c = 0
     end
 
-    # SSEND / SSEND0: b = 呼び出し先の先頭 pc、c = (呼び出し先の nregs << 8) | 引数の数
+    # SSEND / SSEND0: b = 呼び出し先の先頭 pc、c = (呼び出し先の nregs << 8) | 引数の数。
+    # def したメソッドが無く、sleep_ms / sleep なら組み込み (SEND) にする
     if name == "SSEND" || name == "SSEND0"
       sym = irep.syms[b]
       argc = name == "SSEND" ? c & 0xF : 0
@@ -379,6 +424,9 @@ module FpgaRom
       end
       raise Error, "#{source}: #{sym} at #{where(irep, insn)} is called with a splat (not supported)" if argc == 15
       callee = ctx.methods[sym]
+      if !callee && FpgaIsa::SELF_BUILTINS.include?(sym) && FpgaIsa.builtin(sym, argc)
+        return Word.new(pc, insn, FpgaIsa.op(argc.zero? ? "SEND0" : "SEND").num, a, FpgaIsa.builtin(sym, argc), argc, irep)
+      end
       unless callee
         raise Error, "#{source}: #{sym} at #{where(irep, insn)} is not a method defined with def in this program " \
                      "(methods are resolved statically; built-in methods like puts are not supported)"
@@ -387,59 +435,79 @@ module FpgaRom
       c = (callee.nregs << 8) | argc
     end
 
-    # SEND / SEND0: b = 組み込みメソッドの番号 (isa.rb の BUILTINS)、c = 引数の数
+    # SEND / SEND0: b = 組み込みメソッドの番号 (isa.rb の BUILTINS)、c = 引数の数。
+    # .call は Proc の呼び出し (BLKCALL a, 引数の数)
     if name == "SEND" || name == "SEND0"
       sym = irep.syms[b]
       argc = name == "SEND" ? c & 0xF : 0
-      id = FpgaIsa.builtin(sym, argc)
+      if sym == "call" && (name == "SEND0" || (c >> 4).zero?) && argc != 15
+        return Word.new(pc, insn, FpgaIsa.op("BLKCALL").num, a, argc, 0, irep)
+      end
+      id = FpgaIsa::SELF_BUILTINS.include?(sym) ? nil : FpgaIsa.builtin(sym, argc)
       if name == "SEND" && (c >> 4) != 0
         id = nil
       end
       unless id
         raise Error, "#{source}: .#{sym} with #{argc} argument(s) at #{where(irep, insn)} is not a supported method " \
-                     "(supported: #{FpgaIsa::BUILTINS.map { |n, k| "#{n}/#{k}" }.join(' ')})"
+                     "(supported: #{FpgaIsa::BUILTINS.map { |n, k| "#{n}/#{k}" }.join(' ')} call)"
       end
       b = id
       c = argc
     end
 
-    # ENTER: 必須の引数だけ。a = その数
+    # ENTER: 必須の引数 (と &blk) だけ。a = 必須の引数の数。ブロックの ENTER は NOP にする
+    # (Proc は引数の数を調べない。足りなければ nil、多ければ捨てる)
     if name == "ENTER"
       aspec = ops[0]
       m1 = (aspec >> 18) & 0x1F
-      if (aspec & ~(0x1F << 18)) != 0
-        raise Error, "#{source}: method at #{where(irep, insn)} takes optional, rest, keyword or block parameters " \
-                     "(only required parameters are supported)"
+      if (aspec & ~((0x1F << 18) | 1)) != 0
+        raise Error, "#{source}: method at #{where(irep, insn)} takes optional, rest or keyword parameters " \
+                     "(only required parameters and &block are supported)"
       end
+      return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if ctx.parents[irep.index]
       a = m1
     end
 
-    # BLOCK: ブロックは値にしない (直後の SENDB / SSENDB が irep を直接呼ぶ)。R[a] = nil だけ
-    return Word.new(pc, insn, FpgaIsa.op("LOADNIL").num, a, 0, 0, irep) if name == "BLOCK"
-
-    # GETUPVAR / SETUPVAR: 外側のフレームのレジスタ。ブロックのフレームはそれを作ったフレームから
-    # 変換時に決まる距離 (Site#disp) にあるので、「bp から下へ何本目」(b) にできる
-    if name == "GETUPVAR" || name == "SETUPVAR"
-      idx = b
-      depth = c
-      total = 0
-      cur = irep
-      (depth + 1).times do
-        site = ctx.blocks[cur.index]
-        raise Error, "#{source}: #{name} at #{where(irep, insn)} is not inside a block given to times / upto / downto / loop" unless site
-        total += site.disp
-        cur = site.parent
-      end
-      raise Error, "#{source}: #{name} at #{where(irep, insn)} reaches a register the block frame overlaps" if idx >= total
-      b = total - idx
-      c = 0
+    # BLOCK: Proc を作る。b = ブロックの irep の先頭 pc、c = 引数の数 | nregs << 8
+    if name == "BLOCK"
+      block = irep.reps[ops[1]]
+      b = block.base
+      c = block_params(block, ctx.decoded[block.index], source) | (block.nregs << 8)
     end
 
-    # BREAK: ブロックのフレームを畳み、iterator の break の出口へ飛ぶ
+    # GETUPVAR / SETUPVAR: 外側のフレームのレジスタ。b = 番号、c = フレームの深さ (mruby の深さ + 1)
+    if name == "GETUPVAR" || name == "SETUPVAR"
+      depth, = block_depth(irep, ctx)
+      raise Error, "#{source}: #{name} at #{where(irep, insn)} reaches #{c + 1} levels out, the block is #{depth} deep" if c + 1 > depth
+      c += 1
+    end
+
+    # BLKPUSH: 深さ lv のフレームのブロックの枠。b = 枠の番号 (1 + m1 + r + m2 + kd)、c = lv
+    if name == "BLKPUSH"
+      x = ops[1]
+      b = 1 + ((x >> 11) & 0x3F) + ((x >> 10) & 1) + ((x >> 5) & 0x1F) + ((x >> 4) & 1)
+      c = x & 0xF
+    end
+
+    # BREAK: iterator に直接渡したブロックなら、フレームを1つ畳んで iterator の出口 (b) へ (c = 0)。
+    # def したメソッドや Proc に渡したブロックなら、作ったフレームまで畳む (c = 1)
     if name == "BREAK"
-      site = ctx.blocks[irep.index]
-      raise Error, "#{source}: break at #{where(irep, insn)} is not inside a block given to times / upto / downto / loop" unless site
-      b = site.brk_pc
+      raise Error, "#{source}: break at #{where(irep, insn)} is not inside a block" unless ctx.parents[irep.index]
+      site = ctx.direct[irep.index]
+      if site
+        b = site.brk_pc
+        c = 0
+      else
+        b = 0
+        c = 1
+      end
+    end
+
+    # RETURN_BLK: ブロックの中の return。c = 囲むメソッドのフレームの深さ
+    if name == "RETURN_BLK"
+      depth, method = block_depth(irep, ctx)
+      raise Error, "#{source}: return inside a block at #{where(irep, insn)} is not inside a method" if method.index == 0
+      c = depth
     end
 
     Word.new(pc, insn, insn.op.num, a, b, c, irep)

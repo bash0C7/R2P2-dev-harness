@@ -17,13 +17,17 @@ module FpgaGenPkg
     lines << "// 定数はどれを使うかが module ごとに違うので、未使用の lint は切る"
     lines << "/* verilator lint_off UNUSEDPARAM */"
     lines << "package mrb_pkg;"
-    lines << "  // レジスタの値 = {tag[1:0], value[31:0]}"
+    lines << "  // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。ARRAY / PROC はヒープの語アドレス、FWD / HDR はヒープの中だけ"
     lines << "  localparam int INT_BITS = #{FpgaIsa::INT_BITS};"
-    lines << "  localparam int VAL_BITS = INT_BITS + 2;"
-    lines << "  localparam logic [1:0] TAG_NIL   = 2'd#{FpgaIsa::TAG_NIL};"
-    lines << "  localparam logic [1:0] TAG_FALSE = 2'd#{FpgaIsa::TAG_FALSE};"
-    lines << "  localparam logic [1:0] TAG_TRUE  = 2'd#{FpgaIsa::TAG_TRUE};"
-    lines << "  localparam logic [1:0] TAG_INT   = 2'd#{FpgaIsa::TAG_INT};"
+    lines << "  localparam int TAG_BITS = #{FpgaIsa::TAG_BITS};"
+    lines << "  localparam int VAL_BITS = INT_BITS + TAG_BITS;"
+    %w[NIL FALSE TRUE INT ARRAY PROC FWD HDR].each do |t|
+      lines << format("  localparam logic [TAG_BITS-1:0] TAG_%-5s = 3'd%d;", t, FpgaIsa.const_get("TAG_#{t}"))
+    end
+    lines << ""
+    lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = 種類 << 16 | 中身の語数"
+    lines << "  localparam int HEAP_SIZE = #{FpgaIsa::HEAP_SIZE};"
+    %w[ARY DATA PROC].each { |k| lines << "  localparam int KIND_#{k} = #{FpgaIsa.const_get("KIND_#{k}")};" }
     lines << ""
     lines << "  // コアの大きさ (tools/fpga/isa.rb)"
     lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"
@@ -52,15 +56,17 @@ module FpgaGenPkg
     lines.join("\n") + "\n"
   end
 
-# 組み込みメソッドの名前を SystemVerilog の識別子にする
-BUILTIN_NAMES = {
-  "%" => "MOD", "!=" => "NEQ", "-@" => "NEG", "<<" => "SHL", ">>" => "SHR", "&" => "AND", "|" => "OR",
-  "^" => "XOR", "~" => "INV", "!" => "NOT", "abs" => "ABS", "zero?" => "ZERO", "even?" => "EVEN", "odd?" => "ODD"
-}.freeze
+  # 組み込みメソッドの名前を SystemVerilog の識別子にする
+  BUILTIN_NAMES = {
+    "%" => "MOD", "!=" => "NEQ", "-@" => "NEG", "<<" => "SHL", ">>" => "SHR", "&" => "AND", "|" => "OR",
+    "^" => "XOR", "~" => "INV", "!" => "NOT", "abs" => "ABS", "zero?" => "ZERO", "even?" => "EVEN", "odd?" => "ODD",
+    "size" => "SIZE", "length" => "LENGTH", "empty?" => "EMPTY", "first" => "FIRST", "last" => "LAST", "pop" => "POP",
+    "push" => "PUSH", "include?" => "INCL", "sleep_ms" => "SLEEPMS", "sleep" => "SLEEP"
+  }.freeze
 
-def builtin_const(name)
-  BUILTIN_NAMES.fetch(name)
-end
+  def builtin_const(name)
+    BUILTIN_NAMES.fetch(name)
+  end
 
   def write
     File.write(PATH, render)

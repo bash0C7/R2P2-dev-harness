@@ -17,7 +17,7 @@ module mrb_core_tb;
   logic halted, error;
 
   mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
-    .clk, .rst_n, .en(1'b1), .in_val, .out_val, .halted, .error
+    .clk, .rst_n, .en(1'b1), .ms_tick(1'b1), .in_val, .out_val, .halted, .error
   );
 
   /* verilator lint_off BLKSEQ */
@@ -36,6 +36,10 @@ module mrb_core_tb;
   logic [47:0] prog [$];
   string       name;
   int          npass = 0;
+  int          cycles = 0;
+  int          gcs = 0;
+  logic        last_space = 1'b0;
+  int          base_cycles = 0;
 
   function automatic logic [47:0] w(logic [7:0] op, logic [7:0] a = 0, logic [15:0] b = 0, logic [15:0] c = 0);
     return {op, a, b, c};
@@ -52,7 +56,15 @@ module mrb_core_tb;
     rst_n = 1'b0;
     repeat (2) @(posedge clk);
     #1 rst_n = 1'b1;
-    for (int i = 0; i < 2000 && !halted && !error; i++) @(posedge clk);
+    cycles = 0;
+    gcs    = 0;
+    last_space = 1'b0;
+    for (int i = 0; i < 100000 && !halted && !error; i++) begin
+      @(posedge clk);
+      cycles++;
+      if (dut.core.space != last_space) gcs++; // GC の回数 (使う半分が入れ替わった回数)
+      last_space = dut.core.space;
+    end
     #1;
   endtask
 
@@ -67,7 +79,7 @@ module mrb_core_tb;
   task automatic expect_val(input string what, input logic [VAL_BITS-1:0] got, input logic [VAL_BITS-1:0] v);
     if (got !== v)
       $fatal(1, "%s: %s = tag %0d val %0d, expected tag %0d val %0d", name, what,
-             got[VAL_BITS-1 -: 2], $signed(got[INT_BITS-1:0]), v[VAL_BITS-1 -: 2], $signed(v[INT_BITS-1:0]));
+             got[VAL_BITS-1 -: TAG_BITS], $signed(got[INT_BITS-1:0]), v[VAL_BITS-1 -: TAG_BITS], $signed(v[INT_BITS-1:0]));
   endtask
   
   task automatic expect_reg(input int r, input logic [VAL_BITS-1:0] v);
@@ -379,26 +391,174 @@ module mrb_core_tb;
     run();
     expect_error(0);
 
-    // ---- ブロック (変換器が iterator を SSEND に下げたもの): 外側の変数と break
-    begin_test("upvar and break");
-    prog.push_back(w(OP_LOADI_5, 1));                        // 0
-    prog.push_back(w(OP_SSEND0, 2, 4, (4 << 8) | 0));        // 1
-    prog.push_back(w(OP_LOADI_7, 3));                        // 2: (break で飛ばされる)
-    prog.push_back(w(OP_STOP));                              // 3: break の出口
-    prog.push_back(w(OP_ENTER, 0));                          // 4: ブロック (bp = 2)
-    prog.push_back(w(OP_GETUPVAR, 1, 1));                    // 5: R1 = 外側の R1 (bp - 1)
-    prog.push_back(w(OP_ADDI, 1, 1));                        // 6
-    prog.push_back(w(OP_SETUPVAR, 1, 1));                    // 7: 外側の R1 = 6
-    prog.push_back(w(OP_BREAK, 1, 3));                       // 8: 値 6 を持って出口 (pc 3) へ
+    // ---- Proc (BLOCK / BLKCALL): 外側の変数と break
+    begin_test("proc, upvar and break");
+    prog.push_back(w(OP_LOADI_5, 1));                        // 0: 外側の R1 = 5
+    prog.push_back(w(OP_BLOCK, 3, 6, (4 << 8) | 0));         // 1: R3 = Proc (先頭 pc 6、引数 0、nregs 4)
+    prog.push_back(w(OP_BLKCALL, 3, 0));                     // 2: ブロックのフレームは bp + 3
+    prog.push_back(w(OP_LOADI_7, 2));                        // 3: (break で飛ばされる)
+    prog.push_back(w(OP_STOP));                              // 4: break の出口
+    prog.push_back(w(OP_STOP));                              // 5
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 6: R1 = 作ったフレームの R1
+    prog.push_back(w(OP_ADDI, 1, 1));                        // 7
+    prog.push_back(w(OP_SETUPVAR, 1, 1, 1));                 // 8: 作ったフレームの R1 = 6
+    prog.push_back(w(OP_BREAK, 1, 4, 0));                    // 9: 値 6 を持って出口 (pc 4) へ
     run();
     expect_halt();
     expect_reg(1, vint(6));
-    expect_reg(2, vint(6));                                  // break の値はブロックのフレームの R0 (= 外側の R2)
-    expect_reg(3, vint(6));                                  // ブロックの R1 (外側の R3 と同じ場所。pc 2 は通らない)
+    expect_reg(2, VNIL);                                     // pc 3 は通らない
+    expect_reg(3, vint(6));                                  // break の値はブロックのフレームの R0 (= 外側の R3)
+    expect_reg(4, vint(6));                                  // ブロックの R1
     if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after break", name, dut.core.sp, dut.core.bp);
 
+    begin_test("yield through a method and dynamic break");
+    prog.push_back(w(OP_BLOCK, 2, 7, (3 << 8) | 1));         // 0: R2 = Proc (先頭 pc 7、引数 1)
+    prog.push_back(w(OP_SSEND, 1, 4, (5 << 8) | 8'h80 | 0)); // 1: m(&blk)。ブロックの枠 (R1 + 1) を残す
+    prog.push_back(w(OP_STOP));                              // 2: break の戻り先
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_BLKPUSH, 2, 1, 0));                  // 4: m: R2 = 自分のブロック (枠 1)
+    prog.push_back(w(OP_LOADI_4, 3));                        // 5: yield 4
+    prog.push_back(w(OP_BLKCALL, 2, 1));                     // 6
+    prog.push_back(w(OP_ADDI, 1, 2));                        // 7: ブロック: R1 (= 4) + 2
+    prog.push_back(w(OP_BREAK, 1, 0, 1));                    // 8: Proc を作ったフレームまで畳む
+    run();
+    expect_halt();
+    expect_reg(1, vint(6));                                  // m(...) の結果が break の値
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after break", name, dut.core.sp, dut.core.bp);
+
+    // ---- 配列 (ヒープ)
+    begin_test("arrays");
+    prog.push_back(w(OP_LOADI_3, 1));                        // 0
+    prog.push_back(w(OP_LOADI_1, 2));                        // 1
+    prog.push_back(w(OP_LOADI_4, 3));                        // 2
+    prog.push_back(w(OP_ARRAY2, 4, 1, 3));                   // 3: R4 = [3, 1, 4]
+    prog.push_back(w(OP_MOVE, 5, 4));                        // 4
+    prog.push_back(w(OP_LOADI__1, 6));                       // 5
+    prog.push_back(w(OP_GETIDX, 5));                         // 6: R5 = a[-1] = 4
+    prog.push_back(w(OP_GETIDX0, 6, 4));                     // 7: R6 = a[0] = 3
+    prog.push_back(w(OP_MOVE, 7, 4));                        // 8
+    prog.push_back(w(OP_LOADI_5, 8));                        // 9
+    prog.push_back(w(OP_LOADI_7, 9));                        // 10
+    prog.push_back(w(OP_SETIDX, 7));                         // 11: a[5] = 7 (容量を超えて伸ばす)
+    prog.push_back(w(OP_MOVE, 10, 4));                       // 12
+    prog.push_back(w(OP_SEND0, 10, BI_SIZE));                // 13: R10 = 6
+    prog.push_back(w(OP_MOVE, 11, 4));                       // 14
+    prog.push_back(w(OP_SEND0, 11, BI_POP));                 // 15: R11 = 7
+    prog.push_back(w(OP_MOVE, 12, 4));                       // 16
+    prog.push_back(w(OP_SEND0, 12, BI_LAST));                // 17: R12 = nil (a[4])
+    prog.push_back(w(OP_MOVE, 13, 4));                       // 18
+    prog.push_back(w(OP_LOADI_1, 14));                       // 19
+    prog.push_back(w(OP_SEND, 13, BI_PUSH, 1));              // 20: a.push(1) は a を返す
+    prog.push_back(w(OP_MOVE, 14, 4));                       // 21
+    prog.push_back(w(OP_SEND0, 14, BI_LENGTH));              // 22: R14 = 6
+    prog.push_back(w(OP_MOVE, 8, 4));                        // 23
+    prog.push_back(w(OP_LOADI_4, 9));                        // 24
+    prog.push_back(w(OP_SEND, 8, BI_INCL, 1));               // 25: R8 = a.include?(4) = true
+    prog.push_back(w(OP_MOVE, 1, 4));                        // 26
+    prog.push_back(w(OP_SEND0, 1, BI_FIRST));                // 27: R1 = 3
+    prog.push_back(w(OP_ARRAY, 2, 0));                       // 28: R2 = []
+    prog.push_back(w(OP_SEND0, 2, BI_EMPTY));                // 29: R2 = true
+    prog.push_back(w(OP_LOADI_5, 3));                        // 30
+    prog.push_back(w(OP_ARRAY, 3, 1));                       // 31: R3 = [5]
+    prog.push_back(w(OP_GETIDX0, 3, 3));                     // 32: R3 = 5
+    prog.push_back(w(OP_STOP));                              // 33
+    run();
+    expect_halt();
+    expect_reg(5, vint(4));
+    expect_reg(6, vint(3));
+    expect_reg(10, vint(6));
+    expect_reg(11, vint(7));
+    expect_reg(12, VNIL);
+    expect_reg(13, dut.core.regs[4]);                        // push は同じ配列 (同一の参照)
+    if (dut.core.regs[4][VAL_BITS-1 -: TAG_BITS] != TAG_ARRAY) $fatal(1, "%s: R4 is not an array", name);
+    expect_reg(14, vint(6));
+    expect_reg(8, VTRUE);
+    expect_reg(1, vint(3));
+    expect_reg(2, VTRUE);
+    expect_reg(3, vint(5));
+
+    begin_test("array == array is an error");
+    prog.push_back(w(OP_ARRAY, 1, 0));
+    prog.push_back(w(OP_MOVE, 2, 1));
+    prog.push_back(w(OP_EQ, 1));                             // 配列の比較は持たない (参照の == は Ruby と違う)
+    run();
+    expect_error(2);
+
+    begin_test("array to a pin is an error");
+    prog.push_back(w(OP_ARRAY, 1, 0));
+    prog.push_back(w(OP_SETGV, 1, PORT_LED));
+    run();
+    expect_error(1);
+
+    begin_test("index a non-array");
+    prog.push_back(w(OP_LOADI_1, 1));
+    prog.push_back(w(OP_LOADI_0, 2));
+    prog.push_back(w(OP_GETIDX, 1));
+    run();
+    expect_error(2);
+
+    begin_test("gc keeps live arrays");
+    prog.push_back(w(OP_LOADI_5, 1));                        // 0
+    prog.push_back(w(OP_ARRAY2, 2, 1, 1));                   // 1: R2 = [5] (生きている)
+    prog.push_back(w(OP_LOADI16, 3, 600));                   // 2: 600 回
+    prog.push_back(w(OP_ARRAY2, 4, 1, 1));                   // 3: ゴミを作る (半空間を何度も溢れさせる)
+    prog.push_back(w(OP_SUBI, 3, 1));                        // 4
+    prog.push_back(w(OP_MOVE, 5, 3));                        // 5
+    prog.push_back(w(OP_LOADI_0, 6));                        // 6
+    prog.push_back(w(OP_GT, 5));                             // 7
+    prog.push_back(w(OP_JMPIF, 5, 3));                       // 8
+    prog.push_back(w(OP_GETIDX0, 7, 2));                     // 9: R7 = R2[0]
+    prog.push_back(w(OP_STOP));                              // 10
+    run();
+    expect_halt();
+    expect_reg(7, vint(5));
+    if (gcs < 2) $fatal(1, "%s: only %0d gc(s)", name, gcs);
+
+    // ---- ブロックの中の return は、ブロックを作ったメソッドから戻る
+    begin_test("return from a block");
+    prog.push_back(w(OP_SSEND0, 1, 3, 5 << 8));              // 0: R1 = m
+    prog.push_back(w(OP_STOP));                              // 1
+    prog.push_back(w(OP_STOP));                              // 2
+    prog.push_back(w(OP_LOADI_1, 1));                        // 3: m
+    prog.push_back(w(OP_BLOCK, 2, 8, 3 << 8));               // 4
+    prog.push_back(w(OP_BLKCALL, 2, 0));                     // 5
+    prog.push_back(w(OP_LOADI_7, 1));                        // 6: (通らない)
+    prog.push_back(w(OP_RETURN, 1));                         // 7
+    prog.push_back(w(OP_LOADI8, 1, 9));                      // 8: ブロック: return 9
+    prog.push_back(w(OP_RETURN_BLK, 1, 0, 1));               // 9: 1段外のメソッドから戻る
+    run();
+    expect_halt();
+    expect_reg(1, vint(9));
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after return", name, dut.core.sp, dut.core.bp);
+
+    // ---- 時間待ち: sleep_ms n は ms_tick を n 回数えて n を返す
+    begin_test("sleep_ms 0");
+    prog.push_back(w(OP_LOADI_0, 2));                        // self (R1) は nil、引数は R2
+    prog.push_back(w(OP_SEND, 1, BI_SLEEPMS, 1));
+    prog.push_back(w(OP_STOP));
+    run();
+    expect_halt();
+    expect_reg(1, vint(0));
+    base_cycles = cycles;
+
+    begin_test("sleep_ms 100");
+    prog.push_back(w(OP_LOADI8, 2, 100));
+    prog.push_back(w(OP_SEND, 1, BI_SLEEPMS, 1));
+    prog.push_back(w(OP_STOP));
+    run();
+    expect_halt();
+    expect_reg(1, vint(100));
+    if (cycles - base_cycles < 100 || cycles - base_cycles > 110)
+      $fatal(1, "%s: waited %0d cycles more than sleep_ms 0 (ms_tick every cycle)", name, cycles - base_cycles);
+
+    begin_test("sleep with a negative time");
+    prog.push_back(w(OP_LOADI__1, 2));
+    prog.push_back(w(OP_SEND, 1, BI_SLEEP, 1));
+    run();
+    expect_error(1);
+
     begin_test("upvar below the register file");
-    prog.push_back(w(OP_GETUPVAR, 1, 1));                    // bp = 0 から下は無い
+    prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い
     run();
     expect_error(0);
 

@@ -19,15 +19,25 @@ class FpgaRomTest < Minitest::Test
       dump.zip(firsts).each do |(_line, addr, opname, rest), w|
         where = "#{name} irep #{w.irep.index} byte #{addr}"
         assert_equal addr.to_i, w.insn.addr, where
-        assert_equal opname, w.insn.name, where
-        assert_equal FpgaIsa.op(opname).num, w.op, where unless FpgaIsa::LOWERED.include?(opname)
+        # mrbc -v は ARRAY2 も "ARRAY" と表示する
+        assert_equal opname, w.insn.name == "ARRAY2" ? "ARRAY" : w.insn.name, where
+        unless FpgaIsa::LOWERED.include?(opname)
+          got = FpgaIsa::OPS[w.op].name
+          assert_includes [w.insn.name, *REWRITTEN[w.insn.name]], got, where
+        end
         fields = rest.to_s.split(/[\t ]+/).reject { |f| f.start_with?(";") }
         check_operands(where, opname, fields, w, pc_of)
       end
     end
   end
 
+  # 別の命令に置き換わるもの: ブロックの ENTER は NOP、sleep_ms / sleep は SEND、block_given? は BLKPUSH、.call は BLKCALL
+  REWRITTEN = { "ENTER" => %w[NOP], "SSEND" => %w[SEND], "SSEND0" => %w[SEND0 SEND BLKPUSH], "SEND" => %w[BLKCALL],
+                "SEND0" => %w[BLKCALL] }.freeze
+
   def check_operands(where, opname, fields, w, pc_of)
+    return if FpgaIsa::OPS[w.op].name != w.insn.name # 置き換えたものの中身は fpga:check と ref_vm_test が見る
+
     case opname
     when "JMP"
       assert_equal pc_of.fetch([w.irep.index, fields[0].to_i]), w.b, where
@@ -98,8 +108,8 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_unsupported_instruction_with_location
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("ARRAY"), 1, 0, op("STOP")])) }
-    assert_match(/unsupported instruction\(s\): ARRAY at byte 001/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("ARYCAT"), 1, op("STOP")])) }
+    assert_match(/unsupported instruction\(s\): ARYCAT at byte 001/, e.message)
   end
 
   def test_rejects_unknown_methods
@@ -124,7 +134,7 @@ class FpgaRomTest < Minitest::Test
   def test_rejects_optional_parameters_and_redefinition
     opt = irep_record([op("ENTER"), 0x04, 0x20, 0x00, op("RETNIL")]) # 1:1:... (optional 1)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [opt])) }
-    assert_match(/only required parameters are supported/, e.message)
+    assert_match(/only required parameters and &block are supported/, e.message)
     plain = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
     bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("STOP")], syms: ["f"], reps: [plain, plain])
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
@@ -132,27 +142,48 @@ class FpgaRomTest < Minitest::Test
   end
 
 def test_blocks_are_lowered_only_for_the_known_iterators
-  blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
-  # 3.each { } は受け付けない
-  bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["each"], reps: [blk])
-  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
-  assert_match(/each with a block at byte 005 is not supported/, e.message)
-  # BLOCK を SENDB 以外に渡すと止める (ブロックは値にしない)
-  bin = rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])
-  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
-  assert_match(/BLOCK at byte 000 is not passed directly/, e.message)
-  # 3.times { } は展開される: LOADNIL (BLOCK) と、カウンタのループ + SSEND
-  bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["times"], reps: [blk])
-  names = FpgaRom.from_binary(bin).words.map { |w| FpgaIsa::OPS[w.op].name }
-  assert_equal %w[LOADI_3 LOADNIL LOADI_0 MOVE MOVE LT JMPNOT SSEND ADDI JMP JMP MOVE STOP ENTER RETNIL], names
-end
+    blk = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")], nregs: 3)
+    # 3.select { } は受け付けない (ブロックを渡せるのは def したメソッドと決まった iterator だけ)
+    bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["select"], reps: [blk])
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
+    assert_match(/select with a block at byte 005 is not supported/, e.message)
+    # 3.times { } は展開される: BLOCK で Proc を作り、カウンタのループで BLKCALL する。
+    # ループを抜けたら式の値 (受け手) のまま次へ、break の出口 (pc 13) はブロックのフレームの R0 を結果へ
+    bin = rite([op("LOADI_3"), 1, op("BLOCK"), 2, 0, op("SENDB"), 1, 0, 0, op("STOP")], syms: ["times"], reps: [blk])
+    words = FpgaRom.from_binary(bin).words
+    assert_equal %w[LOADI_3 BLOCK LOADI_0 MOVE MOVE LT JMPNOT MOVE MOVE BLKCALL ADDI JMP JMP MOVE STOP NOP RETNIL],
+                 words.map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal [15, 3 << 8], [words[1].b, words[1].c] # 先頭 pc と (nregs << 8) | 引数の数
+    assert_equal [4, 1], [words[9].a, words[9].b]
+    assert_equal [1, 4], [words[13].a, words[13].b]
+    # 渡さずに値にした BLOCK (proc や &blk) はそのまま Proc になる
+    words = FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])).words
+    assert_equal %w[BLOCK STOP NOP RETNIL], words.map { |w| FpgaIsa::OPS[w.op].name }
+  end
 
-def test_break_and_upvar_need_an_enclosing_iterator
-  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BREAK"), 1, op("STOP")])) }
-  assert_match(/break at byte 000 is not inside a block/, e.message)
-  e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("GETUPVAR"), 1, 1, 0, op("STOP")])) }
-  assert_match(/GETUPVAR at byte 000 is not inside a block/, e.message)
-end
+  # ブロックの外の変数は GETUPVAR c = 深さ + 1 で読む。深さを超える参照と、ブロックの外の break / return は止める
+  def test_break_and_upvar_need_an_enclosing_block
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BREAK"), 1, op("STOP")])) }
+    assert_match(/break at byte 000 is not inside a block/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("GETUPVAR"), 1, 1, 0, op("STOP")])) }
+    assert_match(/GETUPVAR at byte 000 reaches 1 levels out, the block is 0 deep/, e.message)
+    blk = irep_record([op("ENTER"), 0, 0, 0, op("GETUPVAR"), 1, 1, 0, op("RETURN"), 1], nregs: 3)
+    words = FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [blk])).words
+    assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[3].op].name, words[3].a, words[3].b, words[3].c]
+    top_return = irep_record([op("ENTER"), 0, 0, 0, op("RETURN_BLK"), 1], nregs: 3)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [top_return])) }
+    assert_match(/return inside a block at irep 1 byte 004 is not inside a method/, e.message)
+  end
+
+  # sleep_ms / sleep は self への呼び出しでも組み込み (SEND) にする。.call は BLKCALL
+  def test_sleep_and_call_become_builtins
+    bin = rite([op("LOADI_1"), 2, op("SSEND"), 1, 0, 1, op("MOVE"), 2, 1, op("SEND"), 2, 1, 0, op("STOP")],
+               syms: %w[sleep_ms call])
+    words = FpgaRom.from_binary(bin).words
+    assert_equal %w[LOADI_1 SEND MOVE BLKCALL STOP], words.map { |w| FpgaIsa::OPS[w.op].name }
+    assert_equal [1, FpgaIsa.builtin("sleep_ms", 1), 1], [words[1].a, words[1].b, words[1].c]
+    assert_equal [2, 0], [words[3].a, words[3].b]
+  end
 
   def test_rejects_pool
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], plen: 1)) }
@@ -207,9 +238,9 @@ end
   def test_picoruby_converter_stops_with_the_location
     with_picoruby do |dir|
       e = assert_raises(FpgaConverter::Error) do
-        picoruby_convert(dir, rite([op("NOP"), op("ARRAY"), 1, 0, op("STOP")]))
+        picoruby_convert(dir, rite([op("NOP"), op("ARYCAT"), 1, op("STOP")]))
       end
-      assert_match(/unsupported instruction\(s\): ARRAY at byte 001/, e.message)
+      assert_match(/unsupported instruction\(s\): ARYCAT at byte 001/, e.message)
       e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
       assert_match(/needs 17 registers/, e.message)
     end
