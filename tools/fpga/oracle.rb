@@ -9,6 +9,7 @@ require "open3"
 require "tmpdir"
 require "rbconfig"
 require_relative "converter"
+require_relative "corpus"
 
 module FpgaOracle
   class Error < StandardError; end
@@ -47,6 +48,15 @@ module FpgaOracle
     # 時間待ちは待たずに引数を返す (コアと参照インタプリタも値はそうしている。待つ長さはボードエミュレーターで見る)
     script = +"require \"stringio\"\ndef sleep_ms(n) = n\ndef sleep(n) = n\n$__w = []\n"
     script << HASH_INSPECT << EXC_INSPECT
+    # デバイス: 参照インタプリタと同じモデル (devices.rb) で __io_read / __io_write を定義し、FPGA 版の gem を読む。
+    # 書き込みはピンへの代入と同じ列に入れる (値は 32bit の符号付きにそろえる)。時間は 0 (命令の数が無い)
+    script << "require #{File.expand_path('devices', __dir__).inspect}\n$__dev = FpgaDevices::Bank.new([])\n"
+    script << "def __s32(v) = (v & 0xFFFF_FFFF) >= 2**31 ? (v & 0xFFFF_FFFF) - 2**32 : (v & 0xFFFF_FFFF)\n"
+    script << "def __io_read(a) = (v = $__dev.read(a, 0, 0)).nil? ? nil : __s32(v)\n"
+    script << "def __io_write(a, v)\n  $__w << [a, v.is_a?(Integer) ? __s32(v) : v]; throw :__stop if $__w.size >= #{limit}\n" \
+              "  $__dev.write(a, v) if v.is_a?(Integer)\n  v\nend\n"
+    script << "def require(name) = true\n"
+    FpgaCorpus.gem_files(src_path).each { |g| script << "load #{g.inspect}\n" }
     outs.each do |p|
       script << "trace_var(:#{p.name}) { |v| $__w << [#{p.num}, v]; throw :__stop if $__w.size >= #{limit} }\n"
     end

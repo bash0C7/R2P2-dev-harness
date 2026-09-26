@@ -185,7 +185,7 @@ module FpgaFuzz
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
         maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
-        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41, nosuch: 42, divz: 43 }.freeze
+        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41, nosuch: 42, divz: 43, ior: 44, iow: 45 }.freeze
   # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
   HEAP_TEXT = "hello, fpga!"
   HEAP_TABLE_LOG = 6 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
@@ -217,7 +217,7 @@ module FpgaFuzz
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(20)
+      pick = rng.rand(21)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -351,6 +351,19 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("JMP"), 0, words.size + 2, 0)
         catches << [FpgaIsa::CATCH_RESCUE, site + 1, site + 2, words.size]
         words << encode(FpgaIsa.op("EXCEPT"), 15, 0, 0)
+      when 20 # デバイス (devices.rb): レジスタを読むか書く (GPIO、時計、UART、RNG、ポート、知らない番地)。書く値はたまに配列や nil
+        addr = [0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x110, 0x111, 0x112, 0x120, 0x121, 0x122, 0x130,
+                0, 1, 2, 3, 0x1234, 0x20000].sample(random: rng)
+        words << encode(FpgaIsa.op("LOADI32"), 13, addr >> 16, addr & 0xFFFF)
+        if rng.rand(2).zero?
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:ior], 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        else
+          v = rng.rand(1 << 32)
+          words << (rng.rand(8).zero? ? encode(FpgaIsa.op("MOVE"), 14, (ints + arrs + [15]).sample(random: rng), 0) :
+                                        encode(FpgaIsa.op("LOADI32"), 14, v >> 16, v & 0xFFFF))
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
+        end
       when 18 # Symbol#to_s (ROM のシンボル表)
         words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
         words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
@@ -493,6 +506,7 @@ module FpgaFuzz
       [FpgaIsa::CLS_INT, S[:raiser], raiser_at], [FpgaIsa::CLS_INT, S[:raise], prim.("RAISE")],
       [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")], [FpgaIsa::CLS_INT, S[:divz], divz_at],
       [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"), cerr_at],
+      [FpgaIsa::CLS_INT, S[:ior], prim.("IOREAD")], [FpgaIsa::CLS_INT, S[:iow], prim.("IOWRITE")],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],
@@ -535,7 +549,11 @@ module FpgaFuzz
   end
 
   # 入力の刺激もランダムに (button 用)
+  # デバイスの入力も (GPIO の外からの L / H、UART の受信バイト)
   def stim(rng)
-    Array.new(rng.rand(4)) { [rng.rand(40), 2, rng.rand(3) - 1] }
+    rows = Array.new(rng.rand(4)) { [rng.rand(40), 2, rng.rand(3) - 1] }
+    rng.rand(3).times { rows << [rng.rand(400), [0x106, 0x107].sample(random: rng), rng.rand(1 << 32) - (1 << 31)] }
+    rng.rand(6).times { rows << [rng.rand(2000), 0x121, rng.rand(256)] }
+    rows
   end
 end

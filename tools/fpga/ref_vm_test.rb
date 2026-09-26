@@ -64,7 +64,7 @@ class FpgaRefVmTest < Minitest::Test
 
   # picoruby の組み込みに無いメソッド (Hash#min_by、sort_by、Array#tally、zip、each_slice、Range#sum ...) を使うので、
   # picoruby とは比べないもの (CRuby とは比べる)。errors はメッセージが PicoRuby と違うもの (Integer()、キーワード引数) を出す
-  PICORUBY_LACKS = %w[collections errors].freeze
+  PICORUBY_LACKS = %w[collections errors].freeze # FPGA 版の gem を使うもの (devices など) も比べない (test の中で除く)
 
   # 止まるプログラムは、picoruby host VM (本物の mruby VM) の最後の値とも比べる
   def test_finite_corpus_agrees_with_picoruby
@@ -72,7 +72,7 @@ class FpgaRefVmTest < Minitest::Test
     checked = 0
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
-      next if PICORUBY_LACKS.include?(name)
+      next if PICORUBY_LACKS.include?(name) || !FpgaCorpus.gem_files(src).empty?
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
       vm = FpgaRefVm.new(words)
       trace = vm.run(200_000)

@@ -10,7 +10,8 @@
 //   +rom=<hex>     ROM イメージ (tools/fpga/mrb2rom.rb の出力)
 //   +ms=<n>        何 ms 分回すか (既定 1000)
 //   +mhz=<n>       クロック周波数 MHz (既定 125、Raspberry Pi Pico と同じ)。top の CLOCK_50 に入れる
-//   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"。最後の END 行の value は実行した命令の数
+//   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"。最後の END 行の value は実行した命令の数。
+//                  デバイス (mrb_dev.sv) の GPIO のピンの値の変化は "GPIO<n>"、UART の送信は1バイトずつ "UART"
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
 `timescale 1ns / 1ps
@@ -55,10 +56,16 @@ module board_emu_tb;
   logic [1:0] led_q = 2'b00;
   bit         first = 1'b1; // リセット解除直後の状態も1回書く
   logic       halted_q = 1'b0, error_q = 1'b0;
+  logic [31:0] gpio_q = '0;
   always @(negedge clk) begin
     if (fd != 0 && reset_n) begin
       if (first || led[0] !== led_q[0]) $fdisplay(fd, "%0d LED %0d", now_us(), led[0]);
       if (first || led[1] !== led_q[1]) $fdisplay(fd, "%0d LED2 %0d", now_us(), led[1]);
+      // GPIO: 出力にしたピンの値の変化 (入力のピンは外から駆動しないので書かない)
+      for (int i = 0; i < 32; i++)
+        if (dut.soc.gpio_dir[i] && dut.soc.gpio_level[i] !== gpio_q[i]) $fdisplay(fd, "%0d GPIO%0d %0d", now_us(), i, dut.soc.gpio_level[i]);
+      gpio_q = dut.soc.gpio_level;
+      if (dut.soc.tx_valid && dut.soc.en) $fdisplay(fd, "%0d UART %0d", now_us(), dut.soc.tx_byte);
       if (dut.soc.halted && !halted_q) $fdisplay(fd, "%0d HALT %0d", now_us(), dut.soc.core.pc);
       if (dut.soc.error && !error_q) $fdisplay(fd, "%0d ERROR %0d", now_us(), dut.soc.core.pc);
       led_q = led;

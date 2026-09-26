@@ -210,6 +210,29 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 - GPIO (`GPIO.new(pin, GPIO::OUT)`、`write` `read` `high?` `low?`)、PWM、ADC (シミュレーションの入力)、UART (console)、
   `Machine` の範囲内のもの。ボードの top のピンを増やし、エミュレーターに見せる
 
+#### P5 の設計
+
+PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrblib はそのまま使い、C の port の関数を FPGA 用に Ruby で書く**
+(`fpga/ports/<gem>.rb`)。port は回路のデバイスのレジスタを読み書きする primitive だけを使う:
+
+- **デバイスのバス。** primitive `__io_read(addr)` / `__io_write(addr, value)` (Object、Integer の番地と値)。番地は 16bit で、
+  0..3 は今のポート (`$LED` ...)、0x100 から上がデバイス。書き込みはトレースの O 行 (ポート番号 = 番地) に出る。
+  外からの入力 (ピン、ADC の値、UART の受信) は、今の入力ポートと同じく「step から値」の刺激で番地ごとに与える
+  (参照インタプリタと RTL が同じ値を読む)
+- **デバイスは参照インタプリタ・RTL・CRuby の3つで同じ形に書く。** CRuby には `__io_read` / `__io_write` を Ruby で定義して
+  同じ port と mrblib を読ませ、console とデバイスへの書き込みの列を比べる
+- **`require "x"`** は compile の前に解く: ソースの静的な `require` をたどり、gem の mrblib と port をプログラムの前に置く
+  (gem の中の require も)。実行時の `require` は何もしない (プレリュード)。知らない gem は「範囲外」で止める
+- **時間は仮想の時計。** `Machine.uptime_us` などは「実行した命令の数 (1命令 1µs) + sleep した時間」を数えるレジスタを読む。
+  参照と RTL で一致させるため (実時間はエミュレーターの表示だけ)
+
+段:
+- **P5a** バス、require、GPIO、Machine (時間・delay)、UART、rng。エミュレーターに GPIO のピンと UART を見せる (済み)。
+  io/console と watchdog は P5c に回した
+- **P5b** Float (PWM・ADC・example が使う。binary32 を値に持つ `TAG_FLOAT` と、演算の回路かプレリュード)
+- **P5c** PWM、ADC、IRQ (ピンの変化の割り込みを、命令の区切りで Ruby の callback に)
+- **P5d** I2C、SPI とデバイスのモデル (SSD1306 などをエミュレーターが画面として見せる)、rotary_encoder、hcsr04
+- **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
 ### P6 Task
 
 - `Task.new { }`、`Task.pass`、`sleep` で切り替わる協調マルチタスク。タスクごとにレジスタ窓とコールスタックを持つ
@@ -231,6 +254,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P3b キーワード引数 | 55 | 26 (example は 3 / 32) | 26 | kwargs.rb を追加。止める理由はデバイス (P5)、Float 3、`getch` など |
 | 2026-09-26 | P4a+b 例外・ensure の巻き戻し | 56 | 27 (example は 3 / 32) | 27 | exceptions.rb を追加。使わないクラスを表から落とす (live_classes)。止める理由はほぼデバイス (P5)。catch handler は止める理由から消えた |
 | 2026-09-26 | P4c コアのエラーを例外に | 57 | 28 (example は 3 / 32) | 28 | errors.rb を追加。メソッドの生死をクラスでも絞り、blink.rb は 4800 → 1850 語。止める理由はほぼデバイス (P5) |
+| 2026-09-26 | P5a デバイスのバス・GPIO・UART・時計・RNG | 59 | 30 (example は 3 / 32) | 30 | devices.rb、uart_echo.rb (刺激) を追加。FPGA 版の gem (fpga/gems)。止める理由はほぼ device の gem (psg、i2c ...) |
 
 ## 見つけたこと
 
@@ -314,3 +338,12 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
   祖先も値として現れ得るクラスだけにした
 - P4c: 置き換えの途中で、書き足した live_classes / const_class を消してしまった (置き換える範囲の目印の間に入れていた)。
   commit 済みの版から戻した
+- P5a: PicoRuby の gem の mrblib をそのまま使う案は、`Object.const_defined?`、`module Kernel` の private メソッド、`RUBY_PLATFORM`、
+  C の port が前提のエラー処理が多く、変換器を広げる量が大きいのでやめ、同じ API の FPGA 版を Ruby で書いた (fpga/gems)
+- P5a: primitive がデバイスを読む時、テストベンチは命令を始めた cycle (retire) で入力を次の step のものにしていたので、
+  数 cycle 後の S_PRIM では次の step の値が見える。入力を S_FETCH (命令を始める前) で変えるようにした
+  (GETGV は EXEC の cycle で読むので今まで表に出なかった)
+- P5a: `__io_write` の書き込みで、参照は O 行、RTL は W 行が先に出た。ファズで見つけ、参照を RTL の順にした
+- P5a: Icarus が `__io_write` の検査 (always_comb の if の条件の `val_of` / `is_ref`) で止まった (P1b・P1d・P2 と同じ癖)。wire にした
+- P5a: 仮想の時計 (始めた命令の数 + sleep) にしたのは、参照インタプリタに実時間が無いから。実機で実時間の `uptime_us` にするなら、
+  参照との突き合わせは時間を読むプログラムを除く必要がある

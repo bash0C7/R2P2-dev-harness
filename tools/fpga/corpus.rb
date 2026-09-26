@@ -23,6 +23,14 @@ module FpgaCorpus
   # プログラムの前に置いて一緒に compile する組み込みメソッド (Ruby で書いたもの)
   PRELUDE   = Dir[File.join(ROOT, "fpga", "prelude", "*.rb")].sort.freeze
   KINDS     = %w[mrb dump hex lst].freeze
+  # FPGA 版の gem (fpga/gems/<名前>.rb)。require するか、定数を使う (R2P2 では require しなくても使える) と、
+  # プレリュードの後、プログラムの前に置く。名前 -> [file, 使えば入る定数]
+  GEMS_DIR  = File.join(ROOT, "fpga", "gems")
+  GEMS = {
+    "gpio" => ["gpio.rb", %w[GPIO]], "machine" => ["machine.rb", %w[Machine]], "uart" => ["uart.rb", %w[UART]],
+    "rng" => ["rng.rb", %w[RNG]]
+  }.freeze
+  REQUIRE = /^\s*require\s*\(?\s*["']([^"']+)["']/
 
   module_function
 
@@ -38,12 +46,36 @@ module FpgaCorpus
     ENV["MRBC"] || File.join(ROOT, "vendor", "picoruby", "bin", "mrbc")
   end
 
-  # src -> [mrb bytes, dump lines]。プレリュードを前に付けて1つの irep にする
-  def compile(src, mrbc)
+  class UnknownGem < Error; end
+
+  # src が使う gem の file (gem の中の require と定数もたどる)。知らない require は UnknownGem (strict: false なら飛ばす)
+  def gem_files(src, strict: true)
+    files = []
+    todo = [File.read(src)]
+    until todo.empty?
+      text = todo.shift
+      names = text.scan(REQUIRE).flatten
+      GEMS.each { |name, (_, consts)| names << name if consts.any? { |c| text.match?(/\b#{c}\b/) } }
+      names.uniq.each do |name|
+        unless GEMS[name]
+          raise UnknownGem, "require '#{name}' is not supported on the FPGA core (#{src})" if strict
+          next
+        end
+        path = File.join(GEMS_DIR, GEMS[name][0])
+        next if files.include?(path)
+        files << path
+        todo << File.read(path)
+      end
+    end
+    files.sort
+  end
+
+  # src -> [mrb bytes, dump lines]。プレリュードと gem を前に付けて1つの irep にする
+  def compile(src, mrbc, strict: true)
     raise Error, "mrbc not found at #{mrbc}. Run `rake setup` and `rake test:host`, or set MRBC=" unless File.executable?(mrbc)
     Dir.mktmpdir do |dir|
       out = File.join(dir, "out.mrb")
-      stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, src)
+      stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, *gem_files(src, strict: strict), src)
       raise Error, "mrbc failed on #{src}: #{stderr}" unless st.success?
       # 命令の行と、irep の区切り ("irep"。mrbc のアドレスは毎回違うので捨てる)
       dump = stdout.lines.filter_map { |l| l.start_with?("irep ") ? "irep\n" : (l =~ DUMP_LINE ? l.strip + "\n" : nil) }

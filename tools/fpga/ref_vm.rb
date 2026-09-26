@@ -26,6 +26,7 @@
 # トレースに出さない (ハードウェアも出さない)。
 require_relative "converter"
 require_relative "compare"
+require_relative "devices"
 
 class FpgaRefVm
   MASK = (1 << FpgaIsa::INT_BITS) - 1
@@ -72,6 +73,8 @@ class FpgaRefVm
     @tsize = 0
     # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
     @stim = FpgaCompare.sort_stim(stim)
+    @dev = FpgaDevices::Bank.new(@stim) # GPIO、時間、UART、RNG
+    @slept = 0 # sleep した時間 (µs)。仮想の時計 = 始めた命令の数 + これ
     @trace = []
     @stats = Hash.new(0)
   end
@@ -1051,6 +1054,7 @@ class FpgaRefVm
     fault! unless @call_kw.zero? || name == "CALL" || name == "NEW" # キーワード引数を受ける primitive は new と call だけ
     return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
+    return io_prim(step, pc, name, a) if name == "IOREAD" || name == "IOWRITE"
     if name == "RAISE"
       @exc = reg(a + 1)
       return unwind(step, pc, :raise, 0, NIL)
@@ -1104,6 +1108,34 @@ class FpgaRefVm
       return pc + 1
     end
     builtin(step, name, a, argc)
+    pc + 1
+  end
+
+  # __io_read(addr) / __io_write(addr, value): 番地 0..3 は GETGV / SETGV と同じポート、0x100 から上はデバイス
+  # (devices.rb)。書き込みはトレースの O 行 (ポート番号 = 番地)。デバイスには Integer だけを書ける
+  def io_prim(step, pc, name, a)
+    addr = reg(a + 1)
+    fault! unless int?(addr) && addr[1] < 0x10000
+    n = addr[1]
+    if name == "IOREAD"
+      v = if n < FpgaIoMap::NPORTS
+            FpgaIoMap::IN_MASK[n] == 1 ? input(step, n) : @io[n]
+          elsif FpgaDevices.device?(n)
+            r = @dev.read(n, step, step + 1 + @slept)
+            r.nil? ? NIL : int(r)
+          else
+            NIL
+          end
+      set(step, a, v)
+      return pc + 1
+    end
+    v = reg(a + 2)
+    fault! if ref?(v) || (n < FpgaIoMap::NPORTS && FpgaIoMap::IN_MASK[n] == 1)
+    core_error!(FpgaIsa::CERR_TYPE, v) if FpgaDevices.device?(n) && !int?(v)
+    @io[n] = v if n < FpgaIoMap::NPORTS
+    @dev.write(n, v[1]) if FpgaDevices.device?(n)
+    set(step, a, v) # RTL と同じく W 行が先
+    @trace << format("O %d %d %d %08x", step, n, v[0], v[1])
     pc + 1
   end
 
@@ -1199,8 +1231,10 @@ class FpgaRefVm
     value = case name
             when "NOT" then bool(!truthy?(x))
             when "SLEEPMS", "SLEEP"
-              # 時間はハードウェア (ボードエミュレーター) だけが持つ。値は待った量 (CRuby の sleep と同じく n)
+              # 時間はハードウェア (ボードエミュレーター) だけが持つ。値は待った量 (CRuby の sleep と同じく n)。
+              # 仮想の時計は待った分だけ進む
               fault! unless int?(y) && signed(y[1]) >= 0
+              @slept += y[1] * (name == "SLEEP" ? 1_000_000 : 1000)
               y
             else
               fault! unless int?(x)
