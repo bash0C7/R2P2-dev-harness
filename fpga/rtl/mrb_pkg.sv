@@ -19,7 +19,7 @@ package mrb_pkg;
   localparam logic [TAG_BITS-1:0] TAG_HDR   = 4'd8;
 
   // ヒープ (tools/fpga/isa.rb)。見出しの値 = クラス << 16 | 中身の語数
-  localparam int HEAP_SIZE = 2048;
+  localparam int HEAP_SIZE = 65536;
   localparam logic [15:0] CLS_OBJECT = 16'd1;
   localparam logic [15:0] CLS_NIL    = 16'd2;
   localparam logic [15:0] CLS_TRUE   = 16'd3;

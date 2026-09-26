@@ -78,11 +78,18 @@ module peridot_air_top
   always_comb for (int i = 0; i < 256; i++) no_rx[i] = 8'd0;
   logic [11:0] no_adc [5];
   always_comb for (int i = 0; i < 5; i++) no_adc[i] = 12'd0;
+  // I2C: エミュレーターの板には 0x3C (SSD1306) と 0x3E (LCD) がつながっているとみなす (tools/fpga/devices.rb の既定)
+  logic [31:0] i2c_present [4];
+  assign i2c_present[0] = 32'd0;
+  assign i2c_present[1] = 32'h5000_0000;
+  assign i2c_present[2] = 32'd0;
+  assign i2c_present[3] = 32'd0;
 
   mrb_soc #(.ROM_FILE(ROM_FILE)) soc (
     .clk(CLOCK_50), .rst_n, .en, .ms_tick, .in_val, .out_val, .halted(), .error(),
     // デバイスの GPIO・UART・PWM・ADC はまだピンにつないでいない (ボードエミュレーターは soc の中を覗く)
     .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx), .adc_val(no_adc),
+    .i2c_rx_count('0), .i2c_rx_bytes(no_rx), .i2c_present, .spi_rx_count('0), .spi_rx_bytes(no_rx),
     .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */

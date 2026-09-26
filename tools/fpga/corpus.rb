@@ -26,10 +26,18 @@ module FpgaCorpus
   # FPGA 版の gem (fpga/gems/<名前>.rb)。require するか、定数を使う (R2P2 では require しなくても使える) と、
   # プレリュードの後、プログラムの前に置く。名前 -> [file, 使えば入る定数]
   GEMS_DIR  = File.join(ROOT, "fpga", "gems")
+  PICORUBY_MRBLIB = "../../vendor/picoruby/mrbgems/picoruby-%s/mrblib/%s.rb" # GEMS_DIR から
   GEMS = {
     "gpio" => ["gpio.rb", %w[GPIO]], "machine" => ["machine.rb", %w[Machine]], "uart" => ["uart.rb", %w[UART]],
     "rng" => ["rng.rb", %w[RNG]], "irq" => ["irq.rb", %w[IRQ]], "pwm" => ["pwm.rb", %w[PWM]], "adc" => ["adc.rb", %w[ADC]],
-    "watchdog" => ["watchdog.rb", %w[Watchdog]], "io/console" => ["io_console.rb", %w[STDIN]]
+    "watchdog" => ["watchdog.rb", %w[Watchdog]], "io/console" => ["io_console.rb", %w[STDIN]],
+    "i2c" => ["i2c.rb", %w[I2C]], "spi" => ["spi.rb", %w[SPI]], "time" => ["time.rb", %w[Time]], "vram" => ["vram.rb", %w[VRAM]],
+    "bdffont" => ["bdffont.rb", %w[BDFFont]],
+    # PicoRuby の mrblib をそのまま使う (Ruby だけで書かれた gem)
+    "ssd1306" => [format(PICORUBY_MRBLIB, "ssd1306", "ssd1306"), %w[SSD1306]],
+    "uc8151" => [format(PICORUBY_MRBLIB, "uc8151", "uc8151"), %w[UC8151]],
+    "hcsr04" => [format(PICORUBY_MRBLIB, "hcsr04", "hcsr04"), %w[HCSR04]],
+    "rotary_encoder" => [format(PICORUBY_MRBLIB, "rotary_encoder", "rotary_encoder"), %w[RotaryEncoder]]
   }.freeze
   REQUIRE = /^\s*require\s*\(?\s*["']([^"']+)["']/
 
@@ -52,24 +60,30 @@ module FpgaCorpus
   # src が使う gem の file (gem の中の require と定数もたどる)。知らない require は UnknownGem (strict: false なら飛ばす)
   def gem_files(src, strict: true)
     files = []
-    todo = [File.read(src)]
-    until todo.empty?
-      text = todo.shift
-      names = text.scan(REQUIRE).flatten
-      code = text.gsub(/^\s*#.*$/, "") # 行全体の注釈の中の名前 (「ソフト PWM」) は数えない
-      GEMS.each { |name, (_, consts)| names << name if consts.any? { |c| code.match?(/\b#{c}\b/) } }
-      names.uniq.each do |name|
+    seen = []
+    visit = lambda do |text|
+      gem_names(text).each do |name|
         unless GEMS[name]
           raise UnknownGem, "require '#{name}' is not supported on the FPGA core (#{src})" if strict
           next
         end
-        path = File.join(GEMS_DIR, GEMS[name][0])
-        next if files.include?(path)
-        files << path
-        todo << File.read(path)
+        path = File.expand_path(GEMS[name][0], GEMS_DIR)
+        next if seen.include?(path)
+        seen << path
+        visit.call(File.read(path))
+        files << path # 使う gem を先に (後置の順)
       end
     end
-    files.sort
+    visit.call(File.read(src))
+    files
+  end
+
+  # text が require するか、定数を使う gem の名前 (名前の順)
+  def gem_names(text)
+    names = text.scan(REQUIRE).flatten
+    code = text.gsub(/^\s*#.*$/, "") # 行全体の注釈の中の名前 (「ソフト PWM」) は数えない
+    GEMS.each { |name, (_, consts)| names << name if consts.any? { |c| code.match?(/\b#{c}\b/) } }
+    names.uniq.sort
   end
 
   # src -> [mrb bytes, dump lines]。プレリュードと gem を前に付けて1つの irep にする
@@ -80,7 +94,7 @@ module FpgaCorpus
       stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, *gem_files(src, strict: strict), src)
       raise Error, "mrbc failed on #{src}: #{stderr}" unless st.success?
       # 命令の行と、irep の区切り ("irep"。mrbc のアドレスは毎回違うので捨てる)
-      dump = stdout.lines.filter_map { |l| l.start_with?("irep ") ? "irep\n" : (l =~ DUMP_LINE ? l.strip + "\n" : nil) }
+      dump = stdout.scrub.lines.filter_map { |l| l.start_with?("irep ") ? "irep\n" : (l =~ DUMP_LINE ? l.strip + "\n" : nil) }
       [File.binread(out), dump.join]
     end
   end

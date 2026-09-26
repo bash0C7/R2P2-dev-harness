@@ -556,8 +556,10 @@ class Integer
     s.rjust(width, "0")
   end
 
+  # 1バイト (CRuby と同じく 0..255。128 から上も UTF-8 にしない)
   def chr
-    "" << self
+    raise RangeError, "main out of char range" if self < 0 || self > 255
+    "".__push(self)
   end
 
   def to_i

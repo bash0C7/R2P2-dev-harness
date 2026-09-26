@@ -1,11 +1,12 @@
-# CPU コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog) の参照モデル。docs/spec.md §10「デバイス (P5)」。
+# CPU コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI) の参照モデル。docs/spec.md §10「デバイス (P5)」。
 #
 # コアは primitive の __io_read(addr) / __io_write(addr, value) でデバイスのレジスタを読み書きする (16bit の番地、
 # 値は 32bit の Integer)。RTL (fpga/rtl/mrb_dev.sv) と参照インタプリタ (ref_vm.rb) と、CRuby での突き合わせ
 # (oracle.rb が __io_read / __io_write をこのモデルで定義する) が同じ形で動く。
 #
 # 外からの入力は刺激 ([step, 番地, 値]) で与える: GPIO の EXT_LOW / EXT_HIGH はその step からの値 (最後が勝つ)、
-# UART の RX は1行が1バイトで、その step から読める (届いた順)、ADC の入力はその step からの値。
+# UART・I2C・SPI の返事 (RX) は1行が1バイトで、その step から読める (届いた順)、ADC の入力と I2C の応答する番地は
+# その step からの値。外のチップ (表示器など) への書き込みはトレースの O 行に出るだけ (表示は emu のデコーダー)。
 #
 # 各命令を始める前に tick を呼ぶ (ピンの標本、IRQ の事象、watchdog の期限)。RTL は S_FETCH の終わりで同じことをする。
 module FpgaDevices
@@ -47,9 +48,21 @@ module FpgaDevices
   WDT_CAUSED    = 0x173 # watchdog で再起動したか (1 / 0)
   WDT_REMAIN    = 0x174 # 期限までの µs (無効なら 0)
   WDT_REBOOT    = 0x175 # ms を書くとその後に再起動
+  I2C_ADDR      = 0x180 # 7bit の番地を書く (始め)
+  I2C_TX        = 0x181 # 1バイト送る
+  I2C_ACK       = 0x182 # その番地が応答するか (1 / 0)
+  I2C_STOP      = 0x183 # 終わり
+  I2C_RX        = 0x184 # 返事の次のバイト (刺激。無ければ 0xFF)
+  I2C_PRESENT   = 0x185 # 0x185..0x188: 応答する番地の bit (番地 32k..32k+31 が 0x185+k。刺激で与える)
+  I2C_PRESENT_DEFAULT = [0, 0x5000_0000, 0, 0].freeze # 0x3C (SSD1306) と 0x3E (AQM0802 の LCD)
+  SPI_TX        = 0x190 # 1バイト送る
+  SPI_RX        = 0x191 # 返事の次のバイト (刺激。無ければ 0xFF)
   # 刺激で与える番地 (レベル)
-  LEVEL_INPUTS = [GPIO_EXT_LOW, GPIO_EXT_HIGH, *(ADC_BASE...ADC_BASE + ADC_INPUTS)].freeze
-  REGS = [GPIO_DIR, GPIO_OUT, GPIO_PULLUP, GPIO_PULLDOWN, GPIO_OD, PWM_SEL, IRQ_PIN, IRQ_MASK, IRQ_DEBOUNCE, IRQ_ID].freeze
+  LEVEL_INPUTS = [GPIO_EXT_LOW, GPIO_EXT_HIGH, *(ADC_BASE...ADC_BASE + ADC_INPUTS), *(I2C_PRESENT...I2C_PRESENT + 4)].freeze
+  # 刺激で与える番地 (届いた順のバイトの列)
+  QUEUE_INPUTS = [UART_RX, I2C_RX, SPI_RX].freeze
+  REGS = [GPIO_DIR, GPIO_OUT, GPIO_PULLUP, GPIO_PULLDOWN, GPIO_OD, PWM_SEL, IRQ_PIN, IRQ_MASK, IRQ_DEBOUNCE, IRQ_ID,
+          I2C_ADDR].freeze
   MASK = 0xFFFF_FFFF
 
   def self.device?(addr)
@@ -62,7 +75,9 @@ module FpgaDevices
 
     # stim: [[step, addr, value], ...] (FpgaCompare.sort_stim の順)
     def initialize(stim = [])
-      @rx = stim.select { |_, a, _| a == UART_RX }.map { |s, _, v| [s, v & 0xFF] }
+      # 番地ごとの [[step, バイト], ...]
+      @queues = QUEUE_INPUTS.to_h { |q| [q, stim.select { |_, a, _| a == q }.map { |s, _, v| [s, v & 0xFF] }] }
+      @rx = @queues[UART_RX]
       # 番地ごとの [[step, 値], ...] (step の順。同じ step なら後が勝つ)
       @levels = Hash.new { |h, k| h[k] = [] }
       stim.each { |st, a, v| @levels[a] << [st, v & MASK] if LEVEL_INPUTS.include?(a) }
@@ -75,6 +90,8 @@ module FpgaDevices
       @regs = Hash.new(0)
       @rng = RNG_SEED
       @rp = step.zero? ? 0 : @rx.count { |s, _| s <= step }
+      # I2C と SPI の返事の読んだ数。外のチップはリセットされないので、watchdog の再起動でも初めからにしない
+      @qp ||= { I2C_RX => 0, SPI_RX => 0 }
       @pwm = {} # pin => [mHz, duty]
       @slots = Array.new(IRQ_SLOTS) # [pin, mask, debounce, 最後の時刻 (ms), 最後の事象]
       @queue = []
@@ -142,6 +159,13 @@ module FpgaDevices
       ((out & driven) | (released & ~driven)) & MASK
     end
 
+    # 応答する I2C の番地の k 番目の語 (刺激が無ければ既定)
+    def present_word(k, step)
+      rows = @levels[I2C_PRESENT + k]
+      return I2C_PRESENT_DEFAULT[k] if rows.empty? || rows[0][0] > step
+      level_input(I2C_PRESENT + k, step)
+    end
+
     def rx_avail(step)
       @rx.count { |s, _| s <= step } - @rp
     end
@@ -175,6 +199,16 @@ module FpgaDevices
         id, ev = @queue.shift
         (id << 8) | ev
       when WDT_CAUSED then @caused
+      when I2C_ACK
+        a = @regs[I2C_ADDR] & 0x7F
+        (present_word(a >> 5, step) >> (a & 31)) & 1
+      when I2C_PRESENT...I2C_PRESENT + 4 then present_word(addr - I2C_PRESENT, step)
+      when I2C_RX, SPI_RX
+        q = @queues[addr]
+        return 0xFF if q.count { |s, _| s <= step } <= @qp[addr]
+        b = q[@qp[addr]][1]
+        @qp[addr] += 1
+        b
       when WDT_REMAIN then @wdt ? [@wdt[0] - vtime, 0].max & MASK : 0
       when RNG
         x = @rng

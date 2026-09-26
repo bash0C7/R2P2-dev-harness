@@ -13,6 +13,9 @@ HARNESS_ROOT = File.expand_path("..", __dir__)
 load "#{MRUBY_ROOT}/build_config/picoruby-test.rb"
 
 MRuby.each_target do |conf|
+  # FPGA の変換器 (tools/fpga/rom.rb) はこの picoruby で走る。既定の 6.4MB のヒープでは、表示器の gem を入れた
+  # プログラム (SSD1306 のデモなど) の変換で NoMemoryError になったので、estalloc の 24bit の番地に収まる 16MB 弱にする
+  conf.cc.defines << "HEAP_SIZE=16000000"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-cdc-midi"
   conf.gem gemdir: "#{HARNESS_ROOT}/gems/picoruby-usb-peripheral-hid-mouse"

@@ -128,3 +128,18 @@ class Object
     true
   end
 end
+
+# GC はヒープが足りなくなった時にコアが動かす (コピー GC)。start は何もしない (いつ動いても結果は同じ)
+module GC
+  def self.start
+    nil
+  end
+end
+
+class Proc
+  # Proc.new { } はブロックの Proc そのもの
+  def self.new(&block)
+    raise ArgumentError, "tried to create Proc object without a block" unless block
+    block
+  end
+end

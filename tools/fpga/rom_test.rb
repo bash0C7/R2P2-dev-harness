@@ -45,7 +45,7 @@ class FpgaRomTest < Minitest::Test
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
-    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF],
+    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF], "ALIAS" => %w[NOP],
     "HASH" => %w[ARRAY], "HASHADD" => %w[ARRAY], "HASHCAT" => %w[SEND], "RANGE_INC" => %w[SEND], "RANGE_EXC" => %w[SEND]
   }.freeze
 

@@ -14,7 +14,7 @@ class PWM
   end
 
   # 0 は止める (設定は書かない)
-  def __push(freq)
+  def __pwm_push(freq)
     @frequency = freq
     __io_write(0x140, @pin)
     if freq > 0
@@ -27,19 +27,19 @@ class PWM
 
   def frequency(freq)
     raise TypeError, "wrong argument type" unless freq.is_a?(Float) || freq.is_a?(Integer)
-    __push(freq.to_f)
+    __pwm_push(freq.to_f)
     freq.to_f
   end
 
   def period_us(period_us)
     raise ArgumentError, "period must be positive" if period_us <= 0
     freq = 1000000.0 / period_us
-    __push(freq)
+    __pwm_push(freq)
     freq
   end
 
   # duty は 0..100 に丸め、丸めた値を返す
-  def __set_duty(duty)
+  def __pwm_duty(duty)
     duty = 0.0 if duty < 0.0
     duty = 100.0 if duty > 100.0
     @duty = duty
@@ -52,10 +52,10 @@ class PWM
 
   def duty(duty)
     raise TypeError, "wrong argument type" unless duty.is_a?(Float) || duty.is_a?(Integer)
-    __set_duty(duty.to_f)
+    __pwm_duty(duty.to_f)
   end
 
   def pulse_width_us(pulse_width)
-    __set_duty(pulse_width.to_f / 10000.0 * @frequency)
+    __pwm_duty(pulse_width.to_f / 10000.0 * @frequency)
   end
 end

@@ -16,6 +16,7 @@
 /* verilator lint_off SYNCASYNCNET */
 module mrb_run_tb;
   import mrb_pkg::*;
+  parameter int HEAP_WORDS = HEAP_SIZE; // ファズは小さいヒープで GC を突く (rake が -G で渡す)
 
   localparam int PC_BITS  = 14;
   localparam int NREGS    = RF_SIZE; // 参照インタプリタ (ref_vm.rb) と同じ大きさ
@@ -31,12 +32,16 @@ module mrb_run_tb;
   logic [15:0] rx_count;
   logic [7:0]  rx_bytes [256];
   logic [11:0] adc_val [5];
+  logic [15:0] i2c_rx_count, spi_rx_count;
+  logic [7:0]  i2c_rx_bytes [256], spi_rx_bytes [256];
+  logic [31:0] i2c_present [4];
   logic ms_tick = 1'b0;
 
   /* verilator lint_off PINCONNECTEMPTY */
-  mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
+  mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS), .HEAP_WORDS(HEAP_WORDS)) dut (
     .clk, .rst_n, .en(1'b1), .ms_tick, .in_val, .out_val, .halted, .error,
     .ext_low, .ext_high, .rx_count, .rx_bytes, .adc_val,
+    .i2c_rx_count, .i2c_rx_bytes, .i2c_present, .spi_rx_count, .spi_rx_bytes,
     .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */
@@ -53,13 +58,27 @@ module mrb_run_tb;
 // step が進むたびに明示的に呼ぶ (always_comb の再評価の時期にシミュレータ差があるので頼らない)
 // 命令を始める前 (S_FETCH) に呼ぶので、1命令が数 cycle かかっても (primitive がデバイスを読んでも) その命令の step の値が見える
 task automatic update_inputs();
-  int n;
+  int n, ni, ns;
   for (int p = 0; p < NPORTS; p++) in_val[p] = 0;
   ext_low  = 0;
   ext_high = 0;
   for (int i = 0; i < 5; i++) adc_val[i] = 0;
+  // 応答する I2C の番地: 刺激が無ければ tools/fpga/devices.rb の既定 (0x3C と 0x3E)
+  i2c_present[0] = 0; i2c_present[1] = 32'h5000_0000; i2c_present[2] = 0; i2c_present[3] = 0;
+  ni = 0;
+  ns = 0;
   n = 0;
   for (int i = 0; i < nstim; i++) begin
+    if (stim_port[i] == 'h184) begin // I2C の返事
+      if (ni < 256) i2c_rx_bytes[ni] = 8'(stim_val[i]);
+      if (stim_step[i] <= step) i2c_rx_count = 16'(ni + 1);
+      ni++;
+    end
+    if (stim_port[i] == 'h191) begin // SPI の返事
+      if (ns < 256) spi_rx_bytes[ns] = 8'(stim_val[i]);
+      if (stim_step[i] <= step) spi_rx_count = 16'(ns + 1);
+      ns++;
+    end
     if (stim_port[i] == 'h121) begin // UART の RX: 届いた順に並べ、届いた数
       if (n < 256) rx_bytes[n] = 8'(stim_val[i]);
       if (stim_step[i] <= step) rx_count = 16'(n + 1);
@@ -70,6 +89,7 @@ task automatic update_inputs();
       if (stim_port[i] == 'h106) ext_low = stim_val[i];
       if (stim_port[i] == 'h107) ext_high = stim_val[i];
       if (stim_port[i] >= 'h150 && stim_port[i] <= 'h154) adc_val[stim_port[i] - 'h150] = 12'(stim_val[i]);
+      if (stim_port[i] >= 'h185 && stim_port[i] <= 'h188) i2c_present[stim_port[i] - 'h185] = stim_val[i];
     end
   end
 endtask
@@ -85,7 +105,7 @@ endtask
   always @(negedge clk) begin
     if (rst_n) begin
       // watchdog の再起動 (コアはリセットされ、この step の命令は pc 0 からやり直す)
-      if (dut.reboot) $fdisplay(fd, "B %0d", step);
+      if (dut.reboot && step < max_steps) $fdisplay(fd, "B %0d", step); // 上限の step は参照と同じく L だけ
       if (dut.core.retire) begin
         if (step >= max_steps) begin
           $fdisplay(fd, "L %0d", step);
@@ -145,6 +165,9 @@ endtask
     #1; // mrb_soc の initial (ROM を全 bit 1 で埋める) より後に読む
     $readmemh(rom_file, dut.rom);
     rx_count = 0;
+    i2c_rx_count = 0;
+    spi_rx_count = 0;
+    for (int i = 0; i < 256; i++) begin i2c_rx_bytes[i] = 0; spi_rx_bytes[i] = 0; end
     for (int i = 0; i < 256; i++) rx_bytes[i] = 0;
     update_inputs();
     fd = $fopen(trace_file, "w");

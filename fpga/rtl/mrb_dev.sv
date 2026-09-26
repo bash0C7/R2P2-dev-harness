@@ -1,11 +1,13 @@
-// コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog)。番地と意味は tools/fpga/devices.rb (参照モデル) と同じ。
+// コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI)。番地と意味は tools/fpga/devices.rb (参照モデル) と同じ。
 // コアは primitive の __io_read / __io_write で読み書きする (16bit の番地、0x100 から上)。
 // 読み出しは組み合わせ。re は読んだ cycle のパルス (UART の RX、RNG、IRQ の登録と事象は読むと進む)。
 // tick は命令を始める前 (コアの S_FETCH の en の cycle) のパルスで、ピンを標本にして IRQ の事象を積み、watchdog の期限を見る。
 // 期限を過ぎていれば reboot を 1 cycle 出し (soc がコアとポートをリセットする)、自分も初めからにする (watchdog の印は残す)。
 //
 // 外からの入力: ext_low / ext_high (GPIO のピンを外から L / H にする)、rx_count / rx_bytes (UART が受けたバイトの数と、
-// 届いた順のバイト列)、adc_val (ADC の入力 0..4 の 12bit)。シミュレーションのテストベンチが刺激から作る。実機では 0。
+// 届いた順のバイト列)、adc_val (ADC の入力 0..4 の 12bit)、i2c_rx / spi_rx (外のチップの返事のバイト列)、
+// i2c_present (応答する I2C の番地の bit)。シミュレーションのテストベンチが刺激から作る。実機では 0。
+// I2C / SPI の書き込み (番地と送るバイト) はコアの書き込みとしてトレースに出るだけ (表示器はそれを読むデコーダーが画面にする)。
 // 外への出力: gpio_dir / gpio_out / gpio_level (ピン)、tx_valid / tx_byte (UART の送信)、pwm_running (PWM が動いているピン)。
 `timescale 1ns / 1ps
 // 値のタグ (wdata の上位) と時計の上位は使わない
@@ -29,6 +31,11 @@ module mrb_dev
   input  logic [15:0]         rx_count,
   input  logic [7:0]          rx_bytes [RX_MAX],
   input  logic [11:0]         adc_val [5],
+  input  logic [15:0]         i2c_rx_count,
+  input  logic [7:0]          i2c_rx_bytes [RX_MAX],
+  input  logic [31:0]         i2c_present [4],
+  input  logic [15:0]         spi_rx_count,
+  input  logic [7:0]          spi_rx_bytes [RX_MAX],
   output logic [31:0]         gpio_dir,
   output logic [31:0]         gpio_out,
   output logic [31:0]         gpio_level,
@@ -47,7 +54,9 @@ module mrb_dev
                           IRQ_PIN = 16'h160, IRQ_MASK = 16'h161, IRQ_DEBOUNCE = 16'h162, IRQ_REGISTER = 16'h163,
                           IRQ_ID = 16'h164, IRQ_UNREG = 16'h165, IRQ_EVENT = 16'h166,
                           WDT_ENABLE = 16'h170, WDT_DISABLE = 16'h171, WDT_FEED = 16'h172, WDT_CAUSED = 16'h173,
-                          WDT_REMAIN = 16'h174, WDT_REBOOT = 16'h175;
+                          WDT_REMAIN = 16'h174, WDT_REBOOT = 16'h175,
+                          I2C_ADDR = 16'h180, I2C_ACK = 16'h182, I2C_RX = 16'h184, I2C_PRESENT = 16'h185,
+                          SPI_RX = 16'h191;
   localparam int NSLOT = 16;  // IRQ の枠 (RP2040 の port と同じ)
   localparam int QLEN  = 32;  // 事象の列 (31 で満杯)
 
@@ -104,6 +113,12 @@ module mrb_dev
   logic        wdt_due;
   assign wdt_due = wdt_en && vtime >= wdt_dead;
 
+  // ---- I2C / SPI: 番地と、返事の読んだ数 (外のチップはリセットされないので watchdog の再起動でも残す)
+  logic [31:0] i2c_addr;
+  logic [15:0] i2c_rp, spi_rp;
+  logic        i2c_ack;
+  assign i2c_ack = i2c_present[i2c_addr[6:5]][i2c_addr[4:0]];
+
   logic [31:0] adc_r;
   always_comb begin
     adc_r = 32'd0;
@@ -140,6 +155,12 @@ module mrb_dev
       IRQ_EVENT:     rdata = {TAG_INT, q_empty ? 32'hFFFF_FFFF : {19'd0, q[9*qh +: 5], 4'd0, q[9*qh + 5 +: 4]}}; // id << 8 | 事象
       WDT_CAUSED:    rdata = {TAG_INT, 31'd0, caused};
       WDT_REMAIN:    rdata = {TAG_INT, wdt_en && wdt_dead > vtime ? 32'(wdt_dead - vtime) : 32'd0};
+      I2C_ADDR:      rdata = {TAG_INT, i2c_addr};
+      I2C_ACK:       rdata = {TAG_INT, 31'd0, i2c_ack};
+      I2C_RX:        rdata = {TAG_INT, i2c_rx_count == i2c_rp ? 32'd255 : {24'd0, i2c_rx_bytes[i2c_rp[7:0]]}};
+      I2C_PRESENT, I2C_PRESENT + 16'd1, I2C_PRESENT + 16'd2, I2C_PRESENT + 16'd3:
+                     rdata = {TAG_INT, i2c_present[addr[1:0] - 2'd1]};
+      SPI_RX:        rdata = {TAG_INT, spi_rx_count == spi_rp ? 32'd255 : {24'd0, spi_rx_bytes[spi_rp[7:0]]}};
       default:       rdata = V_NIL;
     endcase
   end
@@ -180,6 +201,9 @@ module mrb_dev
       wdt_ms    <= '0;
       caused    <= 1'b0;
       reboot    <= 1'b0;
+      i2c_addr  <= '0;
+      i2c_rp    <= '0;
+      spi_rp    <= '0;
     end else begin
       reboot <= 1'b0;
       if (tick && wdt_due) begin
@@ -206,6 +230,7 @@ module mrb_dev
         unreg     <= 1'b0;
         have_last <= 1'b0;
         wdt_en    <= 1'b0;
+        i2c_addr  <= '0;
       end else if (tick) begin
         // ピンの事象 (RP2040 の gpio_irq_callback と同じ): ピンの順に、そのピンの枠の mask の和で絞り、最初に重なる枠へ
         begin : irq_tick
@@ -278,6 +303,7 @@ module mrb_dev
               wdt_ms   <= wdata[31:0];
             end
             WDT_DISABLE:   wdt_en <= 1'b0;
+            I2C_ADDR:      i2c_addr <= wdata[31:0];
             WDT_FEED:      if (wdt_en) wdt_dead <= vtime + 64'(wdt_ms) * 64'd1000;
             default: ;
           endcase
@@ -293,6 +319,8 @@ module mrb_dev
           se[4*free_i[3:0] +: 4]    <= 4'd0;
         end
         if (re && addr == IRQ_EVENT && !q_empty) qh <= qh + 5'd1;
+        if (re && addr == I2C_RX && i2c_rx_count != i2c_rp) i2c_rp <= i2c_rp + 16'd1;
+        if (re && addr == SPI_RX && spi_rx_count != spi_rp) spi_rp <= spi_rp + 16'd1;
       end
     end
   end

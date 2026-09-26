@@ -371,7 +371,7 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value, :floats, :float_at
+                :method_names, :noops, :aliases, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value, :floats, :float_at
     attr_accessor :class_live # クラスの番号 -> メソッド表に行を置くか (live_classes)
     attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
@@ -388,6 +388,7 @@ module FpgaRom
       end
       @method_names = {} # メソッドの irep の番号 -> 名前 (super が使う)
       @noops = {}        # クラスの本体の attr_* / include / private など (実行時は何もしない) の場所 -> true
+      @aliases = {}      # alias の場所 -> [クラス, 新しい名前, メソッドの irep]
       @cref = {}         # irep の番号 -> 字句の入れ子のクラスの名前 (内側から。一番外は含めない)。Ruby の cref
       @globals = []      # ポートでないグローバル変数の名前 (定数の表に置き、始めに nil にする)
       @strings = []      # pool の文字列 (同じ中身は1つ、出てきた順)
@@ -632,6 +633,15 @@ module FpgaRom
         when "RANGE_INC" then use.call("__range_inc")
         when "RANGE_EXC" then use.call("__range_exc")
         when "EXEC", "BLOCK", "LAMBDA" then todo << ir.reps[ops[1]].index
+        when "ALIAS"
+          owner, name, m = ctx.aliases[site_key(ir, decoded[i].index(insn))]
+          next unless recv[owner.id]
+          if used[name]
+            todo << m.index
+          else
+            waiting[name] ||= []
+            waiting[name] << m.index
+          end
         when "TDEF", "SDEF"
           owner = ctx.scope[ir.index]
           # def self.x はクラスの値が、def x はオブジェクトができ得る時だけ
@@ -788,6 +798,17 @@ module FpgaRom
         scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
         ctx.method_names[m.index] = irep.syms[ops[1]]
         analyze(m, scope, ctx, cref)
+      when "ALIAS"
+        # alias new old: クラスの本体で、同じクラスで先に def したメソッドだけ (静的に表の行を足す。実行時は何もしない)
+        unless ctx.bodies[irep.index]
+          raise Error, "#{source}: alias at #{where(irep, insn)} is only supported in a class body"
+        end
+        new_name = irep.syms[ops[0]]
+        old = irep.syms[ops[1]]
+        m = scope.methods[old]
+        raise Error, "#{source}: alias #{new_name} #{old} at #{where(irep, insn)} must name a method defined earlier in the same class" unless m
+        scope.methods[new_name] = m
+        ctx.aliases[site_key(irep, k)] = [scope, new_name, m]
       when "SDEF"
         d = prev_def(insns, k, ops[0])
         unless ctx.bodies[irep.index] && d && d.name == "LOADSELF"
@@ -845,10 +866,15 @@ module FpgaRom
         when "include"
           argc.times do |j|
             d = prev_def(insns, k, ops[0] + 1 + j)
-            raise Error, "#{source}: include at #{where(irep, insn)} takes module constants only" unless d && d.name == "GETCONST"
-            mname = irep.syms[d.operands[1]]
+            raise Error, "#{source}: include at #{where(irep, insn)} takes module constants only" unless d && %w[GETCONST GETMCNST].include?(d.name)
             mod = nil
-            ctx.lexical_names(cref, mname).each { |n| mod ||= ctx.klass_named(n) }
+            if d.name == "GETMCNST" # include A::B
+              mname = const_path(ctx, irep, insns, k, ops[0] + 1 + j)
+              mod = mname && ctx.klass_named(mname)
+            else
+              mname = irep.syms[d.operands[1]]
+              ctx.lexical_names(cref, mname).each { |n| mod ||= ctx.klass_named(n) }
+            end
             raise Error, "#{source}: #{mname} at #{where(irep, insn)} is not a known module" unless mod && mod.is_module
             scope.includes << mod
             ctx.class_deps[site_key(irep, insns.index(d))] = scope
@@ -1198,6 +1224,7 @@ module FpgaRom
 
     # クラスの本体の attr_* / include / private など: 実行時は nil を置くだけ
     return Word.new(pc, insn, FpgaIsa.op("LOADNIL").num, a, 0, 0, irep) if ctx.noops[site_key(irep, k)]
+    return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if name == "ALIAS" # 表の行は analyze が足した
 
     # A::X: 入れ物を GETCONST / GETMCNST の連なりから解き、クラスならその即値、定数なら番号
     if name == "GETMCNST" || name == "SETMCNST"

@@ -4,7 +4,7 @@
 // ROM は tools/fpga/rom.rb (PicoRuby の変換器) が作る 48bit 固定長語 ({op, a, b, c})。命令の意味は
 // tools/fpga/ref_vm.rb と同じ (docs/spec.md §10)。ずれたら rake fpga:check / fpga:fuzz が落ちる。
 //
-// 値 = {tag[3:0], value[31:0]}。OBJ はヒープ (HEAP_SIZE 語、半分ずつ使う) の語アドレスで、クラスは見出しの上位 16bit。
+// 値 = {tag[3:0], value[31:0]}。OBJ はヒープ (HEAP_WORDS 語、半分ずつ使う) の語アドレスで、クラスは見出しの上位 16bit。
 // レジスタはレジスタ窓: R[i] はレジスタファイルの bp + i。呼び出し先の bp は呼び出し元の bp + a。
 // cp は今のフレームが Proc (ブロック) の時のその参照。外側の変数は Proc の連鎖でたどる。
 // env は今のフレームの中で Proc を作った時にできるヒープのオブジェクトで、フレームが生きている間は bp を指し、
@@ -24,7 +24,8 @@ module mrb_core
   import mrb_fpconv_pkg::*;
 #(
   parameter int NREGS   = RF_SIZE, // レジスタファイルの大きさ (全フレームで共有)
-  parameter int PC_BITS = 14
+  parameter int PC_BITS = 14,
+  parameter int HEAP_WORDS = HEAP_SIZE // ヒープの語数 (2 の冪。半分ずつ使う)
 ) (
   input  logic                clk,
   input  logic                rst_n,
@@ -58,8 +59,8 @@ module mrb_core
   localparam int RB   = $clog2(NREGS);
   localparam int SB   = $clog2(STACK_DEPTH + 1);
   localparam int CB   = $clog2(NCONST);
-  localparam int HB   = $clog2(HEAP_SIZE);
-  localparam int HALF = HEAP_SIZE / 2;
+  localparam int HB   = $clog2(HEAP_WORDS);
+  localparam int HALF = HEAP_WORDS / 2;
   localparam logic [VAL_BITS-1:0] V_NIL = {TAG_NIL, {INT_BITS{1'b0}}};
   localparam logic signed [INT_BITS-1:0] INT_MIN = {1'b1, {(INT_BITS-1){1'b0}}};
   localparam logic [2:0] X_RAISE = 3'd4; // x_kind: 例外を投げる (rescue と ensure を探し、無ければフレームを畳む)
@@ -181,7 +182,7 @@ module mrb_core
   logic [15:0]         obj_n;     // new: インスタンス変数の数
 
   // ヒープ
-  logic [VAL_BITS-1:0] heap [HEAP_SIZE];
+  logic [VAL_BITS-1:0] heap [HEAP_WORDS];
   logic                space;     // 使っている半分
   logic [HB:0]         hp;        // 次に確保する語
   logic [16:0]         need;      // 確保する語数 (半分より大きければ GC しても入らずエラー)
@@ -1354,7 +1355,7 @@ module mrb_core
 
   localparam logic [HB:0] HALF_W = (HB+1)'(HALF);
   logic [HB:0] limit;
-  assign limit = space ? (HB+1)'(HEAP_SIZE) : HALF_W;
+  assign limit = space ? (HB+1)'(HEAP_WORDS) : HALF_W;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin

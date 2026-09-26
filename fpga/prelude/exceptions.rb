@@ -46,6 +46,8 @@ class StopIteration < IndexError; end
 class RangeError < StandardError; end
 class FloatDomainError < RangeError; end
 class LocalJumpError < StandardError; end
+class IOError < StandardError; end
+class EOFError < IOError; end
 
 class Object
   # raise / raise "msg" / raise Cls / raise Cls, "msg" / raise obj。引数なしは今 rescue している例外 ($!) を投げ直す
