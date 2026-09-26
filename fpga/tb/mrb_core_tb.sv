@@ -17,12 +17,14 @@ module mrb_core_tb;
   logic halted, error;
   logic [7:0] no_rx [256];
   initial for (int i = 0; i < 256; i++) no_rx[i] = 8'd0;
+  logic [11:0] adc [5];
+  initial for (int i = 0; i < 5; i++) adc[i] = 12'(1000 + i);
 
   /* verilator lint_off PINCONNECTEMPTY */
   mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
     .clk, .rst_n, .en(1'b1), .ms_tick(1'b1), .in_val, .out_val, .halted, .error,
-    .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx),
-    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte()
+    .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx), .adc_val(adc),
+    .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
@@ -1435,6 +1437,65 @@ module mrb_core_tb;
     expect_reg(3, vint(19));
     expect_reg(4, vint(1500));
     expect_reg(8, vint(9));
+
+    // IRQ (devices.rb の IRQ_*): ピン 7 の EDGE を登録し、出力で上げ下げして事象の列から取る。ADC の入力 1 (テストベンチが 1001)
+    begin_test("irq events and adc");
+    method_entry(CLS_NIL, 20, tgt_prim(PR_IOWRITE));
+    method_entry(CLS_NIL, 21, tgt_prim(PR_IOREAD));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI16, 2, 16'h160));               // 1
+    prog.push_back(w(OP_LOADI_7, 3));                        // 2
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 3: IRQ_PIN = 7
+    prog.push_back(w(OP_LOADI16, 2, 16'h161));               // 4
+    prog.push_back(w(OP_LOADI8, 3, 12));                     // 5
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 6: IRQ_MASK = EDGE_FALL | EDGE_RISE
+    prog.push_back(w(OP_LOADI16, 5, 16'h163));               // 7
+    prog.push_back(w(OP_SSEND, 4, 21, 1));                   // 8: R4 = 登録した id (1)
+    prog.push_back(w(OP_LOADI16, 2, 16'h100));               // 9
+    prog.push_back(w(OP_LOADI8, 3, 8'h80));                  // 10
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 11: GPIO_DIR = ピン 7
+    prog.push_back(w(OP_LOADI16, 2, 16'h101));               // 12
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 13: GPIO_OUT = ピン 7 を H (次の tick で EDGE_RISE)
+    prog.push_back(w(OP_LOADI_0, 3));                        // 14
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 15: L (EDGE_FALL)
+    prog.push_back(w(OP_LOADI16, 7, 16'h166));               // 16
+    prog.push_back(w(OP_SSEND, 6, 21, 1));                   // 17: R6 = 1 << 8 | 8
+    prog.push_back(w(OP_LOADI16, 9, 16'h166));               // 18
+    prog.push_back(w(OP_SSEND, 8, 21, 1));                   // 19: R8 = 1 << 8 | 4
+    prog.push_back(w(OP_LOADI16, 11, 16'h166));              // 20
+    prog.push_back(w(OP_SSEND, 10, 21, 1));                  // 21: R10 = -1 (空)
+    prog.push_back(w(OP_LOADI16, 13, 16'h151));              // 22
+    prog.push_back(w(OP_SSEND, 12, 21, 1));                  // 23: R12 = ADC の入力 1
+    prog.push_back(w(OP_STOP));                              // 24
+    run();
+    expect_halt();
+    expect_reg(4, vint(1));
+    expect_reg(6, vint(264));
+    expect_reg(8, vint(260));
+    expect_reg(10, vint(-1));
+    expect_reg(12, vint(1001));
+
+    // watchdog: 0ms で有効にすると次の命令の前に再起動し (コアはリセット)、pc 0 からやり直す。2回目は WDT_CAUSED が 1
+    begin_test("watchdog reboots the core");
+    method_entry(CLS_NIL, 20, tgt_prim(PR_IOWRITE));
+    method_entry(CLS_NIL, 21, tgt_prim(PR_IOREAD));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI16, 2, 16'h173));               // 1
+    prog.push_back(w(OP_SSEND, 1, 21, 1));                   // 2: R1 = WDT_CAUSED
+    prog.push_back(w(OP_LOADI_1, 2));                        // 3
+    prog.push_back(w(OP_EQ, 1));                             // 4: R1 = (R1 == 1)
+    prog.push_back(w(OP_JMPIF, 1, 11));                      // 5
+    prog.push_back(w(OP_LOADI16, 2, 16'h170));               // 6
+    prog.push_back(w(OP_LOADI_0, 3));                        // 7
+    prog.push_back(w(OP_SSEND, 1, 20, 2));                   // 8: WDT_ENABLE = 0 ms
+    prog.push_back(w(OP_JMP, 0, 9));                         // 9: (始める前に再起動する)
+    prog.push_back(w(OP_NOP));                               // 10
+    prog.push_back(w(OP_LOADI_7, 5));                        // 11
+    prog.push_back(w(OP_STOP));                              // 12
+    run();
+    expect_halt();
+    expect_reg(1, VTRUE);
+    expect_reg(5, vint(7));
 
     begin_test("rescue compares classes");
     method_entry(ISA_BIT | CLS_INT, CLS_INT, 16'd1);

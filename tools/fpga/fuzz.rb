@@ -229,7 +229,7 @@ module FpgaFuzz
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(22)
+      pick = rng.rand(23)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -363,18 +363,53 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("JMP"), 0, words.size + 2, 0)
         catches << [FpgaIsa::CATCH_RESCUE, site + 1, site + 2, words.size]
         words << encode(FpgaIsa.op("EXCEPT"), 15, 0, 0)
-      when 20 # デバイス (devices.rb): レジスタを読むか書く (GPIO、時計、UART、RNG、ポート、知らない番地)。書く値はたまに配列や nil
+      when 20 # デバイス (devices.rb): レジスタを読むか書く (GPIO、時計、UART、RNG、PWM、ADC、IRQ、watchdog、ポート、知らない番地)。
+        # 書く値はたまに配列や nil。watchdog は小さい ms で有効にすると再起動する
         addr = [0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x110, 0x111, 0x112, 0x120, 0x121, 0x122, 0x130,
-                0, 1, 2, 3, 0x1234, 0x20000].sample(random: rng)
+                0x140, 0x141, 0x142, 0x143, 0x150, 0x152, 0x154, 0x160, 0x161, 0x162, 0x163, 0x163, 0x164, 0x165, 0x166, 0x166,
+                0x170, 0x171, 0x172, 0x173, 0x174, 0x175, 0, 1, 2, 3, 0x1234, 0x20000].sample(random: rng)
         words << encode(FpgaIsa.op("LOADI32"), 13, addr >> 16, addr & 0xFFFF)
         if rng.rand(2).zero?
           words << encode(FpgaIsa.op("SSEND"), 12, S[:ior], 1)
           words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
         else
-          v = rng.rand(1 << 32)
+          # IRQ のピン・mask・id と PWM のピンは小さい値が多くないと当たらない。watchdog は数 ms
+          v = [0x160, 0x161, 0x164, 0x140, 0x170, 0x175, 0x162].include?(addr) && rng.rand(4) > 0 ? rng.rand(18) : rng.rand(1 << 32)
           words << (rng.rand(8).zero? ? encode(FpgaIsa.op("MOVE"), 14, (ints + arrs + [15]).sample(random: rng), 0) :
                                         encode(FpgaIsa.op("LOADI32"), 14, v >> 16, v & 0xFFFF))
           words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
+        end
+      when 22 # IRQ と watchdog: 小さいピンを登録し、出力で上げ下げして事象を取る。ときどき解除、watchdog を数 ms で有効 / feed
+        io_w = lambda do |addr, v|
+          words << encode(FpgaIsa.op("LOADI16"), 13, addr, 0)
+          words << encode(FpgaIsa.op("LOADI16"), 14, v, 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
+        end
+        io_r = lambda do |addr|
+          words << encode(FpgaIsa.op("LOADI16"), 13, addr, 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:ior], 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        end
+        pin = rng.rand(4)
+        case rng.rand(6)
+        when 0
+          io_w.(0x160, pin)
+          io_w.(0x161, rng.rand(16))
+          io_w.(0x162, rng.rand(3))
+          io_r.(0x163)
+        when 1
+          io_w.(0x100, rng.rand(16))
+          io_w.(0x101, rng.rand(16))
+          io_r.(0x166)
+        when 2
+          io_r.(0x166)
+          io_r.(0x166)
+        when 3
+          io_w.(0x164, rng.rand(18))
+          io_r.(0x165)
+        else
+          io_w.([0x170, 0x172, 0x172, 0x171, 0x175].sample(random: rng), rng.rand(4))
+          io_r.([0x173, 0x174].sample(random: rng))
         end
       when 21 # Float: LOADF か Integer#to_f か String#__strtod で作り、primitive を1つ送る (引数は Float・整数・配列)
         words << case rng.rand(4)
@@ -619,6 +654,7 @@ module FpgaFuzz
     rows = Array.new(rng.rand(4)) { [rng.rand(40), 2, rng.rand(3) - 1] }
     rng.rand(3).times { rows << [rng.rand(400), [0x106, 0x107].sample(random: rng), rng.rand(1 << 32) - (1 << 31)] }
     rng.rand(6).times { rows << [rng.rand(2000), 0x121, rng.rand(256)] }
+    rng.rand(3).times { rows << [rng.rand(1000), 0x150 + rng.rand(5), rng.rand(1 << 13)] } # ADC (12bit を越える値も)
     rows
   end
 end

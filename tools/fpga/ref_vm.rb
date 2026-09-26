@@ -51,7 +51,20 @@ class FpgaRefVm
   # stim: [[step, port, value], ...]。step 以降の命令から port の入力が value になる。
   def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [])
     @rom = words
-    @regs = Array.new(nregs) { NIL }
+    @nregs = nregs
+    # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
+    @stim = FpgaCompare.sort_stim(stim)
+    @dev = FpgaDevices::Bank.new(@stim) # GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog
+    @trace = []
+    @stats = Hash.new(0)
+    boot(0)
+  end
+
+  # 電源を入れた時と watchdog の再起動 (コアのリセット): レジスタ・ヒープ・定数・ポート・仮想の時計を初めから。
+  # step はデバイスの刺激のために数え続ける (仮想の時計はこの step から)
+  def boot(step)
+    @boot_step = step
+    @regs = Array.new(@nregs) { NIL }
     @call_kw = 0 # 今の呼び出しのキーワード引数の印 (c の bit 8)
     @kw = 0      # 今のフレームの印 (ENTER が見る)
     @io = Array.new(FpgaIoMap::NPORTS) { NIL }
@@ -72,12 +85,12 @@ class FpgaRefVm
     @hcount = 0
     @tbase = 0  # メソッド表 (TABLE で決まる)
     @tsize = 0
-    # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
-    @stim = FpgaCompare.sort_stim(stim)
-    @dev = FpgaDevices::Bank.new(@stim) # GPIO、時間、UART、RNG
     @slept = 0 # sleep した時間 (µs)。仮想の時計 = 始めた命令の数 + これ
-    @trace = []
-    @stats = Hash.new(0)
+  end
+
+  # 仮想の時計 (µs): この step までに始めた命令の数 (started は今の命令を含めるか) + sleep した時間
+  def vtime(step, started)
+    step - @boot_step + (started ? 1 : 0) + @slept
   end
 
   attr_reader :trace, :regs, :io, :consts, :heap, :stats
@@ -95,6 +108,14 @@ class FpgaRefVm
       if step >= max_steps
         @trace << "L #{step}"
         break
+      end
+      # 命令を始める前にデバイスが見る (IRQ の事象、watchdog)。期限を過ぎていれば再起動して pc 0 から
+      if @dev.tick(step, vtime(step, false)) == :reboot
+        @trace << "B #{step}"
+        @stats[:reboot] += 1
+        boot(step)
+        pc = 0
+        @dev.tick(step, vtime(step, false))
       end
       # ROM の空きは全 bit 1 (op 0xff、未対応命令) で埋まっている。ハードウェアと同じくエラーになる
       op, a, b, c = FpgaRom.unpack(@rom[pc] || FpgaRom::PAD)
@@ -1131,7 +1152,8 @@ class FpgaRefVm
       v = if n < FpgaIoMap::NPORTS
             FpgaIoMap::IN_MASK[n] == 1 ? input(step, n) : @io[n]
           elsif FpgaDevices.device?(n)
-            r = @dev.read(n, step, step + 1 + @slept)
+            r = @dev.read(n, step, vtime(step, true))
+            @stats[:irq_event] += 1 if n == FpgaDevices::IRQ_EVENT && r != MASK
             r.nil? ? NIL : int(r)
           else
             NIL
@@ -1143,7 +1165,7 @@ class FpgaRefVm
     fault! if ref?(v) || (n < FpgaIoMap::NPORTS && FpgaIoMap::IN_MASK[n] == 1)
     core_error!(FpgaIsa::CERR_TYPE, v) if FpgaDevices.device?(n) && !int?(v)
     @io[n] = v if n < FpgaIoMap::NPORTS
-    @dev.write(n, v[1]) if FpgaDevices.device?(n)
+    @dev.write(n, v[1], vtime(step, true)) if FpgaDevices.device?(n)
     set(step, a, v) # RTL と同じく W 行が先
     @trace << format("O %d %d %d %08x", step, n, v[0], v[1])
     pc + 1

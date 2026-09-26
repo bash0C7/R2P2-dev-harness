@@ -46,10 +46,13 @@ class FpgaRefVmTest < Minitest::Test
 
   # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、ピンへの代入の系列を比べる。止まるプログラムは
   # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
+  # watchdog の再起動は CRuby では表せないので比べない
+  CRUBY_CANNOT = %w[watchdog].freeze
+
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
-      next if File.file?(File.join(CORPUS, "#{name}.stim"))
+      next if File.file?(File.join(CORPUS, "#{name}.stim")) || CRUBY_CANNOT.include?(name)
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
       trace = FpgaRefVm.new(words).run(200_000)
       ours = FpgaCompare.outputs(trace)

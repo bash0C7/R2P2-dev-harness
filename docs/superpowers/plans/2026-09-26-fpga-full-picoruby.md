@@ -237,7 +237,32 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
   (`LOADF`、FPGA だけの命令)。Integer の演算の primitive は Float の引数も受ける。`to_s` / `format("%.2f")` / `to_f` の文字列との
   変換も primitive (表示の規則は CRuby / PicoRuby と同じ。変換は多倍長の整数だけで正確に、`mrb_fpconv_pkg.sv`)。`Math` はプレリュード (primitive の上)。NaN・Infinity を Integer にすると
   FloatDomainError、32bit に入らなければ RangeError (黙って折り返さない)
-- **P5c** PWM、ADC、IRQ (ピンの変化の割り込みを、命令の区切りで Ruby の callback に)
+- **P5c** PWM、ADC、IRQ (ピンの変化の割り込みを、命令の区切りで Ruby の callback に)、watchdog、io/console
+- **P5c の設計。** どれも mrb_dev のレジスタと、PicoRuby と同じ API の FPGA 版 gem (fpga/gems)。
+  - **命令の区切りで見る (tick)。** デバイスは各命令を始める前 (参照は step の頭、RTL は S_FETCH の終わりの en の cycle) に
+    ピンの値を標本にし、IRQ の事象と watchdog の期限を調べる。その時の仮想の時計は「それまでに始めた命令の数 + sleep」
+  - **IRQ (0x160..0x166)。** RP2040 の port (picoruby-irq/ports/rp2040/irq.c) と同じ: 16 個の枠、事象の列は 32 (31 で満杯、
+    溢れたら捨てる)。0x160 ピン、0x161 事象の mask (LEVEL_LOW 1、LEVEL_HIGH 2、EDGE_FALL 4、EDGE_RISE 8)、0x162 debounce (ms) を
+    書いてから 0x163 を読むと登録 (id 1..16、空きが無ければ -1)。0x164 に id を書くと解除 (0x165 で登録されていたか)。
+    0x166 を読むと列の先頭を取る (id << 8 | 事象、空なら -1)。事象は tick ごとに、前の標本との差 (EDGE) と今の値 (LEVEL) を、
+    そのピンで有効な mask の和で絞ったもの。ピンの最初の枠で mask と重なれば、debounce (同じ事象が debounce ms 以内なら捨てる)
+    の後に列に積む。LEVEL は条件が続く間 tick ごとに積む (RP2040 と同じく列はすぐ埋まる)。
+    `IRQ.process` / `peek_event` / `register` / `unregister` / `GPIO#irq` は Ruby。`IRQ.start` / `stop` は Task が要るので P6
+  - **PWM (0x140..0x143)。** 0x140 にピンを書き、0x141 に周波数 (mHz、0 は止める)、0x142 に duty (1/1000 %) を書く。0x143 は
+    動いているピンの bit。波形は step のトレースには出さない (ピンの LEVEL は GPIO の値のまま)。エミュレーターは設定の変化を書く。
+    `PWM#frequency` `duty` `period_us` `pulse_width_us` は C の binding と同じ計算 (duty は 0..100 に丸める) を Ruby で
+  - **ADC (0x150..0x154)。** 入力 0..3 (ピン 26..29) と 4 (温度、`"temperature"`) の生の値 (12bit)。刺激で与える (番地に値、
+    その step から。無ければ 0)。`read` / `read_voltage` は raw * 3.3 / 4095、`read_raw` は raw
+  - **watchdog (0x170..0x175)。** 0x170 に ms を書くと有効 (期限 = 今 + ms)、0x171 で無効、0x172 で期限をのばす (feed)、
+    0x173 は watchdog で再起動したか、0x174 は残り (µs、無効なら 0)、0x175 に ms を書くとその後に再起動 (`reboot`)。
+    tick で期限を過ぎていれば**再起動**: コアはリセット (レジスタ・ヒープ・定数・仮想の時計が初めから)、デバイスは
+    「watchdog で再起動した」印だけを残して初めから (UART の受けて読んでいないバイトは捨てる)。トレースに `B <step>` を書き、
+    step は数え続ける (刺激は step で与えるので)。参照と RTL で同じ
+  - **io/console。** `STDIN` / `STDOUT` (IO) の `getch` は UART の RX を 1ms ごとに見て1文字、`read_nonblock(n)`、
+    `raw` / `cooked` (何もしない)、`echo=`。console の入力は UART の RX (FPGA の console は UART だとみなす)
+  - **CRuby との突き合わせ。** 刺激・時計・watchdog を使うプログラムは比べない (今と同じ)。IRQ は CRuby では tick が無いので、
+    oracle は __io_read / __io_write のたびに tick する (出力のピンの変化は次のアクセスの前に見える。LEVEL の事象を使う
+    プログラムは比べない)
 - **P5d** I2C、SPI とデバイスのモデル (SSD1306 などをエミュレーターが画面として見せる)、rotary_encoder、hcsr04
 - **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
 ### P6 Task
@@ -263,6 +288,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P4c コアのエラーを例外に | 57 | 28 (example は 3 / 32) | 28 | errors.rb を追加。メソッドの生死をクラスでも絞り、blink.rb は 4800 → 1850 語。止める理由はほぼデバイス (P5) |
 | 2026-09-26 | P5a デバイスのバス・GPIO・UART・時計・RNG | 59 | 30 (example は 3 / 32) | 30 | devices.rb、uart_echo.rb (刺激) を追加。FPGA 版の gem (fpga/gems)。止める理由はほぼ device の gem (psg、i2c ...) |
 | 2026-09-26 | P5b Float | 60 | 31 (example は 3 / 32) | 31 | floats.rb を追加。10進との変換は多倍長の整数で正確に (mrb_fpconv_pkg、tb は両シミュレーターで 1174 本)。ROM を 16384 語に。止める理由はほぼ device の gem (psg、i2c、irq ...) |
+| 2026-09-26 | P5c IRQ・PWM・ADC・watchdog・io/console | 63 | 38 (example は 9 / 32) | 38 | peripherals.rb (刺激)、irq_loopback.rb、watchdog.rb を追加。example の irq_gpio_picoruby など IRQ.start を使う3本は、参照と RTL は一致するが NotImplementedError で終わる (P6 で Task ができてから)。止める理由は i2c / spi / psg / Task |
 
 ## 見つけたこと
 
@@ -369,3 +395,15 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 - P5b: Float と Integer#** の Float、`format` の精度をプレリュードに入れたら ROM が 8192 語に入らないプログラムが出た。
   ROM を 16384 語 (PC_BITS 14) にした。実機の FPGA のメモリに収まるかは合成で確かめていない
 - P5b: `f_fmod` の結果を `rem * $pow(2.0, e - 1075)` で作っていたのをやめ、bit を組む形にした (非正規化数で `real` を経ない)
+- P5c: gem を入れるかを「定数の名前がソースにあるか」で見ていたので、gpio.rb の注釈の「(UART、PWM ...)」で GPIO を使う
+  プログラム全部に uart gem が入っていた (ROM が無駄に大きい)。行全体の注釈は数えないようにした
+- P5c: watchdog の再起動は「コアのリセット」にした。コアは rst_n を非同期で見るので、組み合わせの信号で落とすと
+  リセットが fetching を消して自分を解く輪になる。mrb_dev が flop で 1 cycle の reboot を出し、soc がコアとポートに入れる
+- P5c: IRQ の事象を読み出しの時に計算する (参照のデバイスは読む時に値を作る作り) のでは、読む前に2回変わったピンを取りこぼす。
+  命令の区切りの tick を足した (参照は step の頭、RTL は S_FETCH の en の cycle)
+- P5c: ファズの device の断片は番地も値もランダムなので、IRQ の登録 (小さいピンと mask) と watchdog の期限 (数 ms) に
+  まず当たらなかった (irq_event 0、reboot 0)。専用の断片を足して届かせた
+- P5c: PicoRuby の `IRQ.start` は Task (dispatcher) の上に作ってあるので、P6 より前は NotImplementedError にした
+- P5c: ファズ (Integer#[] が Float#> の primitive を指すランダムな表) で、RTL が Float の比較の primitive に Integer の受け手を
+  通していた (参照はエラー)。Integer の primitive が Float の引数を受ける所の条件を、比較だけ Float の primitive まで広げて
+  書いていた。P5b の commit から入っていた

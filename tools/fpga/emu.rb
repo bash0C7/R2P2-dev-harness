@@ -1,7 +1,8 @@
 # PERIDOT-Air のボードエミュレーター (fpga/sim/board_emu_tb.sv) のログを読み、人が読む形にし、
 # 参照インタプリタ (ref_vm.rb) と LED の変化の系列を突き合わせる。rake fpga:emu が使う。
 #
-# ログは1行 "<us> <what> <value>"。what は LED / LED2 / GPIO<n> / UART (送ったバイト) / BUTTON / HALT / ERROR / END。
+# ログは1行 "<us> <what> <value>"。what は LED / LED2 / GPIO<n> / UART (送ったバイト) / PWM<n> (mHz) / PWMDUTY<n> (1/1000 %) /
+# REBOOT (watchdog) / BUTTON / HALT / ERROR / END。
 require_relative "converter"
 require_relative "compare"
 
@@ -60,6 +61,9 @@ module FpgaEmu
       when "ERROR"       then "#{t}  CPU error at pc #{e.value}"
       when "END"         then "#{t}  (end)"
       when /\AGPIO(\d+)\z/  then "#{t}  gpio#{Regexp.last_match(1).ljust(3)} #{e.value}"
+      when /\APWM(\d+)\z/   then "#{t}  pwm#{Regexp.last_match(1).ljust(4)} #{e.value.zero? ? 'stopped' : format('%.3f Hz', e.value / 1000.0)}"
+      when /\APWMDUTY(\d+)\z/ then "#{t}  pwm#{Regexp.last_match(1).ljust(4)} duty #{format('%.3f', e.value / 1000.0)} %"
+      when "REBOOT"      then "#{t}  watchdog reboot"
     end
   end
 
@@ -92,13 +96,17 @@ module FpgaEmu
     window_steps(ms, ce_div, mhz) + STEP_SLACK
   end
 
-  # 参照インタプリタの O 行から、ピンの点灯 (true / false) の変化の列を作る (最初は消灯)
-  # upto: この step より後の書き込みは数えない
+  # 参照インタプリタの O 行から、ピンの点灯 (true / false) の変化の列を作る (最初は消灯。watchdog の再起動 (B 行) で
+  # ポートはリセットされて消灯に戻る)。upto: この step より後の書き込みは数えない
   def ref_pin_sequence(trace, port, upto: nil)
     seq = [false]
-    trace.grep(/\AO /).each do |l|
+    trace.grep(/\A[OB] /).each do |l|
       step = l.split[1].to_i
       next if upto && step > upto
+      if l.start_with?("B ")
+        seq << false unless seq.last == false
+        next
+      end
       p, v = FpgaCompare.outputs([l]).first
       next unless p == port
       lit = v == true || (v.is_a?(Integer) && v != 0)

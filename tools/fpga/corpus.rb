@@ -28,7 +28,8 @@ module FpgaCorpus
   GEMS_DIR  = File.join(ROOT, "fpga", "gems")
   GEMS = {
     "gpio" => ["gpio.rb", %w[GPIO]], "machine" => ["machine.rb", %w[Machine]], "uart" => ["uart.rb", %w[UART]],
-    "rng" => ["rng.rb", %w[RNG]]
+    "rng" => ["rng.rb", %w[RNG]], "irq" => ["irq.rb", %w[IRQ]], "pwm" => ["pwm.rb", %w[PWM]], "adc" => ["adc.rb", %w[ADC]],
+    "watchdog" => ["watchdog.rb", %w[Watchdog]], "io/console" => ["io_console.rb", %w[STDIN]]
   }.freeze
   REQUIRE = /^\s*require\s*\(?\s*["']([^"']+)["']/
 
@@ -55,7 +56,8 @@ module FpgaCorpus
     until todo.empty?
       text = todo.shift
       names = text.scan(REQUIRE).flatten
-      GEMS.each { |name, (_, consts)| names << name if consts.any? { |c| text.match?(/\b#{c}\b/) } }
+      code = text.gsub(/^\s*#.*$/, "") # 行全体の注釈の中の名前 (「ソフト PWM」) は数えない
+      GEMS.each { |name, (_, consts)| names << name if consts.any? { |c| code.match?(/\b#{c}\b/) } }
       names.uniq.each do |name|
         unless GEMS[name]
           raise UnknownGem, "require '#{name}' is not supported on the FPGA core (#{src})" if strict

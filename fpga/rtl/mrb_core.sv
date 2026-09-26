@@ -1675,8 +1675,10 @@ module mrb_core
                     end
                   end
                   default: begin
+                    // 受け手が Integer でよいのは Integer の primitive だけ (Float の primitive の受け手は Float)
                     if (!(ra_float || (ra_int && (prim == PR_IADD || prim == PR_ISUB || prim == PR_IMUL || prim == PR_IDIV ||
-                                                  cmp || prim == PR_IEQ || prim == PR_MOD)))) fk <= FK_HARD;
+                                                  prim == PR_ILT || prim == PR_ILE || prim == PR_IGT || prim == PR_IGE ||
+                                                  prim == PR_IEQ || prim == PR_MOD)))) fk <= FK_HARD;
                     else case (prim)
                       PR_FEQ, PR_IEQ: begin fk <= FK_VAL; fval <= mk_bool(y_num && xr == yr); end
                       PR_FCMP: begin
