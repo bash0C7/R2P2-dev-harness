@@ -259,7 +259,7 @@ require_relative "../tools/fpga/gap"
 FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
 FPGA_CORE_NREGS    = FpgaIsa::RF_SIZE
-FPGA_DEFAULT_STEPS = 60_000
+FPGA_DEFAULT_STEPS = 200_000
 FPGA_BOARD_BUILD   = File.join(FPGA_BUILD_DIR, "peridot_air")
 
 def fpga_rel(path)

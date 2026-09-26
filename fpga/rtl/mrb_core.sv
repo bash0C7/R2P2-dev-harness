@@ -223,6 +223,11 @@ module mrb_core
     return v[HB-1:0];
   endfunction
 
+  // new できてインスタンス変数を持てるクラス (isa.rb の instantiable?): Object、Hash、Range、Exception、プログラムのクラス
+  function automatic logic inst_ok(input logic [15:0] cls);
+    return cls == CLS_OBJECT || cls == CLS_HASH || cls == CLS_RANGE || cls == CLS_EXC || (cls >= FIRST_USER_CLASS && cls < CLS_DATA);
+  endfunction
+
   // == (どちらもヒープのオブジェクトでない時): 型が同じで、Integer・Symbol・Class は値も
   function automatic logic eq_of(input logic [VAL_BITS-1:0] x, input logic [VAL_BITS-1:0] y);
     if (tag_of(x) != tag_of(y)) return 1'b0;
@@ -379,7 +384,7 @@ module mrb_core
   assign iv_hdr  = heap[iv_obj[HB-1:0]];
   assign iv_cls  = iv_hdr[31:16];
   assign iv_ok   = iv_obj[VAL_BITS-1 -: TAG_BITS] == TAG_OBJ &&
-                   (iv_cls == CLS_OBJECT || (iv_cls >= FIRST_USER_CLASS && iv_cls < CLS_DATA)) &&
+                   inst_ok(iv_cls) &&
                    {2'b00, lk_tgt[13:0]} < iv_hdr[15:0];
   assign iv_addr = iv_obj[HB-1:0] + HB'(1) + HB'(lk_tgt[13:0]);
   // S_LKDONE の分かれ方
@@ -390,8 +395,7 @@ module mrb_core
   assign lk_kind_ivset = lk_tgt[15:14] == TGT_IVSET;
   // new: クラスの番号 (R[a] の Class の即値) が Object かプログラムのクラスか
   logic new_ok;
-  assign new_ok = ra[VAL_BITS-1 -: TAG_BITS] == TAG_CLASS &&
-                  (ra[15:0] == CLS_OBJECT || (ra[15:0] >= FIRST_USER_CLASS && ra[15:0] < CLS_DATA)) && ra[31:16] == 16'd0;
+  assign new_ok = ra[VAL_BITS-1 -: TAG_BITS] == TAG_CLASS && inst_ok(ra[15:0]) && ra[31:16] == 16'd0;
 
   // 深さ k のフレームの底 (0 は今のフレーム、1 は今の Proc を作ったフレーム、2 はその外側 ...) は、
   // S_WALK で Proc の連鎖を 1 cycle に1段ずつたどって求める (k = 0 は EXEC でそのまま bp)
@@ -622,7 +626,7 @@ module mrb_core
           endcase
         end
         PR_NOT:     begin err = prim_argc_bad; wval = mk_bool(!ra_truthy); end
-        PR_OEQ:     begin err = prim_argc_bad; wval = mk_bool(ra == ra1); end // 同じものか
+        PR_OEQ, PR_SAME: begin err = prim_argc_bad; wval = mk_bool(ra == ra1); end // 同じものか
         PR_CLASSOF: begin err = prim_argc_bad; wval = mk(TAG_CLASS, {16'd0, recv_cls[15] ? CLS_CLASS : recv_cls}); end
         PR_SLEEPMS, PR_SLEEP: begin
           // 時間を待ってから R[a] = 引数
@@ -894,7 +898,8 @@ module mrb_core
           wval = rb_ary ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
         end
         OP_GETIDX: begin
-          if (!ra_ary) begin
+          // 配列を整数で引く時だけその場で。ほか (Range で切り出すなど) は [] を送る
+          if (!ra_ary || !ra1_int) begin
             go_lookup = 1'b1; lk_sym_n = SYM_AREF; err = !a2_ok;
           end else begin
             wr = 1'b1; wval = idx_val; err = !a1_ok || !ra1_int;

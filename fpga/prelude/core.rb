@@ -35,7 +35,7 @@ class Array
   def each
     i = 0
     while i < size
-      yield self[i]
+      yield __aget(i)
       i += 1
     end
     self
@@ -44,7 +44,7 @@ class Array
   def each_with_index
     i = 0
     while i < size
-      yield self[i], i
+      yield __aget(i), i
       i += 1
     end
     self
@@ -54,7 +54,7 @@ class Array
     result = []
     i = 0
     while i < size
-      result << yield(self[i])
+      result << yield(__aget(i))
       i += 1
     end
     result
@@ -85,7 +85,7 @@ class Array
     return false unless size == other.size
     i = 0
     while i < size
-      return false unless self[i] == other[i]
+      return false unless __aget(i) == other.__aget(i)
       i += 1
     end
     true

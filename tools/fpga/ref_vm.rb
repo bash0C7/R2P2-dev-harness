@@ -598,7 +598,8 @@ class FpgaRefVm
       c.times { |i| @heap[p + 4 + i] = reg(b + i) }
       set(step, a, [FpgaIsa::TAG_OBJ, p])
     when "GETIDX"
-      return send_op(step, pc, a, "[]", 1) unless ary?(reg(a))
+      # 配列を整数で引く時だけその場で。ほか (Range で切り出すなど) は [] を送る
+      return send_op(step, pc, a, "[]", 1) unless ary?(reg(a)) && int?(reg(a + 1))
       set(step, a, index(reg(a), reg(a + 1)))
     when "GETIDX0"
       v = reg(b)
@@ -684,7 +685,7 @@ class FpgaRefVm
     @stats[:ivar] += 1
     fault! unless ref?(obj)
     cls = obj_class(obj)
-    fault! unless cls == FpgaIsa::CLS_OBJECT || (cls >= FpgaIsa::FIRST_USER_CLASS && cls < FpgaIsa::CLS_DATA)
+    fault! unless FpgaIsa.instantiable?(cls)
     fault! if i >= (@heap[obj[1]][1] & 0xFFFF)
     obj[1] + 1 + i
   end
@@ -874,7 +875,7 @@ class FpgaRefVm
       aset(a)
       set(step, a, reg(a + 2)) # 伸ばす時の GC で動くので後で読む
       return pc + 1
-    when "OEQ"
+    when "OEQ", "SAME"
       set(step, a, bool(x == reg(a + 1))) # 同じものか
       return pc + 1
     when "IADD", "ISUB", "IMUL", "IDIV", "ILT", "ILE", "IGT", "IGE"
@@ -945,7 +946,7 @@ class FpgaRefVm
     k = reg(a)
     fault! unless k[0] == FpgaIsa::TAG_CLASS
     id = k[1]
-    fault! unless id == FpgaIsa::CLS_OBJECT || (id >= FpgaIsa::FIRST_USER_CLASS && id < FpgaIsa::CLS_DATA)
+    fault! unless FpgaIsa.instantiable?(id)
     r = lookup(id, FpgaIsa::NIVARS_SYM, walk: false)
     n = r ? r[0] & 0x3FFF : 0
     @stats[:object] += 1

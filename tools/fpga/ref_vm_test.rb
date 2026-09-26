@@ -51,7 +51,7 @@ class FpgaRefVmTest < Minitest::Test
       name = File.basename(src, ".rb")
       next if File.file?(File.join(CORPUS, "#{name}.stim"))
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
-      trace = FpgaRefVm.new(words).run(60_000)
+      trace = FpgaRefVm.new(words).run(200_000)
       ours = FpgaCompare.outputs(trace)
       console = FpgaCompare.console(trace)
       refute(ours.empty? && console.empty?, name)
@@ -62,15 +62,20 @@ class FpgaRefVmTest < Minitest::Test
     end
   end
 
+  # picoruby の組み込みに無いメソッド (Hash#min_by、sort_by、Array#tally、zip、each_slice、Range#sum ...) を使うので、
+  # picoruby とは比べないもの (CRuby とは比べる)
+  PICORUBY_LACKS = %w[collections].freeze
+
   # 止まるプログラムは、picoruby host VM (本物の mruby VM) の最後の値とも比べる
   def test_finite_corpus_agrees_with_picoruby
     skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
     checked = 0
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
+      next if PICORUBY_LACKS.include?(name)
       words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
       vm = FpgaRefVm.new(words)
-      trace = vm.run(60_000)
+      trace = vm.run(200_000)
       next unless trace.last.start_with?("H ")
       ours = FpgaIoMap.pins_out.to_h { |p| [p.num, FpgaCompare.decode(*vm.io[p.num])] }
       final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)

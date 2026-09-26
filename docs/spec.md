@@ -674,7 +674,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **`A::X` (`GETMCNST` / `SETMCNST`) と `class A::B`** は、入れ物を直前の `GETCONST` / `GETMCNST` の連なりから静的に解く。
   入れ物が知っているクラス・モジュールでない (`GPIO::OUT` のようにデバイスのクラスがまだ無い時も)、`A::X` がどこでも
   代入されていなければ変換時に止める。空の本体のクラス (`class E < StandardError; end`、mruby は `EXEC` を出さない) も通す
-- **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** 文字列は下の「文字列と出力 (P2)」。Hash・Range は無い
+- **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** `GETIDX` は配列を整数で引く時だけその場で読み、ほか (Range で切り出す
+  など) は `[]` を送る。文字列は下の「文字列と出力 (P2)」、Hash・Range は「Hash と Range (P3)」
 - **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`、呼び出しの splat (`f(*a)`)。** キーワード引数 (定義側も呼び出し側も)
   は変換時に止める (Hash が要るので P3 の後。下の「引数 (P1d)」)
 - **pool の Float と 32bit に収まらない整数、例外 (catch handler) は変換時に止める**
@@ -772,6 +773,22 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
   トレースは O 行のまま。参照との突き合わせ (`ref_vm_test.rb`) は、止まるプログラムの console のバイト列を
   CRuby の標準出力と picoruby の出力 (最後の `p` の行を除く) の両方と比べる。PERIDOT-Air の top には console のピンがまだ無い
   (UART の TX は P5)
+
+### Hash と Range (P3)
+
+- **Hash・Range・Exception はプレリュードの Ruby のクラス** (組み込みの番号 12 / 13 / 15 のまま)。`new` でき、インスタンス変数を持てる
+  (`FpgaIsa.instantiable?`、RTL の `inst_ok`)。Hash は `@keys` `@vals` の2つの配列で挿入順を保ち、キーは `eql?` で線形に探す
+  (`Object#eql?` は同じものか (primitive `equal?`)、Integer・String・Array は値で比べる)。Range は `@first` `@last` `@excl`
+- **作る命令は変換器が下げる:** `HASH a n` → `ARRAY a 2n` + `SEND a :__to_hash`、`HASHADD a n` → `ARRAY a+1 2n` + `SEND a :__add_pairs 1`、
+  `HASHCAT a` → `SEND a :__merge! 1`、`RANGE_INC` / `RANGE_EXC a` → `SEND a :__range_inc` / `:__range_exc 1`
+- **`Enumerable`** (each を使うメソッド) を Array・Hash・Range が include する。Hash の `each` は `[key, value]` を1つ yield する
+  (proc が展開するので `|k, v|` で受けられる)。`Array#[]` は `(i)` だけが primitive (`__aget`)、`(i, n)` と `(range)` はプレリュード
+- **`Hash#inspect` は PicoRuby の形** (`{"a" => 1, b: 2}`、Symbol のキーはいつも `名前: `)。CRuby 3.3 の形とは違うので、
+  参照の突き合わせは CRuby に同じ形の `Hash#inspect` を入れてから走らせる (`FpgaOracle::HASH_INSPECT`)
+- **`case` / `when`** は `===` を送るだけ。`Range#===` / `include?` は CRuby の `cover?` と同じく `<=>` で比べ、比べられなければ偽
+- **プレリュードの使わないメソッドは ROM に置かない。** 変換器が、一番外から生きているコード (ブロック、クラスの本体) と、
+  名前が使われる (送る、`LOADSYM`、`super`、下げた命令が送る) メソッドを、増えなくなるまでたどる (`live_ireps`)。
+  置かないメソッドの中の未対応の命令は止めない
 
 ### プレリュード
 

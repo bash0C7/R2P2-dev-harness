@@ -18,7 +18,7 @@ module FpgaCorpus
   ROOT      = File.expand_path("../..", __dir__)
   DIR       = File.join(ROOT, "fpga", "corpus")
   TABLE     = File.join(ROOT, "docs", "fpga-opcodes.md")
-  DUMP_LINE = /\A\s*\d+ \d{3} /
+  DUMP_LINE = /\A\s*\d+ \d{3,} / # iseq のバイト位置は 3 桁以上 (1000 バイトを超える irep もある)
   MAX_REGS  = FpgaIsa::RF_SIZE # 1つの irep が使えるレジスタの上限 = レジスタファイルの大きさ
   # プログラムの前に置いて一緒に compile する組み込みメソッド (Ruby で書いたもの)
   PRELUDE   = Dir[File.join(ROOT, "fpga", "prelude", "*.rb")].sort.freeze
@@ -45,7 +45,8 @@ module FpgaCorpus
       out = File.join(dir, "out.mrb")
       stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, src)
       raise Error, "mrbc failed on #{src}: #{stderr}" unless st.success?
-      dump = stdout.lines.grep(DUMP_LINE).map { |l| l.strip + "\n" }
+      # 命令の行と、irep の区切り ("irep"。mrbc のアドレスは毎回違うので捨てる)
+      dump = stdout.lines.filter_map { |l| l.start_with?("irep ") ? "irep\n" : (l =~ DUMP_LINE ? l.strip + "\n" : nil) }
       [File.binread(out), dump.join]
     end
   end
@@ -88,7 +89,7 @@ module FpgaCorpus
   end
 
   def op_counts(dump)
-    dump.lines.map { |l| l.split[2] }.tally
+    dump.lines.reject { |l| l.start_with?("irep") }.map { |l| l.split[2] }.tally
   end
 
   def table(dumps)

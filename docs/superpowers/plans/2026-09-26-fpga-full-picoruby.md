@@ -153,11 +153,25 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 - **出力は console ポート** (`$CONSOLE`、出力ポート 3) に1バイトずつ書く。`puts` `print` `p` はプレリュードで、
   トレースは今の O 行のまま。参照との突き合わせは、CRuby の標準出力と console ポートに書いたバイト列を比べる
 - **`LOADL`** は 32bit に収まる整数なら `LOADI32` にする。収まらない整数、Float、BIGINT は変換時に止める
-### P3 Hash、Range、case、Array の残り
+### P3 Hash、Range、case、Array の残り、キーワード引数
 
-- Hash (`HASH` `HASHADD` `HASHCAT`、`[]` `[]=` `each` `keys` `fetch` ...)、Range (`RANGE_INC` `RANGE_EXC`、`each`、`include?`)
-- `case` / `when` (`===`)、`Array.new` `join` `each_slice` `sort` `select` `reject` `inject` など example に出るもの、`AREF` `APOST`
+- `Hash` (`HASH` `HASHADD` `HASHCAT`、`[]` `[]=` `each` `keys` `fetch` ...)、`Range` (`RANGE_INC` `RANGE_EXC`、`each`、`include?`)
+- `case` / `when` (`===`)、`Array.new` `join` `each_slice` `sort` `select` `reject` `inject` など example に出るもの
+- キーワード引数 (P1d の残り: `ENTER` の key / kdict、`KARG` `KEY_P` `KEYEND`、呼び出しの nk)
+- 名指し: collections.rb (Hash / Range / case / Array)、kwargs.rb
 
+#### P3 の設計
+
+- **Hash・Range はプレリュードの Ruby のクラス** (組み込みの番号 12 / 13 のまま)。Hash は `@keys` `@vals` の2つの配列で、
+  挿入順を保ち、キーは `==` (`eql?`) で線形に探す (小さい Hash しか出ない)。Range は `@first` `@last` `@excl`
+- 回路の変更は、組み込みのクラスのうち Hash・Range・Exception (15) を `new` できてインスタンス変数を持てることだけ
+  (`new_ok` / `iv_ok` / ref の `ivar_addr`)
+- **命令は変換器が下げる:** `HASH a n` → `ARRAY a 2n` + `SEND a :__to_hash`、`HASHADD a n` → `ARRAY a+1 2n` + `SEND a :__add_pairs 1`、
+  `HASHCAT a` → `SEND a :__merge! 1`、`RANGE_INC a` / `RANGE_EXC a` → `SEND a :__range_inc 1` / `:__range_exc 1`
+- **Array の残りはプレリュード。** `Array#[]` は `(i)` だけ primitive で、`(i, n)` と `(range)` はプレリュード (`__aget` を呼ぶ)。
+  `Enumerable` (each を使うもの) を Array・Hash・Range で共有する
+- **`case` / `when`** は `===` を送るだけ (P2 で Object#=== と Module#=== がある)。Range#=== は include?
+- **キーワード引数** は Hash の後に同じ段でやる (設計は着手時に書く)
 ### P4 例外
 
 - `raise` / `rescue` / `ensure` / `retry` (`EXCEPT` `RESCUE` `RAISEIF` `JMPUW`)。irep の catch handler を ROM の表にする
@@ -186,6 +200,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P1d 引数 | 50 | 18 (example は 0 / 32) | 18 | args.rb を追加。止まる理由の上位は文字列 30、`GETMCNST` 18、`puts` 15。キーワード引数は P3 の後 |
 | 2026-09-26 | P1e 定数の path・グローバル変数 | 51 | 19 (example は 0 / 32) | 19 | consts.rb を追加。`GETMCNST` は止める理由から消えた (`GPIO::OUT` などは P5 でクラスができれば通る)。上位は文字列 30、`puts` 15 |
 | 2026-09-26 | P2 文字列と出力 | 53 | 23 (example は 2 / 32: picoruby-dfu の app_1 / app_2) | 23 | hello.rb、strings.rb を追加。止める理由の上位はデバイス (`start` 14、`connect` 8、`require psg` 8)、`HASH` 4、Float 3 |
+| 2026-09-26 | P3a Hash・Range・Array | 54 | 25 (example は 3 / 32) | 25 | collections.rb を追加。使わないメソッドを ROM から落とす (live_ireps)。上位はデバイス |
 
 ## 見つけたこと
 
@@ -233,3 +248,11 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 - P2: プレリュードが ROM を 4000 語ほど使う (使わないメソッドも全部入る)。example が入り切らなくなったら、
   呼ばれないメソッドを落とす (名前のシンボルがどこにも出てこない def を消す)
 - P2: PERIDOT-Air の top には console のピンがまだ無いので、ボードエミュレーターは console を見ない (UART の TX は P5)
+- P3: プレリュードが大きくなり、collections.rb の ROM が 9647 語 (> 8192) になった。呼ばれないメソッドを落とす (live_ireps) を入れた
+  (名前で数えるので、プレリュードが使う名前のメソッドは残る。hello.rb で 4800 語)
+- P3: コーパスの .dump を作る正規表現が、iseq のバイト位置を 3 桁と決めていた。1000 バイトを超える irep の行を黙って落とし、
+  rom_test の突き合わせの数がずれて気づいた
+- P3: PicoRuby の `Hash#inspect` は `{"a" => 1, b: 2}` (Ruby 3.4 の形)、CRuby 3.3 は `{"a"=>1, :b=>2}`。PicoRuby に合わせ、
+  CRuby には同じ形の Hash#inspect を入れてから比べる。PicoRuby の組み込みには `Hash#min_by` `sort_by`、`Array#tally` `zip`
+  `each_slice`、`Range#sum` などが無い (プレリュードは持つ)。collections.rb は picoruby とは比べない
+- P3: `Range#===` を `<` で書いて、`(1..9) === "hi"` が String#< で止まった。CRuby の cover? と同じく <=> で比べ、比べられなければ偽

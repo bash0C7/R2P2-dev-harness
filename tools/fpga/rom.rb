@@ -193,17 +193,21 @@ module FpgaRom
     end
 
     bad = []
+    ctx = Context.new(source, decoded)
+    analyze(top, ctx.object, ctx)
+    add_iclasses(ctx)
+    # 呼ばれることのあるメソッドだけを ROM に置く (プレリュードの使わないメソッドを落とす)
+    ctx.live = live_ireps(ireps, decoded, ctx)
+
     ireps.each_with_index do |ir, i|
+      next unless ctx.live[i]
       decoded[i].each { |insn| bad << "#{insn.name} at #{where(ir, insn)}" unless FpgaIsa.convertible?(insn.name) }
     end
     raise Error, "#{source}: unsupported instruction(s): #{bad.join(', ')}" unless bad.empty?
 
-    ctx = Context.new(source, decoded)
-    analyze(top, ctx.object, ctx)
-    add_iclasses(ctx)
-
     # pool: 文字列は ROM のデータ領域に置く (同じ中身は1つ)。整数は 32bit に収まること。Float と大きい整数は止める
     ireps.each_with_index do |ir, i|
+      next unless ctx.live[i]
       decoded[i].each do |insn|
         next unless insn.name == "STRING" || insn.name == "LOADL"
         e = ir.pool[insn.operands[1]]
@@ -224,6 +228,11 @@ module FpgaRom
     base = 1
     pc_of = []
     ireps.each_with_index do |ir, i|
+      unless ctx.live[i]
+        ir.base = nil
+        pc_of << {}
+        next
+      end
       ir.base = base
       base += 1 if ctx.bodies[ir.index]
       base += 2 + 2 * ctx.globals.size if ir.index == 0
@@ -241,6 +250,7 @@ module FpgaRom
 
     words = [nil]
     ireps.each_with_index do |ir, i|
+      next unless ctx.live[i]
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
       if ir.index == 0
         # 一般のグローバル変数を nil に (R0 を借りる)、self (main) を作る
@@ -317,6 +327,7 @@ module FpgaRom
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
                 :method_names, :noops, :cref, :globals, :strings, :string_at
+    attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
 
@@ -424,6 +435,55 @@ module FpgaRom
       i -= 1
     end
     nil
+  end
+
+  # 生きている irep (ROM に置くもの)。一番外から、生きているコードの中のブロック・クラスの本体と、
+  # 名前が使われる (送る、LOADSYM、super、変換器が下げた命令が送る) メソッドを、増えなくなるまでたどる。
+  # 演算の落ち先 (OP_SYMS、initialize を含む) はいつも使われる
+  def self.live_ireps(ireps, decoded, ctx)
+    live = Array.new(ireps.size, false)
+    used = {}
+    waiting = {} # 名前 -> その名前の、まだ生きていないメソッドの irep の番号
+    todo = [0]
+    use = lambda do |name|
+      unless used[name]
+        used[name] = true
+        (waiting.delete(name) || []).each { |j| todo << j }
+      end
+    end
+    FpgaIsa::OP_SYMS.each { |s| use.call(s) }
+    until todo.empty?
+      i = todo.pop
+      next if live[i]
+      live[i] = true
+      ir = ireps[i]
+      decoded[i].each do |insn|
+        ops = insn.operands
+        case insn.name
+        when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM" then use.call(ir.syms[ops[1]])
+        when "SUPER" then use.call(ctx.method_names[ir.index]) if ctx.method_names[ir.index]
+        when "STRCAT"
+          use.call("to_s")
+          use.call("<<")
+        when "HASH" then use.call("__to_hash")
+        when "HASHADD" then use.call("__add_pairs")
+        when "HASHCAT" then use.call("__merge!")
+        when "RANGE_INC" then use.call("__range_inc")
+        when "RANGE_EXC" then use.call("__range_exc")
+        when "EXEC", "BLOCK", "LAMBDA" then todo << ir.reps[ops[1]].index
+        when "TDEF", "SDEF"
+          m = ir.reps[ops[2]].index
+          name = ir.syms[ops[1]]
+          if used[name]
+            todo << m
+          else
+            waiting[name] ||= []
+            waiting[name] << m
+          end
+        end
+      end
+    end
+    live
   end
 
   # k 番目の命令で R[reg] に入っている定数の path (GETCONST / GETMCNST の連なりを字句の入れ子で解く)。
@@ -688,6 +748,18 @@ module FpgaRom
       a = insn.operands[0]
       return [["SEND", a + 1, ctx.sym_id("to_s"), 0], ["SEND", a, ctx.sym_id("<<"), 1]]
     end
+    # Hash / Range はプレリュードの Ruby のクラス。作る命令はそのメソッドの呼び出しにする
+    ops = insn.operands
+    case insn.name
+    when "HASH" # R[a] = {R[a] => R[a+1], ...} (b 組)
+      return [["ARRAY", ops[0], 2 * ops[1], 0], ["SEND", ops[0], ctx.sym_id("__to_hash"), 0]]
+    when "HASHADD" # R[a] に R[a+1..] の b 組を足す
+      return [["ARRAY", ops[0] + 1, 2 * ops[1], 0], ["SEND", ops[0], ctx.sym_id("__add_pairs"), 1]]
+    when "HASHCAT" # R[a] に R[a+1] (Hash) を足す (**h)
+      return [["SEND", ops[0], ctx.sym_id("__merge!"), 1]]
+    when "RANGE_INC", "RANGE_EXC" # R[a] = R[a]..R[a+1] / R[a]...R[a+1]
+      return [["SEND", ops[0], ctx.sym_id(insn.name == "RANGE_INC" ? "__range_inc" : "__range_exc"), 1]]
+    end
     return [["LOADTRUE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETTRUE"
     return [["LOADFALSE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETFALSE"
     nil
@@ -697,8 +769,8 @@ module FpgaRom
   def self.method_entries(ctx)
     entries = []
     ctx.classes.each do |k|
-      k.methods.each { |sym, m| entries << [k.id, ctx.sym_id(sym), m.base] }
-      k.meta_methods.each { |sym, m| entries << [FpgaIsa::META | k.id, ctx.sym_id(sym), m.base] }
+      k.methods.each { |sym, m| entries << [k.id, ctx.sym_id(sym), m.base] if m.base }
+      k.meta_methods.each { |sym, m| entries << [FpgaIsa::META | k.id, ctx.sym_id(sym), m.base] if m.base }
     end
     # クラスの名前 (Module#name)。include の写し (iclass) には無い
     if ctx.symbols.key?("__name_sym")
