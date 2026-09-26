@@ -28,3 +28,20 @@ jobs:
 
       - name: Run the harness gems' picotest and compile the examples
         run: rake test
+
+  # FPGA の HDL シミュレーション (docs/spec.md §10)。picoruby は要らないので host とは独立。
+  fpga:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install Verilator and Icarus Verilog
+        run: rake fpga:setup
+
+      - name: Run the FPGA testbenches
+        run: rake fpga:test

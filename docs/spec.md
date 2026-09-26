@@ -561,3 +561,49 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   session（`.mrb`を直接送る別scriptでの実測）。Pico 2 Wは`rake rp2040:run`で`.rb`→`.mrb`→実行まで実機で通した。
   `rake esp32:run`もDualKey実機で`.rb`→`.mrb`→転送→実行まで通した（出力`hello from mrb 3`）。
   板に戻らない`/home/app.mrb`が残っている場合の復旧は[faq.md](faq.md)
+
+## 10. FPGA のシミュレーション
+
+mruby のバイトコードを直接実行する CPU を FPGA に作る (issue #4)。実機 (PERIDOT-Air) に焼く前に、
+シミュレータで万全に動かす。HDL とテストベンチは SystemVerilog、道具は Ruby (rake)。
+設計: [docs/superpowers/specs/2026-09-26-fpga-sim-env-design.md](superpowers/specs/2026-09-26-fpga-sim-env-design.md)
+
+| タスク | 意味 |
+|---|---|
+| `rake fpga:setup` | 足りないシミュレータを入れる。macOS は `brew install verilator icarus-verilog surfer`、Linux は `apt-get install -y verilator iverilog` (root でなければ sudo) |
+| `rake fpga:doctor` | verilator / iverilog / vvp / surfer の有無と版。必須が欠けていれば落ちる |
+| `rake fpga:test` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す。CI の `fpga` job が回す |
+| `rake fpga:sim[tb]` | 1本を Verilator で回す。波形は `build/fpga/<tb>.fst` |
+| `rake fpga:sim:icarus[tb]` | 1本を Icarus で回す。波形は `build/fpga/<tb>.icarus.fst` |
+
+`vendor/picoruby` は要らない (`rake setup` 無しで回る)。`rake test` には含まれない。
+
+**置き場所。** 回路は `fpga/rtl/**/*.sv` (全部を毎回コンパイルに渡す)、テストベンチは
+`fpga/tb/<name>_tb.sv` で top module 名を file 名と揃える。各 file に `` `timescale 1ns / 1ps `` を書く
+(1つでも書くと、書いていない module を Verilator が `TIMESCALEMOD` で落とす)。
+
+**合否。** テストベンチは合格なら最後に `PASS <tb名>` を出して `$finish`、食い違えば `$fatal`。
+rake は exit status が 0 **かつ** `PASS <tb名>` 行がある時だけ合格にする。
+`+dump=<path>` が渡された時だけ `$dumpfile` / `$dumpvars` で波形を書く (`fpga/tb/counter8_tb.sv` が雛形)。
+
+**Verilator だけではリセット漏れを見逃す。** Verilator は2値なので、リセットされない register は 0 から
+始まり、たまたま期待値と合う。counter8 のリセット代入を消すと、Icarus は最初の check で
+`count is X/Z` で落ちたが、Verilator は数え終わった後の非同期リセットの check まで通った。
+テストベンチはリセット直後に `$isunknown` を見る。
+
+**Verilator の -Wall。** warning は error になる。テストベンチの `always #5 clk = ~clk;` は `BLKSEQ` に
+引っかかるので、そこだけ `/* verilator lint_off BLKSEQ */` で囲む。`$fatal` は abort() なので、
+rake には exit code ではなく signal 6 として返る。
+
+**版。** 確認した組み合わせ: Ubuntu 24.04 の apt (Verilator 5.020 / Icarus 12.0)。
+Homebrew は Verilator 5.052 / Icarus 13.0 / Surfer 0.7.0 (Mac での実行は未確認)。
+`--binary` は Verilator 5.002 以降。
+
+**波形を見る。** `rake fpga:sim[counter8_tb]` の後に `surfer build/fpga/counter8_tb.fst`。
+Mac は `brew install surfer` (`rake fpga:setup` が入れる)。Linux の apt には無いので
+https://gitlab.com/surfer-project/surfer/-/releases のバイナリか
+`cargo install --git https://gitlab.com/surfer-project/surfer surfer`。
+GTKWave の Homebrew cask は 2025-10 に disable された。VSCode なら Vaporview 拡張でも開ける。
+
+**合成と実機はまだ無い。** Cyclone IV の bitstream は Intel Quartus でしか作れない (macOS 版なし)。
+道具立ては issue #10、実機は #11。
