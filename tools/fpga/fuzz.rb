@@ -11,15 +11,19 @@ module FpgaFuzz
 
   # 1本の ROM (48bit 語の配列) を作る。前置きで R0..R11 に値 (たいてい Integer) を入れ、定数を2つ決めてから、
   # ランダムな命令を並べる。前置きが無いと、ほとんどの program が nil への算術ですぐエラーになり浅い
-  PROLOGUE = 14
-  STOPPERS = %w[STOP RETURN RETNIL ENTER BREAK].freeze
+  PROLOGUE = 16
+  STOPPERS = %w[STOP RETURN RETNIL ENTER BREAK RETURN_BLK].freeze
 
   def program(rng, len: 40)
     words = []
     12.times { |r| words << prologue_load(rng, r) }
     words << encode(FpgaIsa.op("SETCONST"), 1, 0, 0)
     words << encode(FpgaIsa.op("SETCONST"), 2, 1, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 10, 0, 3)                                 # R10 = [R0, R1, R2]
+    words << encode(FpgaIsa.op("BLOCK"), 11, PROLOGUE + rng.rand(len - PROLOGUE), block_c(rng)) # R11 = Proc
     ops = FpgaIsa::SUPPORTED.map { |n| FpgaIsa.op(n) }
+    # 配列と Proc の命令は多めに (GC まで届くように)
+    ops += %w[ARRAY ARRAY2 GETIDX SETIDX BLOCK BLKCALL SEND].map { |n| FpgaIsa.op(n) }
     (len - PROLOGUE).times do |k|
       op = ops[rng.rand(ops.size)]
       # 止まる・戻る命令ばかりだと浅いので、3回に2回は引き直す
@@ -38,6 +42,10 @@ module FpgaFuzz
       v &= 0xFFFF_FFFF
       encode(FpgaIsa.op("LOADI32"), r, v >> 16, v & 0xFFFF)
     end
+  end
+
+  def block_c(rng)
+    rng.rand(3) | ((1 + rng.rand(6)) << 8) # 引数の数 | nregs << 8
   end
 
   def encode(op, a, b, c)
@@ -59,17 +67,91 @@ module FpgaFuzz
     when "GETCONST", "SETCONST" then b = rng.rand(4) # 未定義の定数も出るように少ない番号で
     when "JMP", "JMPIF", "JMPNOT", "JMPNIL" then b = PROLOGUE + rng.rand(len - PROLOGUE + 1) # たまに ROM の外
     when "SEND", "SEND0"
+      # sleep_ms / sleep は引数が大きいとシミュレーションが終わらないので除く (コーパスと mrb_core_tb で見る)
       b = rng.rand(FpgaIsa::BUILTINS.size + 1)
+      b = FpgaIsa.builtin("size", 0) if FpgaIsa::SELF_BUILTINS.include?((FpgaIsa::BUILTINS[b] || [])[0])
       c = rng.rand(100) < 85 ? (FpgaIsa::BUILTINS[b] ? FpgaIsa::BUILTINS[b][1] : 0) : rng.rand(3)
     when "SSEND", "SSEND0"
       b = PROLOGUE + rng.rand(len - PROLOGUE)
       argc = op.name == "SSEND" ? rng.rand(3) : 0
       c = ((1 + rng.rand(8)) << 8) | argc
     when "ENTER" then a = rng.rand(3)
-    when "GETUPVAR", "SETUPVAR" then b = rng.rand(12) # bp より下 (フレームの外) も時々
-    when "BREAK" then b = PROLOGUE + rng.rand(len - PROLOGUE)
+    when "GETUPVAR", "SETUPVAR", "BLKPUSH" then b = rng.rand(12); c = rng.rand(4)
+    when "BREAK" then b = PROLOGUE + rng.rand(len - PROLOGUE); c = rng.rand(2)
+    when "RETURN_BLK" then c = rng.rand(3)
+    when "ARRAY" then b = rng.rand(5)
+    when "ARRAY2" then b = rng.rand(12); c = rng.rand(5)
+    when "GETIDX0" then b = small.call
+    when "BLOCK" then b = PROLOGUE + rng.rand(len - PROLOGUE); c = block_c(rng)
+    when "BLKCALL" then b = rng.rand(3)
     end
     encode(op, a, b, c)
+  end
+
+  # ヒープを突く program。R0..R7 は小さい整数、R8..R11 は配列や Proc。安全な形の断片 (配列を作る、push、
+  # 代入、添字で読む、pop、include?、Proc を呼ぶ) を並べて先頭へ戻るループにし、GC を何度も起こす。
+  # R12..R15 は断片の作業用。ブロックの本体は ROM の後ろ (外側の変数を読み書きし、配列も作る)
+  HEAP_STEPS = 3000
+
+  def heap_program(rng, body: 30)
+    ints = (0..7).to_a
+    arrs = (8..10).to_a
+    words = []
+    8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
+    words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
+    words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 10, 8, 1)
+    words << encode(FpgaIsa.op("SETCONST"), 8, 0, 0)
+    block_at = nil # BLOCK の先頭 pc は最後に決める
+    words << :block
+    top = words.size
+    body.times do
+      pick = rng.rand(9)
+      case pick
+      when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
+        words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
+      when 1 # push
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SEND"), 12, FpgaIsa.builtin(rng.rand(2).zero? ? "push" : "<<", 1), 1)
+      when 2 # a[i] = v (伸ばすこともある)
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(24), 0)
+        words << encode(FpgaIsa.op("MOVE"), 14, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SETIDX"), 12, 0, 0)
+      when 3 # v = a[i]
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("LOADI16"), 13, (rng.rand(20) - 6) & 0xFFFF, 0)
+        words << encode(FpgaIsa.op("GETIDX"), 12, 0, 0)
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0) # 要素は nil や配列のこともあるので作業用へ
+      when 4 # pop / size / first / last / include?
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        name = %w[pop size first last empty?].sample(random: rng)
+        words << encode(FpgaIsa.op("SEND0"), 12, FpgaIsa.builtin(name, 0), 0)
+        words << encode(FpgaIsa.op("MOVE"), name == "size" ? ints.sample(random: rng) : 15, 12, 0)
+      when 5
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SEND"), 12, FpgaIsa.builtin("include?", 1), 1)
+      when 6 # Proc を呼ぶ
+        words << encode(FpgaIsa.op("MOVE"), 12, 11, 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("BLKCALL"), 12, 1, 0)
+      when 7 # 定数に配列を置く / 読む
+        words << encode(FpgaIsa.op(rng.rand(2).zero? ? "SETCONST" : "GETCONST"), arrs.sample(random: rng), 0, 0)
+      else # 整数の計算
+        words << encode(FpgaIsa.op("ADDI"), ints.sample(random: rng), rng.rand(4), 0)
+      end
+    end
+    words << encode(FpgaIsa.op("JMP"), 0, top, 0)
+    # ブロック: 外側の R0..R7 を読み書きし、配列を作って返す
+    block_at = words.size
+    words << encode(FpgaIsa.op("GETUPVAR"), 2, rng.rand(8), 1)
+    words << encode(FpgaIsa.op("ADD"), 1, 0, 0)
+    words << encode(FpgaIsa.op("SETUPVAR"), 1, rng.rand(8), 1)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 2)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    words.map { |w| w == :block ? encode(FpgaIsa.op("BLOCK"), 11, block_at, 1 | (4 << 8)) : w }
   end
 
   def hex(words)

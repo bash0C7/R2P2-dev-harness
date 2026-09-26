@@ -15,7 +15,7 @@ user から「中断不要、すすめろ」と指示があったので、各 is
 | issue | 問い | 決定 |
 |---|---|---|
 | #6 | 整数の幅 | 32bit で折り返す。範囲外は仕様外 |
-| #6 | 値の型タグ | 2bit (nil / false / true / Integer) + 32bit |
+| #6 | 値の型タグ | 2bit (nil / false / true / Integer) + 32bit。段階 C で 3bit (+ Array / Proc、ヒープの中だけの転送先と見出し) |
 | #6 | 命令の範囲 | コーパス駆動 (`fpga/corpus/*.rb`)。出現した命令と、同じ族で回路がほぼ増えないもので 38 命令 |
 | #6 | compiler の版 | `SUBMODULE_PINS` の mruby-compiler に固定。コーパスの生成物を commit し、`fpga:corpus:check` で版のずれを検出 |
 | #6 | irep | 1つだけ。子 irep・pool・catch handler は変換時に止める |
@@ -52,8 +52,8 @@ user から「中断不要、すすめろ」と指示があったので、各 is
 - #10: Quartus を入れた VM (か x86 機) で `rake fpga:build[fpga/corpus/blink.mrb]` を通す。合成が SV の書き方で
   落ちたら直す (`always_ff` の配列リセット、untyped `parameter ROM_FILE` の文字列比較などが候補)
 - #11: USB-Blaster で `rake fpga:flash`、LED の目視、fit summary の LE / メモリを spec §10 に記録
-- 後回しにしたもの: パイプライン、レジスタファイルの BRAM 化、タイマー I/O、EPCQ16 への永続書き込み、
-  メソッド呼び出し (`SEND`)、Integer 以外の型
+- 後回しにしたもの: パイプライン、レジスタファイルと ROM・ヒープの BRAM 化、EPCQ16 への永続書き込み、
+  文字列・Hash・Range、Proc が作ったフレームより長生きする時の退避
 
 ## シミュレーターで完全に動かす (実機は後回し、user の指示)
 
@@ -64,3 +64,15 @@ user から「中断不要、すすめろ」と指示があったので、各 is
 段階 B (済): ブロック。変換器が `times` / `upto` / `downto` / `loop` をカウンタのループとブロックの irep の呼び出しに展開し、
 ブロックのフレームを呼んだフレームから静的な距離に置くことで、外側の変数を「bp から下へ何本目」にした。
 コアに足したのは `GETUPVAR` `SETUPVAR` `BREAK` だけ。ブロックを値にすること (`proc` `yield` `&blk`)、`each` は対象外。
+
+段階 C (済、user の「全部必要だ。全部やれ」): Proc・配列・時間待ち。
+
+- **タグを 3bit にし、Array / Proc をヒープ (2048 語) の参照にした。** GC は Cheney のコピー GC (半分ずつ)。
+  根を写す順を参照インタプリタとコアで揃え、GC の後のアドレスまでトレースで一致させる
+- **ブロックは Proc になった。** Proc は作ったフレームの bp と、そのフレームの Proc (外側への鎖) を持つ。
+  `GETUPVAR` の深さは鎖をたどって解く (段階 B の「静的な距離」をやめた)。`yield` / `&blk` / `block_given?` / `proc` /
+  `lambda` / `.call`、`break` (iterator の出口へ、または Proc を作ったフレームまで)、ブロックの中の `return` (`RETURN_BLK`)
+- **iterator は変換器がループに展開したまま。** `each` / `each_with_index` / `map` を足した
+- **配列:** `ARRAY` `ARRAY2` `GETIDX` `GETIDX0` `SETIDX` と組み込み (`size` `length` `empty?` `first` `last` `pop` `push` `include?` `<<`)
+- **時間待ち:** `sleep_ms` / `sleep` は `ms_tick` (1ms ごと、`MS_CYCLES` から作る) を数える。参照インタプリタは待たずに n を返す
+- **差分ファズに GC まで届く形を足した** (4本に1本)。300 本で GC は 245 回起きる

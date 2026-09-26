@@ -643,28 +643,37 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 
 ### 対応命令と値の表現 (#6)
 
-コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith / methods / math / blink_method) の
-`mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 51 命令を
-コアが実行し、`BLOCK` `SENDB` `SSENDB` の3つは変換器がほかの命令に下げる (下の「ブロック」)。
+コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith / methods / math / blink_method /
+blocks / arrays / procs / gc / blink_sleep) の `mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの
+(`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 60 命令をコアが実行し、`SENDB` `SSENDB` の2つは
+変換器がほかの命令に下げる (下の「ブロックと Proc」)。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
 - **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
   (mruby なら 64bit / Bignum になる所で、コアは黙って折り返す)
-- **値 = 2bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3。偽は nil と false だけ (0 は真)
-- **`EQ`** は Integer 同士なら値、それ以外は型が同じなら等しい (nil == nil、true == true)
+- **値 = 3bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3 / Array=4 / Proc=5
+  (6 と 7 はヒープの中だけ: GC の転送先と、オブジェクトの見出し)。偽は nil と false だけ (0 は真)。
+  Array と Proc の値はヒープの語アドレス (下の「配列とヒープ」)
+- **`EQ`** は Integer 同士なら値、それ以外は型が同じなら等しい (nil == nil、true == true)。
+  **Array 同士の `==` はエラー** (Ruby は中身を比べるが、コアは持たない)。Proc 同士は同じものか
 - **整数以外への算術・大小比較 (`ADD` `LT` など) と `ADDI`系はエラーで止まる。** mruby ならメソッド探索に行く所
 - **`STOP` と、一番外側の `RETURN` / `RETNIL` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
 - **`def` したメソッドを呼べる (`TDEF` `SSEND` `SSEND0` `ENTER` `RETURN` `RETNIL`)。** 再帰もできる。呼び出し先は変換時に
   名前から静的に決める (同じ名前の再定義、定義していないメソッドの呼び出しは変換時に止める)。引数は必須のものだけ
-  (省略可能・残り・キーワード・ブロック引数は変換時に止める)。引数の数が合わなければ `ENTER` でエラー。
+  (と `&blk`。省略可能・残り・キーワード引数は変換時に止める)。引数の数が合わなければ `ENTER` でエラー。
   `TDEF` は実行時には R[a] に nil を入れるだけ (mruby はメソッド名の Symbol)。呼び出しの深さは 16 まで
-- **組み込みメソッド (`SEND` `SEND0`)。** `%` `!=` `-@` `<<` `>>` `&` `|` `^` `~` `!` `abs` `zero?` `even?` `odd?` だけ
-  (`tools/fpga/isa.rb` の `BUILTINS`)。受け手は Integer (`!` と `!=` は何でもよい)。`puts` など他のメソッドは変換時に止める
+- **組み込みメソッド (`SEND` `SEND0`)。** 次の 24 個だけ (`tools/fpga/isa.rb` の `BUILTINS`)。`puts` など他のメソッドは変換時に止める
+  - Integer: `%` `-@` `<<` `>>` `&` `|` `^` `~` `abs` `zero?` `even?` `odd?`
+  - 何でも: `!` `!=`
+  - Array: `size` `length` `empty?` `first` `last` `pop` `push` `include?`、`<<` (受け手が Array なら push)
+  - 時間待ち: `sleep_ms` `sleep` (受け手を書かない呼び出しを変換器が `SEND` に直す。下の「時間待ち」)
+  - Proc: `.call` (変換器が `BLKCALL` にする)
 - **`*` `/` `%` は Ruby と同じく floor 側に丸める** (`-7 / 2 = -4`、`-7 % 3 = 2`)。0 で割るとエラー。
   `INT_MIN / -1` は折り返して `INT_MIN`。シフトは 32 以上ずらすと 0 (右は符号)、負の量は逆向き
 - **定数 (`GETCONST` `SETCONST`) は 16 個まで。** 名前は変換時に番号にする。代入前に読むとエラー
-- **ブロックは `times` `upto` `downto` `loop` に直接渡すものだけ** (下の「ブロック」)。`each` などほかの iterator、
-  ブロックを値として持つこと (`proc`、`&blk`、`yield`)、ブロックからメソッドを抜ける `return` は変換時に止める
+- **ブロックは `def` したメソッド (`yield` / `&blk` / `block_given?`) と、`times` `upto` `downto` `loop` `each`
+  `each_with_index` `map` `proc` `lambda` に渡せる** (下の「ブロックと Proc」)。ほかのメソッドへのブロックは変換時に止める
+- **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)、上の組み込み。** 文字列・Hash・Range は無い
 - **pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
@@ -707,19 +716,48 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 - `File.open(path, "rb") { |f| f.read }`、`getbyte` `byteslice` `unpack`、`format`、`exit`、`STDERR` は使える。
   48bit の整数も扱える (`MRB_INT64`)
 
-### ブロック
+### ブロックと Proc
 
-ブロックを値 (Proc) にはしない。変換器が `BLOCK` + `SENDB` / `SSENDB` を、カウンタのループとブロックの irep の呼び出し
-(`SSEND` と同じ仕組み) に展開する。コアに足したのは `GETUPVAR` `SETUPVAR` `BREAK` の3命令だけ。
+ブロックは Proc (ヒープのオブジェクト) になる。`BLOCK` が Proc を作り、`BLKCALL` がそれを呼ぶ。Proc は
+先頭 pc・引数の数・nregs と、**作ったフレームの bp と、そのフレームの Proc** (外側への鎖) を持つ。
 
-- **展開する iterator:** `n.times { |i| }` (i = 0 から i < n)、`a.upto(b) { |i| }` (i <= b)、`a.downto(b) { |i| }` (i >= b)、
-  `loop { }`。結果は受け手 (`loop` は break の値)。ブロックの引数は必須のものだけで、iterator が渡さない分は nil
-- **フレームの置き場所:** iterator を呼んだフレームの R[a] が受け手、その後ろに引数・ブロック・カウンタを置き、さらに後ろ
-  (bp + a + 3、`upto`/`downto` は + 4、`loop` は + 2) をブロックのフレームにする。距離が変換時に決まるので、
-  外側の変数 (`GETUPVAR` / `SETUPVAR` の番号と深さ) は「bp から下へ何本目」(ROM の b) に直せる。入れ子のブロックは距離を足す
-- **`break` (`BREAK`):** ブロックのフレームを畳み (値はブロックの R0 = 呼んだ側のレジスタ)、iterator の break の出口へ飛ぶ。
-  出口の pc は変換時に決まる。`next` は普通の `RETURN` / `RETNIL`
-- `BLOCK` は `LOADNIL` にする (ROM の一覧では `<- BLOCK` と出る)。展開された語は一覧に `<- SENDB` と出る
+- **iterator は変換器がループに展開する。** `SENDB` / `SSENDB` を、カウンタのループと `BLKCALL` の列に置き換える。
+  `n.times { |i| }` (i = 0 から i < n)、`a.upto(b)` (i <= b)、`a.downto(b)` (i >= b)、`loop { }`、
+  `ary.each { |v| }`、`ary.each_with_index { |v, i| }`、`ary.map { |v| }` (結果は新しい配列)。
+  結果は受け手 (`loop` は break の値、`map` は新しい配列)。展開された語は ROM の一覧に `<- SENDB` と出る
+- **`proc { }` / `lambda { }` は Proc をそのまま返す。** `.call(...)` は `BLKCALL`。lambda も proc と同じ扱い
+  (引数の数を調べず、足りなければ nil、多ければ捨てる。ブロックの `ENTER` は `NOP` にする)
+- **`def` したメソッドへのブロック** は `SSEND` の c に印 (0x80) を付け、呼び出し先のブロックの枠 (引数の後ろ) に置いたまま呼ぶ。
+  `yield` は `BLKPUSH` (枠から Proc を取る) + `BLKCALL`、`&blk` は引数として受け、`block_given?` は `BLKPUSH` の後に `!` を2回
+- **外側の変数 (`GETUPVAR` / `SETUPVAR`)。** c = 何段外のフレームか (mruby の深さ + 1)。コアは今の Proc から鎖を c 段
+  たどって (1 cycle 1段、S_WALK) そのフレームの bp を得て、b 番目のレジスタを読み書きする。作ったフレームがもう無い Proc から
+  外側を触るのは仕様外 (mruby ならフレームを退避する所で、コアは退避しない)
+- **`break` (`BREAK`)。** iterator に直接渡したブロックなら、ブロックのフレームを1つ畳んで iterator の出口 (変換時に決まる b) へ
+  (c = 0)。`def` したメソッドや Proc に渡したブロックなら、Proc を作ったフレームまでコールスタックを畳み、
+  そのフレームから呼んだ所へ値を持って戻る (c = 1)。`next` は普通の `RETURN` / `RETNIL`
+- **ブロックの中の `return` (`RETURN_BLK`)。** c = ブロックを囲むメソッドまでの段数。そのメソッドのフレームまで畳んでから戻る。
+  メソッドの外 (一番外) のブロックの `return` は変換時に止める
+
+### 配列とヒープ
+
+- **ヒープは 2048 語 (1語 = タグ + 32bit) を半分ずつ使う。** 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
+  **Cheney のコピー GC** でもう半分へ写し、それでも足りなければエラーで止まる
+- **オブジェクト。** 見出し (タグ 7、値 = 種類 << 16 | 語数) の後ろに中身。
+  配列は `[見出し] [長さ] [中身への参照]` と、別の塊 `[見出し] [要素 × 容量]`。Proc は `[見出し] [先頭 pc | 引数の数 << 16 | nregs << 24] [作ったフレームの bp] [外側の Proc]`
+- **配列を伸ばす** (`a[i] = v` で i が容量以上、`push`) 時は、容量 max(i + 1, 2 倍, 4) の塊を新しく取り、写して付け替える。
+  間は nil
+- **GC の根は、レジスタファイル全部 (番号順)、代入済みの定数 (番号順)、コールスタックの Proc (底から)、今の Proc。**
+  参照インタプリタとコアが同じ順に写すので、GC の後のアドレスまでトレースで一致する。コアは1語1 cycle で写す
+- **Array と Proc はピンに出せない** (`SETGV` でエラー)
+
+### 時間待ち
+
+- **`sleep_ms n` は n ms、`sleep n` は n 秒待って n を返す。** 整数だけ (負はエラー)
+- **時計は 1ms ごとの `ms_tick`。** コアは待つ間 `ms_tick` を数えるだけで、命令は進まない。
+  `peridot_air_top.sv` の `MS_CYCLES` (既定 50,000 = 50MHz の 1ms) が `ms_tick` の間隔。
+  ボードエミュレーターは周波数と時刻の倍率から計算して渡すので、クロックを変えても待ち時間は変わらない
+- **参照インタプリタとトレースは時間を持たない。** 待ちは 1 step で、値 (n) だけを比べる。待つ長さは
+  `mrb_core_tb` (100 ms で 100 cycle 前後) とボードエミュレーター (`blink_sleep.rb` が 0.1 秒ごとに反転) で見る
 
 ### CPU コア (#8)
 
@@ -736,7 +774,12 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 - `*` `/` `%` は組み合わせ回路 (`x / y` `x % y` を floor に補正)
 `mrb_soc.sv` が ROM (1024語、同期読み出し) + コア + I/O (`mrb_io.sv`)。
 出力ポートは最後に書いた値を持ち (書く前は nil)、`GETGV` で読み戻せる。入力ポートは Integer で読める。
-`fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる。
+`fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる (配列の伸長、GC 後も生きている配列、
+ブロックの中の return、`sleep_ms` の待ち時間も)。
+
+- **1命令 2 cycle は、ヒープとフレームを触らない命令だけ。** 配列・Proc を作る (S_ALLOC → 見出しと中身を1語ずつ)、
+  配列を伸ばす (S_GROW)、GC (S_GC_ROOT → S_GC_SCAN)、外側のフレームをたどる (S_WALK)、`break` / `return` でコールスタックを
+  畳む (S_UNWIND)、`sleep_ms` (S_SLEEP) は数 cycle から数千 cycle かかる。トレースは命令ごとなので影響しない
 
 ### 正しさの基準 (#9)
 
@@ -758,10 +801,12 @@ L <step>                    命令数の上限 (fpga:check は 20000)
   その step の命令から値が変わる (参照もシミュレーションも同じ)
 - **差分ファズ (`rake fpga:fuzz[count,seed]`)。** 対応命令からランダムに ROM を組み (R0..R11 に乱数を入れる前置き付き、
   範囲外のレジスタ・0 で割る・深い再帰・未定義の定数・引数の数違いもわざと混ぜる)、参照とコアでトレースを1行残らず比べる。
-  `fpga:test` は seed 1 で 300 本。5000 本 (seed 2..6) 一致を確かめた。入力の刺激の適用順 (同じ port の行の順) の
+  4本に1本は**ヒープを突く形** (配列を作る・push・代入・添字・pop・Proc の呼び出しを並べたループで、GC を何度も起こす。
+  上限 3000 命令)。`sleep_ms` / `sleep` は混ぜない。
+  `fpga:test` は seed 1 で 300 本 (GC 245 回、74 本)。seed 2..7 で 400 本ずつ一致し、どの seed でも GC は 250 回以上起きた。入力の刺激の適用順 (同じ port の行の順) の
   食い違いはファズが見つけた。`%` の floor 補正を壊すと、ファズもコーパスも落ちる
 - **参照インタプリタ自体は別の実装と比べる** (`ref_vm_test.rb`):
-  CRuby で同じ `.rb` を走らせ `trace_var` で拾った出力の系列 (入力を読まないプログラム)、
+  CRuby で同じ `.rb` を走らせ `trace_var` で拾った出力の系列 (入力を読まないプログラム。`sleep_ms` / `sleep` は待たずに n を返す)、
   picoruby host VM に `p [$LED, $LED2]` を足して走らせた最後の値 (止まるプログラム)
 
 ### PERIDOT-Air (#10 #11)
@@ -774,7 +819,7 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 - **待ち時間はクロックイネーブルで作る。** CPU を `CE_DIV` cycle (既定 1000) に1回だけ進める。
   blink は 1回の反転に 7012 命令なので、50MHz なら約 0.28 秒ごとに反転する
   (Quartus と同じ `ROM_FILE` 経由の `$readmemh` で、CE_DIV=1 の時 14024 cycle ごとの反転をシミュレーションで確かめた)。
-  タイマー I/O は後
+  `CE_DIV` に関係なく時間で待つなら `sleep_ms` (上の「時間待ち」)
 - **ピンと Quartus の設定は osafune/peridot_air (MIT) の `fpga/air_blank_top/` から写した** (`fpga/boards/peridot_air/`)
 - **合成 (`rake fpga:build`)。** `build/fpga/peridot_air/` に自己完結のプロジェクト (`.sv` の写し、全語を埋めた `rom.hex`) を作り、
   `quartus_sh` が PATH にあればそこで、無ければ `FPGA_QUARTUS_HOST=<ssh 先>` へ rsync して
@@ -809,6 +854,8 @@ CPU は1命令 2 cycle なので、`CE_DIV=1` なら 125MHz で 6250 万命令/�
 - **時刻を引き延ばして速く回す。** CPU は `en` の cycle でしか進まないので、回路の `CE_DIV` を 1/k にし
   (1命令あたり 10 cycle 以上は残す)、時刻を k 倍して表示する。`CE_DIV=1000` なら k=100 で、実機 2 秒分が
   0.3 秒ほどで回る。1:1 で回した結果との差は 10µs 以内だった。`FPGA_EMU_EXACT=1` で 1:1 (実機 1 秒分に 20 秒ほど)
+- **`sleep_ms`。** `rake fpga:emu[fpga/corpus/blink_sleep.rb]` は `sleep_ms 100` の blink で、0.1000 秒ごとに反転する。
+  50MHz・`CE_DIV=100` でも 125MHz・`CE_DIV=1` でも同じ
 - **ボタン。** `<name>.buttons` (`fpga/corpus/button.buttons`) に `<ms> <0|1>` (1 = 押す) を書くと、その時刻に `D[0]` を落とす
 - **参照と突き合わせる。** エミュレーターが実際に実行した命令の数 (ログの END 行) だけ参照インタプリタを回し、LED の点灯の変化の列が一致するかを見る。
   窓の端は ±4 命令の揺れを許す。ボタンを押すプログラムは、時刻と命令数を対応付けられないので突き合わせない。

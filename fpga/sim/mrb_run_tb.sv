@@ -25,9 +25,10 @@ module mrb_run_tb;
   logic [NPORTS-1:0][INT_BITS-1:0] in_val;
   logic [NPORTS-1:0][VAL_BITS-1:0] out_val;
   logic halted, error;
+  logic ms_tick = 1'b0;
 
   mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
-    .clk, .rst_n, .en(1'b1), .in_val, .out_val, .halted, .error
+    .clk, .rst_n, .en(1'b1), .ms_tick, .in_val, .out_val, .halted, .error
   );
 
   always #5 clk = ~clk;
@@ -52,32 +53,42 @@ endtask
   int    max_steps = 20000;
   string rom_file, trace_file, stim_file, dump;
 
-  // 組み合わせの信号が落ち着いた negedge で見る
+  // 組み合わせの信号が落ち着いた negedge で見る。1命令が数 cycle かかる (ヒープ・呼び出し・GC・sleep) ので、
+  // X は命令を始めた cycle、W / O は書いた cycle に、始めた命令の step で出す
+  int cur = 0;
   always @(negedge clk) begin
-    if (rst_n && dut.core.retire) begin
-      $fdisplay(fd, "X %0d %0d %h", step, dut.core.dbg_pc, dut.core.dbg_op);
+    if (rst_n) begin
+      if (dut.core.retire) begin
+        if (step >= max_steps) begin
+          $fdisplay(fd, "L %0d", step);
+          finish();
+        end
+        cur = step;
+        $fdisplay(fd, "X %0d %0d %h", cur, dut.core.dbg_pc, dut.core.dbg_op);
+      end
       if (dut.core.rf_we)
-        $fdisplay(fd, "W %0d %0d %0d %h", step, dut.core.rf_waddr,
-                  dut.core.rf_wdata[VAL_BITS-1 -: 2], dut.core.rf_wdata[INT_BITS-1:0]);
+        $fdisplay(fd, "W %0d %0d %0d %h", cur, dut.core.rf_waddr,
+                  dut.core.rf_wdata[VAL_BITS-1 -: TAG_BITS], dut.core.rf_wdata[INT_BITS-1:0]);
       if (dut.core.io_we)
-        $fdisplay(fd, "O %0d %0d %0d %h", step, dut.core.io_addr,
-                  dut.core.io_wdata[VAL_BITS-1 -: 2], dut.core.io_wdata[INT_BITS-1:0]);
-      if (dut.core.err) begin
-        $fdisplay(fd, "E %0d %0d %h", step, dut.core.dbg_pc, dut.core.dbg_op);
+        $fdisplay(fd, "O %0d %0d %0d %h", cur, dut.core.io_addr,
+                  dut.core.io_wdata[VAL_BITS-1 -: TAG_BITS], dut.core.io_wdata[INT_BITS-1:0]);
+      if (dut.core.error) begin
+        $fdisplay(fd, "E %0d %0d %h", cur, dut.core.dbg_pc, dut.core.dbg_op);
         finish();
-      end else if (dut.core.halt) begin
-        $fdisplay(fd, "H %0d %0d", step, dut.core.dbg_pc);
+      end else if (dut.core.halted) begin
+        $fdisplay(fd, "H %0d %0d", cur, dut.core.dbg_pc);
         finish();
       end
-      step = step + 1;
-      update_inputs();
-      if (step >= max_steps) begin
-        $fdisplay(fd, "L %0d", step);
-        finish();
+      if (dut.core.retire) begin
+        step = step + 1;
+        update_inputs();
       end
     end
   end
-
+  
+  // sleep_ms / sleep の時計。トレースに時間は出ないので速く回す (2 cycle ごと)
+  always @(posedge clk) ms_tick <= ~ms_tick;
+  
   task automatic finish();
     $fclose(fd);
     $display("PASS mrb_run_tb (%0d steps)", step);

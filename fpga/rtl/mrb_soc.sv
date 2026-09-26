@@ -11,6 +11,7 @@ module mrb_soc
   input  logic                              clk,
   input  logic                              rst_n,
   input  logic                              en,
+  input  logic                              ms_tick,  // 1ms ごとの 1 cycle のパルス (sleep_ms / sleep)
   input  logic [NPORTS-1:0][INT_BITS-1:0]   in_val,
   output logic [NPORTS-1:0][VAL_BITS-1:0]   out_val,
   output logic                              halted,
@@ -36,7 +37,7 @@ module mrb_soc
   // トレース用の信号はテストベンチが core.* で覗く
   /* verilator lint_off PINCONNECTEMPTY */
   mrb_core #(.NREGS(NREGS), .PC_BITS(PC_BITS)) core (
-    .clk, .rst_n, .en,
+    .clk, .rst_n, .en, .ms_tick,
     .rom_addr, .rom_data,
     .io_addr, .io_rdata, .io_we, .io_wdata,
     .halted, .error,

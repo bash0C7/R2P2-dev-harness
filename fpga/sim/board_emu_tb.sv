@@ -3,6 +3,7 @@
 //
 // parameter (Verilator の -G で build 時に渡す):
 //   CE_DIV      回路に入れる CE_DIV (実機の CE_DIV / TIME_SCALE)
+//   MS_CYCLES   sleep_ms の 1ms が回路の何 cycle か (+mhz と TIME_SCALE から rake が決める)
 //   TIME_SCALE  ログとボタンの時刻を何倍して実機の時刻とみなすか。CPU は en の cycle でしか進まないので、
 //               CE_DIV を 1/k にして時刻を k 倍すれば、ms の精度では実機と同じ挙動になり、k 倍速く回る
 // plusargs:
@@ -20,6 +21,7 @@
 module board_emu_tb;
   parameter int CE_DIV = 1000;
   parameter int TIME_SCALE = 1;
+  parameter int MS_CYCLES = 125_000; // 回路の時計で 1ms (実機の) が何 cycle か = MHz * 1000 / TIME_SCALE
   localparam int MAX_BTN = 256;
 
   logic       clk = 1'b0;
@@ -27,7 +29,7 @@ module board_emu_tb;
   logic [0:0] d = 1'b1;
   wire  [1:0] led;
 
-  peridot_air_top #(.CE_DIV(CE_DIV)) dut (.CLOCK_50(clk), .RESET_N(reset_n), .D(d), .USER_LED(led));
+  peridot_air_top #(.CE_DIV(CE_DIV), .MS_CYCLES(MS_CYCLES)) dut (.CLOCK_50(clk), .RESET_N(reset_n), .D(d), .USER_LED(led));
 
   // シミュレーションでは周波数は時刻のラベルでしかないので、どこまでも上げられる
   real mhz = 125.0;

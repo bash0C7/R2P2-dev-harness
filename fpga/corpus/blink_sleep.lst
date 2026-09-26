@@ -1,0 +1,19 @@
+# irep 0  nregs 4
+   0  000  LOADI_0   a=1   b=0     c=0      060100000000
+   1  002  BLOCK     a=3   b=8     c=1280   620300080500
+   2  005  MOVE      a=4   b=3     c=0      010400030000  <- SSENDB
+   3       BLKCALL   a=4   b=0     c=0      360400000000  <- SSENDB
+   4       JMP       a=0   b=2     c=0      260000020000  <- SSENDB
+   5       MOVE      a=2   b=4     c=0      010200040000  <- SSENDB
+   6  009  RETURN    a=2   b=0     c=0      3d0200000000
+   7  011  STOP      a=0   b=0     c=0      760000000000
+# irep 1  nregs 5
+   8  000  NOP       a=0   b=0     c=0      000000000000  <- ENTER
+   9  004  LOADI_1   a=2   b=0     c=0      070200000000
+  10  006  GETUPVAR  a=3   b=1     c=1      210300010001
+  11  010  SUB       a=2   b=0     c=0      470200000000
+  12  012  SETUPVAR  a=2   b=1     c=1      220200010001
+  13  016  SETGV     a=2   b=0     c=0      160200000000
+  14  019  LOADI8    a=3   b=100   c=0      030300640000
+  15  022  SEND      a=2   b=22    c=1      320200160001  <- SSEND
+  16  026  RETURN    a=2   b=0     c=0      3d0200000000

@@ -280,7 +280,7 @@ def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
   buttons = nil unless File.file?(buttons)
   sim_ce, k = FpgaEmu.scale(ce_div, fast: ENV["FPGA_EMU_EXACT"].nil?)
 
-  exe = fpga_board_emu(sim_ce, k)
+  exe = fpga_board_emu(sim_ce, k, [(mhz * 1000.0 / k).round, 1].max)
   FileUtils.mkdir_p FPGA_ROM_DIR
   log = File.join(FPGA_ROM_DIR, "#{name}.emu.log")
   cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}", "+mhz=#{mhz}"]
@@ -317,8 +317,8 @@ def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
 end
 
 # fpga/sim/board_emu_tb.sv を CE_DIV と時刻の倍率ごとに build する (parameter は build 時に決まる)
-def fpga_board_emu(ce_div, time_scale)
-  mdir = File.join(FPGA_BUILD_DIR, "verilator", "board_emu_#{ce_div}_x#{time_scale}")
+def fpga_board_emu(ce_div, time_scale, ms_cycles)
+  mdir = File.join(FPGA_BUILD_DIR, "verilator", "board_emu_#{ce_div}_x#{time_scale}_ms#{ms_cycles}")
   exe = File.join(mdir, "board_emu")
   sources = [*fpga_rtl_sources, File.join(FPGA_SIM_DIR, "board_emu_tb.sv")]
   return exe if File.executable?(exe) && sources.all? { |s| File.mtime(s) < File.mtime(exe) }
@@ -326,7 +326,7 @@ def fpga_board_emu(ce_div, time_scale)
   FileUtils.mkdir_p mdir
   fpga_quiet_sh(File.join(mdir, "build.log"),
                 "verilator", "--binary", "--timing", "--assert", "-Wall", "-O3", "--trace-fst",
-                "-j", "0", "-GCE_DIV=#{ce_div}", "-GTIME_SCALE=#{time_scale}",
+                "-j", "0", "-GCE_DIV=#{ce_div}", "-GTIME_SCALE=#{time_scale}", "-GMS_CYCLES=#{ms_cycles}",
                 "--Mdir", mdir, "--top-module", "board_emu_tb", "-o", "board_emu", *sources)
   exe
 end
@@ -437,8 +437,11 @@ namespace :fpga do
     dir = File.join(FPGA_BUILD_DIR, "fuzz")
     FileUtils.mkdir_p dir
     endings = Hash.new(0)
+    gcs = gc_progs = 0
     count.times do |i|
-      words = FpgaFuzz.program(rng)
+      heap = i % 4 == 3 # 4本に1本はヒープ (配列・Proc・GC) を突く形
+      words = heap ? FpgaFuzz.heap_program(rng) : FpgaFuzz.program(rng)
+      max = heap ? FpgaFuzz::HEAP_STEPS : 400
       stim = FpgaFuzz.stim(rng)
       hex = File.join(dir, "prog.hex")
       File.write(hex, FpgaFuzz.hex(words))
@@ -447,8 +450,11 @@ namespace :fpga do
         stim_file = File.join(dir, "prog.stimsrc")
         File.write(stim_file, stim.map { |r| r.join(" ") + "\n" }.join)
       end
-      ref = FpgaRefVm.new(words, stim: stim).run(400)
-      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: 400)
+      vm = FpgaRefVm.new(words, stim: stim)
+      ref = vm.run(max)
+      gcs += vm.gcs
+      gc_progs += 1 if vm.gcs > 0
+      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: max)
       if ref != sim
         keep = File.join(dir, "fail_seed#{seed}_#{i}")
         FileUtils.cp hex, "#{keep}.hex"
@@ -460,7 +466,7 @@ namespace :fpga do
       endings[ref.last.split.first] += 1
     end
     puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
-         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']})"
+         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{gcs} GC in #{gc_progs} program(s))"
   end
 
   desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
