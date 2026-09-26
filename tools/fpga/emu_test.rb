@@ -14,8 +14,10 @@ class FpgaEmuTest < Minitest::Test
   end
 
   def test_steps_for_covers_the_time_window
-    # 1000 ms x 50MHz / (2 cycle x CE_DIV 1000) = 25000 step
-    assert_operator FpgaEmu.steps_for(1000, 1000), :>=, 25_000
+    # 1000 ms x 125MHz / (2 cycle x CE_DIV 1000) = 62500 step
+    assert_operator FpgaEmu.steps_for(1000, 1000), :>=, 62_500
+    # 50MHz なら 25000 step
+    assert_equal 25_000, FpgaEmu.window_steps(1000, 1000, 50)
   end
 
   def test_ref_pin_sequence_dedups_and_uses_ruby_truthiness_for_leds

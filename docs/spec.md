@@ -588,7 +588,7 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
 | `rake fpga:check` | `fpga/corpus/*.mrb` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
-| `rake fpga:emu[src,ms,ce_div]` | PERIDOT-Air のボードエミュレーター。実機の top を 50MHz で回し、LED とボタンの変化を実時間 (秒) で表示し、参照インタプリタと突き合わせる |
+| `rake fpga:emu[src,ms,ce_div,mhz]` | PERIDOT-Air のボードエミュレーター。実機の top をクロック `mhz` (既定 125MHz) で回し、LED とボタンの変化を実時間 (秒) で表示し、参照インタプリタと突き合わせる |
 | `rake fpga:emu:check` | コーパス全部をエミュレーターで 600ms 回し、LED の変化を参照と突き合わせる |
 | `rake fpga:rom[src]` | `.rb` / `.mrb` を PicoRuby の変換器で ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
 | `rake fpga:run[src,max]` | 1本をシミュレーションで走らせ、I/O を表示する。トレースと波形を `build/fpga/rom/` に残す |
@@ -746,8 +746,14 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 ### ボードエミュレーター
 
 実機が届くまでの代役。`fpga/sim/board_emu_tb.sv` が実機の top (`peridot_air_top.sv`) をそのまま置き、
-50MHz のクロック・`CE_DIV`・`RESET_N`・`D[0]`・`USER_LED` を実機どおりに回して、ピンの変化を実時間で書く。
-`rake fpga:emu[fpga/corpus/blink.mrb,2000]` で:
+クロック・`CE_DIV`・`RESET_N`・`D[0]`・`USER_LED` を実機どおりに回して、ピンの変化を実時間で書く。
+
+**クロックは既定 125MHz (Raspberry Pi Pico と同じ)、4つ目の引数 (MHz) で変えられる。** シミュレーションでは
+周波数は時刻のラベルでしかないので、どこまでも上げられ、手元で走る時間は変わらない (PERIDOT-Air の水晶は 50MHz)。
+CPU は1命令 2 cycle なので、`CE_DIV=1` なら 125MHz で 6250 万命令/秒。blink の反転は 125MHz・`CE_DIV=1000` で 0.1122 秒ごと、
+50MHz で 0.2805 秒ごと、1000MHz で 0.0140 秒ごとだった。参照インタプリタと突き合わせる命令数も周波数から計算する。
+
+`rake fpga:emu[fpga/corpus/blink.mrb,2000,1000,50]` (50MHz) で:
 
 ```
    0.000 s  LED    on

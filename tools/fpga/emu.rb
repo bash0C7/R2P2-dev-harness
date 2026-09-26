@@ -6,7 +6,7 @@ require_relative "converter"
 require_relative "compare"
 
 module FpgaEmu
-  CLOCK_HZ = 50_000_000
+  DEFAULT_MHZ = 125 # Raspberry Pi Pico と同じ
   CYCLES_PER_STEP = 2 # mrb_core は1命令 2 cycle (en の cycle で数えて)
 
   Event = Struct.new(:us, :what, :value)
@@ -56,16 +56,16 @@ module FpgaEmu
   end
 
   # ms の間に実行される命令の数 (リセット直後の数 cycle は無視できる)
-  def window_steps(ms, ce_div)
-    (ms / 1000.0 * CLOCK_HZ / (CYCLES_PER_STEP * ce_div)).floor
+  def window_steps(ms, ce_div, mhz = DEFAULT_MHZ)
+    (ms / 1000.0 * mhz * 1_000_000 / (CYCLES_PER_STEP * ce_div)).floor
   end
 
   # 境界の前後の揺れ (リセット解除の同期、クロックイネーブルの位相) を吸収する余裕
   STEP_SLACK = 4
 
   # 参照インタプリタを何 step 回せば ms の間の命令を全部含むか
-  def steps_for(ms, ce_div)
-    window_steps(ms, ce_div) + STEP_SLACK
+  def steps_for(ms, ce_div, mhz = DEFAULT_MHZ)
+    window_steps(ms, ce_div, mhz) + STEP_SLACK
   end
 
   # 参照インタプリタの O 行から、ピンの点灯 (true / false) の変化の列を作る (最初は消灯)
