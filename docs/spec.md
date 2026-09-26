@@ -932,6 +932,23 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **合成はできない。** 変換の関数は値でループの回数が決まり、`real` も合成できない。実機に載せるなら FP の IP と
   ファームウェアに置き換える (今はシミュレーターで完全に動かすのが目標)
 
+### I2C と SPI (P5d)
+
+- **外のチップ (表示器・センサー) は FPGA の外。** コアの側は I2C / SPI の送受信器だけを mrb_dev に持つ。書き込み (番地と
+  送るバイト) はトレースの O 行に出るので、表示器は `tools/fpga/displays.rb` がその列から画面を組み立てる: SSD1306 (I2C 0x3C、
+  命令 0x21 / 0x22 の窓に横へ画素)、AQM0802 の LCD (I2C 0x3E、2行 × 8 文字)、UC8151 (SPI、DC は GPIO 20、命令 0x13 の後の
+  データが画面)。エミュレーターはそれを最後に文字で描く。読み出しの返事は刺激 (UART の RX と同じく届いた順の列、無ければ 0xFF)
+- **I2C (0x180..0x188)。** 0x180 に 7bit の番地 (始め)、0x181 に送るバイト、0x182 はその番地が応答するか、0x183 で終わり、
+  0x184 は返事の次のバイト、0x185..0x188 は応答する番地の bit (刺激で与える。既定は 0x3C と 0x3E)。
+  SPI (0x190..0x191): 0x190 に送るバイト、0x191 は返事の次のバイト (読んだバイトにだけ当てる)。CS は GPIO。
+  外のチップはリセットされないので、watchdog の再起動でも返事の読んだ数は残す
+- **gem。** i2c (`write` `read` `scan`。応答しなければ IOError)、spi (`write` `read` `transfer` `select`)、Time (`Time.now` は
+  仮想の時計を 1970-01-01 UTC からの時刻とみなす)、vram (C の vram.c を Ruby に)、bdffont (フォントの gem は無いので、PicoRuby で
+  入れていない時と同じく `draw_text` は NoMethodError)。ssd1306 / uc8151 / hcsr04 / rotary_encoder は PicoRuby の mrblib を
+  そのまま使う。gem の補助メソッドはプレリュードの名前 (`__write` など) とぶつからない名前にする
+- **変換器が足したもの。** クラスの本体の `alias` (同じクラスで先に def したメソッドの行を静的に足す。命令は NOP)、
+  `include A::B`。プレリュードに `Proc.new`、`GC.start` (何もしない)、IOError / EOFError、1バイトの `Integer#chr`
+
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
@@ -1015,7 +1032,8 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 
 ### 配列とヒープ
 
-- **ヒープは 2048 語 (1語 = タグ + 32bit) を半分ずつ使う。** 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
+- **ヒープは 65536 語 (1語 = タグ + 32bit) を半分ずつ使う。** 語数はコアの parameter `HEAP_WORDS` (既定は `mrb_pkg` の
+  `HEAP_SIZE`) と参照インタプリタの `heap_size:` で、`mrb_core_tb` とファズのヒープを突く形は 2048 語で回して GC を何度も起こす。 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
   **Cheney のコピー GC** でもう半分へ写し、それでも足りなければエラーで止まる
 - **オブジェクト。** 見出し (タグ 8、値 = クラスの番号 << 16 | 語数) の後ろに中身。クラスの番号は
   `tools/fpga/isa.rb` の `CLASSES` (組み込み) と、ヒープの中だけの塊 (配列の中身 `CLS_DATA`、env `CLS_ENV`)。

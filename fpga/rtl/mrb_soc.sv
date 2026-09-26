@@ -1,4 +1,4 @@
-// ROM + CPU コア + I/O (ポート) + デバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog)。シミュレーションのテストベンチと実機の top の両方がこれを置く。
+// ROM + CPU コア + I/O (ポート) + デバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI)。シミュレーションのテストベンチと実機の top の両方がこれを置く。
 // ROM の空きは全 bit 1 (op 0xff) で、プログラムの外へ出たコアはエラーで止まる。
 `timescale 1ns / 1ps
 module mrb_soc
@@ -6,6 +6,7 @@ module mrb_soc
 #(
   parameter int    NREGS    = RF_SIZE,
   parameter int    PC_BITS  = 14,
+  parameter int    HEAP_WORDS = HEAP_SIZE,
   parameter        ROM_FILE = "" // string。型を付けると Icarus が渡せない
 ) (
   input  logic                              clk,
@@ -22,6 +23,11 @@ module mrb_soc
   input  logic [15:0]                       rx_count,
   input  logic [7:0]                        rx_bytes [256],
   input  logic [11:0]                       adc_val [5],
+  input  logic [15:0]                       i2c_rx_count,
+  input  logic [7:0]                        i2c_rx_bytes [256],
+  input  logic [31:0]                       i2c_present [4],
+  input  logic [15:0]                       spi_rx_count,
+  input  logic [7:0]                        spi_rx_bytes [256],
   output logic [31:0]                       gpio_dir,
   output logic [31:0]                       gpio_out,
   output logic [31:0]                       gpio_level,
@@ -57,7 +63,7 @@ module mrb_soc
 
   // トレース用の信号はテストベンチが core.* で覗く
   /* verilator lint_off PINCONNECTEMPTY */
-  mrb_core #(.NREGS(NREGS), .PC_BITS(PC_BITS)) core (
+  mrb_core #(.NREGS(NREGS), .PC_BITS(PC_BITS), .HEAP_WORDS(HEAP_WORDS)) core (
     .clk, .rst_n(core_rst_n), .en, .ms_tick,
     .rom_addr, .rom_data,
     .io_addr, .io_re, .vtime, .io_rdata, .io_we, .io_wdata,
@@ -76,6 +82,7 @@ module mrb_soc
     .clk, .rst_n,
     .addr(io_addr), .rdata(dev_rdata), .re(io_re && is_dev), .we(io_we && is_dev), .wdata(io_wdata), .vtime,
     .tick(en && fetching), .ext_low, .ext_high, .rx_count, .rx_bytes, .adc_val,
+    .i2c_rx_count, .i2c_rx_bytes, .i2c_present, .spi_rx_count, .spi_rx_bytes,
     .gpio_dir, .gpio_out, .gpio_level, .tx_valid, .tx_byte, .pwm_running, .reboot
   );
 endmodule

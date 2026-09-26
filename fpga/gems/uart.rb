@@ -65,7 +65,7 @@ class UART
   end
 
   # 届いたバイトを buffer へ
-  def __fill
+  def __uart_fill
     while __io_read(0x122) > 0
       @buf << __io_read(0x121).chr
     end
@@ -73,25 +73,25 @@ class UART
   end
 
   def bytes_available
-    __fill.bytesize
+    __uart_fill.bytesize
   end
 
   def read(len = nil)
-    __fill
+    __uart_fill
     return nil if @buf.empty? || (len && @buf.bytesize < len)
-    __take(len || @buf.bytesize)
+    __uart_take(len || @buf.bytesize)
   end
 
   def readpartial(maxlen)
-    __fill
+    __uart_fill
     return nil if @buf.empty?
-    __take(maxlen < @buf.bytesize ? maxlen : @buf.bytesize)
+    __uart_take(maxlen < @buf.bytesize ? maxlen : @buf.bytesize)
   end
 
   def getbyte
-    __fill
+    __uart_fill
     return nil if @buf.empty?
-    __take(1).getbyte(0)
+    __uart_take(1).getbyte(0)
   end
 
   def ungetbyte(byte)
@@ -100,11 +100,11 @@ class UART
   end
 
   def gets
-    i = __fill.index("\n")
-    i ? __take(i + 1) : nil
+    i = __uart_fill.index("\n")
+    i ? __uart_take(i + 1) : nil
   end
 
-  def __take(n)
+  def __uart_take(n)
     s = @buf[0, n]
     @buf = @buf[n, @buf.bytesize - n]
     s
@@ -119,7 +119,7 @@ class UART
   end
 
   def clear_rx_buffer
-    __fill
+    __uart_fill
     @buf = ""
     self
   end

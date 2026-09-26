@@ -12,7 +12,8 @@
 //   +mhz=<n>       クロック周波数 MHz (既定 125、Raspberry Pi Pico と同じ)。top の CLOCK_50 に入れる
 //   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"。最後の END 行の value は実行した命令の数。
 //                  デバイス (mrb_dev.sv) の GPIO のピンの値の変化は "GPIO<n>"、UART の送信は1バイトずつ "UART"、
-//                  PWM の設定の変化は "PWM<n>" (周波数 mHz) と "PWMDUTY<n>" (1/1000 %)、watchdog の再起動は "REBOOT"
+//                  PWM の設定の変化は "PWM<n>" (周波数 mHz) と "PWMDUTY<n>" (1/1000 %)、watchdog の再起動は "REBOOT"、
+//                  I2C の番地・送ったバイト・終わりは "I2CADDR" "I2C" "I2CSTOP"、SPI で送ったバイトは "SPI" (表示器は emu.rb が組み立てる)
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
 `timescale 1ns / 1ps
@@ -74,6 +75,15 @@ module board_emu_tb;
       pwm_f_q = dut.soc.dev.pwm_freq;
       pwm_d_q = dut.soc.dev.pwm_duty;
       if (dut.soc.reboot) $fdisplay(fd, "%0d REBOOT 0", now_us());
+      if (dut.soc.io_we && dut.soc.en) begin
+        case (dut.soc.io_addr)
+          16'h180: $fdisplay(fd, "%0d I2CADDR %0d", now_us(), dut.soc.io_wdata[6:0]);
+          16'h181: $fdisplay(fd, "%0d I2C %0d", now_us(), dut.soc.io_wdata[7:0]);
+          16'h183: $fdisplay(fd, "%0d I2CSTOP 0", now_us());
+          16'h190: $fdisplay(fd, "%0d SPI %0d", now_us(), dut.soc.io_wdata[7:0]);
+          default: ;
+        endcase
+      end
       if (dut.soc.tx_valid && dut.soc.en) $fdisplay(fd, "%0d UART %0d", now_us(), dut.soc.tx_byte);
       if (dut.soc.halted && !halted_q) $fdisplay(fd, "%0d HALT %0d", now_us(), dut.soc.core.pc);
       if (dut.soc.error && !error_q) $fdisplay(fd, "%0d ERROR %0d", now_us(), dut.soc.core.pc);

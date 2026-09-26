@@ -182,6 +182,7 @@ module FpgaFuzz
   # 代入、添字で読む、pop、Proc を呼ぶ、演算の落ち先) を並べて先頭へ戻るループにし、GC を何度も起こす。
   # R12..R15 は断片の作業用。ブロックの本体とメソッドは ROM の後ろ。呼び出しはメソッド表を引く
   HEAP_STEPS = 3000
+  HEAP_WORDS = 2048 # heap_program を走らせるヒープの語数 (小さくして GC を何度も起こす)
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
         maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
@@ -239,7 +240,9 @@ module FpgaFuzz
         words << encode(FpgaIsa.op("SEND"), 12, rng.rand(2).zero? ? S[:push] : S[:shl], 1)
       when 2 # a[i] = v (伸ばすこともある)。SETIDX か Array#[]=
         words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
-        words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(24), 0)
+        # ときどき大きい添字で伸ばす (半分を越えればヒープが尽きてエラー)
+        words << (rng.rand(6).zero? ? encode(FpgaIsa.op("LOADI16"), 13, rng.rand(100..1100), 0) :
+                                      encode(FpgaIsa.op("LOADI8"), 13, rng.rand(24), 0))
         words << encode(FpgaIsa.op("MOVE"), 14, (ints + arrs).sample(random: rng), 0)
         words << (rng.rand(2).zero? ? encode(FpgaIsa.op("SETIDX"), 12, 0, 0) : encode(FpgaIsa.op("SEND"), 12, S[:aset], 2))
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)

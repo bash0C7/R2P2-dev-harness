@@ -32,7 +32,6 @@ require_relative "fpconv"
 class FpgaRefVm
   MASK = (1 << FpgaIsa::INT_BITS) - 1
   NIL = [FpgaIsa::TAG_NIL, 0].freeze
-  HALF = FpgaIsa::HEAP_SIZE / 2
 
   class Fault < StandardError; end # 命令の途中のエラー (エラー停止にする)
   # Ruby の例外にできるエラー (isa.rb の CERR_*)。例外の表があれば Integer#__core_error を呼ぶ (core_error)
@@ -49,8 +48,11 @@ class FpgaRefVm
   end
 
   # stim: [[step, port, value], ...]。step 以降の命令から port の入力が value になる。
-  def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [])
+  # heap_size: ヒープの語数 (RTL の HEAP_WORDS と同じにする。ファズは小さくして GC を突く)
+  def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [], heap_size: FpgaIsa::HEAP_SIZE)
     @rom = words
+    @heap_size = heap_size
+    @half = heap_size / 2
     @nregs = nregs
     # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
     @stim = FpgaCompare.sort_stim(stim)
@@ -69,7 +71,7 @@ class FpgaRefVm
     @kw = 0      # 今のフレームの印 (ENTER が見る)
     @io = Array.new(FpgaIoMap::NPORTS) { NIL }
     @consts = Array.new(FpgaIsa::NCONST)
-    @heap = Array.new(FpgaIsa::HEAP_SIZE) { NIL }
+    @heap = Array.new(@heap_size) { NIL }
     @space = 0
     @hp = 0
     @stack = [] # [戻り先の pc, 呼び出し元の bp, 呼び出し元の Proc, 呼び出し元の env, 呼び出し元の nregs]
@@ -263,8 +265,8 @@ class FpgaRefVm
 
   # n 語を確保して先頭の語アドレスを返す。足りなければ GC し、それでも足りなければエラー
   def alloc(n)
-    gc if @hp + n > (@space + 1) * HALF
-    fault! if @hp + n > (@space + 1) * HALF
+    gc if @hp + n > (@space + 1) * @half
+    fault! if @hp + n > (@space + 1) * @half
     p = @hp
     @hp += n
     p
@@ -275,7 +277,7 @@ class FpgaRefVm
   def gc
     @stats[:gc] += 1
     @space = 1 - @space
-    @free = @space * HALF
+    @free = @space * @half
     @regs.each_index { |i| @regs[i] = forward(@regs[i]) }
     @consts.each_index { |i| @consts[i] = forward(@consts[i]) if @consts[i] }
     @stack.each do |fr|
@@ -286,7 +288,7 @@ class FpgaRefVm
     @env = forward(@env)
     @exc = forward(@exc)
     @xval = forward(@xval)
-    scan = @space * HALF
+    scan = @space * @half
     while scan < @free
       w = @heap[scan]
       @heap[scan] = forward(w) unless w[0] == FpgaIsa::TAG_HDR

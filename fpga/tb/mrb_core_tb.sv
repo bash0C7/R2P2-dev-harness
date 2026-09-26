@@ -19,11 +19,14 @@ module mrb_core_tb;
   initial for (int i = 0; i < 256; i++) no_rx[i] = 8'd0;
   logic [11:0] adc [5];
   initial for (int i = 0; i < 5; i++) adc[i] = 12'(1000 + i);
+  logic [31:0] present [4];
+  initial begin present[0] = 0; present[1] = 32'h5000_0000; present[2] = 0; present[3] = 0; end
 
   /* verilator lint_off PINCONNECTEMPTY */
-  mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS)) dut (
+  mrb_soc #(.NREGS(NREGS), .PC_BITS(PC_BITS), .HEAP_WORDS(2048)) dut ( // 小さいヒープで GC を何度も起こす
     .clk, .rst_n, .en(1'b1), .ms_tick(1'b1), .in_val, .out_val, .halted, .error,
     .ext_low('0), .ext_high('0), .rx_count('0), .rx_bytes(no_rx), .adc_val(adc),
+    .i2c_rx_count('0), .i2c_rx_bytes(no_rx), .i2c_present(present), .spi_rx_count('0), .spi_rx_bytes(no_rx),
     .gpio_dir(), .gpio_out(), .gpio_level(), .tx_valid(), .tx_byte(), .pwm_running(), .reboot()
   );
   /* verilator lint_on PINCONNECTEMPTY */
@@ -1195,7 +1198,7 @@ module mrb_core_tb;
     expect_halt();
     expect_reg(1, vint(42));
     expect_reg(4, vint(43));
-    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][10:0]] !== {TAG_HDR, CLS_HASH, 16'd4})
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][15:0]] !== {TAG_HDR, CLS_HASH, 16'd4})
       $fatal(1, "%s: R3 is not an empty Hash", name);
     if (dut.core.regs[6] !== dut.core.regs[8] || dut.core.regs[6][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: the block did not reach h", name);
 
@@ -1286,7 +1289,7 @@ module mrb_core_tb;
     expect_halt();
     expect_reg(4, vint(4));
     expect_reg(5, vint(5));
-    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][10:0]][31:16] != CLS_BRK)
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][15:0]][31:16] != CLS_BRK)
       $fatal(1, "%s: R3 is not a break object", name);
 
     begin_test("break through ensure in an iterator");
@@ -1358,8 +1361,8 @@ module mrb_core_tb;
     expect_halt();
     if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: R3 is not an array", name);
     begin
-      logic [10:0] d;
-      d = dut.core.heap[dut.core.regs[3][10:0] + 2][10:0];
+      logic [15:0] d;
+      d = dut.core.heap[dut.core.regs[3][15:0] + 2][15:0];
       expect_val("kind", dut.core.heap[d + 1], vint(CERR_NOMETHOD));
       expect_val("name", dut.core.heap[d + 2], {TAG_SYM, 32'd30});
       expect_val("recv", dut.core.heap[d + 3], VNIL);

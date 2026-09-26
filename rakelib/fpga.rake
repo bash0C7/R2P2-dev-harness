@@ -196,10 +196,11 @@ namespace :fpga do
       fpga_quiet_sh(File.join(dir, "build.log"), "iverilog", "-g2012", "-o", vvp, "-s", tb, *fpga_rtl_sources, path)
       system("vvp", "-n", vvp, "+dumprom=#{dir}", out: File::NULL) # 途中のケースで止まっても、そこまでは書いてある
       nregs = File.read(path)[/localparam int NREGS\s*=\s*(\d+)/, 1].to_i
+      heap_size = File.read(path)[/\.HEAP_WORDS\((\d+)\)/, 1].to_i
       File.readlines(File.join(dir, "cases.txt"), chomp: true).each do |line|
         n, name = line.split(" ", 2)
         words = File.read(File.join(dir, "#{n}.hex")).gsub(%r{//[^\n]*}, "").split.map(&:hex) # $writememh は1行に数語、注釈つき
-        vm = FpgaRefVm.new(words, nregs: nregs)
+        vm = FpgaRefVm.new(words, nregs: nregs, heap_size: heap_size)
         last = vm.run(100_000).last
         show = lambda do |(tag, x)|
           case tag
@@ -291,15 +292,17 @@ def fpga_stim_path(src)
   File.file?(path) ? path : nil
 end
 
-# fpga/sim/mrb_run_tb.sv を Verilator で1回だけ build する
-def fpga_runner
-  @fpga_runner ||= begin
-    mdir = File.join(FPGA_BUILD_DIR, "verilator", "mrb_run_tb")
+# fpga/sim/mrb_run_tb.sv を Verilator で1回だけ build する (ヒープの語数ごと。既定は FpgaIsa::HEAP_SIZE)
+def fpga_runner(heap = nil)
+  @fpga_runner ||= {}
+  @fpga_runner[heap] ||= begin
+    mdir = File.join(FPGA_BUILD_DIR, "verilator", heap ? "mrb_run_tb_heap#{heap}" : "mrb_run_tb")
     FileUtils.rm_rf mdir
     FileUtils.mkdir_p mdir
     fpga_quiet_sh(File.join(mdir, "build.log"),
                   "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
                   "-j", "0", "--Mdir", mdir, "--top-module", "mrb_run_tb", "-o", "mrb_run_tb",
+                  *(heap ? ["-GHEAP_WORDS=#{heap}"] : []),
                   *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"))
     File.join(mdir, "mrb_run_tb")
   end
@@ -366,11 +369,11 @@ def fpga_board_emu(ce_div, time_scale, ms_cycles)
 end
 
 # シミュレーションで走らせてトレースを返す。トレースなどは build/fpga/rom/<name>.* に書く
-def fpga_sim_trace(hex, name:, stim:, max:, dump: nil)
+def fpga_sim_trace(hex, name:, stim:, max:, dump: nil, heap: nil)
   FileUtils.mkdir_p FPGA_ROM_DIR
   base = File.join(FPGA_ROM_DIR, name)
   trace = "#{base}.sim.trace"
-  cmd = [fpga_runner, "+rom=#{hex}", "+trace=#{trace}", "+max=#{max}"]
+  cmd = [fpga_runner(heap), "+rom=#{hex}", "+trace=#{trace}", "+max=#{max}"]
   if stim
     # テストベンチの $fscanf はコメント行を読めないので、数字だけにしたものを渡す
     plain = "#{base}.stim"
@@ -485,11 +488,12 @@ namespace :fpga do
         stim_file = File.join(dir, "prog.stimsrc")
         File.write(stim_file, stim.map { |r| r.join(" ") + "\n" }.join)
       end
-      vm = FpgaRefVm.new(words, stim: stim)
+      heap_size = heap ? FpgaFuzz::HEAP_WORDS : FpgaIsa::HEAP_SIZE # ヒープを突く形は小さいヒープで GC を何度も起こす
+      vm = FpgaRefVm.new(words, stim: stim, heap_size: heap_size)
       ref = vm.run(max)
       vm.stats.each { |k, v| stats[k] += v }
       gc_progs += 1 if vm.gcs > 0
-      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: max)
+      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: max, heap: heap ? FpgaFuzz::HEAP_WORDS : nil)
       if ref != sim
         keep = File.join(dir, "fail_seed#{seed}_#{i}")
         FileUtils.cp hex, "#{keep}.hex"

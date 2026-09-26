@@ -2,9 +2,10 @@
 # 参照インタプリタ (ref_vm.rb) と LED の変化の系列を突き合わせる。rake fpga:emu が使う。
 #
 # ログは1行 "<us> <what> <value>"。what は LED / LED2 / GPIO<n> / UART (送ったバイト) / PWM<n> (mHz) / PWMDUTY<n> (1/1000 %) /
-# REBOOT (watchdog) / BUTTON / HALT / ERROR / END。
+# REBOOT (watchdog) / I2CADDR / I2C / I2CSTOP / SPI (表示器は displays.rb が組み立てて最後に出す) / BUTTON / HALT / ERROR / END。
 require_relative "converter"
 require_relative "compare"
+require_relative "displays"
 
 module FpgaEmu
   DEFAULT_MHZ = 125 # Raspberry Pi Pico と同じ
@@ -34,11 +35,31 @@ module FpgaEmu
     [ce_div / k, k]
   end
 
-  # UART の送信は、改行 (か最後) までを1行にまとめる (最初のバイトの時刻に並べる)
+  BUS = %w[I2CADDR I2C I2CSTOP SPI].freeze
+
+  # I2C / SPI の書き込みと GPIO の出力の値から、displays.rb の列を作る
+  def display_events(events)
+    out_bits = 0
+    events.filter_map do |e|
+      case e.what
+      when "I2CADDR" then [:i2c_addr, e.value]
+      when "I2C" then [:i2c, e.value]
+      when "I2CSTOP" then [:i2c_stop]
+      when "SPI" then [:spi, e.value]
+      when /\AGPIO(\d+)\z/
+        n = Regexp.last_match(1).to_i
+        out_bits = e.value == 1 ? out_bits | (1 << n) : out_bits & ~(1 << n)
+        [:gpio_out, out_bits]
+      end
+    end
+  end
+
+  # UART の送信は、改行 (か最後) までを1行にまとめる (最初のバイトの時刻に並べる)。表示器は最後に画面を出す
   def format_events(events)
     out = []
     line = nil
     events.each do |e|
+      next if BUS.include?(e.what)
       if e.what == "UART"
         if line.nil?
           line = [e.us, +""]
@@ -49,7 +70,8 @@ module FpgaEmu
       end
       out << format_event(e)
     end
-    out.compact.map { |x| x.is_a?(Array) ? format("%8.3f s  uart   %s", x[0] / 1_000_000.0, x[1].inspect) : x }
+    lines = out.compact.map { |x| x.is_a?(Array) ? format("%8.3f s  uart   %s", x[0] / 1_000_000.0, x[1].inspect) : x }
+    lines + FpgaDisplays.format(FpgaDisplays.decode(display_events(events)))
   end
 
   def format_event(e)

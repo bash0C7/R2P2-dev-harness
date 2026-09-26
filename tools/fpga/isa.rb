@@ -86,8 +86,9 @@ module FpgaIsa
   #   LOADL         32bit に収まる整数は LOADI32
   #   HASH HASHADD HASHCAT RANGE_INC RANGE_EXC  プレリュードの Hash / Range を作るメソッドの呼び出し (ARRAY と SEND)
   #   KARG KEY_P KEYEND  キーワード引数の Hash (R[len+1]) のメソッドの呼び出し。キーワード付きの SEND も下げる (rom.rb の kw_lowered)
+  #   ALIAS         クラスの本体の alias は表の行 (静的に足す)。命令は NOP
   LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL HASH HASHADD HASHCAT RANGE_INC RANGE_EXC
-                KARG KEY_P KEYEND].freeze
+                KARG KEY_P KEYEND ALIAS].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
   # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
@@ -235,7 +236,7 @@ module FpgaIsa
   FIRST_USER_CLASS = 32
   META = 0x8000
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
-  HEAP_SIZE = 2048
+  HEAP_SIZE = 65536
 
   INT_BITS = 32
 

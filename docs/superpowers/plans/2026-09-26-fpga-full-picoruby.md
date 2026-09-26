@@ -264,10 +264,43 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
     oracle は __io_read / __io_write のたびに tick する (出力のピンの変化は次のアクセスの前に見える。LEVEL の事象を使う
     プログラムは比べない)
 - **P5d** I2C、SPI とデバイスのモデル (SSD1306 などをエミュレーターが画面として見せる)、rotary_encoder、hcsr04
+- **P5d の設計。**
+  - **外のチップ (表示器・センサー) は FPGA の外。** コアの側は I2C / SPI の送受信器だけを mrb_dev に持つ。
+    書き込みはトレースの O 行 (番地とバイト) に出るので、表示器 (SSD1306、AQM0802 の LCD、UC8151) はその列を読む
+    デコーダー (Ruby) が画面にする (エミュレーターが表示する)。読み出しの返事は刺激 (UART の RX と同じく届いた順の列。
+    無ければ 0xFF)。応答する I2C の番地は既定で 0x3C (SSD1306) と 0x3E (LCD)、刺激で変えられる
+  - **I2C (0x180..0x188)。** 0x180 に 7bit の番地を書く (始め)、0x181 に1バイト送る、0x182 を読むとその番地が応答するか (1 / 0)、
+    0x183 に書くと終わり (STOP)、0x184 を読むと返事の次のバイト、0x185..0x188 は応答する番地の bit (128 番地、刺激で与える)
+  - **SPI (0x190..0x191)。** 0x190 に1バイト送る、0x191 を読むと返事の次のバイト (刺激。読んだバイトにだけ当てる)。
+    CS は GPIO (PicoRuby の spi gem と同じ)
+  - **gem。** i2c (`write` `read` `scan`。応答しなければ IOError)、spi (`write` `read` `transfer` `select` `deselect`)、
+    Time (`Time.now` は仮想の時計。`usec` `to_i` `to_f` `-`)、vram (C の vram.c を Ruby に)、bdffont (フォントの gem は無い:
+    `draw_text` は PicoRuby でフォントの gem を入れていない時と同じく NoMethodError)。
+    ssd1306 / uc8151 / hcsr04 / rotary_encoder は PicoRuby の mrblib をそのまま使う (変換器が通れば)
+  - **ヒープを 16384 語に。** SSD1306 の画面 (1024 バイト、1語 1バイト) が 2048 語のヒープに入らないため。GC を突く
+    ファズは大きい添字で配列を伸ばす断片で補う
 - **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
 ### P6 Task
 
 - `Task.new { }`、`Task.pass`、`sleep` で切り替わる協調マルチタスク。タスクごとにレジスタ窓とコールスタックを持つ
+- PSG (P5e) の `start` / `join` と `IRQ.start` は Task の上に作られているので、P6 を P5e より先にする
+- **P6 の設計。** PicoRuby の mruby-task (src/task.c) と同じ意味。
+  - **タスクごとに区画を分ける。** レジスタファイルとコールスタックを TASKS (8) 個の区画に分け (タスク i の R0 は i × 128)、
+    今のタスクの番号で選ぶ。切り替えは pc・bp・cp・env・fn・mcls・スタックの深さ・例外の途中の値などの小さな状態を
+    タスクごとの表に写して入れ替えるだけ (レジスタを写さない)。env が生きている間の bp を指したままでよいのは、区画が重ならないから
+    (ブロックが main の変数を読むタスクでも、main の区画はそのまま残る)。GC の根は全区画
+  - **スケジューラーはプレリュードの Ruby** (`Task` クラス、ready / waiting / suspended の列は優先度の順、同じ優先度は後ろへ。
+    task.c の mrb_task_q_insert と同じ)。回路の primitive は、区画にブロックを置く (`__task_init`)、区画を切り替える
+    (`__task_switch`)、今の区画 (`__task_slot`)、tick を止める / 許す (`__task_lock`)
+  - **tick は仮想の時計で。** R2P2 (Pico 2) と同じく 1 tick = 1ms、timeslice は 10 tick。コアは仮想の時計が次の tick を越えた
+    命令の区切りで (スケジューラーが許していれば) `__task_tick` を割り込みで呼び、戻ったらその命令から続ける。
+    割り込みのフレームは今のフレームの上 (bp + nregs) に置く。これのために一番外の irep にも ENTER を置く
+  - **sleep と idle。** タスクがあれば `sleep` / `sleep_ms` はスケジューラーが WAITING にし、どのタスクも動けなければ
+    次に起きる tick まで仮想の時計を進める (今の sleep_ms と同じ)
+  - **タスクの終わり。** 区画はブロックを包んだ Ruby (`r = blk.call` の後に `Task.__finish(r)`) から始め、終わったら区画を返す。
+    例外はタスクの結果にする (mruby の exception_as_result)。区画が尽きたら Task.new は例外
+  - **突き合わせ。** 出力の順が sleep で決まるプログラムは picoruby の host VM とも比べる (host の tick は 4ms なので、
+    tick の単位に依らない書き方のものだけ)
 
 ## 記録
 
@@ -289,6 +322,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P5a デバイスのバス・GPIO・UART・時計・RNG | 59 | 30 (example は 3 / 32) | 30 | devices.rb、uart_echo.rb (刺激) を追加。FPGA 版の gem (fpga/gems)。止める理由はほぼ device の gem (psg、i2c ...) |
 | 2026-09-26 | P5b Float | 60 | 31 (example は 3 / 32) | 31 | floats.rb を追加。10進との変換は多倍長の整数で正確に (mrb_fpconv_pkg、tb は両シミュレーターで 1174 本)。ROM を 16384 語に。止める理由はほぼ device の gem (psg、i2c、irq ...) |
 | 2026-09-26 | P5c IRQ・PWM・ADC・watchdog・io/console | 63 | 38 (example は 9 / 32) | 38 | peripherals.rb (刺激)、irq_loopback.rb、watchdog.rb を追加。example の irq_gpio_picoruby など IRQ.start を使う3本は、参照と RTL は一致するが NotImplementedError で終わる (P6 で Task ができてから)。止める理由は i2c / spi / psg / Task |
+| 2026-09-26 | P5d I2C・SPI・表示器・Time・hcsr04・rotary_encoder | 65 | 47 (example は 17 / 32) | 47 | buses.rb (刺激)、display.rb を追加。ヒープ 65536 語 (parameter)。表示器はトレースのデコーダーでエミュレーターが描く。止める理由は Task (P6)、psg (P5e)、picotest、pio、pitchdetector |
 
 ## 見つけたこと
 
@@ -407,3 +441,15 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 - P5c: ファズ (Integer#[] が Float#> の primitive を指すランダムな表) で、RTL が Float の比較の primitive に Integer の受け手を
   通していた (参照はエラー)。Integer の primitive が Float の引数を受ける所の条件を、比較だけ Float の primitive まで広げて
   書いていた。P5b の commit から入っていた
+- P5d: I2C#scan が「wrong number of arguments (given 1, expected 3)」で落ちた。gem の補助メソッド I2C#__write が、プレリュードの
+  Object#__write (puts が使う) を I2C の中で隠していた (puts は self に送る)。gem の補助メソッドは gem の名前を付けた名前にした
+- P5d: `Integer#chr` が 128..255 を UTF-8 の2バイトにしていた (`"" << self`)。SPI で読んだバイトの列が化けて気づいた。
+  CRuby と PicoRuby は1バイト
+- P5d: IOError、`Proc.new { }`、`GC.start`、`alias`、`include A::B` が無く、PicoRuby の gem (i2c、rotary_encoder、ssd1306) が
+  通らなかった。例を1本ずつ走らせて止まる所を順に足した
+- P5d: SSD1306 の画面 (1024 バイト、1語 1バイト) は 2048 語のヒープに入らず、UC8151 (4736 バイト) は 16384 語でも尽きた。
+  65536 語にし、GC を突く tb とファズは parameter で 2048 語のまま回す (大きいヒープではファズの GC がほぼ起きなくなった)
+- P5d: 変換器を走らせる PicoRuby の host VM の既定のヒープ (6.4MB) が、表示器の gem を入れたプログラムで尽きた (NoMemoryError)。
+  build_config/host-test.rb の overlay で 64MB にした。`-DHEAP_SIZE=(1024*65536)` は shell が括弧でつまずくので数で書く
+- P5d: 外のチップの表示器を RTL のデバイスにすると SV と Ruby に2回書くことになる。書き込みはトレースに出るので、
+  表示はトレースを読むデコーダー (Ruby 1つ) にし、読み出しの返事だけを刺激にした
