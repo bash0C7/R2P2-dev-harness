@@ -23,7 +23,7 @@ class FpgaQuartusTest < Minitest::Test
 
   def test_sources_put_the_package_first_and_leave_out_test_circuits
     names = FpgaQuartus.sources.map { |p| File.basename(p) }
-    assert_equal "mrb_pkg.sv", names.first
+    assert_equal %w[mrb_fpconv_pkg.sv mrb_pkg.sv], names.first(2)
     assert_includes names, "peridot_air_top.sv"
     refute_includes names, "counter8.sv"
   end

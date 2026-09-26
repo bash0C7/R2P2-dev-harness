@@ -188,7 +188,17 @@ module FpgaFuzz
         isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41, nosuch: 42, divz: 43, ior: 44, iow: 45 }.freeze
   # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
   HEAP_TEXT = "hello, fpga!"
-  HEAP_TABLE_LOG = 6 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
+  # Float の断片 (pick 21) が送る primitive。シンボルは FLOAT_SYM から順に (受け手は Float)
+  FLOAT_SEND = %w[FADD FSUB FMUL FDIV FMOD FPOW FLT FLE FGT FGE FEQ FCMP FNEG FTOI FFLOOR FCEIL FROUND FNAN FINF FTOS
+                  FFMT FMATH FATAN2 FHYPOT FFMOD].freeze
+  FLOAT_SYM = 46
+  I2F_SYM = FLOAT_SYM + FLOAT_SEND.size # Integer#to_f
+  STOD_SYM = I2F_SYM + 1                # String#__strtod
+  IFLT_SYMS = { "IADD" => STOD_SYM + 1, "IMUL" => STOD_SYM + 2, "ILT" => STOD_SYM + 3, "IEQ" => STOD_SYM + 4 }.freeze
+  # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
+  FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0].freeze
+  FLOAT_LITS = %w[1.5e3 -0.001 123456789012345678901234567890 1e400 1e-400 2.4703282292062328e-324 0.1 12 1. abc -].freeze
+  HEAP_TABLE_LOG = 7 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
   HEAP_SYMS = [[0, 5], [7, 4], [0, 0], [4, 8]].freeze
   # heap_program のクラス: P (32、@a @b) と Q (33 < P、@c を足す)。オブジェクトは定数 2 に置く
   P_CLS = 32
@@ -202,6 +212,8 @@ module FpgaFuzz
     words << :htable
     words << encode(FpgaIsa.op("ENTER"), 0, 16, 0) # fn = 16 (コアのエラーの __core_error はその上で呼ぶ)
     catches = [] # [種類, begin, end, 飛び先]
+    floats = FLOAT_VALUES + Array.new(4) { [rng.rand(1 << 64)].pack("Q").unpack1("D") }
+    nfloat = floats.size
     8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
     words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
     words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
@@ -217,7 +229,7 @@ module FpgaFuzz
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(21)
+      pick = rng.rand(22)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -364,6 +376,40 @@ module FpgaFuzz
                                         encode(FpgaIsa.op("LOADI32"), 14, v >> 16, v & 0xFFFF))
           words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
         end
+      when 21 # Float: LOADF か Integer#to_f か String#__strtod で作り、primitive を1つ送る (引数は Float・整数・配列)
+        words << case rng.rand(4)
+                 when 0, 1 then [:float, rng.rand(nfloat)]
+                 when 2 then encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+                 else [:lit, rng.rand(FLOAT_LITS.size)]
+                 end
+        words << encode(FpgaIsa.op("SEND0"), 12, I2F_SYM, 0) if words[-1].is_a?(Integer)
+        words << encode(FpgaIsa.op("SEND0"), 12, STOD_SYM, 0) if words[-1].is_a?(Array) && words[-1][0] == :lit
+        name = (FLOAT_SEND + IFLT_SYMS.keys).sample(random: rng)
+        arg = lambda do |r|
+          case rng.rand(5)
+          when 0, 1 then words << [:float, rng.rand(nfloat), r]
+          when 2, 3 then words << encode(FpgaIsa.op("MOVE"), r, ints.sample(random: rng), 0)
+          else words << encode(FpgaIsa.op("MOVE"), r, arrs.sample(random: rng), 0)
+          end
+        end
+        if IFLT_SYMS.key?(name) # Integer の primitive に Float の引数
+          words << encode(FpgaIsa.op("MOVE"), 13, 12, 0)
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, IFLT_SYMS[name], 1)
+        elsif name == "FFMT"
+          words << encode(FpgaIsa.op("LOADI8"), 13, "feEgGx".bytes.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("LOADI8"), 14, rng.rand(23), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 2)
+        elsif name == "FMATH"
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(15), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 1)
+        elsif FLOAT_SEND.index(name) < FLOAT_SEND.index("FNEG") || %w[FATAN2 FHYPOT FFMOD].include?(name)
+          arg.(13)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 1)
+        else
+          words << encode(FpgaIsa.op("SEND0"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 0)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
       when 18 # Symbol#to_s (ROM のシンボル表)
         words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
         words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
@@ -510,6 +556,9 @@ module FpgaFuzz
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],
+      *FLOAT_SEND.each_with_index.map { |n, i| [FpgaIsa::CLS_FLOAT, FLOAT_SYM + i, prim.(n)] },
+      [FpgaIsa::CLS_INT, I2F_SYM, prim.("I2F")], [FpgaIsa::CLS_STRING, STOD_SYM, prim.("STOD")],
+      *IFLT_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
       [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
       [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
       [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],
@@ -535,11 +584,27 @@ module FpgaFuzz
       words << v
       i += 4
     end
+    # Float の値 (1つ 2語: 上位 32bit、下位 32bit) と String#__strtod の文字列
+    float_at = words.size
+    floats.each { |v| words.concat([v].pack("G").unpack("NN")) }
+    lit_at = []
+    FLOAT_LITS.each do |t|
+      lit_at << words.size
+      (0...t.bytesize).step(4) { |i| words << t.byteslice(i, 4).bytes.each_with_index.sum { |b, j| b << (8 * j) } }
+    end
     symtab = words.size
     HEAP_SYMS.each { |off, n| words << (((data_at + off / 4) << 16) | n) } # 語の先頭からだけ (off は 4 の倍数か 0)
     words[0] |= symtab
     words = words.map do |w|
-      w.is_a?(Symbol) && w.to_s.start_with?("string") ? encode(FpgaIsa.op("STRING"), 12, data_at, w.to_s.sub("string", "").to_i) : w
+      if w.is_a?(Symbol) && w.to_s.start_with?("string")
+        encode(FpgaIsa.op("STRING"), 12, data_at, w.to_s.sub("string", "").to_i)
+      elsif w.is_a?(Array) && w[0] == :float
+        encode(FpgaIsa.op("LOADF"), w[2] || 12, float_at + 2 * w[1], 0)
+      elsif w.is_a?(Array) && w[0] == :lit
+        encode(FpgaIsa.op("STRING"), 12, lit_at[w[1]], FLOAT_LITS[w[1]].bytesize)
+      else
+        w
+      end
     end
     with_table(words, entries, HEAP_TABLE_LOG)
   end

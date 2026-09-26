@@ -27,6 +27,7 @@
 require_relative "converter"
 require_relative "compare"
 require_relative "devices"
+require_relative "fpconv"
 
 class FpgaRefVm
   MASK = (1 << FpgaIsa::INT_BITS) - 1
@@ -525,6 +526,9 @@ class FpgaRefVm
       fault! unless r && (r[0] >> 14) == FpgaIsa::TGT_IVAR
       @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)] = reg(a) # ヒープへの書き込みはトレースに出さない
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
+    when "LOADF"
+      # Float のリテラル: ROM のデータの2語 (上位 32bit、下位 32bit) から箱を作る
+      put_float(step, a, bits_float(rom_word(b) & MASK, rom_word(b + 1) & MASK))
     when "STRING"
       fault! unless ok?(a)
       set(step, a, rom_string(b, c))
@@ -1055,6 +1059,7 @@ class FpgaRefVm
     return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
     return io_prim(step, pc, name, a) if name == "IOREAD" || name == "IOWRITE"
+    return float_prim(step, pc, name, a) if FLOAT_PRIMS.include?(name)
     if name == "RAISE"
       @exc = reg(a + 1)
       return unwind(step, pc, :raise, 0, NIL)
@@ -1087,13 +1092,18 @@ class FpgaRefVm
     when "IADD", "ISUB", "IMUL", "IDIV", "ILT", "ILE", "IGT", "IGE"
       # 整数の演算をメソッドとして呼んだもの (self * 2 など)。引数も整数でなければエラー
       fault! unless int?(x)
-      core_error!(%w[ILT ILE IGT IGE].include?(name) ? FpgaIsa::CERR_COMPARE : FpgaIsa::CERR_TYPE, reg(a + 1)) unless int?(reg(a + 1))
+      if float?(reg(a + 1)) # Integer と Float は Float で計算する
+        float_arith(step, a, name.sub(/\AI/, "F"), signed(x[1]).to_f, fval(reg(a + 1)))
+        return pc + 1
+      end
+      core_error!(%w[ILT ILE IGT IGE].include?(name) ? FpgaIsa::CERR_COMPARE : FpgaIsa::CERR_TYPE, reg(a + 1), x) unless int?(reg(a + 1))
       binop(step, pc, { "IADD" => "ADD", "ISUB" => "SUB", "IMUL" => "MUL", "IDIV" => "DIV",
                         "ILT" => "LT", "ILE" => "LE", "IGT" => "GT", "IGE" => "GE" }[name], a)
       return pc + 1
     when "IEQ"
       fault! unless int?(x)
-      set(step, a, bool(x == reg(a + 1)))
+      y = reg(a + 1)
+      set(step, a, bool(float?(y) ? signed(x[1]).to_f == fval(y) : x == y))
       return pc + 1
     when "CLASSOF"
       c = class_of(x)
@@ -1136,6 +1146,161 @@ class FpgaRefVm
     @dev.write(n, v[1]) if FpgaDevices.device?(n)
     set(step, a, v) # RTL と同じく W 行が先
     @trace << format("O %d %d %d %08x", step, n, v[0], v[1])
+    pc + 1
+  end
+
+  # ---- Float (ヒープの箱 [HDR(Float, 2)] [INT 上位 32bit] [INT 下位 32bit] の double)
+
+  FLOAT_PRIMS = %w[FADD FSUB FMUL FDIV FMOD FPOW FLT FLE FGT FGE FEQ FCMP FNEG FTOI FFLOOR FCEIL FROUND FNAN FINF
+                   FTOS FFMT FMATH FATAN2 FHYPOT FFMOD I2F STOD].freeze
+
+  def float?(v)
+    ref?(v) && obj_class(v) == FpgaIsa::CLS_FLOAT
+  end
+
+  def bits_float(hi, lo)
+    [hi, lo].pack("NN").unpack1("G")
+  end
+
+  def bits_of(f)
+    [f].pack("G").unpack1("Q>")
+  end
+
+  def float_of_bits(b)
+    [b].pack("Q>").unpack1("G")
+  end
+
+  def fval(v)
+    bits_float(@heap[v[1] + 1][1], @heap[v[1] + 2][1])
+  end
+
+  # Integer か Float の値 (ほかは nil)
+  def num(v)
+    return signed(v[1]).to_f if int?(v)
+    float?(v) ? fval(v) : nil
+  end
+
+  def put_float(step, a, f)
+    p = alloc(3)
+    hi, lo = [f].pack("G").unpack("NN")
+    @heap[p] = hdr(FpgaIsa::CLS_FLOAT, 2)
+    @heap[p + 1] = int(hi)
+    @heap[p + 2] = int(lo)
+    @stats[:float] += 1
+    set(step, a, [FpgaIsa::TAG_OBJ, p])
+  end
+
+  # C の fmod (x - trunc(x / y) * y を丸めずに。符号は x)
+  def c_fmod(x, y)
+    return Float::NAN if y.zero? || x.nan? || y.nan? || x.infinite?
+    return x if y.infinite?
+    r = x.abs.to_r % y.abs.to_r
+    r.zero? ? (x.negative? || (x.zero? && 1.0 / x < 0) ? -0.0 : 0.0) : (x < 0 ? -r.to_f : r.to_f)
+  end
+
+  # C の pow (PicoRuby は pow)。CRuby は負の数の分数乗と NaN 乗を Complex にするので、そこだけ C の規則で:
+  # 有限の負の数の分数乗は NaN、-Infinity の分数乗は正なら Infinity・負なら 0.0、NaN 乗は x + y (glibc と同じ NaN)
+  def c_pow(x, y)
+    if x < 0 && (y.nan? || (y.finite? && y != y.floor))
+      return x + y if y.nan?
+      return y > 0 ? Float::INFINITY : 0.0 if x.infinite?
+      return Float::NAN
+    end
+    x**y
+  end
+
+  # 二項の演算か比較 (x、y は Ruby の Float)。F で始まる primitive の名前
+  def float_arith(step, a, name, x, y)
+    case name
+    when "FADD" then put_float(step, a, x + y)
+    when "FSUB" then put_float(step, a, x - y)
+    when "FMUL" then put_float(step, a, x * y)
+    when "FDIV" then put_float(step, a, x / y)
+    when "FMOD"
+      core_error!(FpgaIsa::CERR_ZERODIV) if y.zero? # CRuby も PicoRuby も 0.0 での % は ZeroDivisionError
+      put_float(step, a, x % y)
+    when "FPOW" then put_float(step, a, c_pow(x, y))
+    when "FLT" then set(step, a, bool(x < y))
+    when "FLE" then set(step, a, bool(x <= y))
+    when "FGT" then set(step, a, bool(x > y))
+    when "FGE" then set(step, a, bool(x >= y))
+    end
+  end
+
+  # 新しい String (中身は s のバイト)
+  def put_string(step, a, s)
+    p = new_array(Array.new(s.bytesize), FpgaIsa::CLS_STRING)
+    s.bytesize.times { |k| @heap[p + 4 + k] = int(s.getbyte(k)) }
+    set(step, a, [FpgaIsa::TAG_OBJ, p])
+  end
+
+  def float_prim(step, pc, name, a)
+    x = reg(a)
+    if name == "I2F"
+      fault! unless int?(x)
+      put_float(step, a, signed(x[1]).to_f)
+      return pc + 1
+    end
+    if name == "STOD"
+      # プレリュードが整えた Float のリテラルの形の文字列だけが来る
+      fault! unless str?(x) && ary_len(x) <= 64
+      text = Array.new(ary_len(x)) { |k| ary_get(x, k)[1] & 0xFF }.pack("C*")
+      fault! unless text.match?(/\A-?\d+(\.\d+)?([eE][-+]?\d+)?\z/)
+      put_float(step, a, float_of_bits(FpgaFloat.strtod(text)))
+      return pc + 1
+    end
+    fault! unless float?(x)
+    xf = fval(x)
+    case name
+    when "FADD", "FSUB", "FMUL", "FDIV", "FMOD", "FPOW", "FLT", "FLE", "FGT", "FGE"
+      y = num(reg(a + 1))
+      core_error!(%w[FLT FLE FGT FGE].include?(name) ? FpgaIsa::CERR_COMPARE : FpgaIsa::CERR_TYPE, reg(a + 1), x) if y.nil?
+      float_arith(step, a, name, xf, y)
+    when "FEQ"
+      y = num(reg(a + 1))
+      set(step, a, bool(!y.nil? && xf == y))
+    when "FCMP"
+      y = num(reg(a + 1))
+      r = y.nil? ? nil : (xf <=> y)
+      set(step, a, r.nil? ? NIL : int(r))
+    when "FNEG" then put_float(step, a, -xf)
+    when "FTOI"
+      core_error!(FpgaIsa::CERR_FLOATDOMAIN, x) if xf.nan? || xf.infinite?
+      t = xf.truncate
+      core_error!(FpgaIsa::CERR_RANGE, x) if t < -2**31 || t >= 2**31
+      set(step, a, int(t))
+    when "FFLOOR", "FCEIL", "FROUND"
+      r = if !xf.finite? then xf
+          elsif name == "FFLOOR" then xf.floor.to_f
+          elsif name == "FCEIL" then xf.ceil.to_f
+          else xf.round(half: :up).to_f # C の round (0.5 は 0 から遠い方へ)
+          end
+      r = -0.0 if r.zero? && (xf.negative? || (xf.zero? && 1.0 / xf < 0)) # -0.4.round は -0.0 (C と同じ)
+      put_float(step, a, r)
+    when "FNAN" then set(step, a, bool(xf.nan?))
+    when "FINF"
+      r = xf.infinite?
+      set(step, a, r.nil? ? NIL : int(r))
+    when "FTOS" then put_string(step, a, xf.to_s)
+    when "FFMT"
+      conv = reg(a + 1)
+      prec = reg(a + 2)
+      fault! unless int?(conv) && "feEgG".bytes.include?(conv[1]) && int?(prec) && prec[1] <= 20 && xf.finite?
+      put_string(step, a, FpgaFloat.fmt(bits_of(xf), conv[1].chr, prec[1]))
+    when "FMATH"
+      i = reg(a + 1)
+      fault! unless int?(i) && i[1] < FpgaIsa::FMATH.size
+      r = begin
+        Math.send(FpgaIsa::FMATH[i[1]], xf)
+      rescue Math::DomainError
+        Float::NAN # C の libm と同じ (プレリュードが先に Math::DomainError にする)
+      end
+      put_float(step, a, r)
+    when "FATAN2", "FHYPOT", "FFMOD"
+      y = num(reg(a + 1))
+      core_error!(FpgaIsa::CERR_TYPE, reg(a + 1), x) if y.nil?
+      put_float(step, a, name == "FATAN2" ? Math.atan2(xf, y) : (name == "FHYPOT" ? Math.hypot(xf, y) : c_fmod(xf, y)))
+    end
     pc + 1
   end
 
@@ -1238,7 +1403,8 @@ class FpgaRefVm
               y
             else
               fault! unless int?(x)
-              core_error!(FpgaIsa::CERR_TYPE, y) unless y.nil? || int?(y)
+              return float_arith(step, a, "FMOD", signed(x[1]).to_f, fval(y)) if name == "MOD" && y && float?(y)
+              core_error!(FpgaIsa::CERR_TYPE, y, x) unless y.nil? || int?(y)
               sx = signed(x[1])
               sy = y && signed(y[1])
               case name

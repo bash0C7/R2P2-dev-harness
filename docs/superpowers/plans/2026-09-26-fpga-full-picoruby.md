@@ -229,7 +229,14 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 段:
 - **P5a** バス、require、GPIO、Machine (時間・delay)、UART、rng。エミュレーターに GPIO のピンと UART を見せる (済み)。
   io/console と watchdog は P5c に回した
-- **P5b** Float (PWM・ADC・example が使う。binary32 を値に持つ `TAG_FLOAT` と、演算の回路かプレリュード)
+- **P5b** Float (PWM・ADC・example が使う。double のヒープの箱と primitive とプレリュード) (済み。docs/spec.md §10「Float (P5b)」)
+- **P5b の設計 (Float)。** PicoRuby の Float は double で、表示は CRuby と同じ最短表記 (`0.30000000000000004`、`1.0e+20`)。
+  値の 32bit には入らないので、**ヒープの箱** `[HDR(Float, 2)] [INT 上位 32bit] [INT 下位 32bit]` にする (変わらない値。
+  演算のたびに新しい箱)。浮動小数点の演算は回路の primitive (RTL は SystemVerilog の `real` で書いた**シミュレーションの
+  モデル**。合成するなら FP の IP に置き換える)、参照は CRuby の Float。Float のリテラルは ROM のデータ (2語) から作る
+  (`LOADF`、FPGA だけの命令)。Integer の演算の primitive は Float の引数も受ける。`to_s` / `format("%.2f")` / `to_f` の文字列との
+  変換も primitive (表示の規則は CRuby / PicoRuby と同じ。変換は多倍長の整数だけで正確に、`mrb_fpconv_pkg.sv`)。`Math` はプレリュード (primitive の上)。NaN・Infinity を Integer にすると
+  FloatDomainError、32bit に入らなければ RangeError (黙って折り返さない)
 - **P5c** PWM、ADC、IRQ (ピンの変化の割り込みを、命令の区切りで Ruby の callback に)
 - **P5d** I2C、SPI とデバイスのモデル (SSD1306 などをエミュレーターが画面として見せる)、rotary_encoder、hcsr04
 - **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
@@ -255,6 +262,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P4a+b 例外・ensure の巻き戻し | 56 | 27 (example は 3 / 32) | 27 | exceptions.rb を追加。使わないクラスを表から落とす (live_classes)。止める理由はほぼデバイス (P5)。catch handler は止める理由から消えた |
 | 2026-09-26 | P4c コアのエラーを例外に | 57 | 28 (example は 3 / 32) | 28 | errors.rb を追加。メソッドの生死をクラスでも絞り、blink.rb は 4800 → 1850 語。止める理由はほぼデバイス (P5) |
 | 2026-09-26 | P5a デバイスのバス・GPIO・UART・時計・RNG | 59 | 30 (example は 3 / 32) | 30 | devices.rb、uart_echo.rb (刺激) を追加。FPGA 版の gem (fpga/gems)。止める理由はほぼ device の gem (psg、i2c ...) |
+| 2026-09-26 | P5b Float | 60 | 31 (example は 3 / 32) | 31 | floats.rb を追加。10進との変換は多倍長の整数で正確に (mrb_fpconv_pkg、tb は両シミュレーターで 1174 本)。ROM を 16384 語に。止める理由はほぼ device の gem (psg、i2c、irq ...) |
 
 ## 見つけたこと
 
@@ -347,3 +355,17 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 - P5a: Icarus が `__io_write` の検査 (always_comb の if の条件の `val_of` / `is_ref`) で止まった (P1b・P1d・P2 と同じ癖)。wire にした
 - P5a: 仮想の時計 (始めた命令の数 + sleep) にしたのは、参照インタプリタに実時間が無いから。実機で実時間の `uptime_us` にするなら、
   参照との突き合わせは時間を読むプログラムを除く必要がある
+- P5b: Float の文字列との変換を最初は `$sformatf` / `$sscanf` で書いたが、Verilator は書式が定数でないと解釈せず (精度ごとに
+  case を並べた)、Icarus は文字列の添字・`getc`・文字列の三項演算子を受け付けず、最短の桁も「%.{p}e で読み戻す」総当たりだった。
+  C の printf と同じ正確な丸めは参照 (CRuby の `format`) とも一致しない所がある (`%.5g` of 3348.05)。多倍長の整数だけの
+  アルゴリズム (Burger & Dybvig の最短、10^p 倍して偶数丸め、d * 10^e の最近接) を Ruby で作って CRuby と C の printf
+  (cfmt.c) の 20 万通りで確かめてから SystemVerilog に移し、参照もそれを使うようにした
+- P5b: 1100 本のベクタを呼び出しごとに1行ずつ書いたテストは、Verilator が関数をその場に展開して C++ の compile が
+  10 分を超えた。ベクタを file から読むループにして 10 秒ほど
+- P5b: Icarus 12 の多倍長 (1664bit) の `/` が、ある値 (0x70f00ed4b18fc << 78 を 10^23 で) で返らなかった。筆算の割り算にした。
+  vvp は SIGTERM で止まらないので、timeout は `-s KILL` で
+- P5b: 多倍長の strtod の打ち切りを指数だけ (e10 < -400 なら 0) で決めていたので、桁が多いと (10^100 の桁 × 10^-401) 間違える
+  所だった。桁数 nd を数え、nd + e10 で決めるようにした (回路と参照で同じ所)
+- P5b: Float と Integer#** の Float、`format` の精度をプレリュードに入れたら ROM が 8192 語に入らないプログラムが出た。
+  ROM を 16384 語 (PC_BITS 14) にした。実機の FPGA のメモリに収まるかは合成で確かめていない
+- P5b: `f_fmod` の結果を `rem * $pow(2.0, e - 1075)` で作っていたのをやめ、bit を組む形にした (非正規化数で `real` を経ない)

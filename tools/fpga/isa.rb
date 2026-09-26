@@ -47,8 +47,9 @@ module FpgaIsa
   OPS = []
   ALL.each_with_index { |(name, fmt), i| OPS << Op.new(name, i, fmt) }
   # FPGA だけの命令 (mruby の番号の外)。TABLE は ROM の先頭の語: a = メソッド表の大きさの log2、b = 表の先頭の語アドレス
-# HTABLE は例外の表 (catch handler) の位置と数 (b = 先頭の語アドレス、c = 数)。表がある時だけ pc 1 に置く
-EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"]].freeze
+  # HTABLE は例外の表 (catch handler) の位置と数 (b = 先頭の語アドレス、c = 数)。表がある時だけ pc 1 に置く
+  # LOADF は R[a] = Float (b = ROM のデータの語アドレス、上位 32bit と下位 32bit の2語)
+  EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"], ["LOADF", 0xF2, "BS"]].freeze
   EXTRA.each { |name, num, fmt| OPS[num] = Op.new(name, num, fmt) }
   OPS.freeze
 
@@ -69,7 +70,7 @@ EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"]].freeze
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
     CLASS EXEC SDEF TABLE GETIV SETIV SUPER
     ARYCAT ARYPUSH APOST ARGARY STRING
-    HTABLE EXCEPT RESCUE RAISEIF JMPUW
+    HTABLE EXCEPT RESCUE RAISEIF JMPUW LOADF
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
@@ -107,15 +108,19 @@ EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"]].freeze
   MAX_SUPER_DEPTH = 32
 
   # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
-# initialize は new が送るメソッド、__core_error はコアの実行時エラーを例外にするプレリュードのメソッド (コアが番号を知っている)
-OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error].freeze
-# コアの実行時エラーの種類 (Integer#__core_error の受け手)。例外の表があるプログラムでだけ、コアはエラーで止まらずに
-# フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて __core_error を呼ぶ (プレリュードが例外を作って投げる)
-CERR_ZERODIV  = 1 # 0 で割った
-CERR_NOMETHOD = 2 # メソッドが無い (詳細: 名前のシンボル、受け手)
-CERR_ARGNUM   = 3 # 引数の数が違う (詳細: 渡した数、要る数)
-CERR_TYPE     = 4 # Integer の演算の引数が Integer でない (詳細: 引数)
-CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引数)
+  # initialize は new が送るメソッド、__core_error はコアの実行時エラーを例外にするプレリュードのメソッド (コアが番号を知っている)
+  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error].freeze
+  # コアの実行時エラーの種類 (Integer#__core_error の受け手)。例外の表があるプログラムでだけ、コアはエラーで止まらずに
+  # フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて __core_error を呼ぶ (プレリュードが例外を作って投げる)
+  CERR_ZERODIV  = 1 # 0 で割った
+  CERR_NOMETHOD = 2 # メソッドが無い (詳細: 名前のシンボル、受け手)
+  CERR_ARGNUM   = 3 # 引数の数が違う (詳細: 渡した数、要る数)
+  CERR_TYPE     = 4 # Integer / Float の演算の引数が数でない (詳細: 引数、受け手)
+  CERR_COMPARE  = 5 # Integer / Float の比較の引数が数でない (詳細: 引数、受け手)
+  CERR_FLOATDOMAIN = 6 # NaN や Infinity を Integer にした (詳細: その Float)
+  CERR_RANGE    = 7 # Float が 32bit の Integer に入らない (詳細: その Float)
+  # Float#__math の番号 (Math のメソッド。hypot は __atan2 と同じく引数を2つ取るので別)
+  FMATH = %w[sqrt sin cos tan asin acos atan exp log log2 log10 sinh cosh tanh].freeze
 
   def self.table_hash(cls, sym, mask)
     (cls * 5 + sym) & mask
@@ -144,7 +149,17 @@ CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引
     # 例外を投げる (Kernel#raise はプレリュード。引数は例外のオブジェクト)
     ["Object", "__raise", 1, "RAISE"],
     # デバイスのレジスタ (tools/fpga/devices.rb。番地 0..3 は今のポート、0x100 から上がデバイス)
-    ["Object", "__io_read", 1, "IOREAD"], ["Object", "__io_write", 2, "IOWRITE"]
+    ["Object", "__io_read", 1, "IOREAD"], ["Object", "__io_write", 2, "IOWRITE"],
+    # Float (ヒープの箱の double)。二項は Integer の引数も受ける。__ で始まるものはプレリュード (float.rb) の中身
+    ["Float", "+", 1, "FADD"], ["Float", "-", 1, "FSUB"], ["Float", "*", 1, "FMUL"], ["Float", "/", 1, "FDIV"],
+    ["Float", "%", 1, "FMOD"], ["Float", "**", 1, "FPOW"], ["Float", "<", 1, "FLT"], ["Float", "<=", 1, "FLE"],
+    ["Float", ">", 1, "FGT"], ["Float", ">=", 1, "FGE"], ["Float", "==", 1, "FEQ"], ["Float", "<=>", 1, "FCMP"],
+    ["Float", "-@", 0, "FNEG"], ["Float", "to_i", 0, "FTOI"], ["Float", "__floorf", 0, "FFLOOR"],
+    ["Float", "__ceilf", 0, "FCEIL"], ["Float", "__roundf", 0, "FROUND"], ["Float", "nan?", 0, "FNAN"],
+    ["Float", "__infinite", 0, "FINF"], ["Float", "to_s", 0, "FTOS"], ["Float", "__fmt", 2, "FFMT"],
+    ["Float", "__math", 1, "FMATH"], ["Float", "__atan2", 1, "FATAN2"], ["Float", "__hypot", 1, "FHYPOT"], ["Float", "__fmod", 1, "FFMOD"],
+    ["Integer", "to_f", 0, "I2F"],
+    ["String", "__strtod", 0, "STOD"]
   ].freeze
 
   def self.prim(const_name)
@@ -197,6 +212,7 @@ CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引
   CLS_STRING = 11
   CLS_HASH   = 12
   CLS_RANGE  = 13
+  CLS_FLOAT  = 14
   CLS_EXC    = 15
   # new できてインスタンス変数を持てるクラス: Object、プレリュードが Ruby で書く組み込み (Hash / Range / Exception)、
   # プログラムのクラス (FIRST_USER_CLASS から CLS_DATA の前まで)
@@ -204,18 +220,18 @@ CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引
     cls == CLS_OBJECT || cls == CLS_HASH || cls == CLS_RANGE || cls == CLS_EXC || (cls >= FIRST_USER_CLASS && cls < CLS_DATA)
   end
   CLS_DATA   = 0x7FF0
-CLS_ENV    = 0x7FF1
-# 巻き戻しの途中 (ensure を走らせてから続ける return / break / JMPUW。mruby の RBreak) を表すヒープの塊。
-#   [HDR(BRK,2)] [INT 種類 << 16 | 行き先] [値]。行き先は JUMP と BRK0 は pc、RET と BRK はフレームの底
-CLS_BRK    = 0x7FF2
-BRK_JUMP = 0 # JMPUW: 同じフレームの行き先 pc へ
-BRK_RET  = 1 # 底が行き先のフレームから戻る (return、lambda の中の break、ブロックの中の return)
-BRK_BRK  = 2 # 親の底が行き先のフレームを畳み、その呼び出しの結果にする (Proc を作ったフレームへの break)
-BRK_BRK0 = 3 # 今のフレームを畳んで行き先 pc へ (iterator に直接渡したブロックの break)
-# 例外の表 (HTABLE の b から c 語)。1語 = {種類 << 15 | 飛び先 (op と a の 16bit), begin (b), end (c)}。
-# begin <= pc < end の命令が覆われる。種類は mruby と同じ 0 = rescue、1 = ensure。探す順に並べる (irep ごとに後ろから)
-CATCH_RESCUE = 0
-CATCH_ENSURE = 1
+  CLS_ENV    = 0x7FF1
+  # 巻き戻しの途中 (ensure を走らせてから続ける return / break / JMPUW。mruby の RBreak) を表すヒープの塊。
+  #   [HDR(BRK,2)] [INT 種類 << 16 | 行き先] [値]。行き先は JUMP と BRK0 は pc、RET と BRK はフレームの底
+  CLS_BRK    = 0x7FF2
+  BRK_JUMP = 0 # JMPUW: 同じフレームの行き先 pc へ
+  BRK_RET  = 1 # 底が行き先のフレームから戻る (return、lambda の中の break、ブロックの中の return)
+  BRK_BRK  = 2 # 親の底が行き先のフレームを畳み、その呼び出しの結果にする (Proc を作ったフレームへの break)
+  BRK_BRK0 = 3 # 今のフレームを畳んで行き先 pc へ (iterator に直接渡したブロックの break)
+  # 例外の表 (HTABLE の b から c 語)。1語 = {種類 << 15 | 飛び先 (op と a の 16bit), begin (b), end (c)}。
+  # begin <= pc < end の命令が覆われる。種類は mruby と同じ 0 = rescue、1 = ensure。探す順に並べる (irep ごとに後ろから)
+  CATCH_RESCUE = 0
+  CATCH_ENSURE = 1
   FIRST_USER_CLASS = 32
   META = 0x8000
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
@@ -227,7 +243,7 @@ CATCH_ENSURE = 1
   RF_SIZE     = 128
   STACK_DEPTH = 16
   NCONST      = 64
-  PC_BITS     = 13
+  PC_BITS     = 14
 
   def self.op(name_or_num)
     o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]

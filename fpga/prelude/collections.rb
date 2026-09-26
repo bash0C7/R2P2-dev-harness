@@ -453,7 +453,7 @@ class Integer
   include Comparable
 
   def <=>(other)
-    return nil unless other.is_a?(Integer)
+    return nil unless other.is_a?(Integer) || other.is_a?(Float)
     self < other ? -1 : (self > other ? 1 : 0)
   end
 
@@ -469,7 +469,9 @@ class Integer
     self - 1
   end
 
+  # 負の指数と Float の指数は Float (PicoRuby と同じ。CRuby の Rational は無い)
   def **(n)
+    return to_f**n if n.is_a?(Float) || n < 0
     r = 1
     b = self
     while n > 0
@@ -550,7 +552,8 @@ class Integer
     (self >> i) & 1
   end
 
-  def step(limit, by = 1)
+  def step(limit, by = 1, &blk)
+    return to_f.step(limit, by, &blk) if limit.is_a?(Float) || by.is_a?(Float)
     i = self
     if by > 0
       while i <= limit

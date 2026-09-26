@@ -729,7 +729,7 @@ class Object
     args.size == 0 ? nil : (args.size == 1 ? args[0] : args)
   end
 
-  # %d %i %s %p %x %X %o %b %c %% と、フラグ - 0 + 空白、幅。精度と Float は止める
+  # %d %i %s %p %x %X %o %b %c %f %e %E %g %G %% と、フラグ - 0 + 空白、幅、精度 (.n)
   def format(fmt, *args)
     r = ""
     k = 0
@@ -762,6 +762,15 @@ class Object
         width = width * 10 + fmt.getbyte(i) - 48
         i += 1
       end
+      prec = nil
+      if i < len && fmt.getbyte(i) == 46
+        prec = 0
+        i += 1
+        while i < len && fmt.getbyte(i) >= 48 && fmt.getbyte(i) <= 57
+          prec = prec * 10 + fmt.getbyte(i) - 48
+          i += 1
+        end
+      end
       t = fmt.getbyte(i)
       i += 1
       if t == 37
@@ -778,10 +787,19 @@ class Object
           elsif t == 111 then x.to_s(8)
           elsif t == 98 then x.to_s(2)
           elsif t == 99 then (x.is_a?(Integer) ? x.chr : x.to_s[0])
+          elsif t == 102 || t == 101 || t == 69 || t == 103 || t == 71 then Float(x).__format(t, prec || 6)
           else __format_is_not_supported(t)
           end
+      float = t == 102 || t == 101 || t == 69 || t == 103 || t == 71
+      if prec && (t == 115 || t == 112)
+        s = s[0, prec]
+      elsif prec && !float && t != 99
+        neg = s.getbyte(0) == 45
+        d = neg ? s[1, s.size - 1] : s
+        s = (neg ? "-" : "") + d.rjust(prec, "0") if d.size < prec
+      end
       num = t != 115 && t != 112 && t != 99
-      if num && x.to_i >= 0
+      if num && s.getbyte(0) != 45
         s = "+" + s if plus
         s = " " + s if space && !plus
       end

@@ -1395,6 +1395,47 @@ module mrb_core_tb;
     expect_reg(10, vint(15));
     expect_out(1, vint(7));
 
+    // Float (ヒープの箱の double): LOADF は ROM のデータの2語から。+ と to_s / format / String#__strtod は
+    // 多倍長の整数で正確に (tools/fpga/fpconv.rb と同じ)
+    begin_test("floats");
+    method_entry(CLS_FLOAT, 50, tgt_prim(PR_FADD));
+    method_entry(CLS_FLOAT, 51, tgt_prim(PR_FTOS));
+    method_entry(CLS_STRING, 52, tgt_prim(PR_SBYTES));
+    method_entry(CLS_STRING, 53, tgt_prim(PR_STOD));
+    method_entry(CLS_FLOAT, 54, tgt_prim(PR_FTOI));
+    method_entry(CLS_FLOAT, 55, tgt_prim(PR_FFMT));
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADF, 1, 40));                      // 1: R1 = 0.1
+    prog.push_back(w(OP_LOADF, 2, 42));                      // 2: R2 = 0.2
+    prog.push_back(w(OP_SEND, 1, 50, 1));                    // 3: R1 = 0.30000000000000004
+    prog.push_back(w(OP_SEND0, 1, 51));                      // 4: R1 = "0.30000000000000004"
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 5
+    prog.push_back(w(OP_SEND0, 3, 52));                      // 6: R3 = 19
+    prog.push_back(w(OP_STRING, 4, 44, 5));                  // 7: R4 = "1.5e3"
+    prog.push_back(w(OP_SEND0, 4, 53));                      // 8: R4 = 1500.0
+    prog.push_back(w(OP_SEND0, 4, 54));                      // 9: R4 = 1500
+    prog.push_back(w(OP_LOADF, 5, 40));                      // 10
+    prog.push_back(w(OP_LOADI8, 6, 101));                    // 11: 'e'
+    prog.push_back(w(OP_LOADI_3, 7));                        // 12
+    prog.push_back(w(OP_SEND, 5, 55, 2));                    // 13: R5 = "1.000e-01"
+    prog.push_back(w(OP_MOVE, 8, 5));                        // 14
+    prog.push_back(w(OP_SEND0, 8, 52));                      // 15: R8 = 9
+    prog.push_back(w(OP_MOVE, 9, 1));                        // 16
+    prog.push_back(w(OP_LOADI_2, 10));                       // 17
+    prog.push_back(w(OP_SEND, 9, 41, 1));                    // 18: (行が無い) エラー
+    while (prog.size() < 40) prog.push_back(w(OP_NOP));
+    prog.push_back(48'h0000_3FB9_9999);                      // 40: 0.1 の上位
+    prog.push_back(48'h0000_9999_999A);                      // 41: 下位
+    prog.push_back(48'h0000_3FC9_9999);                      // 42: 0.2
+    prog.push_back(48'h0000_9999_999A);                      // 43
+    prog.push_back(48'h0000_6535_2e31);                      // 44: "1.5e"
+    prog.push_back(48'h0000_0000_0033);                      // 45: "3"
+    run();
+    expect_error(18);
+    expect_reg(3, vint(19));
+    expect_reg(4, vint(1500));
+    expect_reg(8, vint(9));
+
     begin_test("rescue compares classes");
     method_entry(ISA_BIT | CLS_INT, CLS_INT, 16'd1);
     prog.push_back(w_table());                               // 0

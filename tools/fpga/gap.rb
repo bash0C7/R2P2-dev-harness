@@ -76,7 +76,6 @@ module FpgaGap
     found = {}
     ireps.each_with_index do |ir, i|
       ir.pool.each do |e|
-        found["Float literal"] = true if e[0] == :float
         found["big integer literal"] = true if e[0] == :bigint || (e[0] == :int && (e[1] < -2**31 || e[1] >= 2**31))
       end
       decoded[i].each do |insn|

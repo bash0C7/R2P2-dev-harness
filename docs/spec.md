@@ -886,6 +886,32 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **ボードエミュレーター** は、出力にした GPIO のピンの値の変化 (`gpio<n>`) と UART の送信 (行ごと) も書く。
   PERIDOT-Air の top にはまだ GPIO と UART のピンを割り当てていない (エミュレーターは soc の中を覗く)
 
+### Float (P5b)
+
+- **値はヒープの箱** `[HDR(CLS_FLOAT=14, 2)] [INT 上位 32bit] [INT 下位 32bit]` (IEEE 754 の double)。リテラルは
+  `LOADF a b` (0xF2、FPGA だけの命令) で、ROM のデータの b 番地から2語 (上位、下位) を読んで箱を作る。
+  変換器は pool の float をデータの領域 (文字列の後ろ) に置く
+- **演算と変換は primitive** (`tools/fpga/isa.rb` の PRIMS: `+ - * / % ** < <= > >= == <=> -@ to_i nan? to_s` と
+  `__floorf` `__ceilf` `__roundf` `__infinite` `__fmt` `__math` `__atan2` `__hypot` `__fmod`、`Integer#to_f`、
+  `String#__strtod`)。Integer の `+ - * / % < <= > >= ==` は引数が Float なら Float で計算する。
+  ほかのメソッド (`round(n)` `floor(n)` `divmod` `step` `Float()` `String#to_f` `format` の `%f %e %g`、Math) は
+  プレリュードの `fpga/prelude/float.rb` と `string.rb`
+- **四則と libm は SystemVerilog の `real`** (シミュレーターが C の double と libm で計算するので、参照インタプリタの
+  CRuby と同じ値になる)。**10進との変換 (`to_s`、`format`、`__strtod`) は多倍長の整数だけで正確に**
+  (`fpga/rtl/mrb_fpconv_pkg.sv`、同じアルゴリズムの Ruby が `tools/fpga/fpconv.rb`)。`$sformatf` / `$sscanf` は使わない:
+  Verilator は書式が定数でないと解釈せず、Icarus は文字列の型の扱い (添字、三項演算子、`getc`) が違うため。
+  Icarus 12 の多倍長の `/` `%` は値によって返らないので、割り算は筆算 (`bdiv`)。
+  突き合わせは `fpga/tb/mrb_fpconv_tb.sv` (両方のシミュレーターで1100本余り、答えは `rake fpga:fpconv:vectors`) と
+  `tools/fpga/fpconv_test.rb` (CRuby の `Float#to_s` / `Float()` / `format`)
+- **意味は PicoRuby に合わせる。** `to_s` は元に戻る最短の桁で、小数点の位置 decpt が 1..15 (16 でも桁が
+  それより多ければ) か -3..0 なら固定、ほかは `d.ddde+XX`。`format` は C の printf と同じく正確に丸める
+  (CRuby の `format` はまれに違う: `format("%.5g", 3348.05)` は CRuby で `3348.0`、C と PicoRuby で `3348.1`)。
+  `x % 0.0` は ZeroDivisionError、負の数の分数乗は NaN、`Integer ** 負か Float` は Float
+- **CRuby と違う所 (決めごと)。** `to_i` は 32bit に入らなければ RangeError (CRuby は Bignum)。`format` の精度は 20 まで
+  (越えると NoMethodError で止める)。`String#__strtod` に渡せるのは 64 バイトまで (越えるとエラーで止まる)
+- **合成はできない。** 変換の関数は値でループの回数が決まり、`real` も合成できない。実機に載せるなら FP の IP と
+  ファームウェアに置き換える (今はシミュレーターで完全に動かすのが目標)
+
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
@@ -917,7 +943,7 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
   一番外の先頭で nil にする (`LOADNIL R0` + `SETCONST`、self を作る前)
 - **並び: pc 0 に `TABLE`、irep を親・子の順 (深さ優先)、データ (pool の文字列とシンボルの名前、1語 4バイト)、
   シンボル表 (シンボル番号 → {データの語アドレス, 長さ})、例外の表 (あれば。pc 1 の `HTABLE` が指す)、最後にメソッド表。**
-  ROM は 8192 語 (`PC_BITS` = 13)。
+  ROM は 16384 語 (`PC_BITS` = 14。Float とデバイスの gem を入れた collections.rb が 8192 語を越えたため)。
   入り切らなければ変換時に止める
 - **シンボルはプログラム全体で番号を振る。** 演算の落ち先 (`+ - * / == < <= > >= [] []=`) は 0 から固定
   (`OP_SYMS`、コアが番号を知っている)。`SEND` 系の b、`LOADSYM` / `TDEF` / `SDEF` の b はシンボルの番号
@@ -1007,7 +1033,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
   ブロック RAM にできる形にしておくためと、Verilator 5.020 が `always_ff` の for ループでの配列への `<=` を
   `BLKLOOPINIT` で受け付けないため
 - `*` `/` `%` は組み合わせ回路 (`x / y` `x % y` を floor に補正)
-`mrb_soc.sv` が ROM (8192語、同期読み出し) + コア + I/O (`mrb_io.sv`)。
+`mrb_soc.sv` が ROM (16384語 × 48bit、同期読み出し) + コア + I/O (`mrb_io.sv`)。
 出力ポートは最後に書いた値を持ち (書く前は nil)、`GETGV` で読み戻せる。入力ポートは Integer で読める。
 `fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる (配列の伸長、GC 後も生きている配列、
 ブロックの中の return、`sleep_ms` の待ち時間も)。

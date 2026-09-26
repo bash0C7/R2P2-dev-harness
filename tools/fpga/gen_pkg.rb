@@ -27,7 +27,7 @@ module FpgaGenPkg
     lines << ""
     lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = クラス << 16 | 中身の語数"
     lines << "  localparam int HEAP_SIZE = #{FpgaIsa::HEAP_SIZE};"
-    %w[OBJECT NIL TRUE FALSE INT SYM ARRAY PROC CLASS STRING HASH RANGE EXC DATA ENV BRK].each do |k|
+    %w[OBJECT NIL TRUE FALSE INT SYM ARRAY PROC CLASS STRING HASH RANGE FLOAT EXC DATA ENV BRK].each do |k|
       lines << format("  localparam logic [15:0] CLS_%-6s = 16'd%d;", k, FpgaIsa.const_get("CLS_#{k}"))
     end
     lines << "  localparam logic [15:0] CLS_META   = 16'h#{FpgaIsa::META.to_s(16)};"
@@ -62,7 +62,7 @@ module FpgaGenPkg
     end
     lines << "  localparam int NPRIMS = #{FpgaIsa::PRIMS.size};"
     lines << "  // コアの実行時エラーの種類 (Integer#__core_error の受け手)"
-    %w[ZERODIV NOMETHOD ARGNUM TYPE COMPARE].each { |k| lines << format("  localparam logic [2:0] CERR_%-8s = 3'd%d;", k, FpgaIsa.const_get("CERR_#{k}")) }
+    %w[ZERODIV NOMETHOD ARGNUM TYPE COMPARE FLOATDOMAIN RANGE].each { |k| lines << format("  localparam logic [2:0] CERR_%-11s = 3'd%d;", k, FpgaIsa.const_get("CERR_#{k}")) }
     lines << "  // 引数の数 (8'hff は何個でも)"
     lines << "  function automatic logic [7:0] prim_nargs(input logic [13:0] p);"
     lines << "    case (p)"

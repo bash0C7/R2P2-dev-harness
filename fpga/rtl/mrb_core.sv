@@ -21,9 +21,10 @@
 /* verilator lint_off UNUSEDSIGNAL */
 module mrb_core
   import mrb_pkg::*;
+  import mrb_fpconv_pkg::*;
 #(
   parameter int NREGS   = RF_SIZE, // レジスタファイルの大きさ (全フレームで共有)
-  parameter int PC_BITS = 13
+  parameter int PC_BITS = 14
 ) (
   input  logic                clk,
   input  logic                rst_n,
@@ -88,12 +89,16 @@ module mrb_core
     // 例外と巻き戻し (ref_vm.rb の unwind): 表の1語目を出す / 1語ずつ比べる / 見つかった / 無かった /
     // フレームを畳む / 巻き戻しの塊を書く
     S_XSTART, S_XSCAN, S_XHIT, S_XMISS, S_XPOP, S_BRKW,
-    S_CERR                // コアのエラーを例外にする: Integer#__core_error を呼ぶ
+    S_CERR,               // コアのエラーを例外にする: Integer#__core_error を呼ぶ
+    S_LF1, S_LF2, S_LF3,  // LOADF: ROM のデータの2語を読む
+    S_FP,                 // Float の primitive の結果で分かれる (値、Float の箱、String、エラー)
+    S_FBOX,               // Float の箱を書く
+    S_FSTR                // Float の primitive が作った文字列を String に写す
   } state_t;
   state_t state;
 
   // 確保のあとに続ける処理
-  typedef enum logic [2:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ, MO_EHASH, MO_BRK } mop_t;
+  typedef enum logic [2:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ, MO_EHASH, MO_BRK, MO_FLOAT } mop_t;
   mop_t mop;
 
   // メソッド表を引く目的
@@ -226,6 +231,13 @@ module mrb_core
   // APOST
   logic [16:0]         ap_len;     // 元の長さ (配列でなければ 1)
   logic [VAL_BITS-1:0] ap_v;       // 元の値 (R[a] に残りの配列を書く cycle に覚える)
+  // Float の primitive (S_PRIM の終わりに fp_compute で計算し、S_FP で分かれる)
+  localparam logic [2:0] FK_FLOAT = 3'd0, FK_VAL = 3'd1, FK_STR = 3'd2, FK_CERR = 3'd3, FK_HARD = 3'd4;
+  logic [2:0]          fk;         // 結果の種類
+  logic [63:0]         fres;       // FK_FLOAT: double の bit
+  logic [VAL_BITS-1:0] fval;       // FK_VAL: R[a] に置く値
+  str_t                fstr;       // FK_STR: 作る String の中身
+  logic                m_fromfpu;  // S_AHDR の後に fstr から写す (S_FSTR)
 
   // ---- 値の部品
   function automatic logic [TAG_BITS-1:0] tag_of(input logic [VAL_BITS-1:0] v);
@@ -265,6 +277,63 @@ module mrb_core
     return 1'b1;
   endfunction
 
+  // ---- Float の振る舞いモデル (四則と libm は SystemVerilog の real、10進との変換は mrb_fpconv_pkg の多倍長の整数。
+  //      シミュレーション用で、合成するなら FP の IP とファームウェアに置き換える)。意味は tools/fpga/ref_vm.rb の float_prim と同じ
+  localparam logic [63:0] F_NAN = 64'h7FF8_0000_0000_0000;
+  function automatic logic f_isnan(input logic [63:0] b);
+    return b[62:52] == 11'h7FF && b[51:0] != 52'd0;
+  endfunction
+  function automatic logic f_isinf(input logic [63:0] b);
+    return b[62:52] == 11'h7FF && b[51:0] == 52'd0;
+  endfunction
+  function automatic logic [63:0] f_int(input logic [31:0] i);
+    return $realtobits($itor($signed(i)));
+  endfunction
+  // C の fmod (丸めずに。符号は x)
+  function automatic logic [63:0] f_fmod(input logic [63:0] xb, input logic [63:0] yb);
+    logic [63:0] mx, my, rem;
+    int ex, ey, e;
+    if (f_isnan(xb) || f_isnan(yb) || f_isinf(xb) || yb[62:0] == 63'd0) return F_NAN;
+    if (f_isinf(yb) || xb[62:0] < yb[62:0]) return xb;
+    ex = int'(xb[62:52]);
+    ey = int'(yb[62:52]);
+    mx = {11'd0, ex != 0, xb[51:0]};
+    my = {11'd0, ey != 0, yb[51:0]};
+    if (ex == 0) ex = 1;
+    if (ey == 0) ey = 1;
+    if (ex >= ey) begin
+      rem = mx % my;
+      for (int k = 0; k < ex - ey; k++) rem = (rem << 1) % my;
+      e = ey;
+    end else begin
+      rem = mx % (my << (ey - ex));
+      e = ex;
+    end
+    // 値 = rem * 2^(e - 1075) (rem < 2^53)。仮数を 53bit にそろえて bit を組む (丸めは要らない)
+    if (rem == 64'd0) return {xb[63], 63'd0};
+    while (!rem[52] && e > 1) begin rem = rem << 1; e--; end
+    if (!rem[52]) return {xb[63], 11'd0, rem[51:0]};
+    return {xb[63], 11'(e), rem[51:0]};
+  endfunction
+  // C の round (0.5 は 0 から遠い方へ)
+  function automatic logic [63:0] f_round(input logic [63:0] xb);
+    real x, t;
+    logic [63:0] tb;
+    if (f_isnan(xb) || f_isinf(xb)) return xb;
+    x = $bitstoreal({1'b0, xb[62:0]});
+    t = $floor(x);
+    if (x - t >= 0.5) t = t + 1.0;
+    tb = $realtobits(t);
+    return {xb[63], tb[62:0]};
+  endfunction
+  function automatic logic [63:0] f_floor(input logic [63:0] xb);
+    if (f_isnan(xb) || f_isinf(xb)) return xb;
+    return $realtobits($floor($bitstoreal(xb)));
+  endfunction
+  function automatic logic [63:0] f_ceil(input logic [63:0] xb);
+    if (f_isnan(xb) || f_isinf(xb)) return xb;
+    return $realtobits($ceil($bitstoreal(xb)));
+  endfunction
   // ---- decode (EXEC では ROM から、ほかの状態では取っておいた ir から)
   logic [47:0] cur;
   assign cur = (state == S_EXEC) ? rom_data : ir;
@@ -308,7 +377,9 @@ module mrb_core
   assign ra2_byte  = tag_of(ra2) == TAG_INT && val_of(ra2) <= 32'd255;
   logic ra2_int, s_idx_ok, s_slice_ok;
   // R[a] が巻き戻しの塊か、その {種類, 行き先} と運ぶ値 (RAISEIF)
-  logic                ra_brk;
+  logic                ra_brk, ra1_float, ra_float;
+  assign ra_float  = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_FLOAT;
+  assign ra1_float = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_FLOAT;
   logic [VAL_BITS-1:0] brk_w1, brk_val;
   assign ra_brk  = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_BRK;
   assign brk_w1  = heap[ha(val_of(ra)) + HB'(1)];
@@ -594,6 +665,8 @@ module mrb_core
   logic                go_block, go_array, go_set, go_sleep, go_walk, go_lwalk, go_lookup;
   // 例外と巻き戻しを始める (S_XSTART へ)。x_*_n は巻き戻しの種類・行き先・運ぶ値・続ける塊
   logic                go_x, set_exc, clr_exc, set_htable;
+  logic                go_fp;   // Float の primitive (S_PRIM の終わりに計算する)
+  logic                go_loadf;
   // Ruby の例外にできるエラー (isa.rb の CERR_*): 例外の表があれば S_CERR で Integer#__core_error を呼ぶ
   logic                cerr;
   logic [2:0]          cerr_kind;
@@ -659,6 +732,8 @@ module mrb_core
     set_push  = 1'b0;
     set_aset  = 1'b0;
     go_x      = 1'b0;
+    go_fp     = 1'b0;
+    go_loadf  = 1'b0;
     cerr      = 1'b0;
     cerr_kind = '0;
     cerr_a1   = V_NIL;
@@ -696,7 +771,7 @@ module mrb_core
           err = prim_argc_bad || !(ra_int && ra1_int) || (prim == PR_IDIV && y == 0);
           // 引数が Integer でない (比較は ArgumentError、ほかは TypeError)、0 で割る
           if (!prim_argc_bad && ra_int && !ra1_int) begin
-            cerr = 1'b1; cerr_a1 = ra1;
+            cerr = 1'b1; cerr_a1 = ra1; cerr_a2 = ra;
             cerr_kind = (prim == PR_ILT || prim == PR_ILE || prim == PR_IGT || prim == PR_IGE) ? CERR_COMPARE : CERR_TYPE;
           end else if (!prim_argc_bad && ra_int && prim == PR_IDIV && y == 0) begin
             cerr = 1'b1; cerr_kind = CERR_ZERODIV;
@@ -711,12 +786,17 @@ module mrb_core
             PR_IGT:  wval = mk_bool(x > y);
             default: wval = mk_bool(x >= y);
           endcase
+          // Float の引数は Float で計算する
+          if (!prim_argc_bad && ra_int && ra1_float) begin err = 1'b0; cerr = 1'b0; wr = 1'b0; go_fp = 1'b1; end
         end
-        PR_IEQ: begin err = prim_argc_bad || !ra_int; wval = mk_bool(ra == ra1); end
+        PR_IEQ: begin
+          err = prim_argc_bad || !ra_int; wval = mk_bool(ra == ra1);
+          if (!prim_argc_bad && ra_int && ra1_float) begin wr = 1'b0; go_fp = 1'b1; end
+        end
         PR_MOD, PR_NEG, PR_SHL, PR_SHR, PR_AND, PR_OR, PR_XOR, PR_INV, PR_ABS, PR_ZERO, PR_EVEN, PR_ODD: begin
           err = prim_argc_bad || !ra_int || (lk_argc == 7'd1 && !ra1_int);
           if (!prim_argc_bad && ra_int && lk_argc == 7'd1 && !ra1_int) begin
-            cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra1;
+            cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra1; cerr_a2 = ra;
           end else if (!prim_argc_bad && ra_int && prim == PR_MOD && y == 0) begin
             cerr = 1'b1; cerr_kind = CERR_ZERODIV;
           end
@@ -734,6 +814,7 @@ module mrb_core
             PR_EVEN: wval = mk_bool(!x[0]);
             default: wval = mk_bool(x[0]);
           endcase
+          if (prim == PR_MOD && !prim_argc_bad && ra_int && ra1_float) begin err = 1'b0; cerr = 1'b0; wr = 1'b0; go_fp = 1'b1; end
         end
         PR_NOT:     begin err = prim_argc_bad; wval = mk_bool(!ra_truthy); end
         PR_OEQ, PR_SAME: begin err = prim_argc_bad; wval = mk_bool(ra == ra1); end // 同じものか
@@ -824,6 +905,14 @@ module mrb_core
           npc     = pr_info[PC_BITS-1:0];
           err     = prim_argc_bad || !ra_proc || !(ia + blk_win + 17'(lk_kw) < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
         end
+        // Float (ヒープの箱の double)。計算は S_PRIM の終わりに fp_compute で (結果で S_FP が分かれる)
+        PR_FADD, PR_FSUB, PR_FMUL, PR_FDIV, PR_FMOD, PR_FPOW, PR_FLT, PR_FLE, PR_FGT, PR_FGE, PR_FEQ, PR_FCMP,
+        PR_FNEG, PR_FTOI, PR_FFLOOR, PR_FCEIL, PR_FROUND, PR_FNAN, PR_FINF, PR_FTOS, PR_FFMT, PR_FMATH,
+        PR_FATAN2, PR_FHYPOT, PR_FFMOD, PR_I2F, PR_STOD: begin
+          wr    = 1'b0;
+          go_fp = 1'b1;
+          err   = prim_argc_bad;
+        end
         PR_RAISE: begin
           // 例外 (引数) を投げる: 今の pc から表を引く
           wr       = 1'b0;
@@ -898,6 +987,7 @@ module mrb_core
         end
         OP_JMPUW: begin go_x = 1'b1; x_kind_n = BRK_JUMP; x_target_n = b; end
         OP_STRING:    go_string = 1'b1;
+        OP_LOADF:     go_loadf = 1'b1;
         OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
         // ヒープのオブジェクトはピンに出せない
         OP_SETGV:     begin iow = 1'b1; err = b[7:0] >= 8'(NPORTS) || is_ref(ra); end
@@ -1119,7 +1209,7 @@ module mrb_core
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
       do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_sleep = 1'b0;
-      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0;
+      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
@@ -1174,6 +1264,9 @@ module mrb_core
           default: ;
         endcase
       end
+      S_FP: if (fk == FK_VAL) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = fval; end
+      S_FBOX: begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
+      S_FSTR: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_AELEM: if (17'(m_k) == 17'(m_n) && m_after != AF_ENTER) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_SROM: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
@@ -1243,6 +1336,8 @@ module mrb_core
   assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
                     state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
                     state == S_SYMRD ? symtab + PC_BITS'(val_of(ra)) :
+                    state == S_LF1 ? b[PC_BITS-1:0] :
+                    state == S_LF2 ? b[PC_BITS-1:0] + PC_BITS'(1) :
                     state == S_XSTART ? hbase :
                     state == S_XSCAN ? hbase + PC_BITS'(hi) + PC_BITS'(1) : pc;
   assign retire   = exec;
@@ -1284,6 +1379,7 @@ module mrb_core
       tbase   <= '0;
       symtab  <= '0;
       vtime   <= '0;
+      m_fromfpu <= 1'b0;
       hbase   <= '0;
       hcount  <= '0;
       exc     <= V_NIL;
@@ -1547,6 +1643,129 @@ module mrb_core
               m_val  <= set_push ? ia1[RB:0] : ia2[RB:0];
               m_i    <= set_push ? arr_len : idx_adj[15:0];
               state  <= S_SET1;
+            end else if (go_loadf) begin
+              state <= S_LF1;
+            end else if (go_fp) begin
+              // Float の primitive を計算して結果を覚える (ref_vm.rb の float_prim と同じ順に調べる)
+              begin : fpc
+                logic [63:0] xb, yb, fb;
+                logic        y_num, cmp;
+                real         xr, yr, rr;
+                logic [8*64-1:0] t;
+                logic [FW+33:0]  pz;
+                fk     <= FK_HARD;
+                fres   <= '0;
+                fval   <= V_NIL;
+                xb     = ra_int ? f_int(ra[31:0]) : {heap[ha(val_of(ra)) + HB'(1)][31:0], heap[ha(val_of(ra)) + HB'(2)][31:0]};
+                y_num  = ra1_int || ra1_float;
+                yb     = ra1_int ? f_int(ra1[31:0]) : {heap[ha(val_of(ra1)) + HB'(1)][31:0], heap[ha(val_of(ra1)) + HB'(2)][31:0]};
+                xr     = $bitstoreal(xb);
+                yr     = $bitstoreal(yb);
+                cmp    = prim == PR_FLT || prim == PR_FLE || prim == PR_FGT || prim == PR_FGE ||
+                         prim == PR_ILT || prim == PR_ILE || prim == PR_IGT || prim == PR_IGE;
+                case (prim)
+                  PR_I2F: if (ra_int) begin fk <= FK_FLOAT; fres <= xb; end
+                  PR_STOD: if (ra_str && arr_len <= 16'd64) begin
+                    t = '0;
+                    for (int k = 0; k < int'(arr_len); k++) t[8*k +: 8] = heap[arr_d + HB'(1) + HB'(k)][7:0];
+                    pz = f_parse(t, int'(arr_len));
+                    if (pz[FW+33]) begin
+                      fk   <= FK_FLOAT;
+                      fres <= f_strtod(pz[FW-1:0], int'($signed(pz[FW+31:FW])), pz[FW+32]);
+                    end
+                  end
+                  default: begin
+                    if (!(ra_float || (ra_int && (prim == PR_IADD || prim == PR_ISUB || prim == PR_IMUL || prim == PR_IDIV ||
+                                                  cmp || prim == PR_IEQ || prim == PR_MOD)))) fk <= FK_HARD;
+                    else case (prim)
+                      PR_FEQ, PR_IEQ: begin fk <= FK_VAL; fval <= mk_bool(y_num && xr == yr); end
+                      PR_FCMP: begin
+                        fk   <= FK_VAL;
+                        fval <= !y_num || f_isnan(xb) || f_isnan(yb) ? V_NIL : mk_int(xr < yr ? -32'sd1 : (xr > yr ? 32'sd1 : 32'sd0));
+                      end
+                      PR_FNEG: begin fk <= FK_FLOAT; fres <= {~xb[63], xb[62:0]}; end
+                      PR_FTOI: begin
+                        if (f_isnan(xb) || f_isinf(xb)) begin fk <= FK_CERR; cx_kind <= CERR_FLOATDOMAIN; cx_a1 <= ra; cx_a2 <= V_NIL; cx_base <= fn; end
+                        else if (xr <= -2147483649.0 || xr >= 2147483648.0) begin fk <= FK_CERR; cx_kind <= CERR_RANGE; cx_a1 <= ra; cx_a2 <= V_NIL; cx_base <= fn; end
+                        else begin fk <= FK_VAL; fval <= mk_int(32'($rtoi(xr))); end
+                      end
+                      PR_FFLOOR: begin fk <= FK_FLOAT; fres <= f_floor(xb); end
+                      PR_FCEIL:  begin fk <= FK_FLOAT; fres <= f_ceil(xb); end
+                      PR_FROUND: begin fk <= FK_FLOAT; fres <= f_round(xb); end
+                      PR_FNAN:   begin fk <= FK_VAL; fval <= mk_bool(f_isnan(xb)); end
+                      PR_FINF:   begin fk <= FK_VAL; fval <= f_isinf(xb) ? mk_int(xb[63] ? -32'sd1 : 32'sd1) : V_NIL; end
+                      PR_FTOS: begin fk <= FK_STR; fstr <= f_to_s(xb); end
+                      PR_FFMT: begin
+                        // ra1 = 変換の文字 (f e E g G)、ra2 = 精度 (0..20)。有限の値だけ (プレリュードが先に見る)
+                        if (ra1_int && (ra1[31:0] == 32'd102 || ra1[31:0] == 32'd101 || ra1[31:0] == 32'd69 || ra1[31:0] == 32'd103 ||
+                                        ra1[31:0] == 32'd71) && ra2_int && ra2[31:0] <= 32'd20 && !f_isnan(xb) && !f_isinf(xb)) begin
+                          fk   <= FK_STR;
+                          fstr <= f_fmt(xb, ra1[7:0], int'(ra2[31:0]));
+                        end
+                      end
+                      PR_FMATH: begin
+                        if (ra1_int && ra1[31:0] < 32'd14) begin
+                          fk <= FK_FLOAT;
+                          case (ra1[3:0])
+                            4'd0:  rr = $sqrt(xr);
+                            4'd1:  rr = $sin(xr);
+                            4'd2:  rr = $cos(xr);
+                            4'd3:  rr = $tan(xr);
+                            4'd4:  rr = $asin(xr);
+                            4'd5:  rr = $acos(xr);
+                            4'd6:  rr = $atan(xr);
+                            4'd7:  rr = $exp(xr);
+                            4'd8:  rr = $ln(xr);
+                            4'd9:  rr = $ln(xr) / $ln(2.0);
+                            4'd10: rr = $log10(xr);
+                            4'd11: rr = $sinh(xr);
+                            4'd12: rr = $cosh(xr);
+                            default: rr = $tanh(xr);
+                          endcase
+                          fres <= $realtobits(rr);
+                        end
+                      end
+                      default: begin
+                        // 二項 (Integer の primitive に Float の引数が来たものも)
+                        if (!y_num) begin
+                          fk <= FK_CERR; cx_kind <= cmp ? CERR_COMPARE : CERR_TYPE; cx_a1 <= ra1; cx_a2 <= ra; cx_base <= fn;
+                        end else if ((prim == PR_FMOD || prim == PR_MOD) && yb[62:0] == 63'd0) begin
+                          fk <= FK_CERR; cx_kind <= CERR_ZERODIV; cx_a1 <= V_NIL; cx_a2 <= V_NIL; cx_base <= fn;
+                        end else if (cmp) begin
+                          fk <= FK_VAL;
+                          case (prim)
+                            PR_FLT, PR_ILT: fval <= mk_bool(xr < yr);
+                            PR_FLE, PR_ILE: fval <= mk_bool(xr <= yr);
+                            PR_FGT, PR_IGT: fval <= mk_bool(xr > yr);
+                            default:        fval <= mk_bool(xr >= yr);
+                          endcase
+                        end else begin
+                          fk <= FK_FLOAT;
+                          case (prim)
+                            PR_FADD, PR_IADD: fb = $realtobits(xr + yr);
+                            PR_FSUB, PR_ISUB: fb = $realtobits(xr - yr);
+                            PR_FMUL, PR_IMUL: fb = $realtobits(xr * yr);
+                            PR_FDIV, PR_IDIV: fb = $realtobits(xr / yr);
+                            PR_FPOW: fb = (xr < 0.0 && !f_isinf(xb) && !f_isinf(yb) && !f_isnan(yb) && $floor(yr) != yr) ? F_NAN : $realtobits($pow(xr, yr));
+                            PR_FATAN2: fb = $realtobits($atan2(xr, yr));
+                            PR_FHYPOT: fb = $realtobits($hypot(xr, yr));
+                            PR_FFMOD:  fb = f_fmod(xb, yb);
+                            default: begin
+                              // Ruby の Float#% (flodivmod): y が NaN なら NaN、x が 0 か y だけ無限なら x、ほかは fmod を y の符号にそろえる
+                              if (f_isnan(yb)) fb = yb;
+                              else if (xb[62:0] == 63'd0 || (f_isinf(yb) && !f_isinf(xb))) fb = xb;
+                              else fb = f_fmod(xb, yb);
+                              if (yr * $bitstoreal(fb) < 0.0) fb = $realtobits($bitstoreal(fb) + yr);
+                            end
+                          endcase
+                          fres <= fb;
+                        end
+                      end
+                    endcase
+                  end
+                endcase
+              end
+              state <= S_FP;
             end else if (go_x) begin
               // 例外か巻き戻し: 今の pc から例外の表を引く
               if (set_exc) exc <= exc_n;
@@ -1727,6 +1946,7 @@ module mrb_core
                 MO_OBJ:   state <= S_OBJ;
                 MO_EHASH: state <= S_EHASH;
                 MO_BRK:   state <= S_BRKW;
+                MO_FLOAT: state <= S_FBOX;
                 default:  state <= S_GROW;
               endcase
             end else if (!gc_done) begin
@@ -1890,7 +2110,7 @@ module mrb_core
             heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(m_n));
             heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_OBJ, 32'(p_new) + 32'd3);
             heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, {CLS_DATA, 16'(m_n)});
-            state <= m_fromrom ? S_SROM : S_AELEM;
+            state <= m_fromrom ? S_SROM : (m_fromfpu ? S_FSTR : S_AELEM);
           end
 
           // ---- String を ROM のデータ (1語 4バイト、バイト j は bit 8j から) から写す。1バイト 2 cycle
@@ -1908,6 +2128,67 @@ module mrb_core
           end
 
           // ---- Symbol#to_s: S_SYMRD でシンボル表の語 {データの語アドレス, 長さ} を読み、STRING と同じに作る
+          // ---- LOADF: ROM のデータの2語 (S_LF1 で上位の語を出し、S_LF2 で読んで下位の語を出す)
+          S_LF1: state <= S_LF2;
+          S_LF2: begin
+            fres[63:32] <= rom_data[31:0];
+            state       <= S_LF3;
+          end
+          S_LF3: begin
+            fres[31:0] <= rom_data[31:0];
+            need       <= 17'd3;
+            mop        <= MO_FLOAT;
+            gc_done    <= 1'b0;
+            state      <= S_ALLOC;
+          end
+          // ---- Float の primitive の結果で分かれる
+          S_FP: begin
+            case (fk)
+              FK_FLOAT: begin
+                need    <= 17'd3;
+                mop     <= MO_FLOAT;
+                gc_done <= 1'b0;
+                state   <= S_ALLOC;
+              end
+              FK_VAL: begin // R[a] への書き込みは m_we
+                pc    <= pc + PC_BITS'(1);
+                state <= S_FETCH;
+              end
+              FK_STR: begin
+                mop       <= MO_ARRAY;
+                m_dst     <= ia[RB:0];
+                m_after   <= AF_WRITE;
+                m_cls     <= CLS_STRING;
+                m_fromrom <= 1'b0;
+                m_fromfpu <= 1'b1;
+                m_n       <= 16'(fs_len(fstr));
+                need      <= 17'd4 + 17'(fs_len(fstr));
+                gc_done   <= 1'b0;
+                state     <= S_ALLOC;
+              end
+              FK_CERR: state <= S_CERR;
+              default: state <= S_ERROR;
+            endcase
+          end
+          // ---- Float の箱: 見出し、上位 32bit、下位 32bit (R[a] への書き込みは m_we)
+          S_FBOX: begin
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_FLOAT, 16'd2});
+            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(fres[63:32]);
+            heap[p_new[HB-1:0] + HB'(2)] <= mk_int(fres[31:0]);
+            pc    <= pc + PC_BITS'(1);
+            state <= S_FETCH;
+          end
+          // ---- Float の primitive の文字列を1バイトずつ (書き終えたら R[m_dst]、m_we)
+          S_FSTR: begin
+            if (17'(m_k) == 17'(m_n)) begin
+              m_fromfpu <= 1'b0;
+              pc        <= pc + PC_BITS'(1);
+              state     <= S_FETCH;
+            end else begin
+              heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int({24'd0, fs_at(fstr, int'(m_k))});
+              m_k <= m_k + 1'b1;
+            end
+          end
           S_SYMRD: state <= S_SYMGO;
           S_SYMGO: begin
             mop       <= MO_ARRAY;

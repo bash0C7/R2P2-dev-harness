@@ -560,6 +560,16 @@ namespace :fpga do
     puts "wrote #{FpgaGenPkg::PATH.sub("#{HARNESS_ROOT}/", '')}"
   end
 
+  namespace :fpconv do
+    desc "Regenerate fpga/tb/mrb_fpconv_vectors.txt (Float <-> decimal answers from tools/fpga/fpconv.rb for mrb_fpconv_tb)"
+    task :vectors do
+      require_relative "../tools/fpga/fpconv_vectors"
+      path = File.join(FPGA_TB_DIR, "mrb_fpconv_vectors.txt")
+      File.write(path, FpgaFpconvVectors.lines.join("\n") + "\n")
+      puts "wrote #{path.sub("#{HARNESS_ROOT}/", '')}"
+    end
+  end
+
   desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation, board emulation"
   task test: ["test:fpga", "fpga:tb", "fpga:check", "fpga:emu:check", "fpga:fuzz:ci"]
 
