@@ -6,28 +6,40 @@
 #
 # out: SETGV で書く。GETGV で読むと最後に書いた値 (書く前は nil)。
 # in:  GETGV で読むと外から入った値 (Integer)。SETGV は変換時にエラー。
+#
+# 変換器の一部として PicoRuby でも走る (isa.rb の注記)。
 module FpgaIoMap
-  Port = Struct.new(:name, :num, :dir)
+  class Port
+    attr_reader :name, :num, :dir
+
+    def initialize(name, num, dir)
+      @name = name
+      @num = num
+      @dir = dir
+    end
+  end
 
   PORTS = [
     Port.new("$LED",    0, :out),  # PERIDOT-Air USER_LED[0]
     Port.new("$LED2",   1, :out),  # PERIDOT-Air USER_LED[1]
-    Port.new("$BUTTON", 2, :in)
+    Port.new("$BUTTON", 2, :in)    # PERIDOT-Air D[0]
   ].freeze
 
-  BY_NAME = PORTS.to_h { |p| [p.name, p] }.freeze
+  BY_NAME = {}
+  PORTS.each { |p| BY_NAME[p.name] = p }
+  BY_NAME.freeze
 
   # ハードウェアの I/O ブロックのポート数と、入力ポートの bit mask
-  NPORTS  = 4
-  IN_MASK = PORTS.select { |p| p.dir == :in }.sum { |p| 1 << p.num }
+  NPORTS = 4
+  mask = 0
+  PORTS.each { |p| mask |= (1 << p.num) if p.dir == :in }
+  IN_MASK = mask
 
-  module_function
-
-  def fetch(name)
+  def self.fetch(name)
     BY_NAME[name]
   end
 
-  def port(num)
+  def self.port(num)
     PORTS.find { |p| p.num == num }
   end
 end

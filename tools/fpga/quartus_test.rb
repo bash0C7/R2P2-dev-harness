@@ -1,24 +1,24 @@
 require_relative "test_helper"
-require_relative "rom"
+require_relative "converter"
 require_relative "quartus"
 require "tmpdir"
 
 class FpgaQuartusTest < Minitest::Test
   include FpgaTestHelper
 
-  def image
-    FpgaRom.from_file(File.join(CORPUS, "blink.mrb"))
+  def hex
+    File.join(CORPUS, "blink.hex")
   end
 
   def test_rom_hex_fills_the_whole_rom_with_ones
-    lines = FpgaQuartus.rom_hex(image).lines(chomp: true)
+    lines = FpgaQuartus.rom_hex(hex).lines(chomp: true)
     assert_equal FpgaQuartus::ROM_DEPTH, lines.size
-    assert_equal image.words.first.hex, lines.first
+    assert_equal File.readlines(hex, chomp: true).first, lines.first
     assert_equal "ffffffffffff", lines.last
   end
 
   def test_rom_hex_rejects_programs_larger_than_the_rom
-    assert_raises(ArgumentError) { FpgaQuartus.rom_hex(image, depth: 4) }
+    assert_raises(ArgumentError) { FpgaQuartus.rom_hex(hex, depth: 4) }
   end
 
   def test_sources_put_the_package_first_and_leave_out_test_circuits
@@ -30,7 +30,7 @@ class FpgaQuartusTest < Minitest::Test
 
   def test_project_is_self_contained
     Dir.mktmpdir do |dir|
-      FpgaQuartus.write_project(dir, image, ce_div: 250)
+      FpgaQuartus.write_project(dir, hex, ce_div: 250)
       qsf = File.read(File.join(dir, "#{FpgaQuartus::PROJECT}.qsf"))
       assert_includes qsf, "set_location_assignment PIN_105 -to USER_LED[0]"
       assert_includes qsf, "set_global_assignment -name SYSTEMVERILOG_FILE src/mrb_core.sv"

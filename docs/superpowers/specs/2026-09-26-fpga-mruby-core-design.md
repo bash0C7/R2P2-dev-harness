@@ -21,6 +21,7 @@ user から「中断不要、すすめろ」と指示があったので、各 is
 | #6 | irep | 1つだけ。子 irep・pool・catch handler は変換時に止める |
 | #7 | ROM の語長 | 1命令1語の固定長 48bit {op8, a8, b16, c16}。`LOADI32` の 32bit も b:c に収まる。ジャンプ先は変換器が絶対語アドレスにする |
 | #7 | 置き場所 | `tools/fpga/` (既存の `tools/<target>/` に揃えた) |
+| #7 | 変換器の言語 | **PicoRuby** (user の指示)。PicoRuby の host VM で走らせ、rake は起動と受け渡しだけ。PicoRuby と CRuby の共通部分で書き、同じ file を CRuby の参照インタプリタやテストも読む。picoruby の無い CI の fpga job のために、コーパスの ROM (`.hex` `.lst`) は commit する |
 | #7 | シンボル | 変換時に I/O ポート番号へ解決。対応表は `tools/fpga/io_map.rb` |
 | #8 | 多サイクルかパイプラインか | 多サイクル (FETCH / EXEC の 2 cycle) |
 | #8 | クロック | 実機の CLOCK_50 (50MHz) の単一クロック + クロックイネーブルで設計 |

@@ -571,7 +571,7 @@ mruby のバイトコード (`.mrb`、RITE0400) を、ソフト VM ではなく�
 [CPU コアと道具立て](superpowers/specs/2026-09-26-fpga-mruby-core-design.md)
 
 ```
-fpga/corpus/*.rb --mrbc--> .mrb --tools/fpga/rom.rb--> ROM (48bit/命令, $readmemh)
+fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $readmemh)
                                                       |                         |
                           tools/fpga/ref_vm.rb (参照) <-+-> fpga/rtl/mrb_core.sv (コア)
                                      \______ rake fpga:check が I/O とトレースを突き合わせる ______/
@@ -588,24 +588,27 @@ fpga/corpus/*.rb --mrbc--> .mrb --tools/fpga/rom.rb--> ROM (48bit/命令, $readm
 | `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
 | `rake fpga:check` | `fpga/corpus/*.mrb` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
-| `rake fpga:rom[src]` | `.rb` / `.mrb` を ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
+| `rake fpga:rom[src]` | `.rb` / `.mrb` を PicoRuby の変換器で ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
 | `rake fpga:run[src,max]` | 1本をシミュレーションで走らせ、I/O を表示する。トレースと波形を `build/fpga/rom/` に残す |
-| `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` と `docs/fpga-opcodes.md` を mrbc で作り直す / 最新かを見る |
+| `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` `.hex` `.lst` と `docs/fpga-opcodes.md` を mrbc と PicoRuby の変換器で作り直す / 最新かを見る |
 | `rake fpga:gen` | `fpga/rtl/mrb_pkg.sv` を `tools/fpga/isa.rb` と `io_map.rb` から作り直す |
 | `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
 | `rake fpga:flash` | 最後の `fpga:build` を openFPGALoader で SRAM に書く。**実機では未確認** |
 
-`fpga:*` は `vendor/picoruby` 無しで回る (コーパスの `.mrb` を commit してあるため)。`rake test` には含まれない。
-mrbc が要るのは `fpga:corpus` と、`.rb` を直接渡した `fpga:rom` / `fpga:run` / `fpga:build` だけ。
+`fpga:test` は `vendor/picoruby` 無しで回る (コーパスの `.mrb` と ROM を commit してあるため)。`rake test` には含まれない。
+picoruby (host VM) が要るのは変換器を走らせる `fpga:rom` / `fpga:run` / `fpga:build` / `fpga:corpus`、
+mrbc が要るのはそれらに `.rb` を直接渡した時と `fpga:corpus`。どちらも `rake setup` と `rake test:host` で出来る
+(`PICORUBY=` / `MRBC=` で差し替えられる)。
 
 ### 置き場所
 
 - `fpga/rtl/**/*.sv`: 回路。`*_pkg.sv` を先に、全部を毎回コンパイルに渡す。`fpga/rtl/boards/` は実機の top
 - `fpga/tb/<name>_tb.sv`: 自己チェック型テストベンチ。top module 名を file 名と揃える
 - `fpga/sim/`: プログラムを走らせるテストベンチ (`mrb_run_tb.sv`)。合否は rake 側が出すので `fpga:tb` の対象外
-- `fpga/corpus/`: 対象の Ruby プログラムと、その `.mrb` / `.dump` / 入力の刺激 `.stim`
+- `fpga/corpus/`: 対象の Ruby プログラムと、その `.mrb` / `.dump` / ROM (`.hex` `.lst`) / 入力の刺激 `.stim`
 - `fpga/boards/peridot_air/`: Quartus の設定 (`.qsf` `.sdc`)
-- `tools/fpga/`: ROM 変換・参照インタプリタ・突き合わせ・Quartus プロジェクト生成 (Ruby)
+- `tools/fpga/`: ROM 変換器 (PicoRuby: `isa.rb` `io_map.rb` `rite.rb` `rom.rb` `mrb2rom.rb`) と、
+  参照インタプリタ・突き合わせ・Quartus プロジェクト生成 (CRuby)
 
 各 `.sv` に `` `timescale 1ns / 1ps `` を書く (1つでも書くと、書いていない module を Verilator が
 `TIMESCALEMOD` で落とす)。
@@ -653,7 +656,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 
 ### ROM 形式と変換 (#7)
 
-`tools/fpga/rite.rb` が RITE0400 を読み、`tools/fpga/rom.rb` が ROM にする。**1命令1語の固定長 48bit**:
+`tools/fpga/rite.rb` が RITE0400 を読み、`tools/fpga/rom.rb` が ROM にする。**変換器は PicoRuby で書き、
+PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけをする (`FpgaConverter.run`)。**1命令1語の固定長 48bit**:
 
 | bit | 中身 |
 |---|---|
@@ -672,6 +676,18 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 
 ROM の空きは全 bit 1 (op 0xff = 未対応) で、プログラムの外へ出たコアはエラーで止まる。
 `rom_test.rb` がコーパス全部について、変換結果を `.dump` (`mrbc -v`) と1命令ずつ突き合わせる。
+
+**変換器は PicoRuby と CRuby の共通部分で書く。** 同じ file を CRuby からも読み (`tools/fpga/converter.rb`)、
+参照インタプリタやテストが使う。`rom_test.rb` は、commit 済みの `.hex` `.lst` (PicoRuby の出力) と
+CRuby で走らせた結果が一致すること、境界の値 (負の相対ジャンプ、`LOADI32` の全 bit 1) で両者が一致することを見る。
+PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使えないもの:
+
+- `require` / `require_relative` が無い。複数の file は `picoruby a.rb,b.rb,c.rb` と `,` でつないで渡す
+- `Struct`、`File.binread`、`String#force_encoding`、`Array#sort_by` `#sum` `#tally` `#flat_map` が無い
+- Enumerator の連鎖 (`each_with_index.map`、`map.with_index`) は `fiber required for enumerator` で落ちる
+- 正規表現はキャプチャ (`$1`) が取れない。`String#split(/\s+/)` は `TypeError`
+- `File.open(path, "rb") { |f| f.read }`、`getbyte` `byteslice` `unpack`、`format`、`exit`、`STDERR` は使える。
+  48bit の整数も扱える (`MRB_INT64`)
 
 ### CPU コア (#8)
 

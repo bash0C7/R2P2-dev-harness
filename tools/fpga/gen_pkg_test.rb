@@ -14,7 +14,7 @@ class FpgaGenPkgTest < Minitest::Test
   end
 
   def test_corpus_is_current
-    skip "mrbc is not built (vendor/picoruby)" unless File.executable?(MRBC)
-    assert_empty FpgaCorpus.stale(MRBC), "run `rake fpga:corpus`"
+    skip "mrbc / picoruby are not built (vendor/picoruby)" unless File.executable?(MRBC) && File.executable?(PICORUBY)
+    assert_empty FpgaCorpus.stale(MRBC, PICORUBY), "run `rake fpga:corpus`"
   end
 end

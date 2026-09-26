@@ -1,5 +1,5 @@
 require "minitest/autorun"
-require_relative "isa"
+require_relative "converter"
 
 module FpgaTestHelper
   ROOT     = File.expand_path("../..", __dir__)

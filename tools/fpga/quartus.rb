@@ -25,10 +25,11 @@ module FpgaQuartus
       .sort_by { |p| [p.end_with?("_pkg.sv") ? 0 : 1, p] }
   end
 
-  # ROM の全語を埋めた $readmemh。空きは全 bit 1 (op 0xff、コアはエラーで止まる)
-  def rom_hex(image, depth: ROM_DEPTH)
-    raise ArgumentError, "program has #{image.words.size} words, the ROM holds #{depth}" if image.words.size > depth
-    lines = image.words.map(&:hex)
+  # ROM の全語を埋めた $readmemh。空きは全 bit 1 (op 0xff、コアはエラーで止まる)。
+  # hex は PicoRuby の変換器 (mrb2rom.rb) が書いたもの
+  def rom_hex(hex, depth: ROM_DEPTH)
+    lines = File.readlines(hex, chomp: true).map(&:strip).reject(&:empty?)
+    raise ArgumentError, "program has #{lines.size} words, the ROM holds #{depth}" if lines.size > depth
     lines += ["f" * 12] * (depth - lines.size)
     lines.join("\n") + "\n"
   end
@@ -42,7 +43,7 @@ module FpgaQuartus
   end
 
   # build/fpga/peridot_air/ にプロジェクトを書く。返り値はその dir
-  def write_project(dir, image, ce_div:)
+  def write_project(dir, hex, ce_div:)
     FileUtils.rm_rf dir
     FileUtils.mkdir_p File.join(dir, "src")
     names = sources.map do |src|
@@ -53,8 +54,9 @@ module FpgaQuartus
     FileUtils.cp File.join(BOARD_DIR, "peridot_air.sdc"), dir
     File.write(File.join(dir, "#{PROJECT}.qpf"), "PROJECT_REVISION = \"#{PROJECT}\"\n")
     File.write(File.join(dir, "#{PROJECT}.qsf"), qsf(names, ce_div: ce_div))
-    File.write(File.join(dir, "rom.hex"), rom_hex(image))
-    File.write(File.join(dir, "rom.lst"), image.listing)
+    File.write(File.join(dir, "rom.hex"), rom_hex(hex))
+    lst = hex.sub(/\.hex\z/, ".lst")
+    FileUtils.cp lst, File.join(dir, "rom.lst") if File.file?(lst)
     dir
   end
 

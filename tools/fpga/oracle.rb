@@ -8,7 +8,7 @@
 require "open3"
 require "tmpdir"
 require "rbconfig"
-require_relative "io_map"
+require_relative "converter"
 
 module FpgaOracle
   class Error < StandardError; end

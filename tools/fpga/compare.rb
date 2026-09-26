@@ -2,7 +2,7 @@
 #
 # 合否は I/O の系列 (O 行) と終わり方 (最後の H/E/L 行) で決める。
 # 食い違ったら、トレース全体 (X/W/O) で最初にずれた行を探し、その step の命令を示す。
-require_relative "isa"
+require_relative "converter"
 
 module FpgaCompare
   Result = Struct.new(:ok, :io_count, :ending, :message, keyword_init: true)
