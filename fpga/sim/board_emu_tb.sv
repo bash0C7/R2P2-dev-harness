@@ -1,4 +1,4 @@
-// PERIDOT-Air のボードエミュレーター。実機の top (fpga/rtl/boards/peridot_air_top.sv) を 50MHz で回し、
+// PERIDOT-Air のボードエミュレーター。実機の top (fpga/rtl/boards/peridot_air_top.sv) を +mhz のクロック (既定 125MHz) で回し、
 // ピンの変化を実時間 (ms) で書く。rake fpga:emu が使う。合否は出さない。
 //
 // parameter (Verilator の -G で build 時に渡す):
@@ -8,6 +8,7 @@
 // plusargs:
 //   +rom=<hex>     ROM イメージ (tools/fpga/mrb2rom.rb の出力)
 //   +ms=<n>        何 ms 分回すか (既定 1000)
+//   +mhz=<n>       クロック周波数 MHz (既定 125、Raspberry Pi Pico と同じ)。top の CLOCK_50 に入れる
 //   +log=<out>     ピンの変化の書き出し先。1行 "<us> <what> <value>"
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
@@ -28,7 +29,10 @@ module board_emu_tb;
 
   peridot_air_top #(.CE_DIV(CE_DIV)) dut (.CLOCK_50(clk), .RESET_N(reset_n), .D(d), .USER_LED(led));
 
-  always #10 clk = ~clk; // 50MHz
+  // シミュレーションでは周波数は時刻のラベルでしかないので、どこまでも上げられる
+  real mhz = 125.0;
+  initial void'($value$plusargs("mhz=%f", mhz));
+  always #(500.0 / mhz) clk = ~clk; // 半周期 ns
 
   int    fd;
   int    ms = 1000;

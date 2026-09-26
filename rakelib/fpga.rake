@@ -272,7 +272,7 @@ end
 
 # PERIDOT-Air のボードエミュレーターで src を ms だけ走らせ、ピンの変化を表示する。
 # <name>.buttons があればボタンを押す (その時は参照との突き合わせはしない)。返り値は参照と一致したか。
-def fpga_emulate(src, ms:, ce_div:, verbose: true)
+def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
   hex = File.extname(src) == ".hex" ? src : fpga_rom(src)
   name = File.basename(src, ".*")
   buttons = File.join(File.dirname(src), "#{name}.buttons")
@@ -282,7 +282,7 @@ def fpga_emulate(src, ms:, ce_div:, verbose: true)
   exe = fpga_board_emu(sim_ce, k)
   FileUtils.mkdir_p FPGA_ROM_DIR
   log = File.join(FPGA_ROM_DIR, "#{name}.emu.log")
-  cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}"]
+  cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}", "+mhz=#{mhz}"]
   if buttons
     plain = File.join(FPGA_ROM_DIR, "#{name}.buttons")
     File.write(plain, FpgaCompare.read_stim(buttons).map { |r| r.join(" ") + "\n" }.join)
@@ -293,7 +293,7 @@ def fpga_emulate(src, ms:, ce_div:, verbose: true)
 
   events = FpgaEmu.read_log(log)
   if verbose
-    puts "PERIDOT-Air emulation: #{fpga_rel(hex)}, #{ms} ms, CE_DIV=#{ce_div}" +
+    puts "PERIDOT-Air emulation: #{fpga_rel(hex)}, #{ms} ms, #{mhz} MHz, CE_DIV=#{ce_div}" +
          (k > 1 ? " (run with CE_DIV=#{sim_ce}, time x#{k}; FPGA_EMU_EXACT=1 for 1:1)" : "")
     puts FpgaEmu.format_events(events)
     unless buttons
@@ -305,8 +305,8 @@ def fpga_emulate(src, ms:, ce_div:, verbose: true)
     puts "  #{name}: buttons in #{fpga_rel(buttons)}, not compared with the reference interpreter"
     ok = true
   else
-    trace = fpga_ref_trace(hex, stim: nil, max: FpgaEmu.steps_for(ms, ce_div))
-    results = FpgaEmu.check_against_ref(events, trace, FpgaEmu.window_steps(ms, ce_div))
+    trace = fpga_ref_trace(hex, stim: nil, max: FpgaEmu.steps_for(ms, ce_div, mhz))
+    results = FpgaEmu.check_against_ref(events, trace, FpgaEmu.window_steps(ms, ce_div, mhz))
     results.each { |r_ok, msg| puts "  #{r_ok ? 'ok' : 'FAIL'} #{name} #{msg}" }
     ok = results.all?(&:first)
   end
@@ -381,16 +381,18 @@ namespace :fpga do
     puts "waveform: #{fpga_rel(dump)}"
   end
 
-  desc "Emulate PERIDOT-Air (50MHz, CE_DIV, pins) running a .rb/.mrb/.hex for <ms> ms (e.g. rake fpga:emu[fpga/corpus/blink.mrb,2000])"
-  task :emu, [:src, :ms, :ce_div] do |_t, args|
-    raise "usage: rake fpga:emu[<file.rb|file.mrb|file.hex>,<ms>,<CE_DIV>]" unless args[:src]
+  desc "Emulate PERIDOT-Air (clock default 125MHz, CE_DIV, pins) running a .rb/.mrb/.hex for <ms> ms (e.g. rake fpga:emu[fpga/corpus/blink.mrb,2000,1000,125])"
+  task :emu, [:src, :ms, :ce_div, :mhz] do |_t, args|
+    raise "usage: rake fpga:emu[<file.rb|file.mrb|file.hex>,<ms>,<CE_DIV>,<MHz>]" unless args[:src]
     require_fpga_tools!
-    ok = fpga_emulate(args[:src], ms: (args[:ms] || 2000).to_i, ce_div: (args[:ce_div] || 1000).to_i)
+    mhz = args[:mhz] ? Float(args[:mhz]) : FpgaEmu::DEFAULT_MHZ
+    raise "MHz must be positive" unless mhz.positive?
+    ok = fpga_emulate(args[:src], ms: (args[:ms] || 2000).to_i, ce_div: (args[:ce_div] || 1000).to_i, mhz: mhz)
     raise "board emulation differs from the reference interpreter" unless ok
   end
 
   namespace :emu do
-    desc "Emulate PERIDOT-Air for every fpga/corpus/*.hex (600 ms, CE_DIV=1000) and compare the LEDs with the reference"
+    desc "Emulate PERIDOT-Air for every fpga/corpus/*.hex (600 ms, 125MHz, CE_DIV=1000) and compare the LEDs with the reference"
     task :check do
       require_fpga_tools!
       failed = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort.reject do |hex|
