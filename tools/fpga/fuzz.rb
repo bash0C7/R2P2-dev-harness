@@ -86,6 +86,7 @@ module FpgaFuzz
     when "BLOCK" then b = PROLOGUE + rng.rand(len - PROLOGUE); c = block_c(rng)
     when "BLKCALL" then b = rng.rand(3)
     when "AREF" then b = small.call; c = rng.rand(4)
+    when "LOADSYM" then b = rng.rand(8)
     end
     encode(op, a, b, c)
   end

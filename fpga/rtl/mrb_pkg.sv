@@ -4,25 +4,34 @@
 // 定数はどれを使うかが module ごとに違うので、未使用の lint は切る
 /* verilator lint_off UNUSEDPARAM */
 package mrb_pkg;
-  // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。ARRAY / PROC はヒープの語アドレス、FWD / HDR はヒープの中だけ
+  // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。OBJ はヒープの語アドレス、FWD / HDR はヒープの中だけ
   localparam int INT_BITS = 32;
-  localparam int TAG_BITS = 3;
+  localparam int TAG_BITS = 4;
   localparam int VAL_BITS = INT_BITS + TAG_BITS;
-  localparam logic [TAG_BITS-1:0] TAG_NIL   = 3'd0;
-  localparam logic [TAG_BITS-1:0] TAG_FALSE = 3'd1;
-  localparam logic [TAG_BITS-1:0] TAG_TRUE  = 3'd2;
-  localparam logic [TAG_BITS-1:0] TAG_INT   = 3'd3;
-  localparam logic [TAG_BITS-1:0] TAG_ARRAY = 3'd4;
-  localparam logic [TAG_BITS-1:0] TAG_PROC  = 3'd5;
-  localparam logic [TAG_BITS-1:0] TAG_FWD   = 3'd6;
-  localparam logic [TAG_BITS-1:0] TAG_HDR   = 3'd7;
+  localparam logic [TAG_BITS-1:0] TAG_NIL   = 4'd0;
+  localparam logic [TAG_BITS-1:0] TAG_FALSE = 4'd1;
+  localparam logic [TAG_BITS-1:0] TAG_TRUE  = 4'd2;
+  localparam logic [TAG_BITS-1:0] TAG_INT   = 4'd3;
+  localparam logic [TAG_BITS-1:0] TAG_SYM   = 4'd4;
+  localparam logic [TAG_BITS-1:0] TAG_CLASS = 4'd5;
+  localparam logic [TAG_BITS-1:0] TAG_OBJ   = 4'd6;
+  localparam logic [TAG_BITS-1:0] TAG_FWD   = 4'd7;
+  localparam logic [TAG_BITS-1:0] TAG_HDR   = 4'd8;
 
-  // ヒープ (tools/fpga/isa.rb)。見出しの値 = 種類 << 16 | 中身の語数
+  // ヒープ (tools/fpga/isa.rb)。見出しの値 = クラス << 16 | 中身の語数
   localparam int HEAP_SIZE = 2048;
-  localparam int KIND_ARY = 1;
-  localparam int KIND_DATA = 2;
-  localparam int KIND_PROC = 3;
-  localparam int KIND_ENV = 4;
+  localparam logic [15:0] CLS_OBJECT = 16'd1;
+  localparam logic [15:0] CLS_NIL    = 16'd2;
+  localparam logic [15:0] CLS_TRUE   = 16'd3;
+  localparam logic [15:0] CLS_FALSE  = 16'd4;
+  localparam logic [15:0] CLS_INT    = 16'd5;
+  localparam logic [15:0] CLS_SYM    = 16'd6;
+  localparam logic [15:0] CLS_ARRAY  = 16'd7;
+  localparam logic [15:0] CLS_PROC   = 16'd8;
+  localparam logic [15:0] CLS_CLASS  = 16'd9;
+  localparam logic [15:0] CLS_DATA   = 16'd32752;
+  localparam logic [15:0] CLS_ENV    = 16'd32753;
+  localparam logic [15:0] CLS_META   = 16'h8000;
 
   // コアの大きさ (tools/fpga/isa.rb)
   localparam int RF_SIZE     = 128;
@@ -80,6 +89,7 @@ package mrb_pkg;
   localparam logic [7:0] OP_LOADI_7    = 8'd13; // B
   localparam logic [7:0] OP_LOADI16    = 8'd14; // BS
   localparam logic [7:0] OP_LOADI32    = 8'd15; // BSS
+  localparam logic [7:0] OP_LOADSYM    = 8'd16; // BB
   localparam logic [7:0] OP_LOADNIL    = 8'd17; // B
   localparam logic [7:0] OP_LOADTRUE   = 8'd19; // B
   localparam logic [7:0] OP_LOADFALSE  = 8'd20; // B

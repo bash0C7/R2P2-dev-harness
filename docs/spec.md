@@ -653,11 +653,12 @@ blocks / arrays / procs / gc / blink_sleep / closures) の `mrbc -v` に出る�
 
 - **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
   (mruby なら 64bit / Bignum になる所で、コアは黙って折り返す)
-- **値 = 3bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3 / Array=4 / Proc=5
-  (6 と 7 はヒープの中だけ: GC の転送先と、オブジェクトの見出し)。偽は nil と false だけ (0 は真)。
-  Array と Proc の値はヒープの語アドレス (下の「配列とヒープ」)
+- **値 = 4bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3 / Symbol=4 (番号) / Class=5 (クラスの番号) /
+  Object=6 (ヒープの語アドレス) (7 と 8 はヒープの中だけ: GC の転送先と、オブジェクトの見出し。9〜15 は空き)。
+  偽は nil と false だけ (0 は真)。Array と Proc は Object で、クラスは見出しの上位 16bit (下の「配列とヒープ」)。
+  シンボルの番号は変換器がプログラム全体で振り (`LOADSYM`)、名前の表は ROM の一覧 (`.lst`) の最後に出る
 - **`EQ`** は Integer 同士なら値、それ以外は型が同じなら等しい (nil == nil、true == true)。
-  **Array 同士の `==` はエラー** (Ruby は中身を比べるが、コアは持たない)。Proc 同士は同じものか
+  **Array 同士の `==` はエラー** (Ruby は中身を比べるが、コアは持たない)。Proc 同士は同じものか、Symbol は番号
 - **整数以外への算術・大小比較 (`ADD` `LT` など) と `ADDI`系はエラーで止まる。** mruby ならメソッド探索に行く所
 - **`STOP` と、一番外側の `RETURN` / `RETNIL` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
 - **`def` したメソッドを呼べる (`TDEF` `SSEND` `SSEND0` `ENTER` `RETURN` `RETNIL`)。** 再帰もできる。呼び出し先は変換時に
@@ -751,10 +752,11 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 
 - **ヒープは 2048 語 (1語 = タグ + 32bit) を半分ずつ使う。** 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
   **Cheney のコピー GC** でもう半分へ写し、それでも足りなければエラーで止まる
-- **オブジェクト。** 見出し (タグ 7、値 = 種類 << 16 | 語数) の後ろに中身。
+- **オブジェクト。** 見出し (タグ 8、値 = クラスの番号 << 16 | 語数) の後ろに中身。クラスの番号は
+  `tools/fpga/isa.rb` の `CLASSES` (組み込み) と、ヒープの中だけの塊 (配列の中身 `CLS_DATA`、env `CLS_ENV`)。
   配列は `[見出し] [長さ] [中身への参照]` と、別の塊 `[見出し] [要素 × 容量]`。
   Proc は `[見出し] [先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc]`。
-  env は `[見出し] [生きている間の bp か nil] [レジスタ × nregs]`。配列の中身と env への参照は Array のタグで指す
+  env は `[見出し] [生きている間の bp か nil] [レジスタ × nregs]`。配列の中身と env への参照も Object のタグで指す
   (レジスタには出ない。種類は見出しで分かる)
 - **配列を伸ばす** (`a[i] = v` で i が容量以上、`push`) 時は、容量 max(i + 1, 2 倍, 4) の塊を新しく取り、写して付け替える。
   間は nil

@@ -4,7 +4,7 @@
 // ROM は tools/fpga/rom.rb (PicoRuby の変換器) が作る 48bit 固定長語 ({op, a, b, c})。命令の意味は
 // tools/fpga/ref_vm.rb と同じ (docs/spec.md §10)。ずれたら rake fpga:check / fpga:fuzz が落ちる。
 //
-// 値 = {tag[2:0], value[31:0]}。ARRAY / PROC はヒープ (HEAP_SIZE 語、半分ずつ使う) の語アドレス。
+// 値 = {tag[3:0], value[31:0]}。OBJ はヒープ (HEAP_SIZE 語、半分ずつ使う) の語アドレスで、クラスは見出しの上位 16bit。
 // レジスタはレジスタ窓: R[i] はレジスタファイルの bp + i。呼び出し先の bp は呼び出し元の bp + a。
 // cp は今のフレームが Proc (ブロック) の時のその参照。外側の変数は Proc の連鎖でたどる。
 // env は今のフレームの中で Proc を作った時にできるヒープのオブジェクトで、フレームが生きている間は bp を指し、
@@ -139,7 +139,7 @@ module mrb_core
     return v[INT_BITS-1:0];
   endfunction
   function automatic logic is_ref(input logic [VAL_BITS-1:0] v);
-    return tag_of(v) == TAG_ARRAY || tag_of(v) == TAG_PROC;
+    return tag_of(v) == TAG_OBJ;
   endfunction
   function automatic logic [VAL_BITS-1:0] mk_int(input logic [INT_BITS-1:0] v);
     return {TAG_INT, v};
@@ -160,7 +160,7 @@ module mrb_core
   // == : Integer は値、参照は同じものか、それ以外は型。配列同士はエラー (eq_err)
   function automatic logic eq_of(input logic [VAL_BITS-1:0] x, input logic [VAL_BITS-1:0] y);
     if (tag_of(x) != tag_of(y)) return 1'b0;
-    if (tag_of(x) == TAG_INT || is_ref(x)) return val_of(x) == val_of(y);
+    if (tag_of(x) == TAG_INT || tag_of(x) == TAG_SYM || tag_of(x) == TAG_CLASS || is_ref(x)) return val_of(x) == val_of(y);
     return 1'b1;
   endfunction
 
@@ -193,8 +193,13 @@ module mrb_core
   logic ra_int, ra1_int, ra_truthy, ra_ary, ra1_ary;
   assign ra_int    = tag_of(ra) == TAG_INT;
   assign ra1_int   = tag_of(ra1) == TAG_INT;
-  assign ra_ary    = tag_of(ra) == TAG_ARRAY;
-  assign ra1_ary   = tag_of(ra1) == TAG_ARRAY;
+  // オブジェクトのクラスは見出しの上位 16bit
+  assign ra_ary    = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_ARRAY;
+  assign ra1_ary   = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_ARRAY;
+  logic ra_proc, rb_ary, cp_proc, walk_proc;
+  assign ra_proc   = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_PROC;
+  assign rb_ary    = tag_of(rb) == TAG_OBJ && heap[ha(val_of(rb))][31:16] == CLS_ARRAY;
+  assign cp_proc   = tag_of(cp) == TAG_OBJ && heap[ha(val_of(cp))][31:16] == CLS_PROC;
   assign ra_truthy = tag_of(ra) != TAG_NIL && tag_of(ra) != TAG_FALSE;
 
   logic signed [INT_BITS-1:0] x, y;
@@ -249,6 +254,8 @@ module mrb_core
     idx_adj  = idx_raw < 0 ? idx_raw + INT_BITS'(idx_len) : idx_raw;
   end
   logic [VAL_BITS-1:0] idx_val;
+  logic idx_recv_ary;
+  assign idx_recv_ary = tag_of(idx_recv) == TAG_OBJ && heap[ha(val_of(idx_recv))][31:16] == CLS_ARRAY;
   assign idx_val = (idx_adj >= 0 && idx_adj < INT_BITS'(idx_len)) ? heap[idx_d + HB'(1) + ha(idx_adj)] : V_NIL;
 
   // 深さ k のフレームの底 (0 は今のフレーム、1 は今の Proc を作ったフレーム、2 はその外側 ...) は、
@@ -273,9 +280,10 @@ module mrb_core
   logic [VAL_BITS-1:0] walk_live;
   assign walk_env  = ha(val_of(heap[ha(val_of(walk_p)) + HB'(2)]));
   assign walk_live = heap[walk_env + HB'(1)];
+  assign walk_proc = tag_of(walk_p) == TAG_OBJ && heap[ha(val_of(walk_p))][31:16] == CLS_PROC;
   // 今の Proc は lambda か
   logic cp_lam;
-  assign cp_lam = tag_of(cp) == TAG_PROC && heap[ha(val_of(cp)) + HB'(1)][23];
+  assign cp_lam = cp_proc && heap[ha(val_of(cp)) + HB'(1)][23];
 
   // ---- Proc (R[a] が Proc の時): 先頭 pc、引数の数、nregs
   logic [HB-1:0]  pr_p;
@@ -349,6 +357,7 @@ module mrb_core
       OP_LOADI16:   begin wr = 1'b1; wval = mk_int({{16{b[15]}}, b}); end
       OP_LOADI32:   begin wr = 1'b1; wval = mk_int({b, c}); end
       OP_LOADNIL, OP_TDEF: begin wr = 1'b1; wval = V_NIL; end
+      OP_LOADSYM:   begin wr = 1'b1; wval = mk(TAG_SYM, {16'd0, b}); end
       OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
       OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
       OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
@@ -436,7 +445,7 @@ module mrb_core
         do_call = 1'b1;
         npc     = op == OP_BLKCALL ? pr_info[PC_BITS-1:0] : b[PC_BITS-1:0];
         err     = (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
-                  (op == OP_BLKCALL && (tag_of(ra) != TAG_PROC || !(ia + 17'(b[7:0]) < 17'(NREGS)) ||
+                  (op == OP_BLKCALL && (!ra_proc || !(ia + 17'(b[7:0]) < 17'(NREGS)) ||
                                         (pr_info[23] && b[7:0] != {1'b0, pr_info[22:16]}))); // lambda は引数の数を調べる
       end
       OP_ENTER: err = argc != a;
@@ -487,12 +496,12 @@ module mrb_core
         // 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
         wr   = 1'b1;
         err  = !b_ok;
-        wval = tag_of(rb) == TAG_ARRAY ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
+        wval = rb_ary ? idx_val : (c[7:0] == 8'd0 ? rb : V_NIL);
       end
       OP_GETIDX, OP_GETIDX0: begin
         wr   = 1'b1;
         wval = idx_val;
-        err  = (op == OP_GETIDX && !a1_ok) || (op == OP_GETIDX0 && !b_ok) || tag_of(idx_recv) != TAG_ARRAY ||
+        err  = (op == OP_GETIDX && !a1_ok) || (op == OP_GETIDX0 && !b_ok) || !idx_recv_ary ||
                (op == OP_GETIDX && !ra1_int);
       end
       OP_SETIDX: begin
@@ -527,9 +536,9 @@ module mrb_core
     m_waddr = 8'(m_dst);
     m_wdata = V_NIL;
     case (state)
-      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_PROC, 32'(p_proc)); end
+      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_proc)); end
       S_RETFIN: begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
-      S_AELEM: if (m_k == (HB+1)'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_ARRAY, 32'(p_new)); end
+      S_AELEM: if (m_k == (HB+1)'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_PUT:   if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
       S_INCL:  if (m_k == (HB+1)'(m_len) || m_found) begin m_we = 1'b1; m_wdata = mk_bool(m_found); end
       S_UNWIND: if (sp != '0 && tag_of(env) == TAG_NIL && ret_bp[top] == target) begin
@@ -817,9 +826,9 @@ module mrb_core
           // ---- env: 見出し、生きている間の bp、レジスタ fn 本 (nil で埋める)
           S_ENV: begin
             if (m_k == (HB+1)'(fn)) begin
-              heap[p_new[HB-1:0]]          <= mk(TAG_HDR, (KIND_ENV << 16) | (32'(fn) + 32'd1));
+              heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_ENV, 16'(fn) + 16'd1});
               heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(bp));
-              env   <= mk(TAG_ARRAY, 32'(p_new));
+              env   <= mk(TAG_OBJ, 32'(p_new));
               state <= S_BLOCK;
             end else begin
               heap[p_new[HB-1:0] + HB'(2) + m_k[HB-1:0]] <= V_NIL;
@@ -828,9 +837,9 @@ module mrb_core
           end
           // ---- Proc: 見出し、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc
           S_BLOCK: begin
-            heap[p_proc]          <= mk(TAG_HDR, (KIND_PROC << 16) | 3);
+            heap[p_proc]          <= mk(TAG_HDR, {CLS_PROC, 16'd3});
             heap[p_proc + HB'(1)] <= mk_int({c, b});
-            heap[p_proc + HB'(2)] <= env_new ? mk(TAG_ARRAY, 32'(p_new)) : env;
+            heap[p_proc + HB'(2)] <= env_new ? mk(TAG_OBJ, 32'(p_new)) : env;
             heap[p_proc + HB'(3)] <= cp;
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
@@ -859,7 +868,7 @@ module mrb_core
 
           // ---- ブロックの中の return: 深さ 0 から c-1 の Proc のうち、一番内側の lambda の深さ (無ければ c)
           S_LWALK: begin
-            if (lw_k == c[3:0] || (tag_of(walk_p) == TAG_PROC && heap[ha(val_of(walk_p)) + HB'(1)][23])) begin
+            if (lw_k == c[3:0] || (walk_proc && heap[ha(val_of(walk_p)) + HB'(1)][23])) begin
               hold <= ra;
               if (lw_k == 4'd0) begin
                 target <= bp;
@@ -869,7 +878,7 @@ module mrb_core
                 walk_left <= lw_k - 4'd1;
                 state     <= S_WALK;
               end
-            end else if (tag_of(walk_p) != TAG_PROC) state <= S_ERROR;
+            end else if (!walk_proc) state <= S_ERROR;
             else begin
               walk_p <= heap[ha(val_of(walk_p)) + HB'(3)];
               lw_k   <= lw_k + 4'd1;
@@ -878,10 +887,10 @@ module mrb_core
 
           // ---- 配列リテラル: 見出し 4 語、要素を1つずつ
           S_AHDR: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, (KIND_ARY << 16) | 2);
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_ARRAY, 16'd2});
             heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(m_n));
-            heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_ARRAY, 32'(p_new) + 32'd3);
-            heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, (KIND_DATA << 16) | 32'(m_n));
+            heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_OBJ, 32'(p_new) + 32'd3);
+            heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, {CLS_DATA, 16'(m_n)});
             state <= S_AELEM;
           end
           S_AELEM: begin
@@ -916,9 +925,9 @@ module mrb_core
           end
           S_GROW: begin
             // p_new: 新しい中身。m_k 語目を写す (長さまでは元の中身、残りは nil)
-            if (m_k == '0) heap[p_new[HB-1:0]] <= mk(TAG_HDR, (KIND_DATA << 16) | 32'(m_cap));
+            if (m_k == '0) heap[p_new[HB-1:0]] <= mk(TAG_HDR, {CLS_DATA, m_cap});
             if (m_k == (HB+1)'(m_cap)) begin
-              heap[s_p + HB'(2)] <= mk(TAG_ARRAY, 32'(p_new));
+              heap[s_p + HB'(2)] <= mk(TAG_OBJ, 32'(p_new));
               m_k   <= (HB+1)'(m_len);
               state <= S_FILL;
             end else begin
@@ -993,7 +1002,7 @@ module mrb_core
 
           // ---- Proc の連鎖を1段ずつ。walk_left 段たどったら、その Proc を作ったフレームの env
           S_WALK: begin
-            if (tag_of(walk_p) != TAG_PROC) state <= S_ERROR;
+            if (!walk_proc) state <= S_ERROR;
             else if (walk_left == 4'd0) begin
               fb_env   <= walk_env;
               fb_esize <= lo16(heap[walk_env]);

@@ -62,7 +62,7 @@ module FpgaIsa
     RETURN RETNIL STOP
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
     GETUPVAR SETUPVAR BREAK
-    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF
+    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令に下げる (docs/spec.md §10「ブロック」)
@@ -80,30 +80,45 @@ module FpgaIsa
 
   JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
 
-  # レジスタの値の型タグ (3bit)。偽は nil と false だけ。ARRAY と PROC はヒープへの参照 (値 = 語アドレス)。
-  # FWD と HDR はヒープの中だけに出る (GC の転送先、オブジェクトの見出し)
-  TAG_BITS  = 3
+  # レジスタの値の型タグ (4bit)。偽は nil と false だけ。SYM はシンボルの番号、CLASS はクラスの番号の即値。
+  # OBJ はヒープのオブジェクトへの参照 (値 = 語アドレス、クラスは見出しで分かる)。
+  # FWD と HDR はヒープの中だけに出る (GC の転送先、オブジェクトの見出し)。9..15 は空き
+  TAG_BITS  = 4
   TAG_NIL   = 0
   TAG_FALSE = 1
   TAG_TRUE  = 2
   TAG_INT   = 3
-  TAG_ARRAY = 4
-  TAG_PROC  = 5
-  TAG_FWD   = 6
-  TAG_HDR   = 7
-  # env (フレームのレジスタの退避先) への参照。レジスタには出ず、Proc とコールスタックの中だけ
-  TAG_ENV   = TAG_ARRAY
+  TAG_SYM   = 4
+  TAG_CLASS = 5
+  TAG_OBJ   = 6
+  TAG_FWD   = 7
+  TAG_HDR   = 8
+  TAGS = %w[NIL FALSE TRUE INT SYM CLASS OBJ FWD HDR].freeze
 
-  # ヒープのオブジェクトの種類 (見出しの値 = 種類 << 16 | 中身の語数)
-  #   配列  [HDR(ARY,2)] [INT 長さ] [ARRAY → 中身]      中身 [HDR(DATA,容量)] [要素 ...]
+  # クラスの番号 (見出しの値 = クラス << 16 | 中身の語数)。組み込みは固定、ユーザーのクラスは FIRST_USER_CLASS から。
+  # クラスメソッドは番号 | META のクラス (メタクラス) のメソッド。DATA と ENV はヒープの中だけの塊で、値にはならない
+  #   Array [HDR(ARRAY,2)] [INT 長さ] [OBJ → 中身]      中身 [HDR(DATA,容量)] [要素 ...]
   #   Proc  [HDR(PROC,3)] [INT 先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc か nil]
   #   env   [HDR(ENV,1+n)] [INT フレームの bp (生きている間) か nil (退避済み)] [レジスタ × n]
-  #         フレームの中で初めて Proc を作った時にでき、フレームから戻る時に n 本 (フレームの nregs) を写し取る。
-  #         Proc の中と、配列の中身への参照と同じく ARRAY のタグで指す (種類は見出しで分かる)
-  KIND_ARY  = 1
-  KIND_DATA = 2
-  KIND_PROC = 3
-  KIND_ENV  = 4
+  #         フレームの中で初めて Proc を作った時にでき、フレームから戻る時に n 本 (フレームの nregs) を写し取る
+  CLASSES = [
+    ["Object", 1], ["NilClass", 2], ["TrueClass", 3], ["FalseClass", 4], ["Integer", 5], ["Symbol", 6],
+    ["Array", 7], ["Proc", 8], ["Class", 9], ["Module", 10], ["String", 11], ["Hash", 12], ["Range", 13],
+    ["Float", 14], ["Exception", 15]
+  ].freeze
+  CLS_OBJECT = 1
+  CLS_NIL    = 2
+  CLS_TRUE   = 3
+  CLS_FALSE  = 4
+  CLS_INT    = 5
+  CLS_SYM    = 6
+  CLS_ARRAY  = 7
+  CLS_PROC   = 8
+  CLS_CLASS  = 9
+  CLS_DATA   = 0x7FF0
+  CLS_ENV    = 0x7FF1
+  FIRST_USER_CLASS = 32
+  META = 0x8000
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
   HEAP_SIZE = 2048
 

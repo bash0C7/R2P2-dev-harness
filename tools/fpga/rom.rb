@@ -46,11 +46,13 @@ module FpgaRom
 
   class Image
     attr_reader :words, :nregs, :ireps
+    attr_accessor :symbols # シンボルの名前 (番号順)
 
     def initialize(words, nregs, ireps)
       @words = words
       @nregs = nregs
       @ireps = ireps
+      @symbols = []
     end
 
     def hex
@@ -69,6 +71,10 @@ module FpgaRom
         from = name == w.insn.name ? "" : "  <- #{w.insn.name}"
         addr = w.first ? format("%03d", w.insn.addr) : "   "
         out << format("%4d  %s  %-9s a=%-3d b=%-5d c=%-5d  %s%s\n", w.pc, addr, name, w.a, w.b, w.c, w.hex, from)
+      end
+      unless symbols.empty?
+        out << "# symbols\n"
+        symbols.each_with_index { |s, i| out << format("%4d  :%s\n", i, s) }
       end
       out
     end
@@ -111,6 +117,7 @@ module FpgaRom
 
     ctx = Context.new(source, methods(ireps, decoded, source), {}, {}, {}, {}, decoded)
     ctx.lambdas = {}
+    ctx.symbols = {}
     block_sites(ireps, decoded, ctx)
 
     # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める (iterator などは数語に展開する)
@@ -141,7 +148,9 @@ module FpgaRom
         end
       end
     end
-    Image.new(words, top.nregs, ireps)
+    image = Image.new(words, top.nregs, ireps)
+    image.symbols = ctx.symbols.keys
+    image
   end
 
   # 変換中に持ち回るもの: メソッド名 -> 呼び出し先の irep、定数名 -> 番号、
@@ -150,6 +159,12 @@ module FpgaRom
   class Context
     attr_reader :source, :methods, :consts, :sites, :parents, :direct, :decoded
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
+    attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
+
+    def sym_id(name)
+      @symbols[name] = @symbols.size unless @symbols.key?(name)
+      @symbols[name]
+    end
 
     def initialize(source, methods, consts, sites, parents, direct, decoded)
       @source = source
@@ -484,6 +499,9 @@ module FpgaRom
       return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if ctx.parents[irep.index]
       a = m1
     end
+
+    # LOADSYM: b = プログラム全体で振ったシンボルの番号
+    b = ctx.sym_id(irep.syms[ops[1]]) if name == "LOADSYM"
 
     # BLOCK / LAMBDA: Proc を作る。b = ブロックの irep の先頭 pc、c = 引数の数 | lambda << 7 | nregs << 8
     if name == "BLOCK" || name == "LAMBDA"
