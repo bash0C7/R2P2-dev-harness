@@ -1,3 +1,4 @@
+# irep 0  nregs 10
    0  000  LOADI16   a=1   b=300   c=0      0e01012c0000
    1  004  LOADINEG  a=2   b=7     c=0      040200070000
    2  007  MOVE      a=7   b=1     c=0      010700010000

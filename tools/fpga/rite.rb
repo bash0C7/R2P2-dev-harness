@@ -15,9 +15,11 @@ module Rite
   class Error < StandardError; end
 
   class Irep
-    attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :syms
+    attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :syms, :reps
+    # rom.rb が並べた時の番号と、ROM での先頭の語アドレス
+    attr_accessor :index, :base
 
-    def initialize(nlocals, nregs, rlen, clen, iseq, plen, syms)
+    def initialize(nlocals, nregs, rlen, clen, iseq, plen, syms, reps)
       @nlocals = nlocals
       @nregs = nregs
       @rlen = rlen
@@ -25,6 +27,7 @@ module Rite
       @iseq = iseq
       @plen = plen
       @syms = syms
+      @reps = reps
     end
   end
 
@@ -64,9 +67,10 @@ module Rite
     pos = 20
     sec = bin.byteslice(pos, 4)
     raise Error, "first section is #{sec.inspect}, expected \"IREP\"" unless sec == "IREP"
-    read_irep(bin, pos + 12) # ident, size, rite_version
+    read_irep(bin, pos + 12)[0] # ident, size, rite_version
   end
 
+  # irep を1つ読み、続く子 irep (rlen 個) も再帰的に読む。[irep, 次の位置] を返す
   def self.read_irep(bin, pos)
     pos += 4 # record size
     nlocals = u16(bin, pos)
@@ -79,27 +83,44 @@ module Rite
     raise Error, "iseq runs past the end of the binary" unless iseq && iseq.bytesize == ilen
     pos += ilen + 13 * clen
 
+    # pool は中身を使わない (対応しないので、あれば rom.rb がエラーにする)。syms と子 irep へ進むために読み飛ばす
     plen = u16(bin, pos)
     pos += 2
-    # pool の中身は読まない (対応しないので、あれば rom.rb がエラーにする)。
-    # pool があると syms の位置が分からないので、syms は空のまま返す。
+    plen.times { pos = skip_pool(bin, pos) }
+
     syms = []
-    if plen == 0
-      slen = u16(bin, pos)
+    slen = u16(bin, pos)
+    pos += 2
+    slen.times do
+      len = u16(bin, pos)
       pos += 2
-      slen.times do
-        len = u16(bin, pos)
-        pos += 2
-        if len == 0xFFFF
-          syms << nil
-        else
-          syms << bin.byteslice(pos, len)
-          pos += len + 1
-        end
+      if len == 0xFFFF
+        syms << nil
+      else
+        syms << bin.byteslice(pos, len)
+        pos += len + 1
       end
     end
 
-    Irep.new(nlocals, nregs, rlen, clen, iseq, plen, syms)
+    reps = []
+    rlen.times do
+      child, pos = read_irep(bin, pos)
+      reps << child
+    end
+    [Irep.new(nlocals, nregs, rlen, clen, iseq, plen, syms, reps), pos]
+  end
+
+  # mruby の src/load.c の POOL BLOCK と同じ長さだけ進める
+  def self.skip_pool(bin, pos)
+    tt = bin.getbyte(pos)
+    pos += 1
+    case tt
+    when 1 then pos + 4                          # IREP_TT_INT32
+    when 3, 5 then pos + 8                       # IREP_TT_INT64, IREP_TT_FLOAT
+    when 7 then pos + bin.getbyte(pos) + 2       # IREP_TT_BIGINT
+    when 0, 2 then pos + 2 + u16(bin, pos) + 1   # IREP_TT_STR, IREP_TT_SSTR
+    else raise Error, "unknown pool type #{tt}"
+    end
   end
 
   # iseq を命令列にする。未知の opcode は Error。

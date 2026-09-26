@@ -25,6 +25,18 @@ module FpgaGenPkg
     lines << "  localparam logic [1:0] TAG_TRUE  = 2'd#{FpgaIsa::TAG_TRUE};"
     lines << "  localparam logic [1:0] TAG_INT   = 2'd#{FpgaIsa::TAG_INT};"
     lines << ""
+    lines << "  // コアの大きさ (tools/fpga/isa.rb)"
+    lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"
+    lines << "  localparam int STACK_DEPTH = #{FpgaIsa::STACK_DEPTH};"
+    lines << "  localparam int NCONST      = #{FpgaIsa::NCONST};"
+    lines << ""
+    lines << "  // SEND / SEND0 の組み込みメソッド (tools/fpga/isa.rb の BUILTINS)。ROM の b に入る番号"
+    lines << "  localparam int NBUILTIN = #{FpgaIsa::BUILTINS.size};"
+    FpgaIsa::BUILTINS.each_with_index do |(n, k), i|
+      lines << format("  localparam logic [7:0] BI_%-6s = 8'd%d; // %s (%d arg)", builtin_const(n), i, n, k)
+    end
+    lines << "  localparam logic [NBUILTIN-1:0] BI_ARGC1 = #{FpgaIsa::BUILTINS.size}'b#{FpgaIsa::BUILTINS.reverse.map { |_, k| k }.join};"
+    lines << ""
     lines << "  // I/O"
     lines << "  localparam int NPORTS = #{FpgaIoMap::NPORTS};"
     lines << "  localparam logic [NPORTS-1:0] IN_MASK = #{FpgaIoMap::NPORTS}'b#{FpgaIoMap::IN_MASK.to_s(2).rjust(FpgaIoMap::NPORTS, '0')};"
@@ -39,6 +51,16 @@ module FpgaGenPkg
     lines << "endpackage"
     lines.join("\n") + "\n"
   end
+
+# 組み込みメソッドの名前を SystemVerilog の識別子にする
+BUILTIN_NAMES = {
+  "%" => "MOD", "!=" => "NEQ", "-@" => "NEG", "<<" => "SHL", ">>" => "SHR", "&" => "AND", "|" => "OR",
+  "^" => "XOR", "~" => "INV", "!" => "NOT", "abs" => "ABS", "zero?" => "ZERO", "even?" => "EVEN", "odd?" => "ODD"
+}.freeze
+
+def builtin_const(name)
+  BUILTIN_NAMES.fetch(name)
+end
 
   def write
     File.write(PATH, render)

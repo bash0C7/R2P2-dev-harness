@@ -17,7 +17,7 @@ module mrb_run_tb;
   import mrb_pkg::*;
 
   localparam int PC_BITS  = 10;
-  localparam int NREGS    = 16;
+  localparam int NREGS    = RF_SIZE; // 参照インタプリタ (ref_vm.rb) と同じ大きさ
   localparam int MAX_STIM = 256;
 
   logic clk = 1'b0;

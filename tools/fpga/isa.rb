@@ -54,11 +54,13 @@ module FpgaIsa
 
   # CPU コアが実行する命令 (docs/spec.md §10「対応命令」)。fpga/corpus/*.rb に出る命令と、
   # 同じ族で回路がほぼ増えないもの (LOADI_n 全部、比較4種、ADDI/SUBI、JMPIF/JMPNIL) まで。
+  # メソッド (TDEF/SSEND/SSEND0/ENTER) は変換時に呼び出し先を静的に解決する。SEND/SEND0 は下の BUILTINS だけ。
   SUPPORTED = %w[
     NOP MOVE LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5
     LOADI_6 LOADI_7 LOADI16 LOADI32 LOADNIL LOADTRUE LOADFALSE GETGV SETGV
     JMP JMPIF JMPNOT JMPNIL ADD ADDI SUB SUBI ADDILV SUBILV EQ LT LE GT GE
     RETURN RETNIL STOP
+    TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
   ].freeze
 
   JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
@@ -70,6 +72,23 @@ module FpgaIsa
   TAG_INT   = 3
 
   INT_BITS = 32
+
+  # SEND / SEND0 で呼べる組み込みメソッド: [名前, 引数の数]。番号は並び順で、ROM の b に入る。
+  # 受け手は Integer (「!」と「!=」だけは何でもよい)。それ以外の SEND は変換時に止める
+  BUILTINS = [
+    ["%", 1], ["!=", 1], ["-@", 0], ["<<", 1], [">>", 1], ["&", 1], ["|", 1], ["^", 1],
+    ["~", 0], ["!", 0], ["abs", 0], ["zero?", 0], ["even?", 0], ["odd?", 0]
+  ].freeze
+
+  # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数
+  RF_SIZE     = 128
+  STACK_DEPTH = 16
+  NCONST      = 16
+
+  def self.builtin(name, argc)
+    BUILTINS.each_with_index { |(n, a), i| return i if n == name && a == argc }
+    nil
+  end
 
   def self.op(name_or_num)
     o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]

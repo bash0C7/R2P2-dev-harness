@@ -19,7 +19,7 @@ module FpgaCorpus
   DIR       = File.join(ROOT, "fpga", "corpus")
   TABLE     = File.join(ROOT, "docs", "fpga-opcodes.md")
   DUMP_LINE = /\A\s*\d+ \d{3} /
-  MAX_REGS  = 16 # mrb_core の NREGS
+  MAX_REGS  = FpgaIsa::RF_SIZE # 1つの irep が使えるレジスタの上限 = レジスタファイルの大きさ
   KINDS     = %w[mrb dump hex lst].freeze
 
   module_function

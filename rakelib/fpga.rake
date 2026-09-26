@@ -220,10 +220,11 @@ require_relative "../tools/fpga/corpus"
 require_relative "../tools/fpga/gen_pkg"
 require_relative "../tools/fpga/quartus"
 require_relative "../tools/fpga/emu"
+require_relative "../tools/fpga/fuzz"
 
 FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
-FPGA_CORE_NREGS    = FpgaCorpus::MAX_REGS
+FPGA_CORE_NREGS    = FpgaIsa::RF_SIZE
 FPGA_DEFAULT_STEPS = 20_000
 FPGA_BOARD_BUILD   = File.join(FPGA_BUILD_DIR, "peridot_air")
 
@@ -426,6 +427,41 @@ namespace :fpga do
     raise "reference and simulation differ: #{failed.join(', ')} (traces in build/fpga/rom/)" unless failed.empty?
   end
 
+  desc "Differential fuzzing: random ROMs on the reference interpreter vs the simulated core, full traces compared (e.g. rake fpga:fuzz[500,1])"
+  task :fuzz, [:count, :seed] do |_t, args|
+    require_fpga_tools!
+    count = (args[:count] || 200).to_i
+    seed = (args[:seed] || Random.new_seed % 100_000).to_i
+    rng = Random.new(seed)
+    dir = File.join(FPGA_BUILD_DIR, "fuzz")
+    FileUtils.mkdir_p dir
+    endings = Hash.new(0)
+    count.times do |i|
+      words = FpgaFuzz.program(rng)
+      stim = FpgaFuzz.stim(rng)
+      hex = File.join(dir, "prog.hex")
+      File.write(hex, FpgaFuzz.hex(words))
+      stim_file = nil
+      unless stim.empty?
+        stim_file = File.join(dir, "prog.stimsrc")
+        File.write(stim_file, stim.map { |r| r.join(" ") + "\n" }.join)
+      end
+      ref = FpgaRefVm.new(words, stim: stim).run(400)
+      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: 400)
+      if ref != sim
+        keep = File.join(dir, "fail_seed#{seed}_#{i}")
+        FileUtils.cp hex, "#{keep}.hex"
+        File.write("#{keep}.ref.trace", ref.join("\n") + "\n")
+        File.write("#{keep}.sim.trace", sim.join("\n") + "\n")
+        File.write("#{keep}.stim", stim.map { |r| r.join(" ") + "\n" }.join)
+        raise "fuzz: program #{i} (seed #{seed}) differs.\n#{FpgaCompare.divergence(ref, sim, nil)}\nkept in #{fpga_rel(keep)}.*"
+      end
+      endings[ref.last.split.first] += 1
+    end
+    puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
+         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']})"
+  end
+
   desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
   task :corpus do
     FpgaCorpus.write(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
@@ -448,7 +484,14 @@ namespace :fpga do
   end
 
   desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation, board emulation"
-  task test: ["test:fpga", "fpga:tb", "fpga:check", "fpga:emu:check"]
+  task test: ["test:fpga", "fpga:tb", "fpga:check", "fpga:emu:check", "fpga:fuzz:ci"]
+
+  namespace :fuzz do
+    desc "fpga:fuzz with a fixed seed and 300 programs (part of fpga:test)"
+    task :ci do
+      Rake::Task["fpga:fuzz"].invoke(300, 1)
+    end
+  end
 
   # ---- PERIDOT-Air 実機 (issue #10 #11)。合成は Quartus、書き込みは openFPGALoader
   desc "Synthesize for PERIDOT-Air with Quartus (local quartus_sh, or FPGA_QUARTUS_HOST over ssh). e.g. rake fpga:build[fpga/corpus/blink.mrb]"

@@ -51,6 +51,20 @@ class FpgaRomTest < Minitest::Test
       assert_equal ["R#{w.a}", "R#{w.b}", w.c.to_s], fields[0, 3], where
     when "NOP", "RETNIL", "STOP"
       assert_equal 0, w.a, where
+    when "ENTER"
+      assert_equal fields[0].split(":").first.to_i, w.a, where # 必須の引数の数
+    when "TDEF"
+      assert_equal ["R#{w.a}", 0, 0], ["R#{w.a}", w.b, w.c], where
+    when "SSEND", "SSEND0"
+      assert_equal "R#{w.a}", fields[0], where
+      assert_equal (opname == "SSEND" ? fields[2].delete("n=").to_i : 0), w.c & 0xFF, where
+    when "SEND", "SEND0"
+      assert_equal "R#{w.a}", fields[0], where
+      assert_equal fields[1].delete(":"), FpgaIsa::BUILTINS[w.b][0], where
+    when "GETCONST"
+      assert_equal "R#{w.a}", fields[0], where
+    when "SETCONST"
+      assert_equal "R#{w.a}", fields[1], where
     else
       assert_equal "R#{w.a}", fields[0], where
     end
@@ -78,13 +92,37 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_unsupported_instruction_with_location
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("SEND0"), 1, 0, op("STOP")], syms: ["!"])) }
-    assert_match(/unsupported instruction\(s\): SEND0 at byte 001/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("ARRAY"), 1, 0, op("STOP")])) }
+    assert_match(/unsupported instruction\(s\): ARRAY at byte 001/, e.message)
   end
 
-  def test_rejects_child_irep
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], rlen: 1)) }
-    assert_match(/child irep/, e.message)
+  def test_rejects_unknown_methods
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("SEND0"), 1, 0, op("STOP")], syms: ["puts"])) }
+    assert_match(/\.puts with 0 argument\(s\) at byte 000 is not a supported method/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("SSEND0"), 1, 0, op("STOP")], syms: ["foo"])) }
+    assert_match(/foo at byte 000 is not a method defined with def/, e.message)
+  end
+
+  # def two; 2; end; two  →  子 irep は親の後ろに並び、SSEND0 の b はその先頭 pc、c は (nregs << 8) | 引数の数
+  def test_methods_are_laid_out_after_the_caller_and_resolved
+    child = irep_record([op("ENTER"), 0, 0, 0, op("LOADI_2"), 2, op("RETURN"), 2], nregs: 3)
+    bin = rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("STOP")], syms: ["two"], reps: [child])
+    image = FpgaRom.from_binary(bin)
+    assert_equal %w[TDEF SSEND0 STOP ENTER LOADI_2 RETURN], image.words.map { |w| w.insn.name }
+    assert_equal 3, image.words[1].b
+    assert_equal (3 << 8) | 0, image.words[1].c
+    assert_equal [0, 3], image.ireps.map(&:base)
+    assert_match(/# irep 1  nregs 3\n   3  000  ENTER/, image.listing)
+  end
+
+  def test_rejects_optional_parameters_and_redefinition
+    opt = irep_record([op("ENTER"), 0x04, 0x20, 0x00, op("RETNIL")]) # 1:1:... (optional 1)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("TDEF"), 1, 0, 0, op("STOP")], syms: ["f"], reps: [opt])) }
+    assert_match(/only required parameters are supported/, e.message)
+    plain = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
+    bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("STOP")], syms: ["f"], reps: [plain, plain])
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(bin) }
+    assert_match(/f is defined twice/, e.message)
   end
 
   def test_rejects_pool
@@ -140,9 +178,9 @@ class FpgaRomTest < Minitest::Test
   def test_picoruby_converter_stops_with_the_location
     with_picoruby do |dir|
       e = assert_raises(FpgaConverter::Error) do
-        picoruby_convert(dir, rite([op("NOP"), op("SEND0"), 1, 0, op("STOP")], syms: ["!"]))
+        picoruby_convert(dir, rite([op("NOP"), op("ARRAY"), 1, 0, op("STOP")]))
       end
-      assert_match(/unsupported instruction\(s\): SEND0 at byte 001/, e.message)
+      assert_match(/unsupported instruction\(s\): ARRAY at byte 001/, e.message)
       e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
       assert_match(/needs 17 registers/, e.message)
     end
