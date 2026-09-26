@@ -9,10 +9,8 @@
 #   - ジャンプ先は mruby の「次の命令からのバイト相対」から、ROM の絶対語アドレスにする
 #   - GETGV / SETGV の Syms[b] は io_map.rb のポート番号にする
 #   - 未対応の命令・子 irep・pool・未知のグローバル変数は、場所を示して止まる
-require_relative "isa"
-require_relative "rite"
-require_relative "io_map"
-
+#
+# 変換器の一部として PicoRuby でも走る (isa.rb の注記)。isa.rb / io_map.rb / rite.rb を先に読み込んでおくこと。
 module FpgaRom
   class Error < StandardError; end
 
@@ -21,72 +19,95 @@ module FpgaRom
   # ROM の空き。op 0xff は未対応命令なので、プログラムの外へ出たコアはエラーで止まる
   PAD = (1 << WORD_BITS) - 1
 
-  Word = Struct.new(:pc, :insn, :op, :a, :b, :c) do
+  class Word
+    attr_reader :pc, :insn, :op, :a, :b, :c
+
+    def initialize(pc, insn, op, a, b, c)
+      @pc = pc
+      @insn = insn
+      @op = op
+      @a = a
+      @b = b
+      @c = c
+    end
+
     def value
       (op << 40) | ((a & 0xFF) << 32) | ((b & 0xFFFF) << 16) | (c & 0xFFFF)
     end
 
+    # 48bit を 16bit ずつ書く (PicoRuby の format は 32bit を超える幅に頼らない)
     def hex
-      format("%0#{HEX_DIGITS}x", value)
+      format("%02x%02x%04x%04x", op & 0xFF, a & 0xFF, b & 0xFFFF, c & 0xFFFF)
     end
   end
 
-  Image = Struct.new(:words, :nregs, :irep, keyword_init: true) do
+  class Image
+    attr_reader :words, :nregs, :irep
+
+    def initialize(words, nregs, irep)
+      @words = words
+      @nregs = nregs
+      @irep = irep
+    end
+
     def hex
-      words.map { |w| "#{w.hex}\n" }.join
+      out = ""
+      words.each { |w| out << w.hex << "\n" }
+      out
     end
 
     # 人が読む一覧。pc と元の iseq のバイト位置を並べる。
     def listing
-      words.map do |w|
-        format("%4d  %03d  %-9s a=%-3d b=%-5d c=%-5d  %s\n", w.pc, w.insn.addr, w.insn.name, w.a, w.b, w.c, w.hex)
-      end.join
+      out = ""
+      words.each do |w|
+        out << format("%4d  %03d  %-9s a=%-3d b=%-5d c=%-5d  %s\n", w.pc, w.insn.addr, w.insn.name, w.a, w.b, w.c, w.hex)
+      end
+      out
     end
   end
 
-  module_function
-
-  def from_file(path, max_regs: nil)
-    from_binary(File.binread(path), source: path, max_regs: max_regs)
+  def self.byte_addr(addr)
+    format("%03d", addr)
   end
 
-  def from_binary(bin, source: "(mrb)", max_regs: nil)
+  def self.from_binary(bin, source = "(mrb)", max_regs = nil)
     irep = Rite.parse(bin)
-    raise Error, "#{source}: has #{irep.rlen} child irep(s) (method/block definitions are not supported)" if irep.rlen.positive?
-    raise Error, "#{source}: has #{irep.plen} pool entr(ies) (strings / big literals are not supported)" if irep.plen.positive?
-    raise Error, "#{source}: has catch handlers (exceptions are not supported)" if irep.clen.positive?
+    raise Error, "#{source}: has #{irep.rlen} child irep(s) (method/block definitions are not supported)" if irep.rlen > 0
+    raise Error, "#{source}: has #{irep.plen} pool entr(ies) (strings / big literals are not supported)" if irep.plen > 0
+    raise Error, "#{source}: has catch handlers (exceptions are not supported)" if irep.clen > 0
     if max_regs && irep.nregs > max_regs
       raise Error, "#{source}: needs #{irep.nregs} registers, the core has #{max_regs}"
     end
 
     insns = Rite.decode(irep.iseq)
-    bad = insns.reject { |i| FpgaIsa.supported?(i.name) }
+    bad = insns.select { |i| !FpgaIsa.supported?(i.name) }
     unless bad.empty?
-      where = bad.map { |i| "#{i.name} at byte #{format('%03d', i.addr)}" }.join(", ")
+      where = bad.map { |i| "#{i.name} at byte #{byte_addr(i.addr)}" }.join(", ")
       raise Error, "#{source}: unsupported instruction(s): #{where}"
     end
 
-    pc_of = insns.each_with_index.to_h { |insn, pc| [insn.addr, pc] }
-    words = insns.each_with_index.map { |insn, pc| encode(insn, pc, pc_of, irep, source) }
-    Image.new(words: words, nregs: irep.nregs, irep: irep)
+    pc_of = {}
+    insns.each_with_index { |insn, pc| pc_of[insn.addr] = pc }
+    words = []
+    insns.each_with_index { |insn, pc| words << encode(insn, pc, pc_of, irep, source) }
+    Image.new(words, irep.nregs, irep)
   end
 
-  def encode(insn, pc, pc_of, irep, source)
+  def self.encode(insn, pc, pc_of, irep, source)
     ops = insn.operands
-    a = b = c = 0
+    a = 0
+    b = 0
+    c = 0
     case insn.op.fmt
-    when "Z"
-      nil
     when "B"
       a = ops[0]
-    when "BB"
-      a, b = ops
-    when "BBB"
-      a, b, c = ops
-    when "BS"
-      a, b = ops
-    when "BSS"
-      a, b, c = ops
+    when "BB", "BS"
+      a = ops[0]
+      b = ops[1]
+    when "BBB", "BSS"
+      a = ops[0]
+      b = ops[1]
+      c = ops[2]
     when "S"
       b = ops[0]
     end
@@ -95,17 +116,21 @@ module FpgaRom
       # mruby: pc は operand を読み終えた位置 (次の命令) から int16 で進む
       rel = b >= 0x8000 ? b - 0x10000 : b
       target = insn.next_addr + rel
-      b = pc_of[target] or
-        raise Error, "#{source}: #{insn.name} at byte #{format('%03d', insn.addr)} jumps to byte #{target}, not an instruction boundary"
+      b = pc_of[target]
+      unless b
+        raise Error, "#{source}: #{insn.name} at byte #{byte_addr(insn.addr)} jumps to byte #{target}, not an instruction boundary"
+      end
     end
 
-    if %w[GETGV SETGV].include?(insn.name)
+    if insn.name == "GETGV" || insn.name == "SETGV"
       sym = irep.syms[b]
-      port = FpgaIoMap.fetch(sym) or
-        raise Error, "#{source}: #{insn.name} at byte #{format('%03d', insn.addr)} uses #{sym}, " \
+      port = FpgaIoMap.fetch(sym)
+      unless port
+        raise Error, "#{source}: #{insn.name} at byte #{byte_addr(insn.addr)} uses #{sym}, " \
                      "which is not in tools/fpga/io_map.rb (known: #{FpgaIoMap::BY_NAME.keys.join(', ')})"
+      end
       if insn.name == "SETGV" && port.dir == :in
-        raise Error, "#{source}: SETGV at byte #{format('%03d', insn.addr)} writes #{sym}, which is an input port"
+        raise Error, "#{source}: SETGV at byte #{byte_addr(insn.addr)} writes #{sym}, which is an input port"
       end
       b = port.num
     end
@@ -114,11 +139,7 @@ module FpgaRom
   end
 
   # ROM の1語を (op, a, b, c) に戻す。参照インタプリタと trace の表示が使う。
-  def unpack(value)
+  def self.unpack(value)
     [(value >> 40) & 0xFF, (value >> 32) & 0xFF, (value >> 16) & 0xFFFF, value & 0xFFFF]
-  end
-
-  def read_hex(path)
-    File.readlines(path, chomp: true).reject { |l| l.strip.empty? || l.start_with?("//") }.map { |l| l.to_i(16) }
   end
 end

@@ -4,6 +4,9 @@
 # ハードウェアも mruby の opcode 番号をそのまま使うので、トレースの op は
 # `mrbc -v` の出力と同じ名前に引ける。ops.h との一致は isa_test.rb が確かめる
 # (vendor/picoruby がある時だけ)。
+#
+# 変換器 (mrb2rom.rb) の一部として PicoRuby でも走るので、PicoRuby と CRuby の共通部分だけで書く
+# (Struct・require・Enumerator の連鎖・sort_by・sum・正規表現のキャプチャは使わない。docs/spec.md §10)。
 module FpgaIsa
   # ops.h の OPCODE(name, fmt) を上から順に。
   ALL = %w[
@@ -24,17 +27,30 @@ module FpgaIsa
     TCLASS:B DEBUG:BBB ERR:B EXT1:Z EXT2:Z EXT3:Z STOP:Z
   ].map { |e| e.split(":") }.freeze
 
-  Op = Struct.new(:name, :num, :fmt) do
-    # opcode の1バイトを除いた operand のバイト数
+  # opcode の1バイトを除いた operand のバイト数
+  FORMAT_BYTES = { "Z" => 0, "B" => 1, "BB" => 2, "BBB" => 3, "BS" => 3, "BSS" => 5, "S" => 2, "W" => 3 }.freeze
+
+  class Op
+    attr_reader :name, :num, :fmt
+
+    def initialize(name, num, fmt)
+      @name = name
+      @num = num
+      @fmt = fmt
+    end
+
     def operand_bytes
-      FORMAT_BYTES.fetch(fmt)
+      FORMAT_BYTES[fmt]
     end
   end
 
-  FORMAT_BYTES = { "Z" => 0, "B" => 1, "BB" => 2, "BBB" => 3, "BS" => 3, "BSS" => 5, "S" => 2, "W" => 3 }.freeze
+  OPS = []
+  ALL.each_with_index { |(name, fmt), i| OPS << Op.new(name, i, fmt) }
+  OPS.freeze
 
-  OPS = ALL.each_with_index.map { |(name, fmt), i| Op.new(name, i, fmt) }.freeze
-  BY_NAME = OPS.to_h { |op| [op.name, op] }.freeze
+  BY_NAME = {}
+  OPS.each { |o| BY_NAME[o.name] = o }
+  BY_NAME.freeze
 
   # CPU コアが実行する命令 (docs/spec.md §10「対応命令」)。fpga/corpus/*.rb に出る命令と、
   # 同じ族で回路がほぼ増えないもの (LOADI_n 全部、比較4種、ADDI/SUBI、JMPIF/JMPNIL) まで。
@@ -55,13 +71,13 @@ module FpgaIsa
 
   INT_BITS = 32
 
-  module_function
-
-  def op(name_or_num)
-    name_or_num.is_a?(Integer) ? OPS.fetch(name_or_num) : BY_NAME.fetch(name_or_num)
+  def self.op(name_or_num)
+    o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]
+    raise ArgumentError, "unknown op #{name_or_num.inspect}" unless o
+    o
   end
 
-  def supported?(name)
+  def self.supported?(name)
     SUPPORTED.include?(name)
   end
 end

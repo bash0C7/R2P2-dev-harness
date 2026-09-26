@@ -97,13 +97,13 @@ macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる
 rake fpga:setup                        # 足りないシミュレータを入れる (brew / apt-get)。最後に doctor を回す
 rake fpga:test                         # Ruby の道具のテスト + 全テストベンチ (Verilator と Icarus) + 参照との突き合わせ
 rake fpga:run[fpga/corpus/counter.mrb] # 1本をシミュレーション上のコアで走らせ、$LED などへの書き込みを表示
-rake fpga:rom[fpga/corpus/blink.mrb]   # ROM イメージと命令一覧を作るだけ
+rake fpga:rom[fpga/corpus/blink.mrb]   # PicoRuby で書いた変換器で ROM イメージと命令一覧を作るだけ
 rake fpga:sim[mrb_core_tb]             # テストベンチ1本を Verilator で。波形は build/fpga/mrb_core_tb.fst
 rake fpga:build[fpga/corpus/blink.mrb] # PERIDOT-Air 向けに Quartus で合成 (quartus_sh か FPGA_QUARTUS_HOST)。実機では未確認
 rake fpga:flash                        # openFPGALoader + USB-Blaster で書く。実機では未確認
 ```
 
-`.rb` を直接渡すと mrbc (`rake setup` と `rake test:host`) が要る。波形は `surfer build/fpga/<tb>.fst` で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)、
+`fpga:rom` / `fpga:run` / `fpga:build` は変換器を PicoRuby の host VM で走らせるので、`rake setup` と `rake test:host` が要る。波形は `surfer build/fpga/<tb>.fst` で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)、
 約束事と罠は [docs/spec.md](docs/spec.md) §10。
 
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、

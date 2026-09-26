@@ -208,36 +208,45 @@ end
 
 # ---- mruby バイトコードを実行する CPU コア (issue #6 #7 #8 #9)
 #
-# fpga/corpus/*.rb が対象のプログラム。.mrb と .dump は commit してあり (tools/fpga/corpus.rb)、
+# fpga/corpus/*.rb が対象のプログラム。.mrb .dump .hex .lst は commit してあり (tools/fpga/corpus.rb)、
 # CI の fpga job は picoruby 無しでそれを使う。
-require_relative "../tools/fpga/isa"
-require_relative "../tools/fpga/rom"
+#
+# .mrb -> ROM の変換器 (tools/fpga/mrb2rom.rb ほか) は PicoRuby で書いてあり、PicoRuby の host VM で走らせる
+# (FpgaConverter.run)。rake は起動と、参照インタプリタ (CRuby) やシミュレーションとの受け渡しだけをする。
+require_relative "../tools/fpga/converter"
 require_relative "../tools/fpga/ref_vm"
 require_relative "../tools/fpga/compare"
 require_relative "../tools/fpga/corpus"
 require_relative "../tools/fpga/gen_pkg"
 require_relative "../tools/fpga/quartus"
 
-FPGA_SIM_DIR      = File.join(FPGA_DIR, "sim")
-FPGA_ROM_DIR      = File.join(FPGA_BUILD_DIR, "rom")
-FPGA_CORE_NREGS   = 16
+FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
+FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
+FPGA_CORE_NREGS    = FpgaCorpus::MAX_REGS
 FPGA_DEFAULT_STEPS = 20_000
-FPGA_BOARD_BUILD  = File.join(FPGA_BUILD_DIR, "peridot_air")
+FPGA_BOARD_BUILD   = File.join(FPGA_BUILD_DIR, "peridot_air")
 
-# .rb (mrbc でその場で compile) か .mrb を ROM イメージにして build/fpga/rom/ に書く。
+def fpga_rel(path)
+  path.sub("#{HARNESS_ROOT}/", "")
+end
+
+# .rb (mrbc で compile してから) か .mrb を、PicoRuby の変換器で build/fpga/rom/<name>.hex と .lst にする。
+# 返り値は hex の path。
 def fpga_rom(src)
   name = File.basename(src, ".*")
-  bin = case File.extname(src)
-        when ".mrb" then File.binread(src)
-        when ".rb"  then FpgaCorpus.compile(src, FpgaCorpus.default_mrbc).first
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  mrb = case File.extname(src)
+        when ".mrb" then src
+        when ".rb"
+          out = File.join(FPGA_ROM_DIR, "#{name}.mrb")
+          File.binwrite(out, FpgaCorpus.compile(src, FpgaCorpus.default_mrbc).first)
+          out
         else raise "#{src}: expected a .rb or .mrb"
         end
-  image = FpgaRom.from_binary(bin, source: src.sub("#{HARNESS_ROOT}/", ""), max_regs: FPGA_CORE_NREGS)
-  FileUtils.mkdir_p FPGA_ROM_DIR
-  hex = File.join(FPGA_ROM_DIR, "#{name}.hex")
-  File.write(hex, image.hex)
-  File.write(File.join(FPGA_ROM_DIR, "#{name}.lst"), image.listing)
-  [image, hex]
+  base = File.join(FPGA_ROM_DIR, name)
+  msg = FpgaConverter.run(mrb, "#{base}.hex", "#{base}.lst", max_regs: FPGA_CORE_NREGS)
+  puts "#{fpga_rel(src)}: #{msg} (picoruby)"
+  "#{base}.hex"
 end
 
 # プログラムの入力の刺激: <src と同じ場所>/<name>.stim
@@ -252,23 +261,23 @@ def fpga_runner
     mdir = File.join(FPGA_BUILD_DIR, "verilator", "mrb_run_tb")
     FileUtils.rm_rf mdir
     FileUtils.mkdir_p mdir
-    log = File.join(mdir, "build.log")
-    ok = system("verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
-                "-j", "0", "--Mdir", mdir, "--top-module", "mrb_run_tb", "-o", "mrb_run_tb",
-                *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"),
-                out: log, err: [:child, :out])
-    raise "verilator failed to build mrb_run_tb:\n#{File.read(log)}" unless ok
+    fpga_quiet_sh(File.join(mdir, "build.log"),
+                  "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
+                  "-j", "0", "--Mdir", mdir, "--top-module", "mrb_run_tb", "-o", "mrb_run_tb",
+                  *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"))
     File.join(mdir, "mrb_run_tb")
   end
 end
 
-# シミュレーションで走らせてトレースを返す
-def fpga_sim_trace(hex, stim:, max:, dump: nil)
-  trace = hex.sub(/\.hex\z/, ".sim.trace")
+# シミュレーションで走らせてトレースを返す。トレースなどは build/fpga/rom/<name>.* に書く
+def fpga_sim_trace(hex, name:, stim:, max:, dump: nil)
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  base = File.join(FPGA_ROM_DIR, name)
+  trace = "#{base}.sim.trace"
   cmd = [fpga_runner, "+rom=#{hex}", "+trace=#{trace}", "+max=#{max}"]
   if stim
     # テストベンチの $fscanf はコメント行を読めないので、数字だけにしたものを渡す
-    plain = hex.sub(/\.hex\z/, ".stim")
+    plain = "#{base}.stim"
     File.write(plain, FpgaCompare.read_stim(stim).map { |r| r.join(" ") + "\n" }.join)
     cmd << "+stim=#{plain}"
   end
@@ -278,8 +287,8 @@ def fpga_sim_trace(hex, stim:, max:, dump: nil)
   File.readlines(trace, chomp: true)
 end
 
-def fpga_ref_trace(image, stim:, max:)
-  vm = FpgaRefVm.new(image.words.map(&:value), nregs: FPGA_CORE_NREGS, stim: FpgaCompare.read_stim(stim))
+def fpga_ref_trace(hex, stim:, max:)
+  vm = FpgaRefVm.new(FpgaConverter.read_hex(hex), nregs: FPGA_CORE_NREGS, stim: FpgaCompare.read_stim(stim))
   vm.run(max)
 end
 
@@ -290,39 +299,41 @@ def fpga_show_outputs(trace)
 end
 
 namespace :fpga do
-  desc "Make a ROM image ($readmemh) from a .rb or .mrb (e.g. rake fpga:rom[fpga/corpus/blink.rb])"
+  desc "Make a ROM image ($readmemh) from a .rb or .mrb with the PicoRuby converter (e.g. rake fpga:rom[fpga/corpus/blink.mrb])"
   task :rom, [:src] do |_t, args|
     raise "usage: rake fpga:rom[<file.rb|file.mrb>]" unless args[:src]
-    image, hex = fpga_rom(args[:src])
-    print image.listing
-    puts "rom: #{hex.sub("#{HARNESS_ROOT}/", '')} (#{image.words.size} words, nregs #{image.nregs})"
+    hex = fpga_rom(args[:src])
+    print File.read(hex.sub(/\.hex\z/, ".lst"))
+    puts "rom: #{fpga_rel(hex)}"
   end
 
-  desc "Run a .rb/.mrb on the simulated CPU core and print its I/O (e.g. rake fpga:run[fpga/corpus/counter.rb])"
+  desc "Run a .rb/.mrb on the simulated CPU core and print its I/O (e.g. rake fpga:run[fpga/corpus/counter.mrb])"
   task :run, [:src, :max] do |_t, args|
     raise "usage: rake fpga:run[<file.rb|file.mrb>,<max steps>]" unless args[:src]
     require_fpga_tools!
-    _image, hex = fpga_rom(args[:src])
-    dump = hex.sub(/\.hex\z/, ".fst")
-    trace = fpga_sim_trace(hex, stim: fpga_stim_path(args[:src]), max: (args[:max] || FPGA_DEFAULT_STEPS).to_i, dump: dump)
+    hex = fpga_rom(args[:src])
+    name = File.basename(hex, ".hex")
+    dump = File.join(FPGA_ROM_DIR, "#{name}.fst")
+    trace = fpga_sim_trace(hex, name: name, stim: fpga_stim_path(args[:src]),
+                                max: (args[:max] || FPGA_DEFAULT_STEPS).to_i, dump: dump)
     fpga_show_outputs(trace)
-    puts "trace: #{hex.sub(/\.hex\z/, '.sim.trace').sub("#{HARNESS_ROOT}/", '')}"
-    puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
+    puts "trace: #{fpga_rel(File.join(FPGA_ROM_DIR, "#{name}.sim.trace"))}"
+    puts "waveform: #{fpga_rel(dump)}"
   end
 
-  desc "Run every fpga/corpus/*.mrb on the reference interpreter and the simulated core, and compare"
+  desc "Run every fpga/corpus/*.hex on the reference interpreter and the simulated core, and compare"
   task :check do
     require_fpga_tools!
-    mrbs = Dir[File.join(FpgaCorpus::DIR, "*.mrb")].sort
-    raise "no fpga/corpus/*.mrb. Run `rake fpga:corpus`" if mrbs.empty?
+    hexes = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort
+    raise "no fpga/corpus/*.hex. Run `rake fpga:corpus`" if hexes.empty?
     failed = []
-    mrbs.each do |mrb|
-      name = File.basename(mrb, ".mrb")
-      image, hex = fpga_rom(mrb)
-      stim = fpga_stim_path(mrb)
-      ref = fpga_ref_trace(image, stim: stim, max: FPGA_DEFAULT_STEPS)
-      File.write(hex.sub(/\.hex\z/, ".ref.trace"), ref.join("\n") + "\n")
-      sim = fpga_sim_trace(hex, stim: stim, max: FPGA_DEFAULT_STEPS)
+    hexes.each do |hex|
+      name = File.basename(hex, ".hex")
+      stim = fpga_stim_path(hex)
+      ref = fpga_ref_trace(hex, stim: stim, max: FPGA_DEFAULT_STEPS)
+      FileUtils.mkdir_p FPGA_ROM_DIR
+      File.write(File.join(FPGA_ROM_DIR, "#{name}.ref.trace"), ref.join("\n") + "\n")
+      sim = fpga_sim_trace(hex, name: name, stim: stim, max: FPGA_DEFAULT_STEPS)
       r = FpgaCompare.compare(ref, sim)
       if r.ok
         puts format("ok %-10s %5d I/O writes, %s", name, r.io_count, r.ending)
@@ -334,16 +345,16 @@ namespace :fpga do
     raise "reference and simulation differ: #{failed.join(', ')} (traces in build/fpga/rom/)" unless failed.empty?
   end
 
-  desc "Regenerate fpga/corpus/*.mrb, *.dump and docs/fpga-opcodes.md with mrbc"
+  desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
   task :corpus do
-    FpgaCorpus.write(FpgaCorpus.default_mrbc)
-    puts "wrote #{FpgaCorpus.names.size} program(s) and #{FpgaCorpus::TABLE.sub("#{HARNESS_ROOT}/", '')}"
+    FpgaCorpus.write(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
+    puts "wrote #{FpgaCorpus.names.size} program(s) and #{fpga_rel(FpgaCorpus::TABLE)}"
   end
 
   namespace :corpus do
-    desc "Check that fpga/corpus/*.mrb, *.dump and docs/fpga-opcodes.md match mrbc (needs vendor/picoruby)"
+    desc "Check that fpga/corpus/* and docs/fpga-opcodes.md match mrbc and the PicoRuby converter (needs vendor/picoruby)"
     task :check do
-      stale = FpgaCorpus.stale(FpgaCorpus.default_mrbc)
+      stale = FpgaCorpus.stale(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
       raise "out of date (run `rake fpga:corpus`): #{stale.join(', ')}" unless stale.empty?
       puts "fpga corpus is up to date"
     end
@@ -362,10 +373,10 @@ namespace :fpga do
   desc "Synthesize for PERIDOT-Air with Quartus (local quartus_sh, or FPGA_QUARTUS_HOST over ssh). e.g. rake fpga:build[fpga/corpus/blink.mrb]"
   task :build, [:src, :ce_div] do |_t, args|
     raise "usage: rake fpga:build[<file.rb|file.mrb>,<CE_DIV>]" unless args[:src]
-    image, _hex = fpga_rom(args[:src])
-    dir = FpgaQuartus.write_project(FPGA_BOARD_BUILD, image, ce_div: (args[:ce_div] || 1000).to_i)
-    rel = dir.sub("#{HARNESS_ROOT}/", "")
-    puts "project: #{rel} (#{image.words.size} words from #{args[:src]})"
+    hex = fpga_rom(args[:src])
+    dir = FpgaQuartus.write_project(FPGA_BOARD_BUILD, hex, ce_div: (args[:ce_div] || 1000).to_i)
+    rel = fpga_rel(dir)
+    puts "project: #{rel}"
 
     host = ENV["FPGA_QUARTUS_HOST"]
     if fpga_tool?("quartus_sh")

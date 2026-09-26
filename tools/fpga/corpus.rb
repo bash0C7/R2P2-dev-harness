@@ -1,14 +1,16 @@
 # fpga/corpus/*.rb (CPU コアの対象にする Ruby プログラムの集合) の生成物。
 #
-# 各 <name>.rb から、mrbc で次の2つを作って commit しておく:
-#   <name>.mrb   ROM 変換の入力。CI の fpga job は picoruby を取らないので、これを使う
+# 各 <name>.rb から次を作って commit しておく:
+#   <name>.mrb   mrbc の出力
 #   <name>.dump  `mrbc -v` の命令行だけ。ROM 変換のテスト (rom_test.rb) が突き合わせる
-# 命令の出現表 docs/fpga-opcodes.md もここから作る。
-# `rake fpga:corpus` が作り直し、`rake fpga:corpus:check` が最新かを見る (どちらも mrbc が要る)。
+#   <name>.hex   PicoRuby で走らせた変換器 (mrb2rom.rb) の ROM イメージ。rake fpga:check が使う
+#   <name>.lst   同じく命令一覧
+# CI の fpga job は picoruby を取らないので、ここにある .hex を使う。命令の出現表 docs/fpga-opcodes.md もここから作る。
+# `rake fpga:corpus` が作り直し、`rake fpga:corpus:check` が最新かを見る (どちらも mrbc と picoruby が要る)。
 require "open3"
 require "tmpdir"
 require "fileutils"
-require_relative "isa"
+require_relative "converter"
 
 module FpgaCorpus
   class Error < StandardError; end
@@ -17,6 +19,8 @@ module FpgaCorpus
   DIR       = File.join(ROOT, "fpga", "corpus")
   TABLE     = File.join(ROOT, "docs", "fpga-opcodes.md")
   DUMP_LINE = /\A\s*\d+ \d{3} /
+  MAX_REGS  = 16 # mrb_core の NREGS
+  KINDS     = %w[mrb dump hex lst].freeze
 
   module_function
 
@@ -44,33 +48,40 @@ module FpgaCorpus
     end
   end
 
-  # name => { mrb:, dump: }
-  def build_all(mrbc)
+  # name => { "mrb" =>, "dump" =>, "hex" =>, "lst" => }
+  def build_all(mrbc, picoruby)
     sources.to_h do |src|
+      name = File.basename(src, ".rb")
       mrb, dump = compile(src, mrbc)
-      [File.basename(src, ".rb"), { mrb: mrb, dump: dump }]
+      hex, lst = Dir.mktmpdir do |dir|
+        paths = %w[in.mrb out.hex out.lst].map { |f| File.join(dir, f) }
+        File.binwrite(paths[0], mrb)
+        FpgaConverter.run(paths[0], paths[1], paths[2], max_regs: MAX_REGS, picoruby: picoruby)
+        [File.read(paths[1]), File.read(paths[2])]
+      end
+      [name, { "mrb" => mrb, "dump" => dump, "hex" => hex, "lst" => lst }]
     end
   end
 
-  def write(mrbc)
-    built = build_all(mrbc)
+  def write(mrbc, picoruby)
+    built = build_all(mrbc, picoruby)
     built.each do |name, b|
-      File.binwrite(File.join(DIR, "#{name}.mrb"), b[:mrb])
-      File.write(File.join(DIR, "#{name}.dump"), b[:dump])
+      KINDS.each { |k| File.binwrite(File.join(DIR, "#{name}.#{k}"), b[k]) }
     end
-    File.write(TABLE, table(built.transform_values { |b| b[:dump] }))
+    File.write(TABLE, table(built.transform_values { |b| b["dump"] }))
   end
 
-  # 古くなった生成物の名前。空なら最新
-  def stale(mrbc)
-    built = build_all(mrbc)
-    bad = built.flat_map do |name, b|
-      mrb = File.join(DIR, "#{name}.mrb")
-      dump = File.join(DIR, "#{name}.dump")
-      [(mrb unless File.file?(mrb) && File.binread(mrb) == b[:mrb]),
-       (dump unless File.file?(dump) && File.read(dump) == b[:dump])]
-    end.compact
-    bad << TABLE unless File.file?(TABLE) && File.read(TABLE) == table(built.transform_values { |b| b[:dump] })
+  # 古くなった生成物の path。空なら最新
+  def stale(mrbc, picoruby)
+    built = build_all(mrbc, picoruby)
+    bad = []
+    built.each do |name, b|
+      KINDS.each do |k|
+        path = File.join(DIR, "#{name}.#{k}")
+        bad << path unless File.file?(path) && File.binread(path) == b[k].b
+      end
+    end
+    bad << TABLE unless File.file?(TABLE) && File.read(TABLE) == table(built.transform_values { |b| b["dump"] })
     bad.map { |p| p.sub("#{ROOT}/", "") }
   end
 

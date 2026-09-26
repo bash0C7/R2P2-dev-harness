@@ -1,5 +1,5 @@
 require_relative "test_helper"
-require_relative "rom"
+require_relative "converter"
 require_relative "ref_vm"
 require_relative "compare"
 require_relative "oracle"
@@ -50,8 +50,8 @@ class FpgaRefVmTest < Minitest::Test
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
       next if File.file?(File.join(CORPUS, "#{name}.stim"))
-      image = FpgaRom.from_file(File.join(CORPUS, "#{name}.mrb"))
-      trace = FpgaRefVm.new(image.words.map(&:value)).run(20_000)
+      words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
+      trace = FpgaRefVm.new(words).run(20_000)
       ours = FpgaCompare.outputs(trace)
       refute_empty ours, name
       cruby = FpgaOracle.cruby_writes(src, limit: ours.size)
@@ -65,8 +65,8 @@ class FpgaRefVmTest < Minitest::Test
     checked = 0
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
-      image = FpgaRom.from_file(File.join(CORPUS, "#{name}.mrb"))
-      vm = FpgaRefVm.new(image.words.map(&:value))
+      words = FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))
+      vm = FpgaRefVm.new(words)
       trace = vm.run(20_000)
       next unless trace.last.start_with?("H ")
       ours = FpgaIoMap::PORTS.select { |p| p.dir == :out }.to_h { |p| [p.num, FpgaCompare.decode(*vm.io[p.num])] }

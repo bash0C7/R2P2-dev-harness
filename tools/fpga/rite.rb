@@ -9,15 +9,36 @@
 #     子 irep (rlen 個) が続く
 #   "END\0"
 # 数値はすべて big endian。
-require_relative "isa"
-
+#
+# 変換器の一部として PicoRuby でも走る (isa.rb の注記)。isa.rb を先に読み込んでおくこと。
 module Rite
   class Error < StandardError; end
 
-  Irep = Struct.new(:nlocals, :nregs, :rlen, :clen, :iseq, :plen, :syms, keyword_init: true)
+  class Irep
+    attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :syms
+
+    def initialize(nlocals, nregs, rlen, clen, iseq, plen, syms)
+      @nlocals = nlocals
+      @nregs = nregs
+      @rlen = rlen
+      @clen = clen
+      @iseq = iseq
+      @plen = plen
+      @syms = syms
+    end
+  end
 
   # iseq を1命令ずつに割ったもの。addr は iseq 内のバイト位置、operands は ops.h の形式どおり。
-  Insn = Struct.new(:addr, :op, :operands, :size) do
+  class Insn
+    attr_reader :addr, :op, :operands, :size
+
+    def initialize(addr, op, operands, size)
+      @addr = addr
+      @op = op
+      @operands = operands
+      @size = size
+    end
+
     def name
       op.name
     end
@@ -27,76 +48,80 @@ module Rite
     end
   end
 
-  module_function
+  def self.u16(bin, pos)
+    (bin.getbyte(pos) << 8) | bin.getbyte(pos + 1)
+  end
 
-  def parse(bin)
-    bin = bin.b
-    raise Error, "not a RITE binary" unless bin[0, 4] == "RITE"
-    ver = bin[4, 4]
+  def self.u32(bin, pos)
+    (u16(bin, pos) << 16) | u16(bin, pos + 2)
+  end
+
+  def self.parse(bin)
+    raise Error, "not a RITE binary" unless bin.bytesize >= 32 && bin.byteslice(0, 4) == "RITE"
+    ver = bin.byteslice(4, 4)
     raise Error, "RITE#{ver} is not supported (expected RITE0400)" unless ver == "0400"
 
     pos = 20
-    sec = bin[pos, 4]
+    sec = bin.byteslice(pos, 4)
     raise Error, "first section is #{sec.inspect}, expected \"IREP\"" unless sec == "IREP"
-    pos += 12 # ident, size, rite_version
-    read_irep(bin, pos)
+    read_irep(bin, pos + 12) # ident, size, rite_version
   end
 
-  def read_irep(bin, pos)
-    u16 = ->(o) { bin.byteslice(o, 2).unpack1("n") }
-    u32 = ->(o) { bin.byteslice(o, 4).unpack1("N") }
-
+  def self.read_irep(bin, pos)
     pos += 4 # record size
-    nlocals = u16.(pos)
-    nregs   = u16.(pos + 2)
-    rlen    = u16.(pos + 4)
-    clen    = u16.(pos + 6)
-    ilen    = u32.(pos + 8)
+    nlocals = u16(bin, pos)
+    nregs   = u16(bin, pos + 2)
+    rlen    = u16(bin, pos + 4)
+    clen    = u16(bin, pos + 6)
+    ilen    = u32(bin, pos + 8)
     pos += 12
     iseq = bin.byteslice(pos, ilen)
+    raise Error, "iseq runs past the end of the binary" unless iseq && iseq.bytesize == ilen
     pos += ilen + 13 * clen
 
-    plen = u16.(pos)
+    plen = u16(bin, pos)
     pos += 2
     # pool の中身は読まない (対応しないので、あれば rom.rb がエラーにする)。
     # pool があると syms の位置が分からないので、syms は空のまま返す。
     syms = []
-    if plen.zero?
-      slen = u16.(pos)
+    if plen == 0
+      slen = u16(bin, pos)
       pos += 2
       slen.times do
-        len = u16.(pos)
+        len = u16(bin, pos)
         pos += 2
         if len == 0xFFFF
           syms << nil
         else
-          syms << bin.byteslice(pos, len).force_encoding("UTF-8")
+          syms << bin.byteslice(pos, len)
           pos += len + 1
         end
       end
     end
 
-    Irep.new(nlocals: nlocals, nregs: nregs, rlen: rlen, clen: clen, iseq: iseq, plen: plen, syms: syms)
+    Irep.new(nlocals, nregs, rlen, clen, iseq, plen, syms)
   end
 
   # iseq を命令列にする。未知の opcode は Error。
-  def decode(iseq)
-    bytes = iseq.bytes
+  def self.decode(iseq)
     insns = []
     addr = 0
-    while addr < bytes.size
-      num = bytes[addr]
-      op = FpgaIsa::OPS[num] or raise Error, "unknown opcode 0x#{num.to_s(16)} at byte #{addr}"
+    size = iseq.bytesize
+    while addr < size
+      num = iseq.getbyte(addr)
+      op = FpgaIsa::OPS[num]
+      raise Error, "unknown opcode 0x#{num.to_s(16)} at byte #{addr}" unless op
       n = op.operand_bytes
-      raw = bytes[addr + 1, n]
-      raise Error, "#{op.name} at byte #{addr} runs past the end of iseq" if raw.size < n
+      raise Error, "#{op.name} at byte #{addr} runs past the end of iseq" if addr + 1 + n > size
+      raw = []
+      n.times { |i| raw << iseq.getbyte(addr + 1 + i) }
       insns << Insn.new(addr, op, split_operands(op.fmt, raw), 1 + n)
       addr += 1 + n
     end
     insns
   end
 
-  def split_operands(fmt, raw)
+  def self.split_operands(fmt, raw)
     case fmt
     when "Z"   then []
     when "B"   then [raw[0]]

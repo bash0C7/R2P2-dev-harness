@@ -1,7 +1,6 @@
 # fpga/rtl/mrb_pkg.sv を isa.rb と io_map.rb から作る。
 # `rake fpga:gen` が書き、`rake test:fpga` (gen_pkg_test.rb) が commit 済みのものと一致するかを見る。
-require_relative "isa"
-require_relative "io_map"
+require_relative "converter"
 
 module FpgaGenPkg
   PATH = File.expand_path("../../fpga/rtl/mrb_pkg.sv", __dir__)

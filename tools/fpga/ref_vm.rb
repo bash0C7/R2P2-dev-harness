@@ -15,9 +15,7 @@
 #   E <step> <pc> <op>          エラーで止まった
 #   L <step>                    命令数の上限に達した
 # 合否は O 行と最後の1行 (H/E/L) で見る。X/W 行はずれた場所を探すため。
-require_relative "isa"
-require_relative "rom"
-require_relative "io_map"
+require_relative "converter"
 
 class FpgaRefVm
   MASK = (1 << FpgaIsa::INT_BITS) - 1

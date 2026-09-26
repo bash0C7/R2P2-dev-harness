@@ -1,5 +1,6 @@
 require_relative "test_helper"
-require_relative "rom"
+require_relative "converter"
+require "tmpdir"
 
 class FpgaRomTest < Minitest::Test
   include FpgaTestHelper
@@ -9,7 +10,7 @@ class FpgaRomTest < Minitest::Test
     names = Dir[File.join(CORPUS, "*.mrb")].map { |p| File.basename(p, ".mrb") }.sort
     refute_empty names
     names.each do |name|
-      image = FpgaRom.from_file(File.join(CORPUS, "#{name}.mrb"))
+      image = FpgaRom.from_binary(File.binread(File.join(CORPUS, "#{name}.mrb")))
       dump = File.readlines(File.join(CORPUS, "#{name}.dump"), chomp: true).map { |l| l.split(/\s+/, 4) }
       pc_of = image.words.to_h { |w| [w.insn.addr, w.pc] }
       assert_equal dump.size, image.words.size, name
@@ -102,8 +103,49 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_too_many_registers
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], nregs: 17), max_regs: 16) }
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("STOP")], nregs: 17), "(mrb)", 16) }
     assert_match(/needs 17 registers/, e.message)
+  end
+
+  # commit 済みの .hex / .lst は PicoRuby で走らせた変換器の出力。同じ file を CRuby で読んでも同じになること
+  def test_committed_rom_matches_the_converter_on_cruby
+    Dir[File.join(CORPUS, "*.mrb")].sort.each do |mrb|
+      image = FpgaRom.from_binary(File.binread(mrb), mrb, 16)
+      assert_equal File.read(mrb.sub(/\.mrb\z/, ".hex")), image.hex, mrb
+      assert_equal File.read(mrb.sub(/\.mrb\z/, ".lst")), image.listing, mrb
+    end
+  end
+
+  def with_picoruby
+    skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
+    Dir.mktmpdir { |dir| yield dir }
+  end
+
+  def picoruby_convert(dir, bin, max_regs: nil)
+    mrb = File.join(dir, "in.mrb")
+    File.binwrite(mrb, bin)
+    FpgaConverter.run(mrb, File.join(dir, "out.hex"), File.join(dir, "out.lst"), max_regs: max_regs, picoruby: PICORUBY)
+    File.read(File.join(dir, "out.hex"))
+  end
+
+  # 48bit の語・負の相対ジャンプ・ポート解決を PicoRuby でも CRuby と同じに出すこと
+  def test_picoruby_and_cruby_agree
+    with_picoruby do |dir|
+      bin = rite([op("LOADI32"), 1, 0xFF, 0xFF, 0xFF, 0xFF, op("NOP"), op("GETGV"), 2, 0, op("JMP"), 0xFF, 0xF9],
+                 syms: ["$BUTTON"])
+      assert_equal FpgaRom.from_binary(bin).hex, picoruby_convert(dir, bin)
+    end
+  end
+
+  def test_picoruby_converter_stops_with_the_location
+    with_picoruby do |dir|
+      e = assert_raises(FpgaConverter::Error) do
+        picoruby_convert(dir, rite([op("NOP"), op("SEND0"), 1, 0, op("STOP")], syms: ["!"]))
+      end
+      assert_match(/unsupported instruction\(s\): SEND0 at byte 001/, e.message)
+      e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
+      assert_match(/needs 17 registers/, e.message)
+    end
   end
 
   def test_rejects_other_rite_versions
