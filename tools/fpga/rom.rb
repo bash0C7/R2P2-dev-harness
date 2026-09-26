@@ -55,6 +55,7 @@ module FpgaRom
     attr_accessor :table_base, :table_size
     attr_accessor :data_base, :symtab # 文字列とシンボルの名前のデータの先頭、シンボル表の先頭 (その間がデータ)
     attr_accessor :class_names # クラスの番号 -> 名前 (ユーザーのクラスとモジュール)
+    attr_accessor :hbase # 例外の表の先頭 (シンボル表の後ろ、メソッド表の前)
 
     def initialize(words, nregs, ireps)
       @words = words
@@ -66,6 +67,7 @@ module FpgaRom
       @data_base = 0
       @symtab = 0
       @class_names = {}
+      @hbase = 0
     end
 
     def hex
@@ -88,6 +90,10 @@ module FpgaRom
               text << (x >= 0x20 && x < 0x7F ? x.chr : ".")
             end
             out << format("%4d  %s  %s\n", w.pc, w.hex, text)
+          elsif w.pc >= hbase && hbase > symtab
+            out << "# catch handlers (type, begin, end, target)\n" if w.pc == hbase
+            v = (w.op << 8) | w.a
+            out << format("%4d  %-7s %-5d %-5d %d\n", w.pc, (v >> 15) == FpgaIsa::CATCH_ENSURE ? "ensure" : "rescue", w.b, w.c, v & 0x7FFF)
           else
             out << "# symbol table (address, length)\n" if w.pc == symtab
             out << format("%4d  %-5d %-5d :%s\n", w.pc, w.b, w.c, symbols[w.pc - symtab])
@@ -185,7 +191,6 @@ module FpgaRom
     ireps = flatten(top, [])
     decoded = []
     ireps.each do |ir|
-      raise Error, "#{source}: irep #{ir.index} has catch handlers (exceptions are not supported)" if ir.clen > 0
       if max_regs && ir.nregs > max_regs
         raise Error, "#{source}: irep #{ir.index} needs #{ir.nregs} registers, the core has #{max_regs}"
       end
@@ -198,12 +203,21 @@ module FpgaRom
     add_iclasses(ctx)
     # 呼ばれることのあるメソッドだけを ROM に置く (プレリュードの使わないメソッドを落とす)
     ctx.live = live_ireps(ireps, decoded, ctx)
+    # 使われるクラスだけメソッド表に行を置く (プレリュードの例外のクラスなど、参照されないものを落とす)
+    ctx.class_live = live_classes(ireps, decoded, ctx)
 
     ireps.each_with_index do |ir, i|
       next unless ctx.live[i]
       decoded[i].each { |insn| bad << "#{insn.name} at #{where(ir, insn)}" unless FpgaIsa.convertible?(insn.name) }
     end
     raise Error, "#{source}: unsupported instruction(s): #{bad.join(', ')}" unless bad.empty?
+    # RESCUE は is_a? と同じ表の行 (ISA) を引く
+    ireps.each_with_index do |ir, i|
+      ctx.need_isa = true if ctx.live[i] && decoded[i].any? { |insn| insn.name == "RESCUE" }
+    end
+    # 例外の表があれば pc 1 に HTABLE を置く
+    handlers = false
+    ireps.each_with_index { |ir, i| handlers = true if ctx.live[i] && !ir.catches.empty? }
 
     # pool: 文字列は ROM のデータ領域に置く (同じ中身は1つ)。整数は 32bit に収まること。Float と大きい整数は止める
     ireps.each_with_index do |ir, i|
@@ -225,7 +239,7 @@ module FpgaRom
 
     # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める。pc 0 は TABLE、クラスの本体は先頭に ENTER を足し、
     # 一番外は先頭で self (main) を作る (CLASS R0 Object、SEND R0 :new)
-    base = 1
+    base = handlers ? 2 : 1
     pc_of = []
     ireps.each_with_index do |ir, i|
       unless ctx.live[i]
@@ -242,6 +256,7 @@ module FpgaRom
         specs = lowered(insn, ir, k, base, ctx)
         base += specs ? specs.size : 1
       end
+      table[ir.iseq.bytesize] = base # irep の終わり (catch handler の end と target に出てよい)
       pc_of << table
     end
     # 文字列のデータ (1語 4バイト) はプログラムの後ろ
@@ -249,6 +264,7 @@ module FpgaRom
     ctx.place_strings(data_base)
 
     words = [nil]
+    words << nil if handlers # HTABLE (表の位置が決まってから書く)
     ireps.each_with_index do |ir, i|
       next unless ctx.live[i]
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
@@ -287,7 +303,25 @@ module FpgaRom
     end
     symtab = words.size
     names.each_with_index { |n, i| words << Word.new(symtab + i, nil, 0, 0, sym_addr[i], n.to_s.bytesize, nil, false) }
-    size = 16
+    # 例外の表: irep ごとに .mrb の並びの後ろから (vm.c の catch_handler_find が探す順)。pc は語に直す
+    hbase = words.size
+    if handlers
+      ireps.each_with_index do |ir, i|
+        next unless ctx.live[i]
+        ir.catches.reverse.each do |type, b, e, t|
+          hb = pc_of[i][b]
+          he = pc_of[i][e]
+          ht = pc_of[i][t]
+          unless hb && he && ht && type <= 1
+            raise Error, "#{source}: irep #{ir.index} has a catch handler (#{type}, #{b}, #{e}, #{t}) off the instruction boundaries"
+          end
+          v = (type << 15) | ht
+          words << Word.new(words.size, nil, v >> 8, v & 0xFF, hb, he, nil, false)
+        end
+      end
+      words[1] = Word.new(1, nil, FpgaIsa.op("HTABLE").num, 0, hbase, words.size - hbase, top, false)
+    end
+        size = 16
     size *= 2 while size < entries.size * 2
     log2 = 0
     log2 += 1 while (1 << log2) < size
@@ -316,6 +350,7 @@ module FpgaRom
     image.table_size = size
     image.data_base = data_base
     image.symtab = symtab
+    image.hbase = hbase
     ctx.classes.each { |k| image.class_names[k.id] = k.name if k.id >= FpgaIsa::FIRST_USER_CLASS }
     image
   end
@@ -326,10 +361,12 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :cref, :globals, :strings, :string_at
+                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class
+    attr_accessor :class_live # クラスの番号 -> メソッド表に行を置くか (live_classes)
     attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
+    attr_accessor :need_isa # is_a? の表の行が要る (RESCUE がある)
 
     def initialize(source, decoded)
       @source = source
@@ -354,6 +391,8 @@ module FpgaRom
       @const_keys = {}
       @lambdas = {}
       @symbols = {}
+      @body_class = {} # クラスの本体の irep の番号 -> そのクラス
+      @class_deps = {} # 親クラス・入れ物・include の引数の定数の場所 -> それを使うクラス (そのクラスが生きていれば生きる)
       FpgaIsa::OP_SYMS.each { |s| sym_id(s) } # 演算の落ち先は固定の番号
     end
 
@@ -449,6 +488,69 @@ module FpgaRom
   # 生きている irep (ROM に置くもの)。一番外から、生きているコードの中のブロック・クラスの本体と、
   # 名前が使われる (送る、LOADSYM、super、変換器が下げた命令が送る) メソッドを、増えなくなるまでたどる。
   # 演算の落ち先 (OP_SYMS、initialize を含む) はいつも使われる
+  # 生きているクラス (メソッド表に行を置くもの): 組み込みと、生きているコードで定数として参照されるもの
+  # (ただし親クラス・入れ物・include の引数としての参照は、それを使うクラスが生きている時だけ)、
+  # 本体が self を使うもの (メソッドを送る、ブロックを作る)、生きているクラスの祖先と include したモジュール
+  def self.live_classes(ireps, decoded, ctx)
+    live = {}
+    deps = {} # クラスの番号 -> そのクラスが生きていれば生きるクラス
+    mark = lambda do |k|
+      if k && !live[k.id]
+        live[k.id] = true
+        mark.call(ctx.klass_id(k.super_id)) if k.super_id
+        mark.call(ctx.klass_id(k.real_super_id)) if k.real_super_id
+        k.includes.each { |m| mark.call(m) }
+        mark.call(k.origin) if k.origin
+        (deps[k.id] || []).each { |d| mark.call(d) }
+      end
+    end
+    ctx.classes.each { |k| mark.call(k) if k.id < FpgaIsa::FIRST_USER_CLASS }
+    ireps.each_with_index do |ir, i|
+      next unless ctx.live[i]
+      insns = decoded[i]
+      body = nil
+      body = ctx.body_class[ir.index]
+      insns.each_with_index do |insn, k|
+        name = insn.name
+        if body && !ctx.noops[site_key(ir, k)] &&
+           (%w[SEND SEND0 SENDB SSEND SSEND0 SSENDB SUPER BLOCK LAMBDA].include?(name) ||
+            (name == "LOADSELF" && !(insns[k + 1] && insns[k + 1].name == "SDEF")) || (name == "MOVE" && insn.operands[1] == 0))
+          mark.call(body)
+        end
+        next unless name == "GETCONST" || name == "GETMCNST"
+        kl = const_class(ctx, ir, insns, k)
+        next unless kl
+        user = ctx.class_deps[site_key(ir, k)]
+        if user
+          deps[user.id] ||= []
+          deps[user.id] << kl
+          mark.call(kl) if live[user.id]
+        else
+          mark.call(kl)
+        end
+      end
+    end
+    # include の写し (iclass) は持ち主が生きていれば生きる
+    ctx.classes.each { |k| mark.call(k) if k.origin && k.owner && live[k.owner.id] }
+    live
+  end
+
+  # k 番目の GETCONST / GETMCNST が指すクラス (クラスでなければ nil)。encode と同じ解き方
+  def self.const_class(ctx, irep, insns, k)
+    insn = insns[k]
+    sym = irep.syms[insn.operands[1]]
+    if insn.name == "GETCONST"
+      ctx.lexical_names(ctx.cref[irep.index], sym).each do |n|
+        kl = ctx.klass_named(n)
+        return kl if kl
+        return nil if ctx.const_keys[n]
+      end
+      return nil
+    end
+    base = const_path(ctx, irep, insns, k, insn.operands[0])
+    base && ctx.klass_named(base) ? ctx.klass_named("#{base}::#{sym}") : nil
+  end
+
   def self.live_ireps(ireps, decoded, ctx)
     live = Array.new(ireps.size, false)
     used = {}
@@ -567,12 +669,16 @@ module FpgaRom
           ctx.classes << k2
         end
         ctx.class_at[site_key(irep, k)] = k2
+        [outer, insn.name == "CLASS" ? prev_def(insns, k, a + 1) : nil].each do |d|
+          ctx.class_deps[site_key(irep, insns.index(d))] = k2 if d && %w[GETCONST GETMCNST].include?(d.name)
+        end
         # すぐ後の EXEC a I[n] が本体 (空の本体 `class E < StandardError; end` には EXEC が無い)
         j = k + 1
         if j < insns.size && insns[j].name == "EXEC" && insns[j].operands[0] == a
           body = irep.reps[insns[j].operands[1]]
           ctx.exec_at[site_key(irep, j)] = body
           ctx.bodies[body.index] = true
+          ctx.body_class[body.index] = k2
           analyze(body, k2, ctx, [full] + cref)
         end
       when "TDEF"
@@ -643,6 +749,7 @@ module FpgaRom
             ctx.lexical_names(cref, mname).each { |n| mod ||= ctx.klass_named(n) }
             raise Error, "#{source}: #{mname} at #{where(irep, insn)} is not a known module" unless mod && mod.is_module
             scope.includes << mod
+            ctx.class_deps[site_key(irep, insns.index(d))] = scope
           end
           ctx.noops[site_key(irep, k)] = true
         when "private", "public", "protected", "module_function"
@@ -844,12 +951,13 @@ module FpgaRom
   def self.method_entries(ctx)
     entries = []
     ctx.classes.each do |k|
+      next unless ctx.class_live[k.id]
       k.methods.each { |sym, m| entries << [k.id, ctx.sym_id(sym), m.base] if m.base }
       k.meta_methods.each { |sym, m| entries << [FpgaIsa::META | k.id, ctx.sym_id(sym), m.base] if m.base }
     end
     # クラスの名前 (Module#name)。include の写し (iclass) には無い
     if ctx.symbols.key?("__name_sym")
-      ctx.classes.each { |k| entries << [k.id, FpgaIsa::NAME_SYM, ctx.sym_id(k.name)] unless k.origin }
+      ctx.classes.each { |k| entries << [k.id, FpgaIsa::NAME_SYM, ctx.sym_id(k.name)] if ctx.class_live[k.id] && !k.origin }
     end
     # primitive: その名前がプログラムのどこかに出てくるものだけ (出ないものは呼べない)。同じクラスの def が勝つ
     FpgaIsa::PRIMS.each_with_index do |pr, i|
@@ -860,6 +968,7 @@ module FpgaRom
     end
     # 親クラスへの輪。メタクラスは本当の親のメタクラスへ、Object のメタクラスは Class へ
     ctx.classes.each do |k|
+      next unless ctx.class_live[k.id]
       if k.is_module # モジュールのメタクラスの親は Module
         entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, FpgaIsa.class_id("Module")]
         next
@@ -870,6 +979,7 @@ module FpgaRom
     end
     # インスタンス変数: 自分で増やした分 (親の分は親の項目で見つかる)、iclass はモジュールの分、attr_*、new が使う数
     ctx.classes.each do |k|
+      next unless ctx.class_live[k.id]
       next if k.is_module
       if k.origin
         layout = ivar_layout(ctx, k.owner) # include したクラスの並びでの番号
@@ -886,8 +996,9 @@ module FpgaRom
       entries << [k.id, FpgaIsa::NIVARS_SYM, layout.size] unless layout.empty?
     end
     # is_a? / kind_of? / === (祖先ごとに1語。名前が出てくる時だけ)
-    if %w[is_a? kind_of? ===].any? { |n| ctx.symbols.key?(n) }
+    if ctx.need_isa || %w[is_a? kind_of? ===].any? { |n| ctx.symbols.key?(n) }
       ctx.classes.each do |k|
+      next unless ctx.class_live[k.id]
         next if k.is_module || k.origin
         ancestors(ctx, k).uniq.each { |a| entries << [FpgaIsa::ISA_BIT | k.id, a, 1] }
         meta = []
@@ -944,8 +1055,12 @@ module FpgaRom
       unless b
         raise Error, "#{source}: #{name} at #{where(irep, insn)} jumps to byte #{target}, not an instruction boundary"
       end
-      # JMPUW (while の中の break など) は ensure を畳みながら飛ぶ。catch handler の無い irep ではただの JMP
-      return Word.new(pc, insn, FpgaIsa.op("JMP").num, 0, b, 0, irep) if name == "JMPUW"
+      # JMPUW (while の中の break、retry など) は、ensure に覆われていれば ensure を走らせてから飛ぶ (コアが表を引く)。
+      # 覆われていなければただの JMP
+      if name == "JMPUW"
+        covered = irep.catches.any? { |t, cb, ce, _| t == FpgaIsa::CATCH_ENSURE && insn.addr >= cb && insn.addr < ce }
+        return Word.new(pc, insn, FpgaIsa.op(covered ? "JMPUW" : "JMP").num, 0, b, 0, irep)
+      end
     end
 
     if name == "GETGV" || name == "SETGV"

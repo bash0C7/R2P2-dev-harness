@@ -35,6 +35,7 @@ package mrb_pkg;
   localparam logic [15:0] CLS_EXC    = 16'd15;
   localparam logic [15:0] CLS_DATA   = 16'd32752;
   localparam logic [15:0] CLS_ENV    = 16'd32753;
+  localparam logic [15:0] CLS_BRK    = 16'd32754;
   localparam logic [15:0] CLS_META   = 16'h8000;
   localparam logic [15:0] FIRST_USER_CLASS = 16'd32;
 
@@ -53,6 +54,12 @@ package mrb_pkg;
   localparam logic [15:0] NIVARS_SYM = 16'hfffe;
   localparam logic [15:0] ISA_BIT = 16'h4000;
   localparam logic [15:0] NAME_SYM = 16'hfffd;
+  // 巻き戻しの塊の種類と、例外の表の種類 (tools/fpga/isa.rb)
+  localparam logic [2:0] BRK_JUMP = 3'd0;
+  localparam logic [2:0] BRK_RET  = 3'd1;
+  localparam logic [2:0] BRK_BRK  = 3'd2;
+  localparam logic [2:0] BRK_BRK0 = 3'd3;
+  localparam logic CATCH_ENSURE = 1'b1;
   // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)
   localparam logic [15:0] SYM_ADD  = 16'd0; // +
   localparam logic [15:0] SYM_SUB  = 16'd1; // -
@@ -118,6 +125,7 @@ package mrb_pkg;
   localparam logic [13:0] PR_SSLICE   = 14'd47; // String#__slice (2 arg)
   localparam logic [13:0] PR_SYMSTR   = 14'd48; // Symbol#to_s (0 arg)
   localparam logic [13:0] PR_NAMESYM  = 14'd49; // Module#__name_sym (0 arg)
+  localparam logic [13:0] PR_RAISE    = 14'd50; // Object#__raise (1 arg)
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -171,6 +179,7 @@ package mrb_pkg;
       PR_SSLICE  : return 8'h02;
       PR_SYMSTR  : return 8'h00;
       PR_NAMESYM : return 8'h00;
+      PR_RAISE   : return 8'h01;
       default: return 8'h00;
     endcase
   endfunction
@@ -218,6 +227,10 @@ package mrb_pkg;
   localparam logic [7:0] OP_JMPIF      = 8'd39; // BS
   localparam logic [7:0] OP_JMPNOT     = 8'd40; // BS
   localparam logic [7:0] OP_JMPNIL     = 8'd41; // BS
+  localparam logic [7:0] OP_JMPUW      = 8'd42; // S
+  localparam logic [7:0] OP_EXCEPT     = 8'd43; // B
+  localparam logic [7:0] OP_RESCUE     = 8'd44; // BB
+  localparam logic [7:0] OP_RAISEIF    = 8'd45; // B
   localparam logic [7:0] OP_SSEND      = 8'd47; // BBB
   localparam logic [7:0] OP_SSEND0     = 8'd48; // BB
   localparam logic [7:0] OP_SEND       = 8'd50; // BBB
@@ -258,4 +271,5 @@ package mrb_pkg;
   localparam logic [7:0] OP_SDEF       = 8'd108; // BBB
   localparam logic [7:0] OP_STOP       = 8'd118; // Z
   localparam logic [7:0] OP_TABLE      = 8'd240; // BS
+  localparam logic [7:0] OP_HTABLE     = 8'd241; // BS
 endpackage

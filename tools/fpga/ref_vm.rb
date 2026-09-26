@@ -52,6 +52,10 @@ class FpgaRefVm
     @mcls = FpgaIsa::CLS_OBJECT # 今のメソッドが見つかったクラス (super の起点)
     @fn = 0     # 今のフレームの nregs (env に写す数。一番外は戻らないので 0)
     @argc = 0
+    @exc = NIL  # 投げている例外か、巻き戻しの途中の塊 (EXCEPT が読む)
+    @xval = NIL # 巻き戻しの途中で運ぶ値 (return / break の値。GC の根)
+    @hbase = 0  # 例外の表 (HTABLE で決まる)
+    @hcount = 0
     @tbase = 0  # メソッド表 (TABLE で決まる)
     @tsize = 0
     # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
@@ -207,7 +211,7 @@ class FpgaRefVm
   end
 
   # Cheney のコピー GC。ルートはレジスタファイル全部 (番号順)、定義済みの定数 (番号順)、
-  # コールスタックの Proc と env (底から、1段ごとに Proc、env の順)、今の Proc、今の env。ハードウェアも同じ順に写す
+  # コールスタックの Proc と env (底から、1段ごとに Proc、env の順)、今の Proc、今の env、exc、xval。ハードウェアも同じ順に写す
   def gc
     @stats[:gc] += 1
     @space = 1 - @space
@@ -220,6 +224,8 @@ class FpgaRefVm
     end
     @cp = forward(@cp)
     @env = forward(@env)
+    @exc = forward(@exc)
+    @xval = forward(@xval)
     scan = @space * HALF
     while scan < @free
       w = @heap[scan]
@@ -449,6 +455,9 @@ class FpgaRefVm
       @tsize = 1 << a
       @tbase = b
       @symtab = c
+    when "HTABLE"
+      @hbase = b
+      @hcount = c
     when "EXEC"
       fault! unless ok?(a + 1)
       @call_kw = 0
@@ -522,10 +531,28 @@ class FpgaRefVm
     when "SEND", "SEND0" then return send(step, pc, a, b, c, false)
     when "SSEND", "SSEND0" then return send(step, pc, a, b, c, true)
     when "ENTER" then return enter(pc, a, b, c)
-    when "RETURN", "RETNIL" then return ret(step, name == "RETURN" ? reg(a) : NIL)
+    when "RETURN", "RETNIL"
+      v = name == "RETURN" ? reg(a) : NIL
+      # 例外の表があれば、ensure に覆われていないかを見ながら戻る
+      return @hcount.zero? ? ret(step, v) : unwind(step, pc, FpgaIsa::BRK_RET, @bp, v)
+    when "EXCEPT"
+      set(step, a, @exc)
+      @exc = NIL
+    when "RESCUE"
+      # R[b] = R[a].is_a?(R[b]) (ISA の行を1回引く)。巻き戻しの塊はどのクラスでもない (表に行が無い)
+      y = reg(b)
+      fault! unless y[0] == FpgaIsa::TAG_CLASS
+      set(step, b, bool(!lookup(FpgaIsa::ISA_BIT | class_of(reg(a)), y[1], walk: false).nil?))
+    when "RAISEIF"
+      x = reg(a)
+      return nxt if x == NIL
+      return redispatch(step, pc, x) if brk?(x)
+      @exc = x
+      return unwind(step, pc, :raise, 0, NIL)
+    when "JMPUW" then return unwind(step, pc, FpgaIsa::BRK_JUMP, b, NIL)
     when "STOP" then return :halt
-    when "BREAK" then return brk(step, a, b, c)
-    when "RETURN_BLK" then return return_blk(step, a, c)
+    when "BREAK" then return brk(step, pc, a, b, c)
+    when "RETURN_BLK" then return return_blk(step, pc, a, c)
     when "GETUPVAR", "BLKPUSH" then set(step, a, read_slot(c, b))
     when "SETUPVAR"
       kind, n = slot(c, b)
@@ -830,32 +857,25 @@ class FpgaRefVm
 
   # break。c = 0: iterator に直接渡したブロック。フレームを1つ畳んで b (iterator の出口) へ。
   # c = 1: メソッドや Proc に渡したブロック。Proc を作ったフレームへ戻るまで畳み、その呼び出しの結果にする
-  def brk(step, a, b, c)
+  # (畳むフレームが ensure に覆われていれば、そこで ensure を走らせてから続ける。unwind)
+  def brk(step, pc, a, b, c)
     value = reg(a)
     fault! if @stack.empty?
     if c.zero?
+      return unwind(step, pc, FpgaIsa::BRK_BRK0, b, value) unless @hcount.zero?
       ret(step, value)
       return b
     end
     if lambda?(@cp) # lambda の中の break は lambda から戻る
       @stats[:lambda_exit] += 1
-      return ret(step, value)
+      return @hcount.zero? ? ret(step, value) : unwind(step, pc, FpgaIsa::BRK_RET, @bp, value)
     end
-    target = frame_base(1)
-    loop do
-      fault! if @stack.empty?
-      callee = @bp
-      pc = pop_frame
-      if @bp == target
-        set_abs(step, callee, value)
-        return pc
-      end
-    end
+    unwind(step, pc, FpgaIsa::BRK_BRK, frame_base(1), value)
   end
 
   # ブロックの中の return: ブロックを囲むメソッド (深さ c のフレーム) まで畳み、そのメソッドから戻る。
   # 途中に lambda があれば、一番内側の lambda から戻る (深さ d の Proc が lambda なら、深さ d のフレーム)
-  def return_blk(step, a, c)
+  def return_blk(step, pc, a, c)
     value = reg(a)
     d = c
     p = @cp
@@ -868,13 +888,102 @@ class FpgaRefVm
       p = @heap[p[1] + 3]
     end
     @stats[:lambda_exit] += 1 if d < c
-    target = frame_base(d)
-    until @bp == target
-      fault! if @stack.empty?
-      pop_frame
+    unwind(step, pc, FpgaIsa::BRK_RET, frame_base(d), value)
+  end
+
+  # ---- 例外と巻き戻し (PicoRuby の vm.c の L_RAISE / UNWIND_ENSURE / THROW_TAGGED_BREAK と同じ意味)
+
+  def brk?(v)
+    ref?(v) && obj_class(v) == FpgaIsa::CLS_BRK
+  end
+
+  # 例外の表で pc を覆う handler (表の順に最初のもの)。ensure_only は ensure だけ。[飛び先, begin, end] か nil
+  def find_handler(pc, ensure_only)
+    @hcount.times do |i|
+      op, a, b, c = FpgaRom.unpack(rom_word(@hbase + i))
+      v = (op << 8) | a
+      next if ensure_only && (v >> 15) != FpgaIsa::CATCH_ENSURE
+      return [v & ((1 << FpgaIsa::PC_BITS) - 1), b, c] if pc >= b && pc < c
     end
-    fault! if @stack.empty?
-    ret(step, value)
+    nil
+  end
+
+  # 巻き戻し。kind は :raise (@exc を投げる) か巻き戻しの塊の種類 (isa.rb の BRK_*)、target はその行き先、value は運ぶ値。
+  # 今のフレームの pc (呼び出し元は戻り先 - 1) を覆う handler を探し、無ければフレームを畳んで (env は写す) 呼び出し元で探す。
+  # :raise は rescue と ensure、ほかは ensure だけを探す。ensure が見つかれば、巻き戻しの塊 (brk、無ければ作る) を
+  # @exc に置いてそこへ飛ぶ (ensure の最後の RAISEIF が redispatch で続ける)。JUMP は行き先がその ensure の外の時だけ
+  def unwind(step, pc, kind, target, value, brk = nil)
+    @xval = value
+    xpc = pc
+    loop do
+      h = find_handler(xpc, kind != :raise)
+      if h
+        @stats[:handler] += 1
+        if kind == :raise
+          @xval = NIL
+          return h[0]
+        end
+        if kind != FpgaIsa::BRK_JUMP || target < h[1] || target > h[2]
+          unless brk
+            p = alloc(3) # GC が走ってよい (@xval は根)
+            @heap[p] = hdr(FpgaIsa::CLS_BRK, 2)
+            @heap[p + 1] = int((kind << 16) | target)
+            @heap[p + 2] = @xval
+            brk = [FpgaIsa::TAG_OBJ, p]
+          end
+          @exc = brk
+          @xval = NIL
+          return h[0]
+        end
+      end
+      case kind
+      when :raise
+        fault! if @stack.empty? # 一番外まで捕まらなかった
+        @stats[:raise_pop] += 1
+        xpc = (pop_frame - 1) & ((1 << FpgaIsa::PC_BITS) - 1)
+        next
+      when FpgaIsa::BRK_JUMP
+        return finish(target)
+      when FpgaIsa::BRK_RET
+        if @bp == target
+          return :halt if @stack.empty?
+          callee = @bp
+          ret_pc = pop_frame
+          set_abs(step, callee, @xval) unless @popped_ctor # initialize の戻り値は捨てる
+          return finish(ret_pc)
+        end
+      when FpgaIsa::BRK_BRK
+        fault! if @stack.empty?
+        if @stack.last[1] == target
+          callee = @bp
+          ret_pc = pop_frame
+          set_abs(step, callee, @xval)
+          return finish(ret_pc)
+        end
+      else # BRK0
+        fault! if @stack.empty?
+        callee = @bp
+        pop_frame
+        set_abs(step, callee, @xval)
+        return finish(target)
+      end
+      fault! if @stack.empty?
+      xpc = (pop_frame - 1) & ((1 << FpgaIsa::PC_BITS) - 1)
+    end
+  end
+
+  # 巻き戻しを終えて pc へ
+  def finish(pc)
+    @exc = NIL
+    @xval = NIL
+    pc
+  end
+
+  # ensure の最後の RAISEIF が巻き戻しの塊を受けた: その pc から続ける
+  def redispatch(step, pc, x)
+    @stats[:redispatch] += 1
+    w = @heap[x[1] + 1][1]
+    unwind(step, pc, w >> 16, w & 0xFFFF, @heap[x[1] + 2], x)
   end
 
   # 空の Hash を h から 13 語に作る (プレリュードの Hash の形: @keys @vals @default @default_proc。変換器が確かめる)
@@ -907,6 +1016,10 @@ class FpgaRefVm
     fault! unless @call_kw.zero? || name == "CALL" || name == "NEW" # キーワード引数を受ける primitive は new と call だけ
     return blkcall(pc, a, argc, blk) if name == "CALL"
     return new_object(step, pc, a, argc, blk) if name == "NEW"
+    if name == "RAISE"
+      @exc = reg(a + 1)
+      return unwind(step, pc, :raise, 0, NIL)
+    end
     x = reg(a)
     case name
     when "ISA", "KINDOF"

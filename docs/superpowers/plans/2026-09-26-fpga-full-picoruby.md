@@ -184,7 +184,25 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 
 - `raise` / `rescue` / `ensure` / `retry` (`EXCEPT` `RESCUE` `RAISEIF` `JMPUW`)。irep の catch handler を ROM の表にする
 - コアの実行時エラー (0 で割る、NoMethodError、型の違い) を例外にし、`rescue` できるようにする。捕まえなければ今と同じく止まる
+- 名指し: exceptions.rb
 
+#### P4 の設計 (PicoRuby の vm.c の L_RAISE / catch_handler_find / OP_EXCEPT / OP_RESCUE / OP_RAISEIF と同じ意味)
+
+段を3つに分ける:
+- **P4a 例外と普通の流れ。** catch handler (種類 rescue / ensure、begin、end、target) を全部の irep から集め、pc (語) に直して
+  ROM の表にする (1語 = {種類, begin, end, target}、irep ごとに後ろから = vm.c の探す順)。表の場所と数は `HTABLE` (FPGA だけの命令、
+  handler がある時だけ pc 1 に置く)。例外はコアのレジスタ `exc` (GC の根)。`raise` はプレリュードで例外を作り、primitive `__raise` で
+  投げる。投げるとコアは今のフレームの pc (呼び出し元のフレームは戻り先 - 1) を覆う handler を表から探し、無ければフレームを畳んで
+  (env は写す) 呼び出し元で探す。見つかれば target へ。一番外まで無ければエラーで止まる。`EXCEPT a` は R[a] = exc (exc は nil に)、
+  `RESCUE a b` は R[b] = R[a].is_a?(R[b]) (ISA の行)、`RAISEIF a` は R[a] が nil でなければ投げ直す。
+  例外のクラスはプレリュード (Exception は組み込みの 15、ほかは Ruby のクラス)。`ensure` は普通の流れ (本体の後に落ちる) と
+  例外の時に動く
+- **P4b return / break / next / JMPUW で ensure を抜ける。** vm.c は RBreak (印の付いた疑似例外) で ensure を走らせてから続ける。
+  最初は「P4a では変換時に止める」つもりだったが、`g { break }` のように ensure を持つメソッドのフレームをブロックの break が
+  畳む所は静的に見つからない (黙って ensure を飛ばす)。止められないので P4a と一緒に作った: 例外と同じ状態機械で、
+  畳むフレームごとに ensure を探し、あれば巻き戻しの塊 (種類、行き先、値) を exc に置いて ensure へ飛び、
+  ensure の最後の RAISEIF が塊を受けて続ける (spec §10「例外 (P4)」)
+- **P4c コアのエラーを例外にする** (NoMethodError、ArgumentError、ZeroDivisionError ...)。P4a では今と同じくエラーで止まる
 ### P5 require とデバイス
 
 - `require` は変換器が解決する。範囲内の gem は組み込み、範囲外は「範囲外」
@@ -210,6 +228,7 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
 | 2026-09-26 | P2 文字列と出力 | 53 | 23 (example は 2 / 32: picoruby-dfu の app_1 / app_2) | 23 | hello.rb、strings.rb を追加。止める理由の上位はデバイス (`start` 14、`connect` 8、`require psg` 8)、`HASH` 4、Float 3 |
 | 2026-09-26 | P3a Hash・Range・Array | 54 | 25 (example は 3 / 32) | 25 | collections.rb を追加。使わないメソッドを ROM から落とす (live_ireps)。上位はデバイス |
 | 2026-09-26 | P3b キーワード引数 | 55 | 26 (example は 3 / 32) | 26 | kwargs.rb を追加。止める理由はデバイス (P5)、Float 3、`getch` など |
+| 2026-09-26 | P4a+b 例外・ensure の巻き戻し | 56 | 27 (example は 3 / 32) | 27 | exceptions.rb を追加。使わないクラスを表から落とす (live_classes)。止める理由はほぼデバイス (P5)。catch handler は止める理由から消えた |
 
 ## 見つけたこと
 
@@ -270,3 +289,17 @@ GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。
   変換器がプレリュードの呼び出しに下げ、回路は印の受け渡しと空の Hash を作るだけにした
 - P3: tb のキーワード引数のケースで、比べるために取っておいたレジスタが呼び出し先のフレームの中にあり、ENTER が nil にした
   (参照インタプリタと RTL は一致していて、テストの誤り)
+- P4: 例外のクラスをプレリュードに 15 足したら、`===` がどのプログラムにもあるので is_a? の行が全クラス分増え、メソッド表が
+  1024 語から 2048 語に倍になり、全プログラムが 1200 語ほど増えた (collections.rb は 8134 語で ROM の端)。生きているクラスだけ
+  表に行を置く (live_classes) にして、+150 語ほど (クラスの定義のコードと `$!`) に戻した
+- P4: ensure を通り抜ける break は、ensure を持つメソッド (yield する側) のフレームをブロックが畳む時にも起きる。
+  ブロックを作った所しか静的には見えないので、「P4b は変換時に止める」はできなかった (黙って ensure を飛ばす)。P4a と一緒に作った
+- P4: `retry` は mruby では rescue 節を覆う ensure (`$!` を戻すためのもの) を通る JMPUW で、巻き戻しの塊を作る。
+  retry を止めていたら、よくある書き方が通らなかった
+- P4: PicoRuby の `Exception#inspect` はメッセージが無ければクラスの名前だけ (`TypeError`)、CRuby 3.3 は `#<TypeError: TypeError>`。
+  PicoRuby に合わせ、CRuby には同じ形の inspect を入れてから比べる。`Exception.new(nil).message` は PicoRuby だけ `""` (CRuby に合わせた)
+- P4: ブロックの中の return が new の initialize のフレームを畳む時、RTL は戻り値で R0 を上書きし、参照は上書きしなかった
+  (コードを読んで見つけた。どのテストも通っていない組み合わせ)。巻き戻しを1つの状態機械にまとめた時に、RTL も上書きしないようにそろえた
+- P4: rom.rb に Enumerator の連鎖 (`each_with_index.any?`) と正規表現のキャプチャを書き、変換器が PicoRuby で走らなくなる所だった。
+  CRuby の突き合わせでは見つからないので、書いたら `rake fpga:corpus` (PicoRuby で変換) を回す
+- P4: fpga:fuzz と fpga:gap を同時に回すと、同じ build/fpga/verilator/mrb_run_tb で Verilator のビルドがぶつかって落ちる

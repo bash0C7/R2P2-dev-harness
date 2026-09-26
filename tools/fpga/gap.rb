@@ -1,7 +1,7 @@
 # 実在の PicoRuby プログラムが FPGA コアでどこまで動くかを測る (rake fpga:gap)。
 #
 # 対象は vendor/picoruby の gem の example と examples/ と fpga/corpus/。1本ずつ mrbc にかけ、
-# 変換を止める理由を「最初の1つ」ではなく全部数える (命令、メソッド、pool、catch handler、require)。
+# 変換を止める理由を「最初の1つ」ではなく全部数える (命令、メソッド、pool、require)。
 # ハードウェアに無いもの (ネットワーク、BLE、TLS、ファイル、USB デバイス、コンパイラ) を require するものは範囲外。
 # 計画: docs/superpowers/plans/2026-09-26-fpga-full-picoruby.md
 require "open3"
@@ -79,7 +79,6 @@ module FpgaGap
         found["Float literal"] = true if e[0] == :float
         found["big integer literal"] = true if e[0] == :bigint || (e[0] == :int && (e[1] < -2**31 || e[1] >= 2**31))
       end
-      found["catch handler (rescue / ensure)"] = true if ir.clen > 0
       decoded[i].each do |insn|
         found["op #{insn.name}"] = true unless FpgaIsa.convertible?(insn.name)
         next unless %w[SEND SEND0 SENDB SSEND SSEND0 SSENDB].include?(insn.name)

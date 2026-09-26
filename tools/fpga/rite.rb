@@ -16,6 +16,8 @@ module Rite
 
   class Irep
     attr_reader :nlocals, :nregs, :rlen, :clen, :iseq, :plen, :pool, :syms, :reps
+    # catch handler: [[種類 (0 rescue / 1 ensure), begin, end, target], ...] (iseq のバイト位置、.mrb の並びのまま)
+    attr_accessor :catches
     # rom.rb が並べた時の番号と、ROM での先頭の語アドレス
     attr_accessor :index, :base
 
@@ -30,6 +32,7 @@ module Rite
       @pool = pool
       @syms = syms
       @reps = reps
+      @catches = []
     end
   end
 
@@ -83,7 +86,12 @@ module Rite
     pos += 12
     iseq = bin.byteslice(pos, ilen)
     raise Error, "iseq runs past the end of the binary" unless iseq && iseq.bytesize == ilen
-    pos += ilen + 13 * clen
+pos += ilen
+catches = []
+clen.times do
+  catches << [bin.getbyte(pos), u32(bin, pos + 1), u32(bin, pos + 5), u32(bin, pos + 9)]
+  pos += 13
+end
 
     plen = u16(bin, pos)
     pos += 2
@@ -112,7 +120,9 @@ module Rite
       child, pos = read_irep(bin, pos)
       reps << child
     end
-    [Irep.new(nlocals, nregs, rlen, clen, iseq, pool, syms, reps), pos]
+    irep = Irep.new(nlocals, nregs, rlen, clen, iseq, pool, syms, reps)
+    irep.catches = catches
+    [irep, pos]
   end
 
   # mruby の src/load.c の POOL BLOCK を1つ読む。[中身, 次の位置]

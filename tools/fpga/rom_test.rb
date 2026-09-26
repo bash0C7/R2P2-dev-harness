@@ -53,7 +53,7 @@ class FpgaRomTest < Minitest::Test
     return if FpgaIsa::OPS[w.op].name != w.insn.name # 置き換えたものの中身は fpga:check と ref_vm_test が見る
 
     case opname
-    when "JMP"
+    when "JMP", "JMPUW"
       assert_equal pc_of.fetch([w.irep.index, fields[0].to_i]), w.b, where
     when "JMPIF", "JMPNOT", "JMPNIL"
       assert_equal "R#{w.a}", fields[0], where

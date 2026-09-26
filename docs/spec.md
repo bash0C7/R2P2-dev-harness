@@ -650,7 +650,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 コーパス駆動で決めた。`fpga/corpus/*.rb` とプレリュード (`fpga/prelude/*.rb`) の `mrbc -v` に出る命令と、同じ族で回路が
 ほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) をコアが実行し
 (`tools/fpga/isa.rb` の `SUPPORTED`)、`SENDB` `SSENDB` `LAMBDA` `MODULE` `LOADSELF` `RETSELF` `RETTRUE` `RETFALSE` は
-変換器がほかの命令にする (`LOWERED`)。FPGA だけの命令は `TABLE` (ROM の先頭、下の「メソッド表と呼び出し」)。
+変換器がほかの命令にする (`LOWERED`)。FPGA だけの命令は `TABLE` (ROM の先頭、下の「メソッド表と呼び出し」) と
+`HTABLE` (例外の表、下の「例外 (P4)」)。
 多重代入 (`a, b = ary`) の `AREF` は、配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
@@ -678,7 +679,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   など) は `[]` を送る。文字列は下の「文字列と出力 (P2)」、Hash・Range は「Hash と Range (P3)」
 - **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`・キーワード (`k:`、`**opts`)、呼び出しの splat (`f(*a)`、`f(**h)`)。**
   下の「引数 (P1d)」
-- **pool の Float と 32bit に収まらない整数、例外 (catch handler) は変換時に止める**
+- **pool の Float と 32bit に収まらない整数は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
 
@@ -797,13 +798,55 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
   名前が使われる (送る、`LOADSYM`、`super`、下げた命令が送る) メソッドを、増えなくなるまでたどる (`live_ireps`)。
   置かないメソッドの中の未対応の命令は止めない
 
+### 例外 (P4)
+
+PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENSURE` / `THROW_TAGGED_BREAK` /
+`OP_EXCEPT` / `OP_RESCUE` / `OP_RAISEIF` / `OP_JMPUW` と同じ意味にした。
+
+- **例外の表。** 変換器が全部の irep の catch handler (種類 rescue / ensure、begin、end、target。iseq のバイト位置) を pc (語) に
+  直し、シンボル表とメソッド表の間に置く。1語 = {種類 << 15 | 飛び先 (op と a の 16bit), begin (b), end (c)}、
+  begin <= pc < end の命令が覆われる (mruby の「次の命令の位置で begin < pc <= end」と同じ)。並びは irep ごとに .mrb の後ろから
+  (vm.c が探す順)。irep の範囲は重ならないので、表を先頭から探して最初に覆うものが vm.c と同じになる。
+  表の位置と数は `HTABLE` (FPGA だけの命令、b = 先頭、c = 数) で、表がある時だけ pc 1 に置く
+- **投げる。** `raise` はプレリュード (`Object#raise`、下) が例外のオブジェクトを作り、primitive `__raise` で投げる。
+  コアは例外をレジスタ `exc` に置き、今のフレームの pc (呼び出し元のフレームは戻り先 − 1 = 呼び出した命令) を覆う
+  rescue か ensure を表から探す。無ければフレームを畳んで (env はレジスタを写す) 呼び出し元で探す。見つかれば target へ。
+  一番外まで無ければエラーで止まる (E 行は投げた命令)
+- **`EXCEPT a`** は R[a] = exc (exc は nil に)、**`RESCUE a b`** は R[b] = R[a].is_a?(R[b]) (`is_a?` と同じ表の行を1回引く。
+  R[b] がクラスでなければエラー。`RESCUE` があれば変換器が行を置く)、**`RAISEIF a`** は R[a] が nil なら何もせず、
+  巻き戻しの塊 (下) なら続きを、ほかは例外として投げ直す
+- **ensure を通り抜ける `return` / `break` / `next` / `JMPUW` (while の中の break、retry)。** mruby の RBreak と同じく、
+  抜ける所 (今のフレームと、畳むフレームの呼び出しの位置) が ensure に覆われていれば、巻き戻しの塊
+  `[HDR(BRK, 2)] [種類 << 16 | 行き先] [値]` (クラス 0x7FF2、ヒープの中だけのもの) を作って exc に置き、ensure へ飛ぶ。
+  ensure の最後の `RAISEIF` がその塊を受け、そこから同じ巻き戻しを続ける。種類は JUMP (`JMPUW`: 同じフレームの pc へ。
+  行き先がその ensure の範囲の中ならただ飛ぶ)、RET (底が行き先のフレームから戻る: `return`、lambda の中の `break`、
+  ブロックの中の `return`)、BRK (Proc を作ったフレームへの `break`)、BRK0 (iterator に直接渡したブロックの `break`)。
+  `JMPUW` は ensure に覆われていなければ変換器がただの `JMP` にする
+- **コアは1つの状態機械で巻き戻す** (S_XSTART → S_XSCAN → S_XHIT / S_XMISS → S_XPOP、塊を作る S_BRKW)。
+  表を 1 cycle に1語比べる。例外の表が無いプログラムの `return` は今までどおり表を引かない。
+  `exc` と運ぶ値 `xval` は GC の根 (cp、env の後、この順)
+- **例外のクラスはプレリュード** (`fpga/prelude/exceptions.rb`)。Exception は組み込みの 15、StandardError RuntimeError
+  ArgumentError TypeError NameError NoMethodError ZeroDivisionError IndexError KeyError StopIteration RangeError
+  LocalJumpError FrozenError ScriptError NotImplementedError は Ruby のクラス。`message` / `to_s` はメッセージが無ければ
+  クラスの名前。**`inspect` は PicoRuby の形** (メッセージが無いか空ならクラスの名前だけ、あれば `#<クラス: メッセージ>`)。
+  CRuby 3.3 は `#<TypeError: TypeError>` と出すので、参照の突き合わせは CRuby に同じ形の `Exception#inspect` を入れる
+  (`FpgaOracle::EXC_INSPECT`)。`Exception.new(nil).message` は CRuby と同じくクラスの名前 (PicoRuby は `""`)
+- **`raise`** は `raise` (今 rescue している `$!` を投げ直す。無ければ RuntimeError "unhandled exception")、`raise "msg"`、
+  `raise Cls`、`raise Cls, "msg"`、`raise obj`。3つ目の引数 (backtrace) は止める。`$!` は一般のグローバル変数
+  (mrbc が rescue の出入りで保存・復元する)。`backtrace` `full_message` は無い (呼べばエラー)
+- **使われないクラスはメソッド表に行を置かない** (`live_classes`)。組み込みと、生きているコードで定数として参照される
+  クラス (親クラス・入れ物・`include` の引数としての参照は、それを使うクラスが生きている時だけ)、本体が self を使う
+  クラス、それらの祖先。プレリュードの例外のクラスは `raise` や `rescue` を使うプログラムでだけ表に載る
+- **まだのもの (P4c):** コアの実行時エラー (0 で割る、NoMethodError、型の違い、引数の数) は例外にならず、今までどおり
+  エラーで止まる (rescue できない)。`loop` は StopIteration を捕まえない
+
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
 一緒に compile する** (`mrbc -o out.mrb fpga/prelude/core.rb prog.rb` で1つの irep になる)。コアはそれを普通のメソッドとして走らせる。
 回路を増やさずに組み込みメソッドを足すため。今あるもの: `Integer#times` `upto` `downto`、`Array#each` `each_with_index` `map`
 `==` `include?` `join` `inspect`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?` `===` `puts` `print` `p` `format`、
-`NilClass#nil?`、`Module#===` `name`、String のメソッド (上の「文字列と出力」)。プレリュードは ROM を 4000 語ほど使う
+`NilClass#nil?`、`Module#===` `name`、String のメソッド (上の「文字列と出力」)、例外のクラスと `raise` (上の「例外 (P4)」)。プレリュードは ROM を 4000 語ほど使う
 (使わないメソッドも全部入る)。CRuby / picoruby でも同じ意味になる書き方だけで書く
 (参照の突き合わせは CRuby の組み込みと比べる)。
 
@@ -827,7 +870,8 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
   入力ポートへの代入は変換時に止める。表に無いグローバル変数は一般のグローバル変数で、定数の表に置き、
   一番外の先頭で nil にする (`LOADNIL R0` + `SETCONST`、self を作る前)
 - **並び: pc 0 に `TABLE`、irep を親・子の順 (深さ優先)、データ (pool の文字列とシンボルの名前、1語 4バイト)、
-  シンボル表 (シンボル番号 → {データの語アドレス, 長さ})、最後にメソッド表。** ROM は 8192 語 (`PC_BITS` = 13)。
+  シンボル表 (シンボル番号 → {データの語アドレス, 長さ})、例外の表 (あれば。pc 1 の `HTABLE` が指す)、最後にメソッド表。**
+  ROM は 8192 語 (`PC_BITS` = 13)。
   入り切らなければ変換時に止める
 - **シンボルはプログラム全体で番号を振る。** 演算の落ち先 (`+ - * / == < <= > >= [] []=`) は 0 から固定
   (`OP_SYMS`、コアが番号を知っている)。`SEND` 系の b、`LOADSYM` / `TDEF` / `SDEF` の b はシンボルの番号
@@ -923,8 +967,8 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 ブロックの中の return、`sleep_ms` の待ち時間も)。
 
 - **1命令 2 cycle は、ヒープとフレームを触らない命令だけ。** 配列・Proc を作る (S_ALLOC → 見出しと中身を1語ずつ)、
-  配列を伸ばす (S_GROW)、GC (S_GC_ROOT → S_GC_SCAN)、外側のフレームをたどる (S_WALK)、`break` / `return` でコールスタックを
-  畳む (S_UNWIND)、メソッド探索 (S_LOOKUP / S_PROBE、1段に 2 cycle + 衝突した語の数)、`sleep_ms` (S_SLEEP) は
+  配列を伸ばす (S_GROW)、GC (S_GC_ROOT → S_GC_SCAN)、外側のフレームをたどる (S_WALK)、例外と `break` / `return` で
+  コールスタックを畳む (S_XSTART から、例外の表を1語ずつ引く)、メソッド探索 (S_LOOKUP / S_PROBE、1段に 2 cycle + 衝突した語の数)、`sleep_ms` (S_SLEEP) は
   数 cycle から数千 cycle かかる。トレースは命令ごとなので影響しない
 
 ### 正しさの基準 (#9)

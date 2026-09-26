@@ -12,7 +12,7 @@ module FpgaFuzz
   # 1本の ROM (48bit 語の配列) を作る。pc 0 は TABLE、前置きで R0..R11 に値 (たいてい Integer) を入れ、
   # 定数を2つ決めてから、ランダムな命令を並べる。後ろにランダムなメソッド表を置く。
   # 前置きが無いと、ほとんどの program が nil への算術ですぐエラーになり浅い
-  PROLOGUE = 17
+  PROLOGUE = 18
   STOPPERS = %w[STOP RETURN RETNIL ENTER BREAK RETURN_BLK].freeze
   TABLE_LOG = 5
   NSYMS = 16 # 呼び出しに使うシンボルの番号は 0..15 (0..10 は演算の落ち先)
@@ -26,6 +26,8 @@ module FpgaFuzz
   def program(rng, len: 40)
     words = []
     words << encode(FpgaIsa.op("TABLE"), TABLE_LOG, 0, 0) # 表の位置は with_table が入れる
+    nh = rng.rand(5) # 例外の表の数 (表はプログラムの後ろ、pc len から)。0 なら例外の表なし
+    words << encode(FpgaIsa.op("HTABLE"), 0, len, nh)
     12.times { |r| words << prologue_load(rng, r) }
     words << encode(FpgaIsa.op("SETCONST"), 1, 0, 0)
     words << encode(FpgaIsa.op("SETCONST"), 2, 1, 0)
@@ -39,6 +41,11 @@ module FpgaFuzz
       # 止まる・戻る命令ばかりだと浅いので、3回に2回は引き直す
       op = ops[rng.rand(ops.size)] while STOPPERS.include?(op.name) && rng.rand(3) > 0
       words << word(rng, op, PROLOGUE + k, len)
+    end
+    # 例外の表: 種類、覆う範囲 (プログラムのどこか)、飛び先
+    nh.times do
+      beg = PROLOGUE + rng.rand(len - PROLOGUE)
+      words << catch_word(rng.rand(2), beg, beg + 1 + rng.rand(8), PROLOGUE + rng.rand(len - PROLOGUE))
     end
     with_table(words, random_table(rng, len))
   end
@@ -112,6 +119,11 @@ module FpgaFuzz
     rng.rand(8).zero? ? 15 : rng.rand(3)
   end
 
+  # 例外の表の1語 (isa.rb の CATCH_*): {種類 << 15 | 飛び先, begin, end}
+  def catch_word(type, beg, en, tgt)
+    ((((type << 15) | tgt) & 0xFFFF) << 32) | ((beg & 0xFFFF) << 16) | (en & 0xFFFF)
+  end
+
   def encode(op, a, b, c)
     (op.num << 40) | ((a & 0xFF) << 32) | ((b & 0xFFFF) << 16) | (c & 0xFFFF)
   end
@@ -130,7 +142,9 @@ module FpgaFuzz
     when "ADDILV", "SUBILV" then b = small.call; c = rng.rand(256)
     when "GETGV", "SETGV" then b = rng.rand(FpgaIoMap::NPORTS + 1)
     when "GETCONST", "SETCONST" then b = rng.rand(4) # 未定義の定数も出るように少ない番号で
-    when "JMP", "JMPIF", "JMPNOT", "JMPNIL" then b = PROLOGUE + rng.rand(len - PROLOGUE + 1) # たまに ROM の外
+    when "JMP", "JMPIF", "JMPNOT", "JMPNIL", "JMPUW" then b = PROLOGUE + rng.rand(len - PROLOGUE + 1) # たまに ROM の外
+    when "HTABLE" then b = len - rng.rand(3); c = rng.rand(6) # 表を差し替える (ずれた位置、多すぎる数もある)
+    when "RESCUE" then b = small.call
     when "SEND", "SEND0", "SSEND", "SSEND0"
       b = rng.rand(NSYMS)
       n = op.name.end_with?("0") ? 0 : argc(rng)
@@ -171,7 +185,7 @@ module FpgaFuzz
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
         maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
-        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38 }.freeze
+        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41 }.freeze
   # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
   HEAP_TEXT = "hello, fpga!"
   HEAP_TABLE_LOG = 6 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
@@ -185,6 +199,8 @@ module FpgaFuzz
     arrs = (8..10).to_a
     words = []
     words << encode(FpgaIsa.op("TABLE"), HEAP_TABLE_LOG, 0, 0)
+    words << :htable
+    catches = [] # [種類, begin, end, 飛び先]
     8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
     words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
     words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
@@ -321,6 +337,13 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("SSEND0"), 12, S[:kwm], 0)
         end
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 13 # 例外: 投げるか ensure を通って戻る raiser を呼び、rescue で受けて投げたもの (配列) を R15 に
+        site = words.size
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SSEND"), 12, S[:raiser], 1)
+        words << encode(FpgaIsa.op("JMP"), 0, words.size + 2, 0)
+        catches << [FpgaIsa::CATCH_RESCUE, site + 1, site + 2, words.size]
+        words << encode(FpgaIsa.op("EXCEPT"), 15, 0, 0)
       when 18 # Symbol#to_s (ROM のシンボル表)
         words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
         words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
@@ -403,6 +426,23 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("ENTER"), 0, 4, 0x800)
     words << encode(FpgaIsa.op("ARRAY"), 1, 1, 0)
     words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    # raiser(x): [x] を投げるか、ensure を通って [x] を返す (ensure は配列を作ってから RAISEIF で続ける)。
+    # 投げるかは R0 (self の整数) の偶奇で。たまに rescue の無い所で投げて止まる
+    raiser_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 6, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("SEND0"), 3, S[:odd], 0)
+    words << encode(FpgaIsa.op("JMPNOT"), 3, raiser_at + 8, 0)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("MOVE"), 4, 2, 0)
+    words << encode(FpgaIsa.op("SEND"), 3, S[:raise], 1)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    catches << [FpgaIsa::CATCH_ENSURE, raiser_at + 7, raiser_at + 9, words.size]
+    words << encode(FpgaIsa.op("EXCEPT"), 3, 0, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 4, 3, rng.rand(3))
+    words << encode(FpgaIsa.op("RAISEIF"), 3, 0, 0)
+    words << encode(FpgaIsa.op("RETNIL"), 0, 0, 0)
     # proc { |a, b| [b, a] }
     pair_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 2, 5, 0)
@@ -416,6 +456,7 @@ module FpgaFuzz
       when :block then encode(FpgaIsa.op("BLOCK"), 11, block_at, 0)
       when :inner then encode(FpgaIsa.op("BLOCK"), 3, inner_at, lam)
       when :pair then encode(FpgaIsa.op("BLOCK"), 12, pair_at, 0)
+      when :htable then encode(FpgaIsa.op("HTABLE"), 0, 0, 0) # 表の位置は後で入れる
       else w
       end
     end
@@ -429,6 +470,8 @@ module FpgaFuzz
       [FpgaIsa::CLS_OBJECT, FpgaIsa::OP_SYMS.index("=="), prim.("OEQ")],
       [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")],
       [FpgaIsa::CLS_INT, S[:vargs], vargs_at], [FpgaIsa::CLS_INT, S[:kwm], kwm_at],
+      [FpgaIsa::CLS_INT, S[:raiser], raiser_at], [FpgaIsa::CLS_INT, S[:raise], prim.("RAISE")],
+      [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],
@@ -443,6 +486,10 @@ module FpgaFuzz
       [FpgaIsa::CLS_OBJECT, S[:isa], prim.("ISA")], [FpgaIsa::CLS_OBJECT, S[:respond], prim.("RESPOND")],
       [FpgaIsa::ISA_BIT | P_CLS, P_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, Q_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, P_CLS, 1]
     ]
+    # 例外の表 (探す順 = 並べた順)。HTABLE (pc 1) に位置と数を入れる
+    hbase = words.size
+    catches.each { |t, b, e, tgt| words << catch_word(t, b, e, tgt) }
+    words[1] = encode(FpgaIsa.op("HTABLE"), 0, hbase, catches.size)
     # データ (1語 4バイト) とシンボル表。TABLE の c がシンボル表の先頭
     data_at = words.size
     text = HEAP_TEXT

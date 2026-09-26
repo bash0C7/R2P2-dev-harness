@@ -47,7 +47,8 @@ module FpgaIsa
   OPS = []
   ALL.each_with_index { |(name, fmt), i| OPS << Op.new(name, i, fmt) }
   # FPGA だけの命令 (mruby の番号の外)。TABLE は ROM の先頭の語: a = メソッド表の大きさの log2、b = 表の先頭の語アドレス
-  EXTRA = [["TABLE", 0xF0, "BS"]].freeze
+# HTABLE は例外の表 (catch handler) の位置と数 (b = 先頭の語アドレス、c = 数)。表がある時だけ pc 1 に置く
+EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"]].freeze
   EXTRA.each { |name, num, fmt| OPS[num] = Op.new(name, num, fmt) }
   OPS.freeze
 
@@ -68,6 +69,7 @@ module FpgaIsa
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
     CLASS EXEC SDEF TABLE GETIV SETIV SUPER
     ARYCAT ARYPUSH APOST ARGARY STRING
+    HTABLE EXCEPT RESCUE RAISEIF JMPUW
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
@@ -81,10 +83,9 @@ module FpgaIsa
   #   GETMCNST / SETMCNST  A::X は変換時に解いて CLASS / GETCONST / SETCONST
   #   STRCAT        SEND a+1 :to_s と SEND a :<< (式展開は新しい STRING から始まるので R[a] を伸ばしてよい)
   #   LOADL         32bit に収まる整数は LOADI32
-  #   JMPUW         catch handler の無い irep ではただの JMP (while の中の break)
   #   HASH HASHADD HASHCAT RANGE_INC RANGE_EXC  プレリュードの Hash / Range を作るメソッドの呼び出し (ARRAY と SEND)
   #   KARG KEY_P KEYEND  キーワード引数の Hash (R[len+1]) のメソッドの呼び出し。キーワード付きの SEND も下げる (rom.rb の kw_lowered)
-  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL JMPUW HASH HASHADD HASHCAT RANGE_INC RANGE_EXC
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL HASH HASHADD HASHCAT RANGE_INC RANGE_EXC
                 KARG KEY_P KEYEND].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
@@ -132,7 +133,9 @@ module FpgaIsa
     # String (Array と同じ形で、1語に1バイト)。ほかのメソッドはプレリュード。__ で始まるものはプレリュードの中身
     ["String", "bytesize", 0, "SBYTES"], ["String", "getbyte", 1, "SGETB"], ["String", "__aset", 2, "SASET"],
     ["String", "__push", 1, "SPUSH"], ["String", "__slice", 2, "SSLICE"], ["Symbol", "to_s", 0, "SYMSTR"],
-    ["Module", "__name_sym", 0, "NAMESYM"]
+    ["Module", "__name_sym", 0, "NAMESYM"],
+    # 例外を投げる (Kernel#raise はプレリュード。引数は例外のオブジェクト)
+    ["Object", "__raise", 1, "RAISE"]
   ].freeze
 
   def self.prim(const_name)
@@ -192,7 +195,18 @@ module FpgaIsa
     cls == CLS_OBJECT || cls == CLS_HASH || cls == CLS_RANGE || cls == CLS_EXC || (cls >= FIRST_USER_CLASS && cls < CLS_DATA)
   end
   CLS_DATA   = 0x7FF0
-  CLS_ENV    = 0x7FF1
+CLS_ENV    = 0x7FF1
+# 巻き戻しの途中 (ensure を走らせてから続ける return / break / JMPUW。mruby の RBreak) を表すヒープの塊。
+#   [HDR(BRK,2)] [INT 種類 << 16 | 行き先] [値]。行き先は JUMP と BRK0 は pc、RET と BRK はフレームの底
+CLS_BRK    = 0x7FF2
+BRK_JUMP = 0 # JMPUW: 同じフレームの行き先 pc へ
+BRK_RET  = 1 # 底が行き先のフレームから戻る (return、lambda の中の break、ブロックの中の return)
+BRK_BRK  = 2 # 親の底が行き先のフレームを畳み、その呼び出しの結果にする (Proc を作ったフレームへの break)
+BRK_BRK0 = 3 # 今のフレームを畳んで行き先 pc へ (iterator に直接渡したブロックの break)
+# 例外の表 (HTABLE の b から c 語)。1語 = {種類 << 15 | 飛び先 (op と a の 16bit), begin (b), end (c)}。
+# begin <= pc < end の命令が覆われる。種類は mruby と同じ 0 = rescue、1 = ensure。探す順に並べる (irep ごとに後ろから)
+CATCH_RESCUE = 0
+CATCH_ENSURE = 1
   FIRST_USER_CLASS = 32
   META = 0x8000
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
