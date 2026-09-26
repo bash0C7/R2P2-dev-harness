@@ -219,6 +219,7 @@ require_relative "../tools/fpga/compare"
 require_relative "../tools/fpga/corpus"
 require_relative "../tools/fpga/gen_pkg"
 require_relative "../tools/fpga/quartus"
+require_relative "../tools/fpga/emu"
 
 FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
@@ -267,6 +268,65 @@ def fpga_runner
                   *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"))
     File.join(mdir, "mrb_run_tb")
   end
+end
+
+# PERIDOT-Air のボードエミュレーターで src を ms だけ走らせ、ピンの変化を表示する。
+# <name>.buttons があればボタンを押す (その時は参照との突き合わせはしない)。返り値は参照と一致したか。
+def fpga_emulate(src, ms:, ce_div:, verbose: true)
+  hex = File.extname(src) == ".hex" ? src : fpga_rom(src)
+  name = File.basename(src, ".*")
+  buttons = File.join(File.dirname(src), "#{name}.buttons")
+  buttons = nil unless File.file?(buttons)
+  sim_ce, k = FpgaEmu.scale(ce_div, fast: ENV["FPGA_EMU_EXACT"].nil?)
+
+  exe = fpga_board_emu(sim_ce, k)
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  log = File.join(FPGA_ROM_DIR, "#{name}.emu.log")
+  cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}"]
+  if buttons
+    plain = File.join(FPGA_ROM_DIR, "#{name}.buttons")
+    File.write(plain, FpgaCompare.read_stim(buttons).map { |r| r.join(" ") + "\n" }.join)
+    cmd << "+button=#{plain}"
+  end
+  out = IO.popen(cmd, err: [:child, :out], &:read)
+  raise "board emulator failed:\n#{out}" unless $?.success? && out.include?("PASS board_emu_tb")
+
+  events = FpgaEmu.read_log(log)
+  if verbose
+    puts "PERIDOT-Air emulation: #{fpga_rel(hex)}, #{ms} ms, CE_DIV=#{ce_div}" +
+         (k > 1 ? " (run with CE_DIV=#{sim_ce}, time x#{k}; FPGA_EMU_EXACT=1 for 1:1)" : "")
+    puts FpgaEmu.format_events(events)
+    unless buttons
+      FpgaEmu.periods(events).each { |pin, sec| puts format("  %-4s flips every %.4f s on average", pin, sec) if sec }
+    end
+  end
+
+  if buttons
+    puts "  #{name}: buttons in #{fpga_rel(buttons)}, not compared with the reference interpreter"
+    ok = true
+  else
+    trace = fpga_ref_trace(hex, stim: nil, max: FpgaEmu.steps_for(ms, ce_div))
+    results = FpgaEmu.check_against_ref(events, trace, FpgaEmu.window_steps(ms, ce_div))
+    results.each { |r_ok, msg| puts "  #{r_ok ? 'ok' : 'FAIL'} #{name} #{msg}" }
+    ok = results.all?(&:first)
+  end
+  puts "log: #{fpga_rel(log)}" if verbose
+  ok
+end
+
+# fpga/sim/board_emu_tb.sv を CE_DIV と時刻の倍率ごとに build する (parameter は build 時に決まる)
+def fpga_board_emu(ce_div, time_scale)
+  mdir = File.join(FPGA_BUILD_DIR, "verilator", "board_emu_#{ce_div}_x#{time_scale}")
+  exe = File.join(mdir, "board_emu")
+  sources = [*fpga_rtl_sources, File.join(FPGA_SIM_DIR, "board_emu_tb.sv")]
+  return exe if File.executable?(exe) && sources.all? { |s| File.mtime(s) < File.mtime(exe) }
+  FileUtils.rm_rf mdir
+  FileUtils.mkdir_p mdir
+  fpga_quiet_sh(File.join(mdir, "build.log"),
+                "verilator", "--binary", "--timing", "--assert", "-Wall", "-O3", "--trace-fst",
+                "-j", "0", "-GCE_DIV=#{ce_div}", "-GTIME_SCALE=#{time_scale}",
+                "--Mdir", mdir, "--top-module", "board_emu_tb", "-o", "board_emu", *sources)
+  exe
 end
 
 # シミュレーションで走らせてトレースを返す。トレースなどは build/fpga/rom/<name>.* に書く
@@ -321,6 +381,25 @@ namespace :fpga do
     puts "waveform: #{fpga_rel(dump)}"
   end
 
+  desc "Emulate PERIDOT-Air (50MHz, CE_DIV, pins) running a .rb/.mrb/.hex for <ms> ms (e.g. rake fpga:emu[fpga/corpus/blink.mrb,2000])"
+  task :emu, [:src, :ms, :ce_div] do |_t, args|
+    raise "usage: rake fpga:emu[<file.rb|file.mrb|file.hex>,<ms>,<CE_DIV>]" unless args[:src]
+    require_fpga_tools!
+    ok = fpga_emulate(args[:src], ms: (args[:ms] || 2000).to_i, ce_div: (args[:ce_div] || 1000).to_i)
+    raise "board emulation differs from the reference interpreter" unless ok
+  end
+
+  namespace :emu do
+    desc "Emulate PERIDOT-Air for every fpga/corpus/*.hex (600 ms, CE_DIV=1000) and compare the LEDs with the reference"
+    task :check do
+      require_fpga_tools!
+      failed = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort.reject do |hex|
+        fpga_emulate(hex, ms: 600, ce_div: 1000, verbose: false)
+      end
+      raise "board emulation differs from the reference: #{failed.map { |h| File.basename(h) }.join(', ')}" unless failed.empty?
+    end
+  end
+
   desc "Run every fpga/corpus/*.hex on the reference interpreter and the simulated core, and compare"
   task :check do
     require_fpga_tools!
@@ -366,8 +445,8 @@ namespace :fpga do
     puts "wrote #{FpgaGenPkg::PATH.sub("#{HARNESS_ROOT}/", '')}"
   end
 
-  desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation"
-  task test: ["test:fpga", "fpga:tb", "fpga:check"]
+  desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation, board emulation"
+  task test: ["test:fpga", "fpga:tb", "fpga:check", "fpga:emu:check"]
 
   # ---- PERIDOT-Air 実機 (issue #10 #11)。合成は Quartus、書き込みは openFPGALoader
   desc "Synthesize for PERIDOT-Air with Quartus (local quartus_sh, or FPGA_QUARTUS_HOST over ssh). e.g. rake fpga:build[fpga/corpus/blink.mrb]"
