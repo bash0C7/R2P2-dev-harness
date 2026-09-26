@@ -84,7 +84,8 @@ module mrb_core
     S_EHASH,              // ENTER: キーワード引数の空の Hash を書く
     // 例外と巻き戻し (ref_vm.rb の unwind): 表の1語目を出す / 1語ずつ比べる / 見つかった / 無かった /
     // フレームを畳む / 巻き戻しの塊を書く
-    S_XSTART, S_XSCAN, S_XHIT, S_XMISS, S_XPOP, S_BRKW
+    S_XSTART, S_XSCAN, S_XHIT, S_XMISS, S_XPOP, S_BRKW,
+    S_CERR                // コアのエラーを例外にする: Integer#__core_error を呼ぶ
   } state_t;
   state_t state;
 
@@ -102,7 +103,8 @@ module mrb_core
     LM_RESPOND, // respond_to?
     LM_NIVARS,  // new のインスタンス変数の数 (親はたどらない、無ければ 0)
     LM_NAME,    // Module#name: (クラス, NAME_SYM) -> 名前のシンボル (親はたどらない、無ければ nil)
-    LM_RESCUE   // RESCUE: is_a? と同じく引いて R[b] に書く
+    LM_RESCUE,  // RESCUE: is_a? と同じく引いて R[b] に書く
+    LM_CERR     // Integer#__core_error (見つからなければエラー停止)
   } lmode_t;
   lmode_t lk_mode;
 
@@ -150,6 +152,9 @@ module mrb_core
   logic [PC_BITS-1:0]  h_tgt;     // 見つかった handler
   logic [15:0]         h_beg, h_end;
   logic                x_deliver; // S_XPOP: 畳んだフレームで巻き戻しを終える
+  logic [2:0]          cx_kind;   // S_CERR: エラーの種類と詳細、[種類, 詳細1, 詳細2] を置くフレームの位置
+  logic [VAL_BITS-1:0] cx_a1, cx_a2;
+  logic [7:0]          cx_base;
   logic [PC_BITS-1:0]  m_rom;     // String を作る時の ROM のデータの語アドレス
   logic [15:0]         m_cls;     // 作る配列の形のオブジェクトのクラス (Array か String)
   logic                m_fromrom; // 要素を ROM のデータから写す (S_SROM)
@@ -498,8 +503,11 @@ module mrb_core
   assign e_pm     = e_lt ? e_mlen : e_m2;
   assign e_skip   = e_lt ? ((e_o != 17'd0 && e_cnt > e_m1 + e_m2) ? e_cnt - e_m1 - e_m2 : 17'd0) : e_o;
   assign e_need   = 17'(b) > e_len + 17'(e_kd) + 17'd2 ? 17'(b) : e_len + 17'(e_kd) + 17'd2;
-  assign e_bad    = 17'(bp) + e_need > 17'(NREGS) || (e_heap && !r1_ary) || (e_fold && argc >= 8'd14) ||
-                    (e_strict && (e_cnt < e_m1 + e_m2 || (e_r == 17'd0 && e_cnt > e_m1 + e_o + e_m2)));
+  // 止めるもの (e_hard) と、引数の数が違う (ArgumentError にできる、e_argnum)
+  logic                e_hard, e_argnum;
+  assign e_hard   = 17'(bp) + e_need > 17'(NREGS) || (e_heap && !r1_ary) || (e_fold && argc >= 8'd14);
+  assign e_argnum = e_strict && (e_cnt < e_m1 + e_m2 || (e_r == 17'd0 && e_cnt > e_m1 + e_o + e_m2));
+  assign e_bad    = e_hard || e_argnum;
   // 必須の引数だけで数が合う (前と同じく、nregs までを埋めるだけ)
   assign e_fast   = !e_heap && e_o == 17'd0 && e_r == 17'd0 && e_m2 == 17'd0 && e_cnt == e_m1 && !e_kd;
   // 空の Hash (13 語: Hash の見出しと 4 つのインスタンス変数、@keys と @vals の空の配列) の k 語目
@@ -583,6 +591,11 @@ module mrb_core
   logic                go_block, go_array, go_set, go_sleep, go_walk, go_lwalk, go_lookup;
   // 例外と巻き戻しを始める (S_XSTART へ)。x_*_n は巻き戻しの種類・行き先・運ぶ値・続ける塊
   logic                go_x, set_exc, clr_exc, set_htable;
+  // Ruby の例外にできるエラー (isa.rb の CERR_*): 例外の表があれば S_CERR で Integer#__core_error を呼ぶ
+  logic                cerr;
+  logic [2:0]          cerr_kind;
+  logic [VAL_BITS-1:0] cerr_a1, cerr_a2;
+  logic [7:0]          cerr_base;
   logic [2:0]          x_kind_n;
   logic [15:0]         x_target_n;
   logic [VAL_BITS-1:0] xval_n, x_brk_n, exc_n;
@@ -636,6 +649,11 @@ module mrb_core
     set_push  = 1'b0;
     set_aset  = 1'b0;
     go_x      = 1'b0;
+    cerr      = 1'b0;
+    cerr_kind = '0;
+    cerr_a1   = V_NIL;
+    cerr_a2   = V_NIL;
+    cerr_base = fn;
     set_exc   = 1'b0;
     clr_exc   = 1'b0;
     set_htable = 1'b0;
@@ -666,6 +684,13 @@ module mrb_core
       case (prim)
         PR_IADD, PR_ISUB, PR_IMUL, PR_IDIV, PR_ILT, PR_ILE, PR_IGT, PR_IGE: begin
           err = prim_argc_bad || !(ra_int && ra1_int) || (prim == PR_IDIV && y == 0);
+          // 引数が Integer でない (比較は ArgumentError、ほかは TypeError)、0 で割る
+          if (!prim_argc_bad && ra_int && !ra1_int) begin
+            cerr = 1'b1; cerr_a1 = ra1;
+            cerr_kind = (prim == PR_ILT || prim == PR_ILE || prim == PR_IGT || prim == PR_IGE) ? CERR_COMPARE : CERR_TYPE;
+          end else if (!prim_argc_bad && ra_int && prim == PR_IDIV && y == 0) begin
+            cerr = 1'b1; cerr_kind = CERR_ZERODIV;
+          end
           case (prim)
             PR_IADD: wval = mk_int(x + y);
             PR_ISUB: wval = mk_int(x - y);
@@ -680,6 +705,11 @@ module mrb_core
         PR_IEQ: begin err = prim_argc_bad || !ra_int; wval = mk_bool(ra == ra1); end
         PR_MOD, PR_NEG, PR_SHL, PR_SHR, PR_AND, PR_OR, PR_XOR, PR_INV, PR_ABS, PR_ZERO, PR_EVEN, PR_ODD: begin
           err = prim_argc_bad || !ra_int || (lk_argc == 7'd1 && !ra1_int);
+          if (!prim_argc_bad && ra_int && lk_argc == 7'd1 && !ra1_int) begin
+            cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra1;
+          end else if (!prim_argc_bad && ra_int && prim == PR_MOD && y == 0) begin
+            cerr = 1'b1; cerr_kind = CERR_ZERODIV;
+          end
           case (prim)
             PR_MOD:  begin err = prim_argc_bad || !ra_int || !ra1_int || y == 0; wval = mk_int(r_floor); end
             PR_NEG:  wval = mk_int(-x);
@@ -794,6 +824,10 @@ module mrb_core
         end
         default: err = 1'b1;
       endcase
+      // 引数の数が違う (回路の primitive)。ほかのどのエラーより先
+      if (prim < 14'(NPRIMS) && prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc}) begin
+        err = 1'b1; cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(32'(lk_argc)); cerr_a2 = mk_int(32'(prim_nargs(prim)));
+      end
     end else begin
       case (op)
         OP_NOP: ;
@@ -879,6 +913,7 @@ module mrb_core
           end else begin
             wr  = 1'b1;
             err = op == OP_DIV && y == 0;
+            if (err) begin cerr = 1'b1; cerr_kind = CERR_ZERODIV; end
             case (op)
               OP_ADD:  wval = mk_int(x + y);
               OP_SUB:  wval = mk_int(x - y);
@@ -941,6 +976,9 @@ module mrb_core
         OP_ENTER: begin
           // 引数を調べて並べ、nregs (b) までのレジスタを nil で埋める。必須の引数だけで数が合えば埋めるだけ
           err = e_bad;
+          if (!e_hard && e_argnum) begin
+            cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(32'(e_cnt)); cerr_a2 = mk_int(32'(17'(e_m1 + e_m2))); cerr_base = b[7:0];
+          end
           if (e_fast) do_enter = 1'b1;
           else go_enter = 1'b1;
         end
@@ -1050,7 +1088,7 @@ module mrb_core
         default: err = 1'b1;
       endcase
       // a を使う命令は bp + a がレジスタファイルに収まっていること (ref_vm.rb と同じ判定)
-      if (!a_ok && !(op == OP_NOP || op == OP_JMP || op == OP_RETNIL || op == OP_STOP || op == OP_TABLE)) err = 1'b1;
+      if (!a_ok && !(op == OP_NOP || op == OP_JMP || op == OP_RETNIL || op == OP_STOP || op == OP_TABLE)) begin err = 1'b1; cerr = 1'b0; end
     end
 
     if (err) begin
@@ -1086,6 +1124,7 @@ module mrb_core
         if (lk_hitr) lkd_err = !lk_kind_pc || sp >= SB'(STACK_DEPTH);
       LM_GETIV: lkd_err = lk_hitr && (!lk_kind_iv || !iv_ok);
       LM_SETIV: lkd_err = !lk_hitr || !lk_kind_iv || !iv_ok;
+      LM_CERR: lkd_err = !lk_hitr || !lk_kind_pc || sp >= SB'(STACK_DEPTH);
       default: ;
     endcase
   end
@@ -1251,7 +1290,13 @@ module mrb_core
             end
             if (clr_exc) exc <= V_NIL;
             gc_done <= 1'b0;
-            if (err) state <= S_ERROR;
+            if (err && cerr) begin
+              cx_kind <= cerr_kind;
+              cx_a1   <= cerr_a1;
+              cx_a2   <= cerr_a2;
+              cx_base <= cerr_base;
+              state   <= S_CERR;
+            end else if (err) state <= S_ERROR;
             else if (halt) state <= S_HALT;
             else if (go_lookup) begin
               // メソッド探索の前の準備 (トレースに出さない書き込み)
@@ -1534,8 +1579,36 @@ module mrb_core
 
           // ---- 引いた結果で分かれる (書き込みは m_we)
           S_LKDONE: begin
-            if (lkd_err) state <= S_ERROR;
+            if (lkd_err && lk_mode == LM_CALL && !lk_hitr) begin
+              // メソッドが無い: NoMethodError (名前、受け手)
+              cx_kind <= CERR_NOMETHOD;
+              cx_a1   <= mk(TAG_SYM, {16'd0, lk_sym});
+              cx_a2   <= ra;
+              cx_base <= fn;
+              state   <= S_CERR;
+            end else if (lkd_err) state <= S_ERROR;
             else case (lk_mode)
+              LM_CERR: begin
+                // Integer#__core_error(詳細1, 詳細2) のフレーム (底は bp + cx_base、ブロックの枠は nil)
+                ret_pc[sp[SB-2:0]]   <= pc + PC_BITS'(1);
+                ret_bp[sp[SB-2:0]]   <= bp;
+                ret_cp[sp[SB-2:0]]   <= cp;
+                ret_env[sp[SB-2:0]]  <= env;
+                ret_fn[sp[SB-2:0]]   <= fn;
+                ret_mcls[sp[SB-2:0]] <= mcls;
+                ret_ctor[sp[SB-2:0]] <= 1'b0;
+                sp                   <= sp + SB'(1);
+                regs[RB'(17'(bp) + 17'(cx_base) + 17'd3)] <= V_NIL;
+                bp                   <= RB'(17'(bp) + 17'(cx_base));
+                cp                   <= V_NIL;
+                env                  <= V_NIL;
+                fn                   <= '0;
+                mcls                 <= lk_fcls;
+                argc                 <= 8'd2;
+                argkw                <= 1'b0;
+                pc                   <= lk_tgt[PC_BITS-1:0];
+                state                <= S_FETCH;
+              end
               LM_CALL, LM_INIT: begin
                 if (!lk_hitr) begin
                   pc    <= pc + PC_BITS'(1); // new で initialize が無い
@@ -1935,6 +2008,27 @@ module mrb_core
             if (m_i >= m_len) heap[s_p + HB'(1)] <= mk_int(32'(m_i) + 32'd1);
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
+          end
+
+          // ---- コアのエラーを例外にする (ref_vm.rb の core_error): 例外の表があれば、フレームの上に
+          //      [種類, 詳細1, 詳細2] を置いて Integer#__core_error を引く (書き込みはトレースに出さない)
+          S_CERR: begin
+            if (hcount == 16'd0 || !(17'(bp) + 17'(cx_base) + 17'd3 < 17'(NREGS))) state <= S_ERROR;
+            else begin
+              regs[RB'(17'(bp) + 17'(cx_base))]         <= mk_int({29'd0, cx_kind});
+              regs[RB'(17'(bp) + 17'(cx_base) + 17'd1)] <= cx_a1;
+              regs[RB'(17'(bp) + 17'(cx_base) + 17'd2)] <= cx_a2;
+              lk_cls   <= CLS_INT;
+              lk_sym   <= SYM_CERR;
+              lk_argc  <= 7'd2;
+              lk_blk   <= 1'b0;
+              lk_kw    <= 1'b0;
+              lk_mode  <= LM_CERR;
+              lk_super <= 1'b0;
+              lk_depth <= '0;
+              lk_hitr  <= 1'b0;
+              state    <= t_on ? S_LOOKUP : S_LKDONE;
+            end
           end
 
           // ---- 例外と巻き戻し (ref_vm.rb の unwind)。xpc を覆う handler を表の順に探す (X_RAISE は rescue と ensure、

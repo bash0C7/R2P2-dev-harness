@@ -33,6 +33,18 @@ class FpgaRefVm
   HALF = FpgaIsa::HEAP_SIZE / 2
 
   class Fault < StandardError; end # 命令の途中のエラー (エラー停止にする)
+  # Ruby の例外にできるエラー (isa.rb の CERR_*)。例外の表があれば Integer#__core_error を呼ぶ (core_error)
+  class CoreError < StandardError
+    attr_reader :kind, :a1, :a2, :base
+
+    def initialize(kind, a1, a2, base = nil)
+      super("core error #{kind}")
+      @kind = kind
+      @a1 = a1
+      @a2 = a2
+      @base = base
+    end
+  end
 
   # stim: [[step, port, value], ...]。step 以降の命令から port の入力が value になる。
   def initialize(words, nregs: FpgaIsa::RF_SIZE, stim: [])
@@ -87,6 +99,8 @@ class FpgaRefVm
         execute(step, pc, op, a, b, c)
       rescue Fault
         :error
+      rescue CoreError => e
+        core_error(pc, e)
       end
       case result
       when :halt
@@ -166,6 +180,27 @@ class FpgaRefVm
 
   def fault!
     raise Fault
+  end
+
+  def core_error!(kind, a1 = NIL, a2 = NIL, base = nil)
+    raise CoreError.new(kind, a1, a2, base)
+  end
+
+  # コアの実行時エラーを例外にする: 例外の表があれば、フレームの上 (fn、ENTER は nregs から) に
+  # [種類, 詳細1, 詳細2] を置いて Integer#__core_error を呼ぶ (書き込みはトレースに出さない)。できなければエラー停止
+  def core_error(pc, e)
+    return :error if @hcount.zero?
+    s = e.base || @fn
+    return :error unless @bp + s + 3 < @regs.size
+    @stats[:core_error] += 1
+    @regs[@bp + s] = int(e.kind)
+    @regs[@bp + s + 1] = e.a1
+    @regs[@bp + s + 2] = e.a2
+    r = lookup(FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"))
+    return :error unless r && (r[0] >> 14) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH
+    @call_kw = 0
+    frame(pc, s, 2, false, r[1])
+    r[0] & 0x3FFF
   end
 
   def ok?(r)
@@ -471,7 +506,7 @@ class FpgaRefVm
       fault! unless ok?(a + window(argc) + @call_kw)
       @regs[@bp + a] = @regs[@bp]
       r = lookup(@mcls, b, super_first: true)
-      fault! unless r
+      core_error!(FpgaIsa::CERR_NOMETHOD, [FpgaIsa::TAG_SYM, b], reg(a)) unless r
       return dispatch(step, pc, a, argc, true, r[0], r[1])
     when "GETIV"
       # (self のクラス, @名前) を引く。無ければ nil
@@ -690,7 +725,7 @@ class FpgaRefVm
     fault! unless ok?(a + window(argc) + @call_kw)
     @regs[@bp + a] = @regs[@bp] if self_call # self を受け手の場所へ (トレースに出さない)
     r = lookup(class_of(reg(a)), sym)
-    fault! unless r
+    core_error!(FpgaIsa::CERR_NOMETHOD, [FpgaIsa::TAG_SYM, sym], reg(a)) unless r
     dispatch(step, pc, a, argc, (c & 0x80) != 0, r[0], r[1])
   end
 
@@ -791,7 +826,7 @@ class FpgaRefVm
     heap = argc == 15 || (!strict && argc == 1 && len > 1 && ary?(reg(1)))
     fault! if heap && !ary?(reg(1))
     cnt = heap ? ary_len(reg(1)) : argc
-    fault! if strict && (cnt < m1 + m2 || (r.zero? && cnt > m1 + o + m2))
+    core_error!(FpgaIsa::CERR_ARGNUM, int(cnt), int(m1 + m2), b) if strict && (cnt < m1 + m2 || (r.zero? && cnt > m1 + o + m2))
     if cnt < len
       mlen = cnt < m1 + m2 ? [cnt - m1, 0].max : m2
       front = cnt - mlen
@@ -1011,7 +1046,7 @@ class FpgaRefVm
   def prim(step, pc, id, a, argc, blk = false)
     pr = FpgaIsa::PRIMS[id]
     fault! unless pr
-    fault! unless pr[2] == -1 || pr[2] == argc
+    core_error!(FpgaIsa::CERR_ARGNUM, int(argc), int(pr[2])) unless pr[2] == -1 || pr[2] == argc
     name = pr[3]
     fault! unless @call_kw.zero? || name == "CALL" || name == "NEW" # キーワード引数を受ける primitive は new と call だけ
     return blkcall(pc, a, argc, blk) if name == "CALL"
@@ -1047,7 +1082,8 @@ class FpgaRefVm
       return pc + 1
     when "IADD", "ISUB", "IMUL", "IDIV", "ILT", "ILE", "IGT", "IGE"
       # 整数の演算をメソッドとして呼んだもの (self * 2 など)。引数も整数でなければエラー
-      fault! unless int?(x) && int?(reg(a + 1))
+      fault! unless int?(x)
+      core_error!(%w[ILT ILE IGT IGE].include?(name) ? FpgaIsa::CERR_COMPARE : FpgaIsa::CERR_TYPE, reg(a + 1)) unless int?(reg(a + 1))
       binop(step, pc, { "IADD" => "ADD", "ISUB" => "SUB", "IMUL" => "MUL", "IDIV" => "DIV",
                         "ILT" => "LT", "ILE" => "LE", "IGT" => "GT", "IGE" => "GE" }[name], a)
       return pc + 1
@@ -1167,12 +1203,13 @@ class FpgaRefVm
               fault! unless int?(y) && signed(y[1]) >= 0
               y
             else
-              fault! unless int?(x) && (y.nil? || int?(y))
+              fault! unless int?(x)
+              core_error!(FpgaIsa::CERR_TYPE, y) unless y.nil? || int?(y)
               sx = signed(x[1])
               sy = y && signed(y[1])
               case name
               when "MOD"
-                fault! if sy.zero?
+                core_error!(FpgaIsa::CERR_ZERODIV) if sy.zero?
                 int(sx % sy) # Ruby の % は floor 側に丸めた余り
               when "NEG" then int(-sx)
               when "SHL" then shift_left(sx, sy)
@@ -1216,7 +1253,7 @@ class FpgaRefVm
             when "SUB" then int(sx - sy)
             when "MUL" then int(sx * sy)
             when "DIV"
-              fault! if sy.zero?
+              core_error!(FpgaIsa::CERR_ZERODIV) if sy.zero?
               int(sx.div(sy)) # Ruby の / は floor 側に丸める。INT_MIN / -1 は折り返して INT_MIN
             when "LT"  then bool(sx < sy)
             when "LE"  then bool(sx <= sy)

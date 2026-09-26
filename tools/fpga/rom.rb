@@ -249,7 +249,7 @@ module FpgaRom
       end
       ir.base = base
       base += 1 if ctx.bodies[ir.index]
-      base += 2 + 2 * ctx.globals.size if ir.index == 0
+      base += 2 + 2 * ctx.globals.size + (handlers ? 1 : 0) if ir.index == 0
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
@@ -269,12 +269,15 @@ module FpgaRom
       next unless ctx.live[i]
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
       if ir.index == 0
+        # 例外の表があれば一番外にも ENTER (fn = nregs。コアのエラーの __core_error をその上で呼ぶ)
+        e = handlers ? 1 : 0
+        words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if handlers
         # 一般のグローバル変数を nil に (R0 を借りる)、self (main) を作る
         ctx.globals.each_with_index do |g, j|
-          words << Word.new(ir.base + 2 * j, nil, FpgaIsa.op("LOADNIL").num, 0, 0, 0, ir, false)
-          words << Word.new(ir.base + 2 * j + 1, nil, FpgaIsa.op("SETCONST").num, 0, ctx.consts.fetch(g), 0, ir, false)
+          words << Word.new(ir.base + e + 2 * j, nil, FpgaIsa.op("LOADNIL").num, 0, 0, 0, ir, false)
+          words << Word.new(ir.base + e + 2 * j + 1, nil, FpgaIsa.op("SETCONST").num, 0, ctx.consts.fetch(g), 0, ir, false)
         end
-        g = 2 * ctx.globals.size
+        g = e + 2 * ctx.globals.size
         words << Word.new(ir.base + g, nil, FpgaIsa.op("CLASS").num, 0, FpgaIsa::CLS_OBJECT, 0, ir, false)
         words << Word.new(ir.base + g + 1, nil, FpgaIsa.op("SEND0").num, 0, ctx.sym_id("new"), 0, ir, false)
       end
@@ -322,12 +325,12 @@ module FpgaRom
       words[1] = Word.new(1, nil, FpgaIsa.op("HTABLE").num, 0, hbase, words.size - hbase, top, false)
     end
         size = 16
-    size *= 2 while size < entries.size * 2
+    size *= 2 while size * 2 < entries.size * 3 # 詰め率 2/3 まで
     log2 = 0
     log2 += 1 while (1 << log2) < size
     tbase = words.size
     if tbase + size > (1 << FpgaIsa::PC_BITS)
-      raise Error, "#{source}: the program and its method table need #{tbase + size} words, the ROM has #{1 << FpgaIsa::PC_BITS}"
+      raise Error, "#{source}: the program and its method table need #{tbase + size} words, the ROM has #{1 << FpgaIsa::PC_BITS} (code #{data_base}, data #{symtab - data_base}, symbols #{hbase - symtab}, handlers #{tbase - hbase}, table #{size})"
     end
     slots = Array.new(size)
     entries.each do |cls, sym, tgt|
@@ -361,7 +364,7 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class
+                :method_names, :noops, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value
     attr_accessor :class_live # クラスの番号 -> メソッド表に行を置くか (live_classes)
     attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
@@ -391,6 +394,7 @@ module FpgaRom
       @const_keys = {}
       @lambdas = {}
       @symbols = {}
+      @class_value = {} # クラスの番号 -> 値として現れ得るか (live_classes)
       @body_class = {} # クラスの本体の irep の番号 -> そのクラス
       @class_deps = {} # 親クラス・入れ物・include の引数の定数の場所 -> それを使うクラス (そのクラスが生きていれば生きる)
       FpgaIsa::OP_SYMS.each { |s| sym_id(s) } # 演算の落ち先は固定の番号
@@ -485,9 +489,6 @@ module FpgaRom
     nil
   end
 
-  # 生きている irep (ROM に置くもの)。一番外から、生きているコードの中のブロック・クラスの本体と、
-  # 名前が使われる (送る、LOADSYM、super、変換器が下げた命令が送る) メソッドを、増えなくなるまでたどる。
-  # 演算の落ち先 (OP_SYMS、initialize を含む) はいつも使われる
   # 生きているクラス (メソッド表に行を置くもの): 組み込みと、生きているコードで定数として参照されるもの
   # (ただし親クラス・入れ物・include の引数としての参照は、それを使うクラスが生きている時だけ)、
   # 本体が self を使うもの (メソッドを送る、ブロックを作る)、生きているクラスの祖先と include したモジュール
@@ -505,10 +506,11 @@ module FpgaRom
       end
     end
     ctx.classes.each { |k| mark.call(k) if k.id < FpgaIsa::FIRST_USER_CLASS }
+    # 値として現れ得るクラス (is_a? の引数になり得る): 組み込みと、定数として参照されるもの、本体が self を使うもの
+    ctx.classes.each { |k| ctx.class_value[k.id] = true if k.id < FpgaIsa::FIRST_USER_CLASS }
     ireps.each_with_index do |ir, i|
       next unless ctx.live[i]
       insns = decoded[i]
-      body = nil
       body = ctx.body_class[ir.index]
       insns.each_with_index do |insn, k|
         name = insn.name
@@ -516,6 +518,7 @@ module FpgaRom
            (%w[SEND SEND0 SENDB SSEND SSEND0 SSENDB SUPER BLOCK LAMBDA].include?(name) ||
             (name == "LOADSELF" && !(insns[k + 1] && insns[k + 1].name == "SDEF")) || (name == "MOVE" && insn.operands[1] == 0))
           mark.call(body)
+          ctx.class_value[body.id] = true
         end
         next unless name == "GETCONST" || name == "GETMCNST"
         kl = const_class(ctx, ir, insns, k)
@@ -527,6 +530,7 @@ module FpgaRom
           mark.call(kl) if live[user.id]
         else
           mark.call(kl)
+          ctx.class_value[kl.id] = true
         end
       end
     end
@@ -551,7 +555,24 @@ module FpgaRom
     base && ctx.klass_named(base) ? ctx.klass_named("#{base}::#{sym}") : nil
   end
 
+  # 生きている irep (ROM に置くもの)。メソッドは「名前が使われる」(送る、LOADSYM、super、変換器が下げた命令が送る。
+  # 演算の落ち先 OP_SYMS はいつも) かつ「そのクラスのオブジェクト (クラスメソッドならクラスの値) ができ得る」時に生きる。
+  # 生きているコードがオブジェクトを作り得るクラス (receivers) を増やし、増えなくなるまで繰り返す (最小の不動点なので、
+  # 実行時に呼ばれ得るメソッドは必ず残る)
   def self.live_ireps(ireps, decoded, ctx)
+    recv = {}
+    mrecv = {}
+    loop do
+      live, used = live_pass(ireps, decoded, ctx, recv, mrecv)
+      r2, m2 = receivers(ireps, decoded, ctx, live, used)
+      return live if r2.size == recv.size && m2.size == mrecv.size
+      recv = r2
+      mrecv = m2
+    end
+  end
+
+  # recv / mrecv (クラスの番号 -> true) のもとで、一番外から生きている irep をたどる。[live, used]
+  def self.live_pass(ireps, decoded, ctx, recv, mrecv)
     live = Array.new(ireps.size, false)
     used = {}
     waiting = {} # 名前 -> その名前の、まだ生きていないメソッドの irep の番号
@@ -562,12 +583,13 @@ module FpgaRom
         (waiting.delete(name) || []).each { |j| todo << j }
       end
     end
-    FpgaIsa::OP_SYMS.each { |s| use.call(s) }
+    FpgaIsa::OP_SYMS.each { |s| use.call(s) unless s == "__core_error" }
     until todo.empty?
       i = todo.pop
       next if live[i]
       live[i] = true
       ir = ireps[i]
+      use.call("__core_error") unless ir.catches.empty? # 例外の表があればコアのエラーを例外にする
       decoded[i].each do |insn|
         ops = insn.operands
         case insn.name
@@ -591,6 +613,9 @@ module FpgaRom
         when "RANGE_EXC" then use.call("__range_exc")
         when "EXEC", "BLOCK", "LAMBDA" then todo << ir.reps[ops[1]].index
         when "TDEF", "SDEF"
+          owner = ctx.scope[ir.index]
+          # def self.x はクラスの値が、def x はオブジェクトができ得る時だけ
+          next unless insn.name == "SDEF" ? mrecv[owner.id] : recv[owner.id]
           m = ir.reps[ops[2]].index
           name = ir.syms[ops[1]]
           if used[name]
@@ -602,7 +627,64 @@ module FpgaRom
         end
       end
     end
-    live
+    [live, used]
+  end
+
+  # 生きているコードでオブジェクトができ得るクラス (とその祖先) と、値になり得るクラス (とその親、メタクラスのメソッド用)。
+  # [recv, mrecv]。オブジェクトができるのは: いつもあるもの (main、nil、true、false、Integer、Symbol、クラスの値)、
+  # 命令が作るもの (配列、文字列、Proc、ENTER が作る残りの配列と空の Hash)、値として現れるクラス (new できる。class で取れる)
+  def self.receivers(ireps, decoded, ctx, live, used)
+    inst = {}
+    %w[Object NilClass TrueClass FalseClass Integer Symbol Class Module].each { |n| inst[FpgaIsa.class_id(n)] = true }
+    inst[FpgaIsa::CLS_STRING] = true if used["to_s"] # Symbol#to_s (primitive) が String を作る
+    vals = {}
+    ireps.each_with_index do |ir, i|
+      next unless live[i]
+      insns = decoded[i]
+      body = ctx.body_class[ir.index]
+      insns.each_with_index do |insn, k|
+        name = insn.name
+        case name
+        when "ARRAY", "ARRAY2", "ARYCAT", "ARYPUSH", "APOST", "ARGARY", "HASH", "HASHADD" then inst[FpgaIsa::CLS_ARRAY] = true
+        when "STRING", "STRCAT" then inst[FpgaIsa::CLS_STRING] = true
+        when "BLOCK", "LAMBDA" then inst[FpgaIsa::CLS_PROC] = true
+        when "ENTER"
+          x = insn.operands[0]
+          inst[FpgaIsa::CLS_ARRAY] = true if ((x >> 12) & 1) == 1
+          inst[FpgaIsa::CLS_HASH] = true if ((x >> 2) & 0x1F) > 0 || ((x >> 1) & 1) == 1
+        when "SEND", "SENDB", "SSEND", "SSENDB", "SUPER"
+          inst[FpgaIsa::CLS_ARRAY] = true if ((name == "SUPER" ? insn.operands[1] : insn.operands[2]) >> 4) > 0 # キーワードは配列から Hash を作る
+        when "GETCONST", "GETMCNST"
+          kl = const_class(ctx, ir, insns, k)
+          vals[kl.id] = true if kl && !ctx.class_deps[site_key(ir, k)]
+        end
+        if body && !ctx.noops[site_key(ir, k)] &&
+           (%w[SEND SEND0 SENDB SSEND SSEND0 SSENDB SUPER BLOCK LAMBDA].include?(name) ||
+            (name == "LOADSELF" && !(insns[k + 1] && insns[k + 1].name == "SDEF")) || (name == "MOVE" && insn.operands[1] == 0))
+          vals[body.id] = true
+        end
+      end
+    end
+    vals.each_key { |id| inst[id] = true }
+    inst.each_key { |id| vals[id] = true }
+    recv = {}
+    inst.each_key do |id|
+      cur = ctx.klass_id(id)
+      while cur && !recv[cur.id]
+        recv[cur.id] = true
+        recv[cur.origin.id] = true if cur.origin
+        cur = cur.super_id ? ctx.klass_id(cur.super_id) : nil
+      end
+    end
+    mrecv = {}
+    vals.each_key do |id|
+      cur = ctx.klass_id(id)
+      while cur && !mrecv[cur.id]
+        mrecv[cur.id] = true
+        cur = cur.real_super_id ? ctx.klass_id(cur.real_super_id) : nil
+      end
+    end
+    [recv, mrecv]
   end
 
   # k 番目の命令で R[reg] に入っている定数の path (GETCONST / GETMCNST の連なりを字句の入れ子で解く)。
@@ -995,19 +1077,14 @@ module FpgaRom
       attr_entries(ctx, k, k.attrs, layout, entries)
       entries << [k.id, FpgaIsa::NIVARS_SYM, layout.size] unless layout.empty?
     end
-    # is_a? / kind_of? / === (祖先ごとに1語。名前が出てくる時だけ)
+    # is_a? / kind_of? / === / rescue (祖先ごとに1語。名前が出てくる時だけ)。引数になり得るのは値として現れ得るクラスだけ
+    # (メタクラスの番号は値にならない: クラスの class は Class)。クラスの即値は Class・Module・Object の行
     if ctx.need_isa || %w[is_a? kind_of? ===].any? { |n| ctx.symbols.key?(n) }
       ctx.classes.each do |k|
-      next unless ctx.class_live[k.id]
+        next unless ctx.class_live[k.id]
         next if k.is_module || k.origin
-        ancestors(ctx, k).uniq.each { |a| entries << [FpgaIsa::ISA_BIT | k.id, a, 1] }
-        meta = []
-        cur = k
-        while cur
-          meta << (FpgaIsa::META | cur.id)
-          cur = cur.real_super_id ? ctx.klass_id(cur.real_super_id) : nil
-        end
-        (meta + [FpgaIsa::CLS_CLASS, FpgaIsa.class_id("Module"), FpgaIsa::CLS_OBJECT]).each do |a|
+        ancestors(ctx, k).uniq.each { |a| entries << [FpgaIsa::ISA_BIT | k.id, a, 1] if ctx.class_value[a] }
+        [FpgaIsa::CLS_CLASS, FpgaIsa.class_id("Module"), FpgaIsa::CLS_OBJECT].each do |a|
           entries << [FpgaIsa::ISA_BIT | FpgaIsa::META | k.id, a, 1]
         end
       end

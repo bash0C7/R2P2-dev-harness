@@ -60,6 +60,9 @@ module FpgaGenPkg
     FpgaIsa::PRIMS.each_with_index do |(cls, n, k, const), i|
       lines << format("  localparam logic [13:0] PR_%-8s = 14'd%d; // %s#%s (%s)", const, i, cls, n, k < 0 ? "any" : "#{k} arg")
     end
+    lines << "  localparam int NPRIMS = #{FpgaIsa::PRIMS.size};"
+    lines << "  // コアの実行時エラーの種類 (Integer#__core_error の受け手)"
+    %w[ZERODIV NOMETHOD ARGNUM TYPE COMPARE].each { |k| lines << format("  localparam logic [2:0] CERR_%-8s = 3'd%d;", k, FpgaIsa.const_get("CERR_#{k}")) }
     lines << "  // 引数の数 (8'hff は何個でも)"
     lines << "  function automatic logic [7:0] prim_nargs(input logic [13:0] p);"
     lines << "    case (p)"
@@ -88,7 +91,7 @@ module FpgaGenPkg
   # 演算の落ち先のシンボルの名前を SystemVerilog の識別子にする
   OP_SYM_NAMES = {
     "+" => "ADD", "-" => "SUB", "*" => "MUL", "/" => "DIV", "==" => "EQ", "<" => "LT", "<=" => "LE", ">" => "GT",
-    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET", "initialize" => "INIT"
+    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET", "initialize" => "INIT", "__core_error" => "CERR"
   }.freeze
 
   def write

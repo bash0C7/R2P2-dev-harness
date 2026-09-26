@@ -416,8 +416,31 @@ class Object
     Range.new(self, last, true)
   end
 
+  # Integer("12") は厳しく読む (数字でない文字があれば ArgumentError)。0x 0b 0o 0 の接頭辞と _ の区切り
   def Integer(x)
-    x.is_a?(String) ? x.to_i : x.to_i
+    raise TypeError, "can't convert nil into Integer" if x.nil?
+    return x.to_i unless x.is_a?(String)
+    s = x.strip
+    neg = s.start_with?("-")
+    s = s[1, s.size - 1] if neg || s.start_with?("+")
+    base = 10
+    if s.size > 1 && s.getbyte(0) == 48
+      c = s.getbyte(1) | 0x20
+      if c == 120 then base = 16
+      elsif c == 98 then base = 2
+      elsif c == 111 then base = 8
+      else base = 8
+      end
+      s = s[(c == 120 || c == 98 || c == 111) ? 2 : 1, s.size]
+    end
+    ok = !s.empty? && s.getbyte(0) != 95 && s.getbyte(s.size - 1) != 95 && !s.include?("__")
+    s.each_char do |ch|
+      d = ch == "_" ? 0 : "0123456789abcdef".index(ch.downcase)
+      ok = false if d.nil? || d >= base
+    end
+    raise ArgumentError, "invalid value for Integer(): #{x.inspect}" unless ok
+    n = s.to_i(base)
+    neg ? -n : n
   end
 
   def Array(x)
@@ -731,7 +754,7 @@ class Hash
     return @vals.__aget(i) if i
     return yield(key) if block_given?
     return default[0] unless default.empty?
-    __key_not_found(key)
+    raise KeyError, "key not found: #{key.inspect}"
   end
 
   def key?(key)
@@ -972,11 +995,11 @@ class Hash
   # キーワード引数 (KARG / KEYEND を変換器がこの呼び出しにする)。KARG は Hash から消す (**opts には残りが入る)
   def __karg(key)
     return delete(key) if key?(key)
-    __missing_keyword(key)
+    raise ArgumentError, "missing keyword: #{key.inspect}"
   end
 
   def __keyend
-    __unknown_keyword(@keys.__aget(0)) unless empty?
+    raise ArgumentError, "unknown keyword: #{@keys.__aget(0).inspect}" unless empty?
   end
 end
 
@@ -1002,7 +1025,7 @@ class Array
   def [](i, n = nil)
     if n.nil?
       return __aget(i) if i.is_a?(Integer)
-      __not_an_index(i) unless i.is_a?(Range)
+      raise TypeError, "no implicit conversion of #{i.class} into Integer" unless i.is_a?(Range)
       len = size
       s = i.begin
       s += len if s < 0

@@ -107,8 +107,15 @@ EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"]].freeze
   MAX_SUPER_DEPTH = 32
 
   # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
-  # 最後の initialize は new が送るメソッド (コアが番号を知っている)
-  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize].freeze
+# initialize は new が送るメソッド、__core_error はコアの実行時エラーを例外にするプレリュードのメソッド (コアが番号を知っている)
+OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error].freeze
+# コアの実行時エラーの種類 (Integer#__core_error の受け手)。例外の表があるプログラムでだけ、コアはエラーで止まらずに
+# フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて __core_error を呼ぶ (プレリュードが例外を作って投げる)
+CERR_ZERODIV  = 1 # 0 で割った
+CERR_NOMETHOD = 2 # メソッドが無い (詳細: 名前のシンボル、受け手)
+CERR_ARGNUM   = 3 # 引数の数が違う (詳細: 渡した数、要る数)
+CERR_TYPE     = 4 # Integer の演算の引数が Integer でない (詳細: 引数)
+CERR_COMPARE  = 5 # Integer の比較の引数が Integer でない (詳細: 引数)
 
   def self.table_hash(cls, sym, mask)
     (cls * 5 + sym) & mask
