@@ -31,6 +31,7 @@ module FpgaGenPkg
       lines << format("  localparam logic [15:0] CLS_%-6s = 16'd%d;", k, FpgaIsa.const_get("CLS_#{k}"))
     end
     lines << "  localparam logic [15:0] CLS_META   = 16'h#{FpgaIsa::META.to_s(16)};"
+    lines << "  localparam logic [15:0] FIRST_USER_CLASS = 16'd#{FpgaIsa::FIRST_USER_CLASS};"
     lines << ""
     lines << "  // コアの大きさ (tools/fpga/isa.rb)"
     lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"
@@ -42,6 +43,10 @@ module FpgaGenPkg
     lines << "  localparam int MAX_SUPER_DEPTH = #{FpgaIsa::MAX_SUPER_DEPTH};"
     lines << "  localparam logic [1:0] TGT_PC = 2'd#{FpgaIsa::TGT_PC};"
     lines << "  localparam logic [1:0] TGT_PRIM = 2'd#{FpgaIsa::TGT_PRIM};"
+    lines << "  localparam logic [1:0] TGT_IVAR = 2'd#{FpgaIsa::TGT_IVAR};"
+    lines << "  localparam logic [1:0] TGT_IVSET = 2'd#{FpgaIsa::TGT_IVSET};"
+    lines << "  localparam logic [15:0] NIVARS_SYM = 16'h#{FpgaIsa::NIVARS_SYM.to_s(16)};"
+    lines << "  localparam logic [15:0] ISA_BIT = 16'h#{FpgaIsa::ISA_BIT.to_s(16)};"
     lines << "  // 演算の命令の落ち先のシンボルの番号 (OP_SYMS)"
     FpgaIsa::OP_SYMS.each_with_index do |s, i|
       lines << format("  localparam logic [15:0] SYM_%-4s = 16'd%d; // %s", OP_SYM_NAMES.fetch(s), i, s)
@@ -79,7 +84,7 @@ module FpgaGenPkg
   # 演算の落ち先のシンボルの名前を SystemVerilog の識別子にする
   OP_SYM_NAMES = {
     "+" => "ADD", "-" => "SUB", "*" => "MUL", "/" => "DIV", "==" => "EQ", "<" => "LT", "<=" => "LE", ">" => "GT",
-    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET"
+    ">=" => "GE", "[]" => "AREF", "[]=" => "ASET", "initialize" => "INIT"
   }.freeze
 
   def write

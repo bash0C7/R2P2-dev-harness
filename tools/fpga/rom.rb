@@ -81,11 +81,19 @@ module FpgaRom
           cls = (w.op << 8) | w.a
           kind = w.c >> 14
           tgt = w.c & 0x3FFF
+          isa = (cls & FpgaIsa::ISA_BIT) != 0
           what = if w.b == FpgaIsa::SUPER_SYM then "super #{w.c}"
+                 elsif w.b == FpgaIsa::NIVARS_SYM then "ivars #{w.c}"
+                 elsif isa then "is_a"
                  elsif kind == FpgaIsa::TGT_PRIM then "prim #{FpgaIsa::PRIMS[tgt] ? FpgaIsa::PRIMS[tgt][3] : tgt}"
+                 elsif kind == FpgaIsa::TGT_IVAR then "ivar #{tgt}"
+                 elsif kind == FpgaIsa::TGT_IVSET then "ivar= #{tgt}"
                  else "pc #{tgt}"
                  end
-          sym = w.b == FpgaIsa::SUPER_SYM ? "-" : ":#{symbols[w.b]}"
+          sym = if w.b == FpgaIsa::SUPER_SYM || w.b == FpgaIsa::NIVARS_SYM then "-"
+                elsif isa then "class #{w.b}"
+                else ":#{symbols[w.b]}"
+                end
           out << format("%4d  class %-5d %-18s %s\n", w.pc, cls, sym, what)
           next
         end
@@ -108,18 +116,31 @@ module FpgaRom
     end
   end
 
-  # クラスとモジュール。methods / meta_methods はメソッド名 -> 中身の irep
+  # クラスとモジュール。methods / meta_methods はメソッド名 -> 中身の irep。
+  # super_id はメソッド探索の親 (include した iclass を含む)、real_super_id は本当の親クラス。
+  # ivar_names は自分のメソッドに出るインスタンス変数、attrs は attr_* (名前 -> "r" / "w" / "rw")、
+  # includes は include したモジュール、origin は iclass の元のモジュール
   class Klass
-    attr_reader :name, :id, :methods, :meta_methods, :is_module
-    attr_accessor :super_id
+    attr_reader :name, :id, :methods, :meta_methods, :is_module, :ivar_names, :attrs, :includes, :cvars
+    attr_accessor :super_id, :real_super_id, :origin, :owner
 
     def initialize(name, id, super_id, is_module)
       @name = name
       @id = id
       @super_id = super_id
+      @real_super_id = super_id
       @is_module = is_module
       @methods = {}
       @meta_methods = {}
+      @ivar_names = []
+      @attrs = {}
+      @includes = []
+      @cvars = []
+      @origin = nil
+    end
+
+    def add_ivar(name)
+      @ivar_names << name unless @ivar_names.include?(name)
     end
   end
 
@@ -160,13 +181,16 @@ module FpgaRom
 
     ctx = Context.new(source, decoded)
     analyze(top, ctx.object, ctx)
+    add_iclasses(ctx)
 
-    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める。pc 0 は TABLE、クラスの本体は先頭に ENTER を足す
+    # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める。pc 0 は TABLE、クラスの本体は先頭に ENTER を足し、
+    # 一番外は先頭で self (main) を作る (CLASS R0 Object、SEND R0 :new)
     base = 1
     pc_of = []
     ireps.each_with_index do |ir, i|
       ir.base = base
       base += 1 if ctx.bodies[ir.index]
+      base += 2 if ir.index == 0
       table = {}
       decoded[i].each_with_index do |insn, k|
         table[insn.addr] = base
@@ -179,6 +203,10 @@ module FpgaRom
     words = [nil]
     ireps.each_with_index do |ir, i|
       words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false) if ctx.bodies[ir.index]
+      if ir.index == 0
+        words << Word.new(ir.base, nil, FpgaIsa.op("CLASS").num, 0, FpgaIsa::CLS_OBJECT, 0, ir, false)
+        words << Word.new(ir.base + 1, nil, FpgaIsa.op("SEND0").num, 0, ctx.sym_id("new"), 0, ir, false)
+      end
       decoded[i].each_with_index do |insn, k|
         pc = pc_of[i][insn.addr]
         specs = lowered(insn, ir, k, pc, ctx)
@@ -229,7 +257,8 @@ module FpgaRom
   #   bodies: クラスの本体の irep の番号 -> true。parents: ブロックの irep の番号 -> 作った irep
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
-    attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys
+    attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
+                :method_names, :noops
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
     attr_accessor :symbols # シンボルの名前 -> 番号 (出てきた順)
 
@@ -238,8 +267,11 @@ module FpgaRom
       @decoded = decoded
       @classes = []
       FpgaIsa::CLASSES.each do |name, id|
-        @classes << Klass.new(name, id, name == "Object" ? nil : FpgaIsa::CLS_OBJECT, false)
+        sup = { "Object" => nil, "Class" => FpgaIsa.class_id("Module") }.fetch(name, FpgaIsa::CLS_OBJECT)
+        @classes << Klass.new(name, id, sup, name == "Module" ? false : false)
       end
+      @method_names = {} # メソッドの irep の番号 -> 名前 (super が使う)
+      @noops = {}        # クラスの本体の attr_* / include / private など (実行時は何もしない) の場所 -> true
       @scope = {}
       @bodies = {}
       @parents = {}
@@ -358,6 +390,7 @@ module FpgaRom
       when "TDEF"
         m = irep.reps[ops[2]]
         scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
+        ctx.method_names[m.index] = irep.syms[ops[1]]
         analyze(m, scope, ctx)
       when "SDEF"
         d = prev_def(insns, k, ops[0])
@@ -366,6 +399,7 @@ module FpgaRom
         end
         m = irep.reps[ops[2]]
         scope.meta_methods[irep.syms[ops[1]]] = m
+        ctx.method_names[m.index] = irep.syms[ops[1]]
         analyze(m, scope, ctx)
       when "BLOCK", "LAMBDA"
         block = irep.reps[ops[1]]
@@ -386,11 +420,97 @@ module FpgaRom
         end
       when "SSEND", "SSEND0"
         sym = irep.syms[ops[1]]
-        if ctx.bodies[irep.index] && %w[attr_reader attr_writer attr_accessor include extend private public protected].include?(sym)
-          raise Error, "#{source}: #{sym} in a class body at #{where(irep, insn)} is not supported yet"
+        next unless ctx.bodies[irep.index]
+        argc = insn.name == "SSEND0" ? 0 : ops[2] & 0xF
+        case sym
+        when "attr_reader", "attr_writer", "attr_accessor"
+          argc.times do |j|
+            d = prev_def(insns, k, ops[0] + 1 + j)
+            raise Error, "#{source}: #{sym} at #{where(irep, insn)} takes symbols only" unless d && d.name == "LOADSYM"
+            name = irep.syms[d.operands[1]]
+            mode = { "attr_reader" => "r", "attr_writer" => "w", "attr_accessor" => "rw" }[sym]
+            scope.attrs[name] = ((scope.attrs[name] || "") + mode)
+            scope.add_ivar("@#{name}")
+          end
+          ctx.noops[site_key(irep, k)] = true
+        when "include"
+          argc.times do |j|
+            d = prev_def(insns, k, ops[0] + 1 + j)
+            raise Error, "#{source}: include at #{where(irep, insn)} takes module constants only" unless d && d.name == "GETCONST"
+            mname = irep.syms[d.operands[1]]
+            mod = nil
+            ctx.lexical_names(scope, mname).each { |n| mod ||= ctx.klass_named(n) }
+            raise Error, "#{source}: #{mname} at #{where(irep, insn)} is not a known module" unless mod && mod.is_module
+            scope.includes << mod
+          end
+          ctx.noops[site_key(irep, k)] = true
+        when "private", "public", "protected", "module_function"
+          ctx.noops[site_key(irep, k)] = true # 見え方は区別しない
+        when "extend", "prepend", "define_method", "alias_method"
+          raise Error, "#{source}: #{sym} in a class body at #{where(irep, insn)} is not supported"
         end
+      when "GETIV", "SETIV"
+        name = irep.syms[ops[1]]
+        if ctx.bodies[irep.index]
+          raise Error, "#{source}: #{name} in a class body at #{where(irep, insn)} (class-level instance variables are not supported)"
+        end
+        scope.add_ivar(name)
+      when "SETCV"
+        scope.cvars << irep.syms[ops[1]] unless scope.cvars.include?(irep.syms[ops[1]])
+      when "SUPER"
+        raise Error, "#{source}: super inside a block at #{where(irep, insn)} is not supported" if ctx.parents[irep.index]
+        raise Error, "#{source}: super outside a method at #{where(irep, insn)}" unless ctx.method_names[irep.index]
       end
     end
+  end
+
+  # include したモジュールごとに iclass を作り、探索の親の輪を C -> iclass (後に include したものが先) -> 元の親 にする
+  def self.add_iclasses(ctx)
+    ctx.classes.dup.each do |k|
+      next if k.includes.empty?
+      prev = k.super_id
+      k.includes.each do |mod|
+        ic = Klass.new("#{k.name}(#{mod.name})", ctx.next_id, prev, false)
+        ic.origin = mod
+        ic.owner = k
+        ic.real_super_id = nil
+        mod.methods.each { |name, m| ic.methods[name] = m }
+        ctx.classes << ic
+        prev = ic.id
+      end
+      k.super_id = prev
+    end
+  end
+
+  # クラスのインスタンス変数の並び (親クラスの分、自分の分、include したモジュールの分)
+  def self.ivar_layout(ctx, k)
+    return [] unless k
+    layout = ivar_layout(ctx, k.real_super_id ? ctx.klass_id(k.real_super_id) : nil).dup
+    k.ivar_names.each { |n| layout << n unless layout.include?(n) }
+    k.includes.each { |mod| mod.ivar_names.each { |n| layout << n unless layout.include?(n) } }
+    layout
+  end
+
+  # クラス変数の持ち主: 本当の親クラスをたどって、一番上でそれを代入するクラス (無ければ自分)
+  def self.cvar_owner(ctx, k, name)
+    owner = k
+    cur = k
+    while cur
+      owner = cur if cur.cvars.include?(name)
+      cur = cur.real_super_id ? ctx.klass_id(cur.real_super_id) : nil
+    end
+    owner
+  end
+
+  # 祖先 (探索の親をたどる。iclass は元のモジュール)
+  def self.ancestors(ctx, k)
+    list = []
+    cur = k
+    while cur
+      list << (cur.origin ? cur.origin.id : cur.id)
+      cur = cur.super_id ? ctx.klass_id(cur.super_id) : nil
+    end
+    list
   end
 
   # ブロックの引数の数 (先頭の ENTER)。必須の引数だけを受け付ける
@@ -462,16 +582,59 @@ module FpgaRom
       next if k.methods[pr[1]]
       entries << [k.id, ctx.symbols[pr[1]], (FpgaIsa::TGT_PRIM << 14) | i]
     end
-    # 親クラスへの輪。メタクラスは親のメタクラスへ、Object のメタクラスは Class へ
+    # 親クラスへの輪。メタクラスは本当の親のメタクラスへ、Object のメタクラスは Class へ
     ctx.classes.each do |k|
       if k.is_module # モジュールのメタクラスの親は Module
         entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, FpgaIsa.class_id("Module")]
         next
       end
       entries << [k.id, FpgaIsa::SUPER_SYM, k.super_id] if k.super_id
-      entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, k.super_id ? FpgaIsa::META | k.super_id : FpgaIsa::CLS_CLASS]
+      next if k.origin # iclass にメタクラスは無い
+      entries << [FpgaIsa::META | k.id, FpgaIsa::SUPER_SYM, k.real_super_id ? FpgaIsa::META | k.real_super_id : FpgaIsa::CLS_CLASS]
+    end
+    # インスタンス変数: 自分で増やした分 (親の分は親の項目で見つかる)、iclass はモジュールの分、attr_*、new が使う数
+    ctx.classes.each do |k|
+      next if k.is_module
+      if k.origin
+        layout = ivar_layout(ctx, k.owner) # include したクラスの並びでの番号
+        (k.origin.ivar_names + k.origin.attrs.keys.map { |a| "@#{a}" }).uniq.each do |n|
+          entries << [k.id, ctx.sym_id(n), (FpgaIsa::TGT_IVAR << 14) | layout.index(n)] if layout.index(n)
+        end
+        attr_entries(ctx, k, k.origin.attrs, layout, entries)
+        next
+      end
+      layout = ivar_layout(ctx, k)
+      parent = ivar_layout(ctx, k.real_super_id ? ctx.klass_id(k.real_super_id) : nil)
+      (layout - parent).each { |n| entries << [k.id, ctx.sym_id(n), (FpgaIsa::TGT_IVAR << 14) | layout.index(n)] }
+      attr_entries(ctx, k, k.attrs, layout, entries)
+      entries << [k.id, FpgaIsa::NIVARS_SYM, layout.size] unless layout.empty?
+    end
+    # is_a? / kind_of? / === (祖先ごとに1語。名前が出てくる時だけ)
+    if %w[is_a? kind_of? ===].any? { |n| ctx.symbols.key?(n) }
+      ctx.classes.each do |k|
+        next if k.is_module || k.origin
+        ancestors(ctx, k).uniq.each { |a| entries << [FpgaIsa::ISA_BIT | k.id, a, 1] }
+        meta = []
+        cur = k
+        while cur
+          meta << (FpgaIsa::META | cur.id)
+          cur = cur.real_super_id ? ctx.klass_id(cur.real_super_id) : nil
+        end
+        (meta + [FpgaIsa::CLS_CLASS, FpgaIsa.class_id("Module"), FpgaIsa::CLS_OBJECT]).each do |a|
+          entries << [FpgaIsa::ISA_BIT | FpgaIsa::META | k.id, a, 1]
+        end
+      end
     end
     entries
+  end
+
+  def self.attr_entries(ctx, k, attrs, layout, entries)
+    attrs.each do |name, mode|
+      slot = layout.index("@#{name}")
+      next unless slot
+      entries << [k.id, ctx.sym_id(name), (FpgaIsa::TGT_IVAR << 14) | slot] if mode.include?("r")
+      entries << [k.id, ctx.sym_id("#{name}="), (FpgaIsa::TGT_IVSET << 14) | slot] if mode.include?("w")
+    end
   end
 
   def self.encode(insn, pc, pc_of, irep, ctx, k = 0)
@@ -519,6 +682,32 @@ module FpgaRom
       end
       b = port.num
     end
+
+    # クラス変数: 持ち主のクラスごとの定数と同じ番号にする
+    if name == "GETCV" || name == "SETCV"
+      owner = cvar_owner(ctx, ctx.scope[irep.index], irep.syms[b])
+      key = "#{owner.name}::#{irep.syms[b]}"
+      slot = ctx.consts[key]
+      unless slot
+        slot = ctx.consts.size
+        raise Error, "#{source}: too many constants (the core has #{FpgaIsa::NCONST}) at #{irep.syms[b]}" if slot >= FpgaIsa::NCONST
+        ctx.consts[key] = slot
+      end
+      return Word.new(pc, insn, FpgaIsa.op(name == "GETCV" ? "GETCONST" : "SETCONST").num, a, slot, 0, irep)
+    end
+
+    # インスタンス変数: b = @名前 のシンボルの番号 (実行時に self のクラスで番号を引く)
+    b = ctx.sym_id(irep.syms[ops[1]]) if name == "GETIV" || name == "SETIV"
+
+    # super: b = 今のメソッドの名前、c = 引数の数 | ブロックの枠を渡す印 (いつも)
+    if name == "SUPER"
+      argc = ops[1] & 0xF
+      raise Error, "#{source}: super at #{where(irep, insn)} with keyword arguments or a splat is not supported yet" if (ops[1] >> 4) != 0 || argc == 15
+      return Word.new(pc, insn, insn.op.num, a, ctx.sym_id(ctx.method_names[irep.index]), argc | 0x80, irep)
+    end
+
+    # クラスの本体の attr_* / include / private など: 実行時は nil を置くだけ
+    return Word.new(pc, insn, FpgaIsa.op("LOADNIL").num, a, 0, 0, irep) if ctx.noops[site_key(irep, k)]
 
     # 定数: 字句の入れ子の順に探す。クラスならその即値 (CLASS)、ほかは番号
     if name == "GETCONST" || name == "SETCONST"

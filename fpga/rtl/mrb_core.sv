@@ -59,7 +59,7 @@ module mrb_core
   localparam logic [VAL_BITS-1:0] V_NIL = {TAG_NIL, {INT_BITS{1'b0}}};
   localparam logic signed [INT_BITS-1:0] INT_MIN = {1'b1, {(INT_BITS-1){1'b0}}};
 
-  typedef enum logic [4:0] {
+  typedef enum logic [5:0] {
     S_INIT, S_FETCH, S_EXEC, S_CLEAR, S_HALT, S_ERROR,
     S_ALLOC,              // 確保 (足りなければ GC してもう一度)
     S_GC_ROOT, S_GC_SCAN, // GC: ルートを写す / 写した先を走査する
@@ -74,13 +74,27 @@ module mrb_core
     S_DETACH, S_RETFIN,   // 戻る前に env へレジスタを写す / 写した後に戻る
     S_LWALK,              // ブロックの中の return: 一番内側の lambda を探す
     S_LOOKUP, S_PROBE,    // メソッド表を引く: 最初の位置を出す / 語を比べて次の位置を出す
-    S_PRIM                // 見つかった primitive を実行する
+    S_LKDONE,             // 引いた結果で分かれる (呼び出し、primitive、インスタンス変数、is_a?、new)
+    S_PRIM,               // 見つかった primitive を実行する
+    S_OBJ                 // new: オブジェクトのインスタンス変数を nil で埋め、見出しを書く
   } state_t;
   state_t state;
 
   // 確保のあとに続ける処理
-  typedef enum logic [1:0] { MO_BLOCK, MO_ARRAY, MO_GROW } mop_t;
+  typedef enum logic [1:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ } mop_t;
   mop_t mop;
+
+  // メソッド表を引く目的
+  typedef enum logic [2:0] {
+    LM_CALL,    // 呼び出し (見つからなければ NoMethodError)
+    LM_INIT,    // new の initialize (見つからなければそのまま、ctor のフレーム)
+    LM_GETIV,   // GETIV (見つからなければ nil)
+    LM_SETIV,   // SETIV (見つからなければエラー)
+    LM_ISA,     // is_a? (親はたどらない)
+    LM_RESPOND, // respond_to?
+    LM_NIVARS   // new のインスタンス変数の数 (親はたどらない、無ければ 0)
+  } lmode_t;
+  lmode_t lk_mode;
 
   logic [PC_BITS-1:0]  pc;
   logic [47:0]         ir;        // 実行中の命令 (EXEC で ROM から取る)
@@ -97,6 +111,9 @@ module mrb_core
   logic [VAL_BITS-1:0] ret_cp [STACK_DEPTH];
   logic [VAL_BITS-1:0] ret_env [STACK_DEPTH];
   logic [7:0]          ret_fn [STACK_DEPTH];
+  logic [15:0]         ret_mcls [STACK_DEPTH];
+  logic                ret_ctor [STACK_DEPTH]; // new の initialize のフレーム (戻り値で R0 を上書きしない)
+  logic [15:0]         mcls;      // 今のメソッドが見つかったクラス (super の起点)
   logic [SB-1:0]       sp;
 
   logic [SB-2:0] top;
@@ -116,6 +133,10 @@ module mrb_core
   logic [5:0]          lk_depth;
   logic [PC_BITS-1:0]  lk_i;      // 何語目を比べているか
   logic [13:0]         prim;
+  logic                lk_hitr;   // S_LKDONE: 見つかったか
+  logic [15:0]         lk_tgt;    // 見つかった飛び先
+  logic [15:0]         lk_fcls;   // 見つかったクラス
+  logic [15:0]         obj_n;     // new: インスタンス変数の数
 
   // ヒープ
   logic [VAL_BITS-1:0] heap [HEAP_SIZE];
@@ -284,7 +305,7 @@ module mrb_core
   // (Icarus は always_comb の中で2回書いてから読む変数があると時刻 0 から進まないので、1つの式で)
   logic [VAL_BITS-1:0] recv_v;
   logic [15:0]         recv_cls;
-  assign recv_v = (state == S_EXEC && (op == OP_SSEND || op == OP_SSEND0)) ? regs[bp] :
+  assign recv_v = (state == S_EXEC && (op == OP_SSEND || op == OP_SSEND0 || op == OP_SUPER || op == OP_GETIV || op == OP_SETIV)) ? regs[bp] :
                   (state == S_EXEC && op == OP_GETIDX0) ? rb : ra;
   logic [TAG_BITS-1:0] recv_tag;
   logic [VAL_BITS-1:0] recv_hdr;
@@ -306,10 +327,35 @@ module mrb_core
   assign lk_hash    = 19'(lk_cls) * 19'd5 + 19'(lk_key);
   assign lk_h       = PC_BITS'(lk_hash) & t_mask;
   assign probe_addr = tbase + ((lk_h + (state == S_PROBE ? lk_i + PC_BITS'(1) : '0)) & t_mask);
-  logic lk_empty, lk_hit, lk_last;
+  logic lk_empty, lk_hit, lk_last, lk_walk;
   assign lk_empty = rom_data == '1;
   assign lk_hit   = rom_data[47:32] == lk_cls && rom_data[31:16] == lk_key;
   assign lk_last  = lk_i == t_mask;
+  assign lk_walk  = !(lk_mode == LM_ISA || lk_mode == LM_NIVARS); // 見つからなければ親へ進むか
+
+  // S_LKDONE で読み書きするインスタンス変数: GETIV / SETIV は self、attr_* は受け手 (R[a])。
+  // Object かプログラムのクラスのインスタンスで、番号が見出しの数より小さいこと
+  logic [VAL_BITS-1:0] iv_obj, iv_hdr;
+  logic [15:0]         iv_cls;
+  logic                iv_ok;
+  logic [HB-1:0]       iv_addr;
+  assign iv_obj  = (lk_mode == LM_GETIV || lk_mode == LM_SETIV) ? regs[bp] : ra;
+  assign iv_hdr  = heap[iv_obj[HB-1:0]];
+  assign iv_cls  = iv_hdr[31:16];
+  assign iv_ok   = iv_obj[VAL_BITS-1 -: TAG_BITS] == TAG_OBJ &&
+                   (iv_cls == CLS_OBJECT || (iv_cls >= FIRST_USER_CLASS && iv_cls < CLS_DATA)) &&
+                   {2'b00, lk_tgt[13:0]} < iv_hdr[15:0];
+  assign iv_addr = iv_obj[HB-1:0] + HB'(1) + HB'(lk_tgt[13:0]);
+  // S_LKDONE の分かれ方
+  logic lk_kind_pc, lk_kind_prim, lk_kind_iv, lk_kind_ivset;
+  assign lk_kind_pc    = lk_tgt[15:14] == TGT_PC;
+  assign lk_kind_prim  = lk_tgt[15:14] == TGT_PRIM;
+  assign lk_kind_iv    = lk_tgt[15:14] == TGT_IVAR;
+  assign lk_kind_ivset = lk_tgt[15:14] == TGT_IVSET;
+  // new: クラスの番号 (R[a] の Class の即値) が Object かプログラムのクラスか
+  logic new_ok;
+  assign new_ok = ra[VAL_BITS-1 -: TAG_BITS] == TAG_CLASS &&
+                  (ra[15:0] == CLS_OBJECT || (ra[15:0] >= FIRST_USER_CLASS && ra[15:0] < CLS_DATA)) && ra[31:16] == 16'd0;
 
   // 深さ k のフレームの底 (0 は今のフレーム、1 は今の Proc を作ったフレーム、2 はその外側 ...) は、
   // S_WALK で Proc の連鎖を 1 cycle に1段ずつたどって求める (k = 0 は EXEC でそのまま bp)
@@ -375,6 +421,9 @@ module mrb_core
   logic                pre_a1;      // 探す前に R[a+1] = pre_a1v (ADDI / SUBI / GETIDX0 の落ち先)
   logic [VAL_BITS-1:0] pre_a1v;
   logic                pre_arb;     // 探す前に R[a] = R[b] (GETIDX0 の落ち先)
+  lmode_t              lk_mode_n;
+  logic [15:0]         lk_cls_n;
+  logic                lk_super_n;  // 親から探し始める (super)
   logic                set_push, set_aset; // go_set の種類: push / Array#[]=
   logic                ret_now; // 戻る。env があれば先に S_DETACH で写すので、この cycle には書かない
   assign ret_now = do_ret && tag_of(env) == TAG_NIL;
@@ -415,6 +464,9 @@ module mrb_core
     lk_sym_n  = b;
     lk_argc_n = 7'd1;
     lk_blk_n  = 1'b0;
+    lk_mode_n = LM_CALL;
+    lk_cls_n  = recv_cls;
+    lk_super_n = 1'b0;
     pre_self  = 1'b0;
     pre_a1    = 1'b0;
     pre_a1v   = V_NIL;
@@ -486,6 +538,32 @@ module mrb_core
           go_set   = 1'b1;
           set_aset = 1'b1;
           err      = prim_argc_bad || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
+        end
+        PR_NEW: begin
+          // (クラス, NIVARS_SYM) を引いてから確保し、initialize を送る
+          wr        = 1'b0;
+          go_lookup = 1'b1;
+          lk_mode_n = LM_NIVARS;
+          lk_cls_n  = ra[15:0];
+          lk_sym_n  = NIVARS_SYM;
+          lk_argc_n = lk_argc;
+          lk_blk_n  = lk_blk;
+          err       = !new_ok;
+        end
+        PR_ISA, PR_KINDOF: begin
+          wr        = 1'b0;
+          go_lookup = 1'b1;
+          lk_mode_n = LM_ISA;
+          lk_cls_n  = ISA_BIT | recv_cls;
+          lk_sym_n  = ra1[15:0];
+          err       = prim_argc_bad || ra1[VAL_BITS-1 -: TAG_BITS] != TAG_CLASS;
+        end
+        PR_RESPOND: begin
+          wr        = 1'b0;
+          go_lookup = 1'b1;
+          lk_mode_n = LM_RESPOND;
+          lk_sym_n  = ra1[15:0];
+          err       = prim_argc_bad || ra1[VAL_BITS-1 -: TAG_BITS] != TAG_SYM;
         end
         PR_CALL: begin
           wr      = 1'b0;
@@ -593,6 +671,18 @@ module mrb_core
           err     = (17'(ia[RB-1:0]) + 17'(call_need) > 17'(NREGS)) || sp >= SB'(STACK_DEPTH) ||
                     !ra_proc || !(ia + 17'(blk_n) < 17'(NREGS)) ||
                     (pr_info[23] && blk_n != {1'b0, pr_info[22:16]}); // lambda は引数の数を調べる
+        end
+        OP_GETIV: begin go_lookup = 1'b1; lk_mode_n = LM_GETIV; end
+        OP_SETIV: begin go_lookup = 1'b1; lk_mode_n = LM_SETIV; end
+        OP_SUPER: begin
+          // 今のメソッドが見つかったクラス (mcls) の親から、同じ名前 (b) を引く。ブロックの枠はそのまま渡す
+          go_lookup  = 1'b1;
+          lk_cls_n   = mcls;
+          lk_super_n = 1'b1;
+          lk_argc_n  = c[6:0];
+          lk_blk_n   = 1'b1;
+          pre_self   = 1'b1;
+          err        = !(ia + 17'(c[6:0]) + 17'd1 < 17'(NREGS));
         end
         OP_EXEC: begin
           // クラスの本体を self = R[a] で呼ぶ (引数 0 個、ブロックなし)
@@ -709,13 +799,44 @@ module mrb_core
   assign s_len = lo16(heap[s_p + HB'(1)]);
   assign s_d   = ha(val_of(heap[s_p + HB'(2)]));
 
+  // S_LKDONE のエラー (引いた結果が目的に合わない)
+  logic lkd_err;
+  always_comb begin
+    lkd_err = 1'b0;
+    case (lk_mode)
+      LM_CALL:
+        if (!lk_hitr) lkd_err = 1'b1;
+        else if (lk_kind_pc) lkd_err = sp >= SB'(STACK_DEPTH);
+        else if (lk_kind_iv) lkd_err = lk_argc != 7'd0 || !iv_ok;
+        else if (lk_kind_ivset) lkd_err = lk_argc != 7'd1 || !iv_ok;
+      LM_INIT:
+        if (lk_hitr) lkd_err = !lk_kind_pc || sp >= SB'(STACK_DEPTH);
+      LM_GETIV: lkd_err = lk_hitr && (!lk_kind_iv || !iv_ok);
+      LM_SETIV: lkd_err = !lk_hitr || !lk_kind_iv || !iv_ok;
+      default: ;
+    endcase
+  end
+
   always_comb begin
     m_we    = 1'b0;
     m_waddr = 8'(m_dst);
     m_wdata = V_NIL;
     case (state)
       S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_proc)); end
-      S_RETFIN: begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
+      S_RETFIN: if (!ret_ctor[top]) begin m_we = 1'b1; m_waddr = 8'(bp); m_wdata = hold; end
+      S_LKDONE: if (!lkd_err) begin
+        m_waddr = 8'(ia[RB-1:0]);
+        case (lk_mode)
+          LM_CALL: begin
+            if (lk_kind_iv) begin m_we = 1'b1; m_wdata = heap[iv_addr]; end
+            if (lk_kind_ivset) begin m_we = 1'b1; m_wdata = ra1; end
+          end
+          LM_GETIV: begin m_we = 1'b1; m_wdata = lk_hitr ? heap[iv_addr] : V_NIL; end
+          LM_ISA, LM_RESPOND: begin m_we = 1'b1; m_wdata = mk_bool(lk_hitr); end
+          default: ;
+        endcase
+      end
+      S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = 8'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_AELEM: if (m_k == (HB+1)'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
       S_PUT: begin
         if (m_push) begin m_we = 1'b1; m_wdata = regs[m_arr[RB-1:0]]; end
@@ -772,7 +893,7 @@ module mrb_core
   assign retire   = exec;
   assign dbg_pc   = pc;
   assign dbg_op   = op;
-  assign rf_we    = (run && (wr || ret_now || set_up)) || (en && m_we);
+  assign rf_we    = (run && (wr || (ret_now && !ret_ctor[top]) || set_up)) || (en && m_we);
   assign rf_waddr = run ? (do_ret ? 8'(bp) : set_up ? 8'(iu[RB-1:0]) : 8'(ia[RB-1:0])) : m_waddr;
   assign rf_wdata = run ? wval : m_wdata;
   assign io_we    = exec && iow;
@@ -793,6 +914,7 @@ module mrb_core
       cp      <= V_NIL;
       env     <= V_NIL;
       fn      <= '0;
+      mcls    <= CLS_OBJECT;
       cvalid  <= '0;
       clr_ptr <= '0;
       clr_end <= '0;
@@ -837,13 +959,15 @@ module mrb_core
               if (pre_self) regs[ia[RB-1:0]] <= regs[bp];
               if (pre_arb) regs[ia[RB-1:0]] <= rb;
               if (pre_a1) regs[ia1[RB-1:0]] <= pre_a1v;
-              lk_cls   <= recv_cls;
+              lk_cls   <= lk_cls_n;
               lk_sym   <= lk_sym_n;
               lk_argc  <= lk_argc_n;
               lk_blk   <= lk_blk_n;
-              lk_super <= 1'b0;
+              lk_mode  <= lk_mode_n;
+              lk_super <= lk_super_n;
               lk_depth <= '0;
-              state    <= t_on ? S_LOOKUP : S_ERROR;
+              lk_hitr  <= 1'b0;
+              state    <= t_on ? S_LOOKUP : S_LKDONE; // 表が無ければ見つからなかったことにする
             end else if (do_call) begin
               // ブロックの呼び出し: R0 は Proc を作った時の self
               ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
@@ -851,6 +975,8 @@ module mrb_core
               ret_cp[sp[SB-2:0]]  <= cp;
               ret_env[sp[SB-2:0]] <= env;
               ret_fn[sp[SB-2:0]]  <= fn;
+              ret_mcls[sp[SB-2:0]] <= mcls;
+              ret_ctor[sp[SB-2:0]] <= 1'b0;
               env                 <= V_NIL;
               fn                  <= call_nregs;
               sp                  <= sp + SB'(1);
@@ -868,6 +994,8 @@ module mrb_core
               ret_cp[sp[SB-2:0]]  <= cp;
               ret_env[sp[SB-2:0]] <= env;
               ret_fn[sp[SB-2:0]]  <= fn;
+              ret_mcls[sp[SB-2:0]] <= mcls;
+              ret_ctor[sp[SB-2:0]] <= 1'b0;
               sp                  <= sp + SB'(1);
               regs[ia1[RB-1:0]]   <= V_NIL;
               bp                  <= ia[RB-1:0];
@@ -892,11 +1020,12 @@ module mrb_core
               dcont  <= S_RETFIN;
               state  <= S_DETACH;
             end else if (do_ret) begin
-              regs[bp] <= wval;
+              if (!ret_ctor[top]) regs[bp] <= wval; // initialize の戻り値は捨てる
               bp       <= ret_bp[top];
               cp       <= ret_cp[top];
               env      <= ret_env[top];
               fn       <= ret_fn[top];
+              mcls     <= ret_mcls[top];
               sp       <= sp - SB'(1);
               pc       <= npc;
               state    <= S_FETCH;
@@ -959,43 +1088,103 @@ module mrb_core
           S_PROBE: begin
             if (!lk_empty && lk_hit) begin
               if (lk_super) begin
-                // 親クラスへ (MAX_SUPER_DEPTH 段で諦める)
-                if (lk_depth == 6'(MAX_SUPER_DEPTH - 1)) state <= S_ERROR;
-                else begin
+                // 親クラスへ (MAX_SUPER_DEPTH - 1 段より先へは行かない)
+                if (lk_depth == 6'(MAX_SUPER_DEPTH - 1)) begin
+                  lk_hitr <= 1'b0;
+                  state   <= S_LKDONE;
+                end else begin
                   lk_cls   <= rom_data[15:0];
                   lk_super <= 1'b0;
                   lk_depth <= lk_depth + 6'd1;
                   state    <= S_LOOKUP;
                 end
-              end else if (rom_data[15:14] == TGT_PRIM) begin
-                prim  <= rom_data[13:0];
-                state <= S_PRIM;
-              end else if (rom_data[15:14] != TGT_PC || sp >= SB'(STACK_DEPTH)) state <= S_ERROR;
-              else begin
-                // メソッド: フレームを作る (底は bp + a)。ブロックを渡さなければその枠は nil
-                ret_pc[sp[SB-2:0]]  <= pc + PC_BITS'(1);
-                ret_bp[sp[SB-2:0]]  <= bp;
-                ret_cp[sp[SB-2:0]]  <= cp;
-                ret_env[sp[SB-2:0]] <= env;
-                ret_fn[sp[SB-2:0]]  <= fn;
-                sp                  <= sp + SB'(1);
-                if (!lk_blk) regs[RB'(ia + 17'(lk_argc) + 17'd1)] <= V_NIL;
-                bp                  <= ia[RB-1:0];
-                cp                  <= V_NIL;
-                env                 <= V_NIL;
-                fn                  <= '0;
-                argc                <= {1'b0, lk_argc};
-                pc                  <= rom_data[PC_BITS-1:0];
-                state               <= S_FETCH;
+              end else begin
+                lk_hitr <= 1'b1;
+                lk_tgt  <= rom_data[15:0];
+                lk_fcls <= lk_cls;
+                state   <= S_LKDONE;
               end
             end else if (lk_empty || lk_last) begin
-              // 見つからない: メソッドなら親クラスを探しに、親の輪も無ければ NoMethodError
-              if (lk_super) state <= S_ERROR;
-              else begin
+              // 見つからない: 親クラスを探しに行く (親の輪が無い、親をたどらない目的なら、見つからなかった)
+              if (lk_super || !lk_walk) begin
+                lk_hitr <= 1'b0;
+                state   <= S_LKDONE;
+              end else begin
                 lk_super <= 1'b1;
                 state    <= S_LOOKUP;
               end
             end else lk_i <= lk_i + PC_BITS'(1);
+          end
+
+          // ---- 引いた結果で分かれる (書き込みは m_we)
+          S_LKDONE: begin
+            if (lkd_err) state <= S_ERROR;
+            else case (lk_mode)
+              LM_CALL, LM_INIT: begin
+                if (!lk_hitr) begin
+                  pc    <= pc + PC_BITS'(1); // new で initialize が無い
+                  state <= S_FETCH;
+                end else if (lk_kind_prim) begin
+                  prim  <= lk_tgt[13:0];
+                  state <= S_PRIM;
+                end else if (lk_kind_pc) begin
+                  // メソッド: フレームを作る (底は bp + a)。ブロックを渡さなければその枠は nil
+                  ret_pc[sp[SB-2:0]]   <= pc + PC_BITS'(1);
+                  ret_bp[sp[SB-2:0]]   <= bp;
+                  ret_cp[sp[SB-2:0]]   <= cp;
+                  ret_env[sp[SB-2:0]]  <= env;
+                  ret_fn[sp[SB-2:0]]   <= fn;
+                  ret_mcls[sp[SB-2:0]] <= mcls;
+                  ret_ctor[sp[SB-2:0]] <= lk_mode == LM_INIT;
+                  sp                   <= sp + SB'(1);
+                  if (!lk_blk) regs[RB'(ia + 17'(lk_argc) + 17'd1)] <= V_NIL;
+                  bp                   <= ia[RB-1:0];
+                  cp                   <= V_NIL;
+                  env                  <= V_NIL;
+                  fn                   <= '0;
+                  mcls                 <= lk_fcls;
+                  argc                 <= {1'b0, lk_argc};
+                  pc                   <= lk_tgt[PC_BITS-1:0];
+                  state                <= S_FETCH;
+                end else begin
+                  // attr_reader / attr_writer (R[a] への書き込みは m_we)
+                  if (lk_kind_ivset) heap[iv_addr] <= ra1;
+                  pc    <= pc + PC_BITS'(1);
+                  state <= S_FETCH;
+                end
+              end
+              LM_SETIV: begin
+                heap[iv_addr] <= ra;
+                pc    <= pc + PC_BITS'(1);
+                state <= S_FETCH;
+              end
+              LM_NIVARS: begin
+                // インスタンス変数の数だけ確保する (見出し + n 語)
+                obj_n <= lk_hitr ? {2'b00, lk_tgt[13:0]} : 16'd0;
+                need  <= (HB+1)'(1) + (lk_hitr ? (HB+1)'(lk_tgt[13:0]) : '0);
+                mop   <= MO_OBJ;
+                state <= S_ALLOC;
+              end
+              default: begin
+                pc    <= pc + PC_BITS'(1);
+                state <= S_FETCH;
+              end
+            endcase
+          end
+
+          // ---- new: インスタンス変数を nil で埋め、見出しを書いて R[a] に置き (m_we)、initialize を引く
+          S_OBJ: begin
+            if (m_k == (HB+1)'(obj_n)) begin
+              heap[p_new[HB-1:0]] <= mk(TAG_HDR, {lk_cls, obj_n});
+              lk_mode  <= LM_INIT;
+              lk_sym   <= SYM_INIT;
+              lk_super <= 1'b0;
+              lk_depth <= '0;
+              state    <= S_LOOKUP;
+            end else begin
+              heap[p_new[HB-1:0] + HB'(1) + m_k[HB-1:0]] <= V_NIL;
+              m_k <= m_k + 1'b1;
+            end
           end
 
           // ---- 確保: 足りなければ一度だけ GC する
@@ -1010,6 +1199,7 @@ module mrb_core
                   state  <= env_new ? S_ENV : S_BLOCK;
                 end
                 MO_ARRAY: state <= S_AHDR;
+                MO_OBJ:   state <= S_OBJ;
                 default:  state <= S_GROW;
               endcase
             end else if (!gc_done) begin
@@ -1131,6 +1321,7 @@ module mrb_core
             cp    <= ret_cp[top];
             env   <= ret_env[top];
             fn    <= ret_fn[top];
+            mcls  <= ret_mcls[top];
             sp    <= sp - SB'(1);
             pc    <= ret_to;
             state <= S_FETCH;
@@ -1231,6 +1422,7 @@ module mrb_core
               cp  <= ret_cp[top];
               env <= ret_env[top];
               fn  <= ret_fn[top];
+              mcls <= ret_mcls[top];
               sp  <= sp - SB'(1);
               if (ret_bp[top] == target) begin
                 pc    <= ret_pc[top];
@@ -1250,6 +1442,7 @@ module mrb_core
               cp  <= ret_cp[top];
               env <= ret_env[top];
               fn  <= ret_fn[top];
+              mcls <= ret_mcls[top];
               sp  <= sp - SB'(1);
               if (bp == target) begin
                 pc    <= ret_pc[top];

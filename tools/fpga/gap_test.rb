@@ -22,4 +22,12 @@ class FpgaGapTest < Minitest::Test
     bin = rite([op("TDEF"), 1, 0, 0, op("SSEND0"), 1, 0, op("SEND0"), 1, 1, op("STOP")], syms: %w[f abs], reps: [child])
     assert_equal [], FpgaGap.blockers(bin)
   end
+
+  # attr_* が定義する名前と、クラスの本体の宣言 (include / private など) も理由にしない
+  def test_attr_and_declarations_are_not_blockers
+    bin = rite([op("LOADSYM"), 2, 0, op("SSEND"), 1, 1, 1, op("SSEND0"), 1, 2, op("SEND0"), 3, 0,
+                op("LOADSYM"), 4, 3, op("SEND"), 3, 3, 1, op("SEND0"), 3, 4, op("STOP")],
+               syms: %w[count attr_accessor private count= missing])
+    assert_equal ["method missing"], FpgaGap.blockers(bin)
+  end
 end

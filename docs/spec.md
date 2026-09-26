@@ -683,7 +683,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   Array 7、Proc 8、Class 9、Module 10 ...)、プログラムのクラスとモジュールは 32 から。クラスメソッド (`def self.x`) は
   メタクラス (番号 | 0x8000) のメソッド。Class の即値の受け手はそのメタクラスで引く
 - **表の1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。** 飛び先の上位 2bit が種類: 0 = メソッドの先頭 pc、
-  1 = primitive (回路が持つメソッド、`PRIMS`)。(クラス, `SUPER_SYM` = 0xFFFF) の飛び先は親クラスの番号
+  1 = primitive (回路が持つメソッド、`PRIMS`)、2 = インスタンス変数を読む、3 = 書く (下の「オブジェクト」)。(クラス, `SUPER_SYM` = 0xFFFF) の飛び先は親クラスの番号
   (メタクラスは親のメタクラスへ、Object のメタクラスは Class へ)。空きは全 bit 1
 - **開番地法のハッシュ表。** 位置は (クラス × 5 + シンボル) & (大きさ − 1) から1語ずつ。大きさは項目の2倍以上の2の冪 (16 以上)。
   コアは 1 cycle に1語比べる (S_LOOKUP / S_PROBE)。見つからなければ親の輪を引き、32 段で諦める (表が壊れていても止まる)
@@ -698,19 +698,39 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **クラスの定義は実行時にも本体を走らせる。** `CLASS` は R[a] = クラスの即値、`EXEC` はそれを self にして本体を呼ぶ
   (本体の中の定数の代入のため)。`TDEF` / `SDEF` は実行時には R[a] = :名前 だけ (表は変換時に作った)。
   同じ名前を2回 def したら後の定義が勝つ (静的に決めるので、2回目の def より前の呼び出しも後の定義を呼ぶ)
-- **変換時に止めるもの:** `Foo::Bar` の形のクラス定義、定数でない親クラス、クラスの本体の中の `attr_*` `include` など (P1c)、
-  クラスの本体の外の `def self.x`
+- **変換時に止めるもの:** `Foo::Bar` の形のクラス定義、定数でない親クラス、クラスの本体の外の `def self.x`、
+  クラスの本体の中の `extend` `prepend` `define_method` `alias_method` とインスタンス変数、ブロックの中の `super`
 - **primitive** (`PRIMS`): Integer の `+ - * / < <= > >= ==` `%` `-@` `<<` `>>` `&` `|` `^` `~` `abs` `zero?` `even?` `odd?`、
-  Object の `!` `==` (同じものか) `class` `sleep_ms` `sleep` `lambda`、Array の `size` `length` `empty?` `first` `last` `pop`
+  Object の `!` `==` (同じものか) `class` `sleep_ms` `sleep` `lambda` `is_a?` `kind_of?` `respond_to?`、Class の `new`、Array の `size` `length` `empty?` `first` `last` `pop`
   `push` `<<` `[]` `[]=`、Proc の `call`。受け手の型が違えばエラー (表が壊れていても同じ結果になるように)。
   プログラムのどこにも名前が出てこない primitive は表に入れない
+
+### オブジェクト (P1c)
+
+- **オブジェクトは `[見出し (クラス, n)] [インスタンス変数 × n]`。** `Class#new` (primitive) が (クラス, `NIVARS_SYM` = 0xFFFE)
+  を親を辿らずに引いて n を得て (無ければ 0)、確保して nil で埋め、R[a] に置いてから `initialize` を送る。
+  `initialize` のフレームは印 (ctor) を持ち、戻り値で R[a] を上書きしない。作れるのは Object とプログラムのクラスだけ
+- **インスタンス変数の並びは変換時に決める。** 親の並びの後ろに、そのクラス (と include した module) で初めて出てくる名前を足す。
+  (クラス, @名前) の行の飛び先は種類 2 + 何番目か。行はそのクラスで増えた分だけ置き、親の分は親を辿って引く。
+  `GETIV` / `SETIV` は b = @名前のシンボル番号で、self のクラスから引く。`GETIV` は見つからなければ nil、
+  `SETIV` は見つからなければエラー (変換器が全部の代入に行を作るので、表が壊れた時だけ)
+- **`attr_reader` / `attr_writer` / `attr_accessor`** は (クラス, :x) → 種類 2、(クラス, :x=) → 種類 3 の行にする
+  (メソッドを呼ばずに、見つけたその場で読み書きする)。本体の中の呼び出しは `LOADNIL` になる
+- **`super`** は、今のメソッドが見つかったクラス (フレームが持つ mcls) の親から、今のメソッドの名前 (b) を引く。
+  受け手は self、ブロックの枠はそのまま渡す (c = 引数の数 | 0x80)
+- **`include`** は、クラスとその親の間に module の写し (iclass、番号は別に振る) を挟む。module のメソッドは iclass から見つかる
+- **`is_a?` / `kind_of?` / `===`** は (`ISA_BIT` 0x4000 | クラス, 祖先のクラス) の行があるかを親を辿らずに1回で引く。
+  行は祖先 (自分、親、include した module、Object) の分だけ、プログラムにこれらの名前が出てくる時だけ置く。
+  `respond_to?` は普通の探索 (親を辿る) で見つかるか
+- **クラス変数 (`@@x`)** は、代入するクラスのうち一番上の祖先を持ち主にした定数 (`Foo::@@x`) にする
+- **一番外の self は Object のインスタンス (main)。** 変換器が一番外の irep の先頭に `CLASS R0 Object` と `SEND0 R0 :new` を足す
 
 ### プレリュード
 
 primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
 一緒に compile する** (`mrbc -o out.mrb fpga/prelude/core.rb prog.rb` で1つの irep になる)。コアはそれを普通のメソッドとして走らせる。
 回路を増やさずに組み込みメソッドを足すため。今あるもの: `Integer#times` `upto` `downto`、`Array#each` `each_with_index` `map`
-`==` `include?`、`Object#loop` `proc` `!=`。CRuby / picoruby でも同じ意味になる書き方だけで書く
+`==` `include?`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?`、`NilClass#nil?`、`Module#===`。CRuby / picoruby でも同じ意味になる書き方だけで書く
 (参照の突き合わせは CRuby の組み込みと比べる)。
 
 ### ROM 形式と変換 (#7)

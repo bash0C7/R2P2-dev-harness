@@ -96,3 +96,28 @@ class Array
     false
   end
 end
+
+class Object
+  def initialize
+  end
+
+  def nil?
+    false
+  end
+
+  def instance_of?(klass)
+    self.class == klass
+  end
+end
+
+class NilClass
+  def nil?
+    true
+  end
+end
+
+class Module
+  def ===(object)
+    object.is_a?(self)
+  end
+end

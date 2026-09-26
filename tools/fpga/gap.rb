@@ -24,6 +24,9 @@ module FpgaGap
   # 範囲外の gem の中のクラス (require を書かずに使う example もある)
   OUT_OF_SCOPE_CONSTS = %w[TCPSocket TCPServer UDPSocket SSLSocket SSLContext BLE CYW43 DRb MbedTLS Prism Keyboard].freeze
 
+  # クラスの本体で変換器が読んで、実行時は何もしない呼び出し (rom.rb の noops)。attr_* は名前を定義する
+  ATTRS = %w[attr_reader attr_writer attr_accessor].freeze
+  DECLARATIONS = (ATTRS + %w[include private public protected module_function]).freeze
   ROOT = File.expand_path("../..", __dir__)
 
   def targets
@@ -55,8 +58,20 @@ module FpgaGap
     decoded = ireps.map { |ir| Rite.decode(ir.iseq) }
     defined = {}
     ireps.each_with_index do |ir, i|
-      decoded[i].each { |insn| defined[ir.syms[insn.operands[1]]] = true if %w[TDEF DEF SDEF].include?(insn.name) }
+      loaded = {} # レジスタ -> 直前の LOADSYM の名前 (attr_* の引数)
+      decoded[i].each do |insn|
+        defined[ir.syms[insn.operands[1]]] = true if %w[TDEF DEF SDEF].include?(insn.name)
+        loaded[insn.operands[0]] = ir.syms[insn.operands[1]] if insn.name == "LOADSYM"
+        next unless insn.name == "SSEND" && ATTRS.include?(ir.syms[insn.operands[1]])
+        (insn.operands[2] & 0xF).times do |j|
+          name = loaded[insn.operands[0] + 1 + j]
+          next unless name
+          defined[name] = true unless ir.syms[insn.operands[1]] == "attr_writer"
+          defined["#{name}="] = true unless ir.syms[insn.operands[1]] == "attr_reader"
+        end
+      end
     end
+    DECLARATIONS.each { |n| defined[n] = true }
     FpgaIsa::PRIMS.each { |pr| defined[pr[1]] = true }
     found = {}
     ireps.each_with_index do |ir, i|

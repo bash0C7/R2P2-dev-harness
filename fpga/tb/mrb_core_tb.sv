@@ -116,7 +116,7 @@ module mrb_core_tb;
   endtask
   
   task automatic expect_halt();
-    if (!halted || error) $fatal(1, "%s: expected halt (halted=%0b error=%0b)", name, halted, error);
+    if (!halted || error) $fatal(1, "%s: expected halt (halted=%0b error=%0b pc=%0d)", name, halted, error, dut.core.pc);
     npass++;
   endtask
 
@@ -216,7 +216,7 @@ module mrb_core_tb;
     expect_reg(9, VTRUE);
     expect_reg(11, VTRUE);
     expect_reg(13, VFALSE);
-    expect_reg(14, VFALSE);
+    expect_reg(13, VFALSE);
 
     // ---- 分岐 (nil と false だけが偽、0 は真)
     begin_test("jumps");
@@ -839,6 +839,94 @@ module mrb_core_tb;
     expect_reg(5, VNIL);
     expect_reg(6, vint(3));
     expect_reg(7, VNIL);
+
+    // ---- オブジェクト: Q < P。new が確保して initialize を呼び (戻り値は捨てる)、インスタンス変数は
+    //      (クラス, @名前) の番号で読み書きする。attr は IVAR / IVSET の行、super は見つかったクラスの親から引く
+    begin_test("objects, attr, super, is_a?, respond_to?");
+    method_entry(16'd32, NIVARS_SYM, 16'd2);
+    method_entry(16'd32, 16'd40, {TGT_IVAR, 14'd0});         // @a
+    method_entry(16'd32, 16'd41, {TGT_IVAR, 14'd1});         // @b
+    method_entry(16'd32, SYM_INIT, 16'd27);
+    method_entry(16'd32, 16'd42, {TGT_IVAR, 14'd0});         // attr_reader :a
+    method_entry(16'd32, 16'd43, {TGT_IVSET, 14'd1});        // attr_writer :b
+    method_entry(16'd32, 16'd46, {TGT_IVAR, 14'd1});         // attr_reader :b
+    method_entry(16'd32, 16'd45, 16'd33);                    // P#get
+    method_entry(16'd32, SUPER_SYM, CLS_OBJECT);
+    method_entry(16'd33, SUPER_SYM, 16'd32);
+    method_entry(16'd33, NIVARS_SYM, 16'd2);
+    method_entry(16'd33, 16'd45, 16'd36);                    // Q#get
+    method_entry(CLS_META | 16'd33, 16'd44, tgt_prim(PR_NEW));
+    method_entry(CLS_OBJECT, 16'd47, tgt_prim(PR_ISA));
+    method_entry(CLS_OBJECT, 16'd48, tgt_prim(PR_RESPOND));
+    method_entry(ISA_BIT | 16'd33, 16'd32, 16'd1);           // Q.is_a?(P)
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_CLASS, 1, 33));                      // 1
+    prog.push_back(w(OP_LOADI_5, 2));                        // 2
+    prog.push_back(w(OP_SEND, 1, 44, 1));                    // 3: R1 = Q.new(5)
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 4
+    prog.push_back(w(OP_SEND0, 3, 42));                      // 5: R3 = 5
+    prog.push_back(w(OP_MOVE, 4, 1));                        // 6
+    prog.push_back(w(OP_SEND0, 4, 45));                      // 7: R4 = 105 (Q#get -> super -> P#get)
+    prog.push_back(w(OP_MOVE, 5, 1));                        // 8
+    prog.push_back(w(OP_LOADI_3, 6));                        // 9
+    prog.push_back(w(OP_SEND, 5, 43, 1));                    // 10: R5 = (b = 3)
+    prog.push_back(w(OP_MOVE, 7, 1));                        // 11
+    prog.push_back(w(OP_SEND0, 7, 46));                      // 12: R7 = 3
+    prog.push_back(w(OP_MOVE, 8, 1));                        // 13
+    prog.push_back(w(OP_CLASS, 9, 32));                      // 14
+    prog.push_back(w(OP_SEND, 8, 47, 1));                    // 15: true
+    prog.push_back(w(OP_MOVE, 10, 1));                       // 16
+    prog.push_back(w(OP_CLASS, 11, CLS_NIL));                // 17
+    prog.push_back(w(OP_SEND, 10, 47, 1));                   // 18: false
+    prog.push_back(w(OP_MOVE, 12, 1));                       // 19
+    prog.push_back(w(OP_LOADSYM, 13, 45));                   // 20
+    prog.push_back(w(OP_SEND, 12, 48, 1));                   // 21: true (Q#get)
+    prog.push_back(w(OP_MOVE, 13, 1));                       // 22: (tb は16レジスタ)
+    prog.push_back(w(OP_LOADSYM, 14, 99));                   // 23
+    prog.push_back(w(OP_SEND, 13, 48, 1));                   // 24: false
+    prog.push_back(w(OP_GETIV, 15, 40));                     // 25: self は nil、行が無いので nil
+    prog.push_back(w(OP_STOP));                              // 26
+    prog.push_back(w(OP_ENTER, 1, 4));                       // 27: initialize(x)
+    prog.push_back(w(OP_SETIV, 1, 40));                      // 28: @a = x
+    prog.push_back(w(OP_LOADI_7, 3));                        // 29
+    prog.push_back(w(OP_SETIV, 3, 41));                      // 30: @b = 7
+    prog.push_back(w(OP_LOADI8, 3, 99));                     // 31
+    prog.push_back(w(OP_RETURN, 3));                         // 32: 99 は捨てる
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 33: P#get
+    prog.push_back(w(OP_GETIV, 1, 40));                      // 34
+    prog.push_back(w(OP_RETURN, 1));                         // 35
+    prog.push_back(w(OP_ENTER, 0, 3));                       // 36: Q#get
+    prog.push_back(w(OP_SUPER, 1, 45, 16'h80));              // 37
+    prog.push_back(w(OP_ADDI, 1, 100));                      // 38
+    prog.push_back(w(OP_RETURN, 1));                         // 39
+    run();
+    expect_halt();
+    if (dut.core.regs[1][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: R1 is not an object", name);
+    expect_reg(3, vint(5));
+    expect_reg(4, vint(105));
+    expect_reg(5, vint(3));
+    expect_reg(7, vint(3));
+    expect_reg(8, VTRUE);
+    expect_reg(10, VFALSE);
+    expect_reg(12, VTRUE);
+    expect_reg(13, VFALSE);
+    expect_reg(15, VNIL);
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d at the end", name, dut.core.sp, dut.core.bp);
+
+    begin_test("SETIV without a slot");
+    prog.push_back(w_table());
+    prog.push_back(w(OP_LOADI_1, 1));
+    prog.push_back(w(OP_SETIV, 1, 40));                      // nil にインスタンス変数は無い
+    run();
+    expect_error(2);
+
+    begin_test("new on a built-in class");
+    method_entry(CLS_META | CLS_INT, 16'd44, tgt_prim(PR_NEW));
+    prog.push_back(w_table());
+    prog.push_back(w(OP_CLASS, 1, CLS_INT));
+    prog.push_back(w(OP_SEND0, 1, 44));                      // Integer.new は作れない
+    run();
+    expect_error(2);
 
     begin_test("upvar below the register file");
     prog.push_back(w(OP_GETUPVAR, 1, 1, 1));                 // 一番外では Proc が無い
