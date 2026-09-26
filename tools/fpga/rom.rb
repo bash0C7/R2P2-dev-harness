@@ -110,6 +110,7 @@ module FpgaRom
     raise Error, "#{source}: unsupported instruction(s): #{bad.join(', ')}" unless bad.empty?
 
     ctx = Context.new(source, methods(ireps, decoded, source), {}, {}, {}, {}, decoded)
+    ctx.lambdas = {}
     block_sites(ireps, decoded, ctx)
 
     # 1命令が何語になるかを数えて、irep と命令の先頭 pc を決める (iterator などは数語に展開する)
@@ -148,6 +149,7 @@ module FpgaRom
   # iterator に直接渡したブロックの irep の番号 -> Site (break の出口が決まる)
   class Context
     attr_reader :source, :methods, :consts, :sites, :parents, :direct, :decoded
+    attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
 
     def initialize(source, methods, consts, sites, parents, direct, decoded)
       @source = source
@@ -189,9 +191,10 @@ module FpgaRom
     ireps.each_with_index do |ir, i|
       insns = decoded[i]
       insns.each_with_index do |insn, k|
-        if insn.name == "BLOCK"
+        if insn.name == "BLOCK" || insn.name == "LAMBDA"
           block = ir.reps[insn.operands[1]]
           ctx.parents[block.index] = ir
+          ctx.lambdas[block.index] = true if insn.name == "LAMBDA"
           block_params(block, decoded[block.index], source)
           next
         end
@@ -219,6 +222,10 @@ module FpgaRom
         if prev && prev.name == "BLOCK" && prev.operands[0] == site.proc_reg && !%w[method proc lambda].include?(kind)
           ctx.direct[ir.reps[prev.operands[1]].index] = site
         end
+        # lambda { } に渡したブロックは lambda になる
+        if prev && prev.name == "BLOCK" && prev.operands[0] == site.proc_reg && kind == "lambda"
+          ctx.lambdas[ir.reps[prev.operands[1]].index] = true
+        end
       end
     end
   end
@@ -244,6 +251,16 @@ module FpgaRom
       d += 1
     end
     [d, cur]
+  end
+
+  # irep から囲むメソッド (か一番外) までの間に lambda のブロックがあるか
+  def self.lambda_between?(irep, ctx)
+    cur = irep
+    while ctx.parents[cur.index]
+      return true if ctx.lambdas[cur.index]
+      cur = ctx.parents[cur.index]
+    end
+    false
   end
 
   # ほかの命令の列に下げる命令なら [[名前, a, b, c], ...] を返す。そのまま1語にするなら nil
@@ -468,11 +485,12 @@ module FpgaRom
       a = m1
     end
 
-    # BLOCK: Proc を作る。b = ブロックの irep の先頭 pc、c = 引数の数 | nregs << 8
-    if name == "BLOCK"
+    # BLOCK / LAMBDA: Proc を作る。b = ブロックの irep の先頭 pc、c = 引数の数 | lambda << 7 | nregs << 8
+    if name == "BLOCK" || name == "LAMBDA"
       block = irep.reps[ops[1]]
       b = block.base
-      c = block_params(block, ctx.decoded[block.index], source) | (block.nregs << 8)
+      c = block_params(block, ctx.decoded[block.index], source) | (ctx.lambdas[block.index] ? 0x80 : 0) | (block.nregs << 8)
+      return Word.new(pc, insn, FpgaIsa.op("BLOCK").num, a, b, c, irep)
     end
 
     # GETUPVAR / SETUPVAR: 外側のフレームのレジスタ。b = 番号、c = フレームの深さ (mruby の深さ + 1)
@@ -503,10 +521,12 @@ module FpgaRom
       end
     end
 
-    # RETURN_BLK: ブロックの中の return。c = 囲むメソッドのフレームの深さ
+    # RETURN_BLK: ブロックの中の return。c = 囲むメソッドのフレームの深さ (途中の lambda はコアが見つける)
     if name == "RETURN_BLK"
       depth, method = block_depth(irep, ctx)
-      raise Error, "#{source}: return inside a block at #{where(irep, insn)} is not inside a method" if method.index == 0
+      if method.index == 0 && !lambda_between?(irep, ctx)
+        raise Error, "#{source}: return inside a block at #{where(irep, insn)} is not inside a method or a lambda"
+      end
       c = depth
     end
 

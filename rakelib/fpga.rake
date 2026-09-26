@@ -438,7 +438,8 @@ namespace :fpga do
     dir = File.join(FPGA_BUILD_DIR, "fuzz")
     FileUtils.mkdir_p dir
     endings = Hash.new(0)
-    gcs = gc_progs = 0
+    stats = Hash.new(0)
+    gc_progs = 0
     count.times do |i|
       heap = i % 4 == 3 # 4本に1本はヒープ (配列・Proc・GC) を突く形
       words = heap ? FpgaFuzz.heap_program(rng) : FpgaFuzz.program(rng)
@@ -453,7 +454,7 @@ namespace :fpga do
       end
       vm = FpgaRefVm.new(words, stim: stim)
       ref = vm.run(max)
-      gcs += vm.gcs
+      vm.stats.each { |k, v| stats[k] += v }
       gc_progs += 1 if vm.gcs > 0
       sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: max)
       if ref != sim
@@ -467,7 +468,8 @@ namespace :fpga do
       endings[ref.last.split.first] += 1
     end
     puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
-         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{gcs} GC in #{gc_progs} program(s))"
+         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{stats[:gc]} GC in #{gc_progs} program(s))\n" \
+         "  reached: #{stats.sort.map { |k, v| "#{k} #{v}" }.join(', ')}"
   end
 
   desc "Measure how many real PicoRuby programs (gem examples, examples/, fpga/corpus) convert and run on the core, and what blocks the rest"

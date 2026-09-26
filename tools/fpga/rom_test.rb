@@ -32,7 +32,7 @@ class FpgaRomTest < Minitest::Test
   end
 
   # 別の命令に置き換わるもの: ブロックの ENTER は NOP、sleep_ms / sleep は SEND、block_given? は BLKPUSH、.call は BLKCALL
-  REWRITTEN = { "ENTER" => %w[NOP], "SSEND" => %w[SEND], "SSEND0" => %w[SEND0 SEND BLKPUSH], "SEND" => %w[BLKCALL],
+  REWRITTEN = { "ENTER" => %w[NOP], "LAMBDA" => %w[BLOCK], "SSEND" => %w[SEND], "SSEND0" => %w[SEND0 SEND BLKPUSH], "SEND" => %w[BLKCALL],
                 "SEND0" => %w[BLKCALL] }.freeze
 
   def check_operands(where, opname, fields, w, pc_of)
@@ -172,7 +172,21 @@ def test_blocks_are_lowered_only_for_the_known_iterators
     assert_equal ["GETUPVAR", 1, 1, 1], [FpgaIsa::OPS[words[3].op].name, words[3].a, words[3].b, words[3].c]
     top_return = irep_record([op("ENTER"), 0, 0, 0, op("RETURN_BLK"), 1], nregs: 3)
     e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("BLOCK"), 1, 0, op("STOP")], reps: [top_return])) }
-    assert_match(/return inside a block at irep 1 byte 004 is not inside a method/, e.message)
+    assert_match(/return inside a block at irep 1 byte 004 is not inside a method or a lambda/, e.message)
+  end
+
+  # lambda { } と -> { } は lambda の印 (c の 0x80) を付けた BLOCK。一番外の lambda の中の return は通す
+  def test_lambdas_are_marked
+    blk = irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN_BLK"), 1], nregs: 3) # |x| return x
+    bin = rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["lambda"], reps: [blk])
+    words = FpgaRom.from_binary(bin).words
+    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[0].op].name, words[0].c]
+    words = FpgaRom.from_binary(rite([op("LAMBDA"), 1, 0, op("STOP")], reps: [blk])).words
+    assert_equal ["BLOCK", 0x80 | 1 | (3 << 8)], [FpgaIsa::OPS[words[0].op].name, words[0].c]
+    words = FpgaRom.from_binary(rite([op("BLOCK"), 2, 0, op("SSENDB"), 1, 0, 0, op("STOP")], syms: ["proc"], reps: [
+      irep_record([op("ENTER"), 0x04, 0, 0, op("RETURN"), 1], nregs: 3)
+    ])).words
+    assert_equal 1 | (3 << 8), words[0].c # proc は印なし
   end
 
   # sleep_ms / sleep は self への呼び出しでも組み込み (SEND) にする。.call は BLKCALL

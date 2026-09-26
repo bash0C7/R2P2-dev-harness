@@ -9,8 +9,10 @@
 #   - RETURN / RETNIL はフレームが無ければ停止、あれば呼び出し元へ戻る。STOP は停止
 #   - 配列と Proc はヒープのオブジェクト。ヒープが足りなくなったらコピー GC。GC の順番もハードウェアと同じ
 #     (移ったオブジェクトのアドレスまで一致させる)
-#   - Proc は作ったフレームの bp と外側の Proc を持つ。外側の変数 (GETUPVAR / SETUPVAR / BLKPUSH) は
-#     「深さ k のフレームの底」を Proc の連鎖でたどって読む
+#   - Proc は作ったフレームの env と外側の Proc を持つ。env はフレームが生きている間はその bp を指し、
+#     フレームから戻る時にレジスタを写し取る (mruby の REnv と同じ)。外側の変数 (GETUPVAR / SETUPVAR / BLKPUSH) は
+#     「深さ k のフレームの env」を Proc の連鎖でたどって読む
+#   - lambda は引数の数を調べ、その中の return / break は lambda から戻る
 #
 # トレース (1行1イベント、数値は10進、値は16進8桁):
 #   X <step> <pc> <op>          命令を実行した
@@ -41,17 +43,24 @@ class FpgaRefVm
     @heap = Array.new(FpgaIsa::HEAP_SIZE) { NIL }
     @space = 0
     @hp = 0
-    @stack = [] # [戻り先の pc, 呼び出し元の bp, 呼び出し元の Proc]
+    @stack = [] # [戻り先の pc, 呼び出し元の bp, 呼び出し元の Proc, 呼び出し元の env, 呼び出し元の nregs]
     @bp = 0
     @cp = NIL   # 今のフレームが Proc (ブロック) ならその参照
+    @env = NIL  # 今のフレームの env (中で Proc を作った時にできる)
+    @fn = 0     # 今のフレームの nregs (env に写す数。一番外は戻らないので 0)
     @argc = 0
     # step の順、同じ step なら与えられた順 (後が勝つ)。テストベンチもこの順で適用する
     @stim = FpgaCompare.sort_stim(stim)
     @trace = []
-    @gcs = 0
+    @stats = Hash.new(0)
   end
 
-  attr_reader :trace, :regs, :io, :consts, :heap, :gcs
+  attr_reader :trace, :regs, :io, :consts, :heap, :stats
+
+  # 珍しい経路を通った回数 (ファズがそこまで届いているかを見るため)。:gc, :detach, :env_heap, :lambda_exit, :aref
+  def gcs
+    @stats[:gc]
+  end
 
   def run(max_steps)
     pc = 0
@@ -170,15 +179,19 @@ class FpgaRefVm
   end
 
   # Cheney のコピー GC。ルートはレジスタファイル全部 (番号順)、定義済みの定数 (番号順)、
-  # コールスタックの Proc (底から)、今の Proc。ハードウェアも同じ順に写す
+  # コールスタックの Proc と env (底から、1段ごとに Proc、env の順)、今の Proc、今の env。ハードウェアも同じ順に写す
   def gc
-    @gcs += 1
+    @stats[:gc] += 1
     @space = 1 - @space
     @free = @space * HALF
     @regs.each_index { |i| @regs[i] = forward(@regs[i]) }
     @consts.each_index { |i| @consts[i] = forward(@consts[i]) if @consts[i] }
-    @stack.each { |fr| fr[2] = forward(fr[2]) }
+    @stack.each do |fr|
+      fr[2] = forward(fr[2])
+      fr[3] = forward(fr[3])
+    end
     @cp = forward(@cp)
+    @env = forward(@env)
     scan = @space * HALF
     while scan < @free
       w = @heap[scan]
@@ -248,27 +261,85 @@ class FpgaRefVm
     @heap[a[1] + 1] = int(i + 1) if i >= len
   end
 
-  # Proc: 見出し p、{先頭 pc | 引数の数 << 16 | nregs << 24}、作ったフレームの bp、外側の Proc
+  # Proc: 見出し p、{先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24}、作ったフレームの env、外側の Proc。
+  # 今のフレームに env が無ければ、Proc と一緒に1回で確保する (env が先、中身は nil)
   def new_proc(entry_word)
-    p = alloc(4)
+    fresh = @env[0] == FpgaIsa::TAG_NIL
+    p = alloc((fresh ? 2 + @fn : 0) + 4)
+    if fresh
+      @heap[p] = hdr(FpgaIsa::KIND_ENV, 1 + @fn)
+      @heap[p + 1] = int(@bp)
+      @fn.times { |i| @heap[p + 2 + i] = NIL }
+      @env = [FpgaIsa::TAG_ENV, p]
+      p += 2 + @fn
+    end
     @heap[p] = hdr(FpgaIsa::KIND_PROC, 3)
     @heap[p + 1] = int(entry_word)
-    @heap[p + 2] = int(@bp)
+    @heap[p + 2] = @env
     @heap[p + 3] = @cp
     p
   end
 
-  # 深さ k のフレームの底。0 は今のフレーム、1 は今の Proc を作ったフレーム、2 はその外側 ...
-  def frame_base(k)
-    return @bp if k.zero?
+  def lambda?(pr)
+    proc?(pr) && ((@heap[pr[1] + 1][1] >> 23) & 1) == 1
+  end
+
+  # 深さ k の Proc。0 は今の Proc、1 はそれを作ったフレームの Proc ...
+  def proc_at(k)
     fault! if k > 15
     p = @cp
-    (k - 1).times do
+    k.times do
       fault! unless proc?(p)
       p = @heap[p[1] + 3]
     end
+    p
+  end
+
+  # 深さ k (1 以上) のフレームの env
+  def env_at(k)
+    p = proc_at(k - 1)
     fault! unless proc?(p)
-    @heap[p[1] + 2][1]
+    @heap[p[1] + 2]
+  end
+
+  # 深さ k のフレームの i 番目のレジスタの場所: [:reg, 番号] (生きている) か [:heap, 語アドレス] (退避済み)
+  def slot(k, i)
+    return [:reg, @bp + i] if k.zero?
+    e = env_at(k)[1]
+    live = @heap[e + 1]
+    return [:reg, live[1] + i] if live[0] == FpgaIsa::TAG_INT
+    @stats[:env_heap] += 1
+    fault! if i >= (@heap[e][1] & 0xFFFF) - 1
+    [:heap, e + 2 + i]
+  end
+
+  def read_slot(k, i)
+    kind, n = slot(k, i)
+    kind == :reg ? (@regs[n] || fault!) : @heap[n]
+  end
+
+  # 深さ k のフレームの底 (生きていなければエラー: 戻ったメソッドへの break / return)
+  def frame_base(k)
+    return @bp if k.zero?
+    live = @heap[env_at(k)[1] + 1]
+    fault! unless live[0] == FpgaIsa::TAG_INT
+    live[1]
+  end
+
+  # フレームから出る前に、その env にレジスタを写し取る
+  def detach
+    return if @env[0] == FpgaIsa::TAG_NIL
+    @stats[:detach] += 1
+    e = @env[1]
+    n = (@heap[e][1] & 0xFFFF) - 1
+    n.times { |i| @heap[e + 2 + i] = @regs[@bp + i] }
+    @heap[e + 1] = NIL
+  end
+
+  def pop_frame
+    detach
+    pc, @bp, @cp, @env, @fn = @stack.pop
+    pc
   end
 
   # ---- 実行
@@ -327,18 +398,17 @@ class FpgaRefVm
     when "STOP" then return :halt
     when "BREAK" then return brk(step, a, b, c)
     when "RETURN_BLK" then return return_blk(step, a, c)
-    when "GETUPVAR"
-      base = frame_base(c)
-      set(step, a, @regs[base + b] || fault!)
+    when "GETUPVAR", "BLKPUSH" then set(step, a, read_slot(c, b))
     when "SETUPVAR"
-      base = frame_base(c)
-      set_abs(step, base + b, reg(a))
-    when "BLKPUSH"
-      base = frame_base(c)
-      set(step, a, @regs[base + b] || fault!)
+      kind, n = slot(c, b)
+      if kind == :reg
+        set_abs(step, n, reg(a))
+      else
+        @heap[n] = reg(a) # 退避済みの env への書き込みはトレースに出さない (ヒープと同じ)
+      end
     when "BLOCK"
       fault! unless ok?(a)
-      set(step, a, [FpgaIsa::TAG_PROC, new_proc((b & 0xFFFF) | (c << 16))])
+      set(step, a, [FpgaIsa::TAG_PROC, new_proc((b & 0xFFFF) | ((c & 0xFF) << 16) | ((c >> 8) << 24))])
     when "BLKCALL" then return blkcall(pc, a, b)
     when "ARRAY"
       fault! unless b.zero? || ok?(a + b - 1)
@@ -352,6 +422,10 @@ class FpgaRefVm
       set(step, a, [FpgaIsa::TAG_ARRAY, p])
     when "GETIDX" then set(step, a, index(reg(a), reg(a + 1)))
     when "GETIDX0" then set(step, a, index(reg(b), int(0)))
+    when "AREF" # 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
+      v = reg(b)
+      @stats[:aref] += 1
+      set(step, a, ary?(v) ? index(v, int(c & 0xFF)) : (c.zero? ? v : NIL))
     when "SETIDX"
       arr = reg(a)
       idx = reg(a + 1)
@@ -386,22 +460,25 @@ class FpgaRefVm
   def enter_frame(pc, a, nregs, keep, new_cp)
     new_bp = @bp + a
     fault! if new_bp + [nregs, keep + 1].max > @regs.size || @stack.size >= FpgaIsa::STACK_DEPTH
-    @stack.push([pc + 1, @bp, @cp])
+    @stack.push([pc + 1, @bp, @cp, @env, @fn])
     @regs[new_bp] = @regs[@bp]
     ((keep + 1)...nregs).each { |i| @regs[new_bp + i] = NIL }
     @bp = new_bp
     @cp = new_cp
+    @env = NIL
+    @fn = nregs
   end
 
   # Proc を呼ぶ (yield / blk.call / iterator)。R[a] の Proc を、R[a+1].. の n 個の値で。
-  # Proc の引数の数より少なければ残りは nil、多ければ捨てる
+  # Proc の引数の数より少なければ残りは nil、多ければ捨てる。lambda は数が違えばエラー
   def blkcall(pc, a, n)
     pr = reg(a)
     fault! unless proc?(pr)
     ok?(a + n) || fault!
     info = @heap[pr[1] + 1][1]
-    m1 = (info >> 16) & 0xFF
+    m1 = (info >> 16) & 0x7F
     nregs = (info >> 24) & 0xFF
+    fault! if lambda?(pr) && n != m1
     enter_frame(pc, a, nregs, [n, m1].min, pr)
     info & 0xFFFF
   end
@@ -410,7 +487,7 @@ class FpgaRefVm
   def ret(step, value)
     return :halt if @stack.empty?
     callee = @bp
-    pc, @bp, @cp = @stack.pop
+    pc = pop_frame
     set_abs(step, callee, value)
     pc
   end
@@ -424,11 +501,15 @@ class FpgaRefVm
       ret(step, value)
       return b
     end
+    if lambda?(@cp) # lambda の中の break は lambda から戻る
+      @stats[:lambda_exit] += 1
+      return ret(step, value)
+    end
     target = frame_base(1)
     loop do
       fault! if @stack.empty?
       callee = @bp
-      pc, @bp, @cp = @stack.pop
+      pc = pop_frame
       if @bp == target
         set_abs(step, callee, value)
         return pc
@@ -436,13 +517,25 @@ class FpgaRefVm
     end
   end
 
-  # ブロックの中の return: ブロックを囲むメソッド (深さ c のフレーム) まで畳み、そのメソッドから戻る
+  # ブロックの中の return: ブロックを囲むメソッド (深さ c のフレーム) まで畳み、そのメソッドから戻る。
+  # 途中に lambda があれば、一番内側の lambda から戻る (深さ d の Proc が lambda なら、深さ d のフレーム)
   def return_blk(step, a, c)
     value = reg(a)
-    target = frame_base(c)
+    d = c
+    p = @cp
+    c.times do |k|
+      fault! unless proc?(p)
+      if lambda?(p)
+        d = k
+        break
+      end
+      p = @heap[p[1] + 3]
+    end
+    @stats[:lambda_exit] += 1 if d < c
+    target = frame_base(d)
     until @bp == target
       fault! if @stack.empty?
-      _pc, @bp, @cp = @stack.pop
+      pop_frame
     end
     fault! if @stack.empty?
     ret(step, value)

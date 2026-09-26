@@ -62,13 +62,14 @@ module FpgaIsa
     RETURN RETNIL STOP
     TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
     GETUPVAR SETUPVAR BREAK
-    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK
+    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令に下げる (docs/spec.md §10「ブロック」)
   #   SENDB SSENDB  iterator (times / each / map ...) はループと BLKCALL に展開し、proc / lambda は Proc をそのまま返す。
   #                 def したメソッドへのブロック付き呼び出しは SSEND (ブロックを渡す印付き) にする
-  LOWERED = %w[SENDB SSENDB].freeze
+  #   LAMBDA        -> (x) { } は lambda の印を付けた BLOCK にする
+  LOWERED = %w[SENDB SSENDB LAMBDA].freeze
 
   # ブロックを取る組み込み: [名前, SENDB か SSENDB か, 引数の数]
   ITERATORS = [
@@ -90,13 +91,19 @@ module FpgaIsa
   TAG_PROC  = 5
   TAG_FWD   = 6
   TAG_HDR   = 7
+  # env (フレームのレジスタの退避先) への参照。レジスタには出ず、Proc とコールスタックの中だけ
+  TAG_ENV   = TAG_ARRAY
 
   # ヒープのオブジェクトの種類 (見出しの値 = 種類 << 16 | 中身の語数)
   #   配列  [HDR(ARY,2)] [INT 長さ] [ARRAY → 中身]      中身 [HDR(DATA,容量)] [要素 ...]
-  #   Proc  [HDR(PROC,3)] [INT 先頭 pc | 引数の数 << 16 | nregs << 24] [INT 作ったフレームの bp] [外側の Proc か nil]
+  #   Proc  [HDR(PROC,3)] [INT 先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc か nil]
+  #   env   [HDR(ENV,1+n)] [INT フレームの bp (生きている間) か nil (退避済み)] [レジスタ × n]
+  #         フレームの中で初めて Proc を作った時にでき、フレームから戻る時に n 本 (フレームの nregs) を写し取る。
+  #         Proc の中と、配列の中身への参照と同じく ARRAY のタグで指す (種類は見出しで分かる)
   KIND_ARY  = 1
   KIND_DATA = 2
   KIND_PROC = 3
+  KIND_ENV  = 4
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
   HEAP_SIZE = 2048
 
