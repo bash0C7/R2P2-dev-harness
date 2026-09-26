@@ -470,7 +470,7 @@ module mrb_core_tb;
     expect_reg(11, vint(7));
     expect_reg(12, VNIL);
     expect_reg(13, dut.core.regs[4]);                        // push は同じ配列 (同一の参照)
-    if (dut.core.regs[4][VAL_BITS-1 -: TAG_BITS] != TAG_ARRAY) $fatal(1, "%s: R4 is not an array", name);
+    if (dut.core.regs[4][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: R4 is not an array", name);
     expect_reg(14, vint(6));
     expect_reg(8, VTRUE);
     expect_reg(1, vint(3));
@@ -625,6 +625,22 @@ module mrb_core_tb;
     expect_reg(1, vint(9));
     expect_reg(2, vint(7));
     if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after return", name, dut.core.sp, dut.core.bp);
+
+    // ---- シンボル: 番号の即値。== は番号で比べる
+    begin_test("symbols");
+    prog.push_back(w(OP_LOADSYM, 1, 3));                     // 0: R1 = :s3
+    prog.push_back(w(OP_LOADSYM, 2, 3));                     // 1
+    prog.push_back(w(OP_EQ, 1));                             // 2: R1 = true
+    prog.push_back(w(OP_LOADSYM, 3, 3));                     // 3
+    prog.push_back(w(OP_LOADSYM, 4, 4));                     // 4
+    prog.push_back(w(OP_EQ, 3));                             // 5: R3 = false
+    prog.push_back(w(OP_LOADSYM, 5, 7));                     // 6
+    prog.push_back(w(OP_STOP));                              // 7
+    run();
+    expect_halt();
+    expect_reg(1, VTRUE);
+    expect_reg(3, VFALSE);
+    expect_reg(5, {TAG_SYM, 32'd7});
 
     // ---- 多重代入 (AREF)
     begin_test("aref");

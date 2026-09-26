@@ -17,17 +17,20 @@ module FpgaGenPkg
     lines << "// 定数はどれを使うかが module ごとに違うので、未使用の lint は切る"
     lines << "/* verilator lint_off UNUSEDPARAM */"
     lines << "package mrb_pkg;"
-    lines << "  // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。ARRAY / PROC はヒープの語アドレス、FWD / HDR はヒープの中だけ"
+    lines << "  // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。OBJ はヒープの語アドレス、FWD / HDR はヒープの中だけ"
     lines << "  localparam int INT_BITS = #{FpgaIsa::INT_BITS};"
     lines << "  localparam int TAG_BITS = #{FpgaIsa::TAG_BITS};"
     lines << "  localparam int VAL_BITS = INT_BITS + TAG_BITS;"
-    %w[NIL FALSE TRUE INT ARRAY PROC FWD HDR].each do |t|
-      lines << format("  localparam logic [TAG_BITS-1:0] TAG_%-5s = 3'd%d;", t, FpgaIsa.const_get("TAG_#{t}"))
+    FpgaIsa::TAGS.each do |t|
+      lines << format("  localparam logic [TAG_BITS-1:0] TAG_%-5s = %d'd%d;", t, FpgaIsa::TAG_BITS, FpgaIsa.const_get("TAG_#{t}"))
     end
     lines << ""
-    lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = 種類 << 16 | 中身の語数"
+    lines << "  // ヒープ (tools/fpga/isa.rb)。見出しの値 = クラス << 16 | 中身の語数"
     lines << "  localparam int HEAP_SIZE = #{FpgaIsa::HEAP_SIZE};"
-    %w[ARY DATA PROC ENV].each { |k| lines << "  localparam int KIND_#{k} = #{FpgaIsa.const_get("KIND_#{k}")};" }
+    %w[OBJECT NIL TRUE FALSE INT SYM ARRAY PROC CLASS DATA ENV].each do |k|
+      lines << format("  localparam logic [15:0] CLS_%-6s = 16'd%d;", k, FpgaIsa.const_get("CLS_#{k}"))
+    end
+    lines << "  localparam logic [15:0] CLS_META   = 16'h#{FpgaIsa::META.to_s(16)};"
     lines << ""
     lines << "  // コアの大きさ (tools/fpga/isa.rb)"
     lines << "  localparam int RF_SIZE     = #{FpgaIsa::RF_SIZE};"

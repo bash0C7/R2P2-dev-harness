@@ -112,16 +112,21 @@ class FpgaRefVm
     r[0] == FpgaIsa::TAG_INT
   end
 
+  # ヒープのオブジェクトのクラス (見出しの上位 16bit)
+  def obj_class(r)
+    @heap[r[1]][1] >> 16
+  end
+
   def ary?(r)
-    r[0] == FpgaIsa::TAG_ARRAY
+    ref?(r) && obj_class(r) == FpgaIsa::CLS_ARRAY
   end
 
   def proc?(r)
-    r[0] == FpgaIsa::TAG_PROC
+    ref?(r) && obj_class(r) == FpgaIsa::CLS_PROC
   end
 
   def ref?(r)
-    ary?(r) || proc?(r)
+    r[0] == FpgaIsa::TAG_OBJ
   end
 
   def truthy?(r)
@@ -218,10 +223,10 @@ class FpgaRefVm
   def new_array(values)
     cap = values.size
     p = alloc(4 + cap)
-    @heap[p] = hdr(FpgaIsa::KIND_ARY, 2)
+    @heap[p] = hdr(FpgaIsa::CLS_ARRAY, 2)
     @heap[p + 1] = int(cap)
-    @heap[p + 2] = [FpgaIsa::TAG_ARRAY, p + 3]
-    @heap[p + 3] = hdr(FpgaIsa::KIND_DATA, cap)
+    @heap[p + 2] = [FpgaIsa::TAG_OBJ, p + 3]
+    @heap[p + 3] = hdr(FpgaIsa::CLS_DATA, cap)
     p
   end
 
@@ -251,9 +256,9 @@ class FpgaRefVm
       d = alloc(1 + newcap)
       a = reg(ra)
       old = ary_data(a)
-      @heap[d] = hdr(FpgaIsa::KIND_DATA, newcap)
+      @heap[d] = hdr(FpgaIsa::CLS_DATA, newcap)
       newcap.times { |k| @heap[d + 1 + k] = k < len ? @heap[old + 1 + k] : NIL }
-      @heap[a[1] + 2] = [FpgaIsa::TAG_ARRAY, d]
+      @heap[a[1] + 2] = [FpgaIsa::TAG_OBJ, d]
     end
     d = ary_data(a)
     (len...i).each { |k| @heap[d + 1 + k] = NIL }
@@ -267,13 +272,13 @@ class FpgaRefVm
     fresh = @env[0] == FpgaIsa::TAG_NIL
     p = alloc((fresh ? 2 + @fn : 0) + 4)
     if fresh
-      @heap[p] = hdr(FpgaIsa::KIND_ENV, 1 + @fn)
+      @heap[p] = hdr(FpgaIsa::CLS_ENV, 1 + @fn)
       @heap[p + 1] = int(@bp)
       @fn.times { |i| @heap[p + 2 + i] = NIL }
-      @env = [FpgaIsa::TAG_ENV, p]
+      @env = [FpgaIsa::TAG_OBJ, p]
       p += 2 + @fn
     end
-    @heap[p] = hdr(FpgaIsa::KIND_PROC, 3)
+    @heap[p] = hdr(FpgaIsa::CLS_PROC, 3)
     @heap[p + 1] = int(entry_word)
     @heap[p + 2] = @env
     @heap[p + 3] = @cp
@@ -360,6 +365,7 @@ class FpgaRefVm
     when "LOADI16"  then set(step, a, int(sext16(b)))
     when "LOADI32"  then set(step, a, int((b << 16) | c))
     when "LOADNIL", "TDEF" then set(step, a, NIL)
+    when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "LOADTRUE" then set(step, a, bool(true))
     when "LOADFALSE" then set(step, a, bool(false))
     when "GETGV"
@@ -408,18 +414,18 @@ class FpgaRefVm
       end
     when "BLOCK"
       fault! unless ok?(a)
-      set(step, a, [FpgaIsa::TAG_PROC, new_proc((b & 0xFFFF) | ((c & 0xFF) << 16) | ((c >> 8) << 24))])
+      set(step, a, [FpgaIsa::TAG_OBJ, new_proc((b & 0xFFFF) | ((c & 0xFF) << 16) | ((c >> 8) << 24))])
     when "BLKCALL" then return blkcall(pc, a, b)
     when "ARRAY"
       fault! unless b.zero? || ok?(a + b - 1)
       p = new_array(Array.new(b))
       b.times { |i| @heap[p + 4 + i] = reg(a + i) }
-      set(step, a, [FpgaIsa::TAG_ARRAY, p])
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
     when "ARRAY2"
       fault! unless c.zero? || ok?(b + c - 1)
       p = new_array(Array.new(c))
       c.times { |i| @heap[p + 4 + i] = reg(b + i) }
-      set(step, a, [FpgaIsa::TAG_ARRAY, p])
+      set(step, a, [FpgaIsa::TAG_OBJ, p])
     when "GETIDX" then set(step, a, index(reg(a), reg(a + 1)))
     when "GETIDX0" then set(step, a, index(reg(b), int(0)))
     when "AREF" # 多重代入: 配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil
@@ -614,7 +620,7 @@ class FpgaRefVm
   # == : Integer 同士は値、配列同士はエラー (中身の比較はしない)、それ以外は型と値 (参照は同じものか)
   def equal?(x, y)
     fault! if ary?(x) && ary?(y)
-    x[0] == y[0] && (x[0] == FpgaIsa::TAG_INT || ref?(x) ? x[1] == y[1] : true)
+    x[0] == y[0] && ([FpgaIsa::TAG_INT, FpgaIsa::TAG_SYM, FpgaIsa::TAG_CLASS].include?(x[0]) || ref?(x) ? x[1] == y[1] : true)
   end
 
   def binop(step, name, a)
