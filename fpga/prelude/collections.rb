@@ -968,6 +968,16 @@ class Hash
   def __merge!(other)
     merge!(other)
   end
+
+  # キーワード引数 (KARG / KEYEND を変換器がこの呼び出しにする)。KARG は Hash から消す (**opts には残りが入る)
+  def __karg(key)
+    return delete(key) if key?(key)
+    __missing_keyword(key)
+  end
+
+  def __keyend
+    __unknown_keyword(@keys.__aget(0)) unless empty?
+  end
 end
 
 class Array

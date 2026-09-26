@@ -134,11 +134,12 @@ module FpgaFuzz
     when "SEND", "SEND0", "SSEND", "SSEND0"
       b = rng.rand(NSYMS)
       n = op.name.end_with?("0") ? 0 : argc(rng)
-      c = n | (rng.rand(4).zero? ? 0x80 : 0)
+      c = n | (rng.rand(4).zero? ? 0x80 : 0) | (rng.rand(6).zero? ? 0x100 : 0) # たまにキーワード引数の Hash の印
     when "ENTER" # 必須 a、nregs b、ときどき省略可能・残り・後ろの必須
       a = rng.rand(3)
       b = 1 + rng.rand(10)
       c = rng.rand(3).zero? ? rng.rand(3) | (rng.rand(2) << 5) | (rng.rand(3) << 6) : 0
+      c |= 0x800 if rng.rand(4).zero? # kd (キーワード引数の Hash を受ける)
     when "EXEC" then b = code_pc.call
     when "CLASS" then b = CLASS_POOL.sample(random: rng) & 0x7FFF
     when "TDEF", "SDEF" then b = rng.rand(NSYMS)
@@ -155,7 +156,7 @@ module FpgaFuzz
     when "LOADSYM" then b = rng.rand(NSYMS)
     when "STRING" then b = rng.rand(len + 4); c = rng.rand(12) # ROM のどこかの語をバイトとして読む
     when "GETIV", "SETIV" then b = rng.rand(NSYMS)
-    when "SUPER" then b = rng.rand(NSYMS); c = argc(rng) | 0x80
+    when "SUPER" then b = rng.rand(NSYMS); c = argc(rng) | 0x80 | (rng.rand(6).zero? ? 0x100 : 0)
     when "ARYPUSH" then b = rng.rand(4)
     when "APOST" then b = rng.rand(3); c = rng.rand(3)
     when "ARGARY" then b = (rng.rand(3) << 11) | (rng.rand(2) << 10) | (rng.rand(2) << 5)
@@ -170,7 +171,7 @@ module FpgaFuzz
   # heap_program が使うシンボルの番号
   S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
         maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
-        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37 }.freeze
+        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38 }.freeze
   # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
   HEAP_TEXT = "hello, fpga!"
   HEAP_TABLE_LOG = 6 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
@@ -199,7 +200,7 @@ module FpgaFuzz
     top = words.size
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     body.times do
-      pick = rng.rand(19)
+      pick = rng.rand(20)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -312,6 +313,14 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
         end
         words << encode(FpgaIsa.op("SETCONST"), 12, 3, 0)
+      when 19 # キーワード引数: kwm(**k) を Hash の印付きで (k は何でもよい) か、無しで (回路が空の Hash を作る) 呼ぶ
+        if rng.rand(2).zero?
+          words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:kwm], 0x100)
+        else
+          words << encode(FpgaIsa.op("SSEND0"), 12, S[:kwm], 0)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
       when 18 # Symbol#to_s (ROM のシンボル表)
         words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
         words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
@@ -389,6 +398,11 @@ module FpgaFuzz
     words << encode(FpgaIsa.op("LOADI_7"), 2, 0, 0)
     words << encode(FpgaIsa.op("ARRAY2"), 6, 1, 4)
     words << encode(FpgaIsa.op("RETURN"), 6, 0, 0)
+    # kwm(**k): [k] を返す (kd の ENTER、R1 = キーワードの Hash、R2 = ブロック)
+    kwm_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 4, 0x800)
+    words << encode(FpgaIsa.op("ARRAY"), 1, 1, 0)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
     # proc { |a, b| [b, a] }
     pair_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 2, 5, 0)
@@ -414,7 +428,7 @@ module FpgaFuzz
       [ary, FpgaIsa::OP_SYMS.index("+"), plus_at], [ary, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT],
       [FpgaIsa::CLS_OBJECT, FpgaIsa::OP_SYMS.index("=="), prim.("OEQ")],
       [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")],
-      [FpgaIsa::CLS_INT, S[:vargs], vargs_at],
+      [FpgaIsa::CLS_INT, S[:vargs], vargs_at], [FpgaIsa::CLS_INT, S[:kwm], kwm_at],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
       [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],

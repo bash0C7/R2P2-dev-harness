@@ -80,12 +80,13 @@ module mrb_core
     S_ENLATCH, S_ENPOST, S_ENFRONT, S_ENFIN, // ENTER: ブロックと写し元を覚える / 後ろの必須 / 前 / 残りとブロック
     S_APOST,              // a, *b, c = v: 後ろの c 個をレジスタへ
     S_SROM, S_SBYTE,      // String を ROM のデータから写す: 語を読む / 1バイト書く
-    S_SYMRD, S_SYMGO      // Symbol#to_s: シンボル表を読む / 読んだ場所から String を作る
+    S_SYMRD, S_SYMGO,     // Symbol#to_s: シンボル表を読む / 読んだ場所から String を作る
+    S_EHASH               // ENTER: キーワード引数の空の Hash を書く
   } state_t;
   state_t state;
 
   // 確保のあとに続ける処理
-  typedef enum logic [1:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ } mop_t;
+  typedef enum logic [2:0] { MO_BLOCK, MO_ARRAY, MO_GROW, MO_OBJ, MO_EHASH } mop_t;
   mop_t mop;
 
   // メソッド表を引く目的
@@ -106,6 +107,7 @@ module mrb_core
   logic [VAL_BITS-1:0] regs [NREGS];
   logic [RB-1:0]       bp;
   logic [7:0]          argc;
+  logic                argkw;     // 今のフレームにキーワード引数の Hash が渡されたか (呼び出しの c の bit 8)
   logic [VAL_BITS-1:0] cp;
   logic [VAL_BITS-1:0] env;       // 今のフレームの env (無ければ nil)
   logic [7:0]          fn;        // 今のフレームの nregs (env に写す数。メソッドは ENTER が決める)
@@ -139,6 +141,7 @@ module mrb_core
   logic [15:0]         lk_cls, lk_sym;
   logic [6:0]          lk_argc;
   logic                lk_blk, lk_super;
+  logic                lk_kw;     // 呼び出しにキーワード引数の Hash がある (ブロックの枠はその次)
   logic [5:0]          lk_depth;
   logic [PC_BITS-1:0]  lk_i;      // 何語目を比べているか
   logic [13:0]         prim;
@@ -192,6 +195,9 @@ module mrb_core
   logic [7:0]          en_nregs;
   logic                en_r, en_heap, en_desc;
   logic [VAL_BITS-1:0] en_blk;     // ブロック (動かす前に覚える)
+  logic [VAL_BITS-1:0] en_kdict;   // キーワード引数の Hash (kd の時)
+  logic                en_kd, en_mkhash; // kd か、空の Hash を作るか
+  logic [16:0]         en_blksrc, en_kidx, en_rn; // ブロックとキーワードの Hash がある場所、残りの配列の長さ
   logic [HB-1:0]       en_src;     // 引数の配列の中身の見出し
   // APOST
   logic [16:0]         ap_len;     // 元の長さ (配列でなければ 1)
@@ -434,6 +440,8 @@ module mrb_core
   //      ブロックの枠は R[a + blk_win]。数の検査と並べ替えは Proc の先頭の ENTER がする
   logic [7:0]  blk_n;
   logic [16:0] blk_win, lk_win, send_win;
+  logic        call_kw;   // Proc#call にキーワード引数の Hash がある
+  assign call_kw = state == S_PRIM && lk_kw;
   assign blk_n    = state == S_PRIM ? {1'b0, lk_argc} : b[7:0];
   assign blk_win  = blk_n == 8'd15 ? 17'd2 : 17'(blk_n) + 17'd1;
   assign lk_win   = lk_argc == 7'd15 ? 17'd2 : 17'(lk_argc) + 17'd1;
@@ -442,6 +450,13 @@ module mrb_core
   // ---- ENTER の並べ方 (ref_vm.rb の enter と同じ)。a = m1、b = nregs、c = o | r << 5 | m2 << 6
   logic [VAL_BITS-1:0] r1v;
   logic                r1_ary, e_strict, e_heap, e_bad, e_fast, e_lt;
+  // キーワード引数 (PicoRuby の vm_op_enter): kd でなく Hash が渡されたら最後の引数として数える (14 個以上は止める)
+  logic                e_kd, e_kwin, e_fold;
+  logic [7:0]          e_argc;
+  assign e_kd   = c[11];
+  assign e_fold = argkw && !e_kd;
+  assign e_kwin = argkw && e_kd;
+  assign e_argc = e_fold ? argc + 8'd1 : argc;
   logic [16:0]         e_m1, e_o, e_r, e_m2, e_len, e_cnt, e_mlen, e_front, e_ps, e_pm, e_rn, e_skip, e_need;
   assign r1v      = regs[RB'(17'(bp) + 17'd1)];
   assign r1_ary   = tag_of(r1v) == TAG_OBJ && heap[ha(val_of(r1v))][31:16] == CLS_ARRAY;
@@ -451,8 +466,8 @@ module mrb_core
   assign e_m2     = 17'(c[10:6]);
   assign e_len    = e_m1 + e_o + e_r + e_m2;
   assign e_strict = !cp_proc || cp_lam; // メソッド (Proc 無し) と lambda は数を調べる
-  assign e_heap   = argc == 8'd15 || (!e_strict && argc == 8'd1 && e_len > 17'd1 && r1_ary);
-  assign e_cnt    = e_heap ? 17'(lo16(heap[ha(val_of(r1v)) + HB'(1)])) : 17'(argc);
+  assign e_heap   = e_argc == 8'd15 || (!e_strict && e_argc == 8'd1 && e_len > 17'd1 && r1_ary);
+  assign e_cnt    = e_heap ? 17'(lo16(heap[ha(val_of(r1v)) + HB'(1)])) : 17'(e_argc);
   assign e_lt     = e_cnt < e_len;
   assign e_mlen   = e_cnt < e_m1 + e_m2 ? (e_cnt > e_m1 ? e_cnt - e_m1 : 17'd0) : e_m2;
   assign e_front  = e_lt ? e_cnt - e_mlen : e_m1 + e_o;
@@ -460,11 +475,28 @@ module mrb_core
   assign e_ps     = e_lt ? e_front : e_m1 + e_o + e_rn;
   assign e_pm     = e_lt ? e_mlen : e_m2;
   assign e_skip   = e_lt ? ((e_o != 17'd0 && e_cnt > e_m1 + e_m2) ? e_cnt - e_m1 - e_m2 : 17'd0) : e_o;
-  assign e_need   = 17'(b) > e_len + 17'd2 ? 17'(b) : e_len + 17'd2;
-  assign e_bad    = 17'(bp) + e_need > 17'(NREGS) || (e_heap && !r1_ary) ||
+  assign e_need   = 17'(b) > e_len + 17'(e_kd) + 17'd2 ? 17'(b) : e_len + 17'(e_kd) + 17'd2;
+  assign e_bad    = 17'(bp) + e_need > 17'(NREGS) || (e_heap && !r1_ary) || (e_fold && argc >= 8'd14) ||
                     (e_strict && (e_cnt < e_m1 + e_m2 || (e_r == 17'd0 && e_cnt > e_m1 + e_o + e_m2)));
   // 必須の引数だけで数が合う (前と同じく、nregs までを埋めるだけ)
-  assign e_fast   = !e_heap && e_o == 17'd0 && e_r == 17'd0 && e_m2 == 17'd0 && e_cnt == e_m1;
+  assign e_fast   = !e_heap && e_o == 17'd0 && e_r == 17'd0 && e_m2 == 17'd0 && e_cnt == e_m1 && !e_kd;
+  // 空の Hash (13 語: Hash の見出しと 4 つのインスタンス変数、@keys と @vals の空の配列) の k 語目
+  logic [HB-1:0]       eh_p;
+  logic [VAL_BITS-1:0] eh_word;
+  assign eh_p = p_new[HB-1:0] + (en_r ? HB'(4) + HB'(en_rn) : '0);
+  always_comb begin
+    case (m_k[3:0])
+      4'd0:  eh_word = mk(TAG_HDR, {CLS_HASH, 16'd4});
+      4'd1:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd5);
+      4'd2:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd9);
+      4'd5, 4'd9: eh_word = mk(TAG_HDR, {CLS_ARRAY, 16'd2});
+      4'd6, 4'd10: eh_word = mk_int('0);
+      4'd7:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd8);
+      4'd11: eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd12);
+      4'd8, 4'd12: eh_word = mk(TAG_HDR, {CLS_DATA, 16'd0});
+      default: eh_word = V_NIL;
+    endcase
+  end
   // S_ENPOST / S_ENFRONT: 引数の j 番目 (配列の中身かレジスタ)
   logic [16:0]         en_idx, en_j;
   logic [VAL_BITS-1:0] en_val;
@@ -531,6 +563,7 @@ module mrb_core
   logic [15:0]         lk_sym_n;    // 探すシンボル
   logic [6:0]          lk_argc_n;
   logic                lk_blk_n;
+  logic                lk_kw_n;
   logic                pre_self;    // 探す前に R[a] = self (SSEND)
   logic                pre_a1;      // 探す前に R[a+1] = pre_a1v (ADDI / SUBI / GETIDX0 の落ち先)
   logic [VAL_BITS-1:0] pre_a1v;
@@ -543,7 +576,9 @@ module mrb_core
   assign ret_now = do_ret && tag_of(env) == TAG_NIL;
   // primitive の引数の数が違う (8'hff は何個でも)
   logic prim_argc_bad;
-  assign prim_argc_bad = prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc};
+  // キーワード引数を受ける primitive は new と Proc#call だけ
+  assign prim_argc_bad = (prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc}) ||
+                         (lk_kw && prim != PR_NEW && prim != PR_CALL);
 
   assign io_addr  = b[7:0];
   assign io_wdata = ra;
@@ -582,6 +617,7 @@ module mrb_core
     lk_sym_n  = b;
     lk_argc_n = 7'd1;
     lk_blk_n  = 1'b0;
+    lk_kw_n   = 1'b0;
     lk_mode_n = LM_CALL;
     lk_cls_n  = recv_cls;
     lk_super_n = 1'b0;
@@ -690,6 +726,7 @@ module mrb_core
           lk_sym_n  = NIVARS_SYM;
           lk_argc_n = lk_argc;
           lk_blk_n  = lk_blk;
+          lk_kw_n   = lk_kw;
           err       = !new_ok;
         end
         PR_ISA, PR_KINDOF: begin
@@ -711,7 +748,7 @@ module mrb_core
           wr      = 1'b0;
           do_call = 1'b1;
           npc     = pr_info[PC_BITS-1:0];
-          err     = prim_argc_bad || !ra_proc || !(ia + blk_win < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
+          err     = prim_argc_bad || !ra_proc || !(ia + blk_win + 17'(lk_kw) < 17'(NREGS)) || sp >= SB'(STACK_DEPTH);
         end
         default: err = 1'b1;
       endcase
@@ -804,8 +841,9 @@ module mrb_core
           go_lookup = 1'b1;
           lk_argc_n = c[6:0];
           lk_blk_n  = c[7];
+          lk_kw_n   = c[8];
           pre_self  = op == OP_SSEND || op == OP_SSEND0;
-          err       = !(ia + send_win < 17'(NREGS));
+          err       = !(ia + send_win + 17'(c[8]) < 17'(NREGS));
         end
         OP_BLKCALL: begin
           do_call = 1'b1;
@@ -821,8 +859,9 @@ module mrb_core
           lk_super_n = 1'b1;
           lk_argc_n  = c[6:0];
           lk_blk_n   = 1'b1;
+          lk_kw_n    = c[8];
           pre_self   = 1'b1;
-          err        = !(ia + send_win < 17'(NREGS));
+          err        = !(ia + send_win + 17'(c[8]) < 17'(NREGS));
         end
         OP_EXEC: begin
           // クラスの本体を self = R[a] で呼ぶ (引数 0 個、ブロックなし)
@@ -961,8 +1000,8 @@ module mrb_core
       LM_CALL:
         if (!lk_hitr) lkd_err = 1'b1;
         else if (lk_kind_pc) lkd_err = sp >= SB'(STACK_DEPTH);
-        else if (lk_kind_iv) lkd_err = lk_argc != 7'd0 || !iv_ok;
-        else if (lk_kind_ivset) lkd_err = lk_argc != 7'd1 || !iv_ok;
+        else if (lk_kind_iv) lkd_err = lk_argc != 7'd0 || lk_kw || !iv_ok;
+        else if (lk_kind_ivset) lkd_err = lk_argc != 7'd1 || lk_kw || !iv_ok;
       LM_INIT:
         if (lk_hitr) lkd_err = !lk_kind_pc || sp >= SB'(STACK_DEPTH);
       LM_GETIV: lkd_err = lk_hitr && (!lk_kind_iv || !iv_ok);
@@ -1073,6 +1112,7 @@ module mrb_core
       pc      <= '0;
       bp      <= '0;
       argc    <= '0;
+      argkw   <= 1'b0;
       sp      <= '0;
       cp      <= V_NIL;
       env     <= V_NIL;
@@ -1128,6 +1168,7 @@ module mrb_core
               lk_sym   <= lk_sym_n;
               lk_argc  <= lk_argc_n;
               lk_blk   <= lk_blk_n;
+              lk_kw    <= lk_kw_n;
               lk_mode  <= lk_mode_n;
               lk_super <= lk_super_n;
               lk_depth <= '0;
@@ -1145,9 +1186,10 @@ module mrb_core
               env                 <= V_NIL;
               fn                  <= '0;
               argc                <= blk_n;
+              argkw               <= call_kw;
               sp                  <= sp + SB'(1);
               regs[ia[RB-1:0]]    <= heap[pr_p + HB'(4)];
-              if (!(state == S_PRIM && lk_blk)) regs[RB'(ia + blk_win)] <= V_NIL;
+              if (!(state == S_PRIM && lk_blk)) regs[RB'(ia + blk_win + 17'(call_kw))] <= V_NIL;
               bp                  <= ia[RB-1:0];
               cp                  <= ra;
               pc                  <= npc;
@@ -1168,6 +1210,7 @@ module mrb_core
               env                 <= V_NIL;
               fn                  <= '0;
               argc                <= '0;
+              argkw               <= 1'b0;
               pc                  <= npc;
               state               <= S_FETCH;
             end else if (do_enter) begin
@@ -1191,11 +1234,21 @@ module mrb_core
               en_ps    <= e_ps;
               en_pm    <= e_pm;
               en_skip  <= e_skip;
-              if (e_r != 17'd0) begin
+              en_kd     <= e_kd;
+              en_mkhash <= e_kd && !e_kwin;
+              en_rn     <= e_rn;
+              en_blksrc <= (e_heap ? 17'd2 : 17'(e_argc) + 17'd1) + 17'(e_kwin);
+              en_kidx   <= argc == 8'd15 ? 17'd2 : 17'(argc) + 17'd1;
+              if (e_kd && !e_kwin && e_r == 17'd0) begin
+                // 残りの配列は無く、空の Hash だけを作る
+                need  <= 17'd13;
+                mop   <= MO_EHASH;
+                state <= S_ALLOC;
+              end else if (e_r != 17'd0) begin
                 m_cls     <= CLS_ARRAY;
                 m_fromrom <= 1'b0;
                 m_n     <= 16'(e_rn);
-                need    <= 17'd4 + e_rn;
+                need    <= 17'd4 + e_rn + (e_kd && !e_kwin ? 17'd13 : 17'd0); // 空の Hash も一緒に (間で GC させない)
                 sg0_k   <= e_heap ? SK_HEAP : SK_REGS;
                 sg0_r   <= e_heap ? (RB+1)'(17'(bp) + 17'd1) : (RB+1)'(17'(bp) + 17'd1 + e_m1 + e_o);
                 sg0_o   <= e_heap ? 16'(e_m1 + e_o) : 16'd0;
@@ -1401,13 +1454,14 @@ module mrb_core
                   ret_mcls[sp[SB-2:0]] <= mcls;
                   ret_ctor[sp[SB-2:0]] <= lk_mode == LM_INIT;
                   sp                   <= sp + SB'(1);
-                  if (!lk_blk) regs[RB'(ia + lk_win)] <= V_NIL;
+                  if (!lk_blk) regs[RB'(ia + lk_win + 17'(lk_kw))] <= V_NIL;
                   bp                   <= ia[RB-1:0];
                   cp                   <= V_NIL;
                   env                  <= V_NIL;
                   fn                   <= '0;
                   mcls                 <= lk_fcls;
                   argc                 <= {1'b0, lk_argc};
+                  argkw                <= lk_kw;
                   pc                   <= lk_tgt[PC_BITS-1:0];
                   state                <= S_FETCH;
                 end else begin
@@ -1464,6 +1518,7 @@ module mrb_core
                 end
                 MO_ARRAY: state <= S_AHDR;
                 MO_OBJ:   state <= S_OBJ;
+                MO_EHASH: state <= S_EHASH;
                 default:  state <= S_GROW;
               endcase
             end else if (!gc_done) begin
@@ -1650,7 +1705,10 @@ module mrb_core
           S_AELEM: begin
             if (17'(m_k) == 17'(m_n)) begin
               case (m_after)
-                AF_ENTER: state <= S_ENLATCH;
+                AF_ENTER: begin
+                  m_k   <= '0;
+                  state <= en_mkhash ? S_EHASH : S_ENLATCH;
+                end
                 AF_APOST: begin
                   // R[a] に残りの配列を書く (m_we) 前に元の値を覚える。以後は確保しない
                   ap_v  <= regs[m_dst[RB-1:0]];
@@ -1677,8 +1735,15 @@ module mrb_core
           end
 
           // ---- ENTER (ref_vm.rb の enter と同じ順)。以後は確保しないので、ブロックと配列の位置を覚えてよい
+          // ---- ENTER: 空の Hash を 13 語書く (kd で Hash が渡されなかった時)
+          S_EHASH: begin
+            heap[eh_p + HB'(m_k[3:0])] <= eh_word;
+            m_k <= m_k + 1'b1;
+            if (m_k[3:0] == 4'd12) state <= S_ENLATCH;
+          end
           S_ENLATCH: begin
-            en_blk <= regs[RB'(17'(bp) + (en_heap ? 17'd2 : 17'(argc) + 17'd1))];
+            en_blk   <= regs[RB'(17'(bp) + en_blksrc)];
+            en_kdict <= en_mkhash ? mk(TAG_OBJ, 32'(eh_p)) : regs[RB'(17'(bp) + en_kidx)];
             en_src <= ha(val_of(heap[ha(val_of(r1v)) + HB'(2)]));
             if (en_m2 != 17'd0) begin
               en_k  <= '0;
@@ -1706,12 +1771,13 @@ module mrb_core
           end
           S_ENFIN: begin
             if (en_r) regs[RB'(17'(bp) + en_m1 + en_o + 17'd1)] <= mk(TAG_OBJ, 32'(p_new));
-            regs[RB'(17'(bp) + en_len + 17'd1)] <= en_blk;
+            if (en_kd) regs[RB'(17'(bp) + en_len + 17'd1)] <= en_kdict;
+            regs[RB'(17'(bp) + en_len + 17'(en_kd) + 17'd1)] <= en_blk;
             fn      <= en_nregs;
-            clr_ptr <= (RB+1)'(17'(bp) + en_len + 17'd2);
+            clr_ptr <= (RB+1)'(17'(bp) + en_len + 17'(en_kd) + 17'd2);
             clr_end <= (RB+1)'(17'(bp) + 17'(en_nregs));
             pc      <= pc + PC_BITS'(1) + PC_BITS'(en_skip);
-            state   <= en_len + 17'd2 < 17'(en_nregs) ? S_CLEAR : S_FETCH;
+            state   <= en_len + 17'(en_kd) + 17'd2 < 17'(en_nregs) ? S_CLEAR : S_FETCH;
           end
 
           // ---- 配列への代入 / push: 容量を超えるなら中身を作り直す (確保で GC が走ってもよい)

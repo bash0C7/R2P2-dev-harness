@@ -409,6 +409,15 @@ module FpgaRom
     end
   end
 
+  # 回路が ENTER で作る空の Hash の形 (@keys @vals @default @default_proc の順、fpga/prelude/collections.rb)
+  def self.check_hash_layout(ctx)
+    k = ctx.klass_named("Hash")
+    layout = ivar_layout(ctx, k)
+    unless layout == %w[@keys @vals @default @default_proc]
+      raise Error, "#{ctx.source}: the prelude's Hash has instance variables #{layout.inspect}; the core builds [@keys @vals @default @default_proc]"
+    end
+  end
+
   # 文字列を 1語 4バイトのデータの語にする (バイト j は bit 8j から)
   def self.data_words(str, addr)
     out = []
@@ -460,8 +469,16 @@ module FpgaRom
       decoded[i].each do |insn|
         ops = insn.operands
         case insn.name
-        when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM" then use.call(ir.syms[ops[1]])
-        when "SUPER" then use.call(ctx.method_names[ir.index]) if ctx.method_names[ir.index]
+        when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM"
+          use.call(ir.syms[ops[1]])
+          nk = insn.name == "LOADSYM" || insn.name.end_with?("0") ? 0 : ops[2] >> 4
+          use.call(nk == 15 ? "empty?" : "__to_hash") if nk > 0
+        when "SUPER"
+          use.call(ctx.method_names[ir.index]) if ctx.method_names[ir.index]
+          use.call((ops[1] >> 4) == 15 ? "empty?" : "__to_hash") if (ops[1] >> 4) > 0
+        when "KARG" then use.call("__karg")
+        when "KEY_P" then use.call("key?")
+        when "KEYEND" then use.call("__keyend")
         when "STRCAT"
           use.call("to_s")
           use.call("<<")
@@ -718,6 +735,14 @@ module FpgaRom
     false
   end
 
+  # ブロックの枠: 引数の枠の次、キーワード (kd) があればその次
+  def self.block_slot(insns)
+    enter = insns[0]
+    return 1 unless enter && enter.name == "ENTER"
+    x = enter.operands[0]
+    params_len(insns) + (((x >> 2) & 0x1F) > 0 || ((x >> 1) & 1) == 1 ? 1 : 0) + 1
+  end
+
   # 先頭の ENTER の引数の枠の数 (必須 + 省略可能 + 残り + 後ろの必須)。ブロックの枠はその次
   def self.params_len(insns)
     enter = insns[0]
@@ -738,11 +763,13 @@ module FpgaRom
        !defined_anywhere?(ctx, "block_given?")
       # block_given? は、囲むメソッドのブロックの枠 (引数の次、R[len+1]) を BLKPUSH で読み、!! で true / false にする
       depth, method = block_depth(ir, ctx)
-      len = method.index == 0 ? 0 : params_len(ctx.decoded[method.index])
+      slot = method.index == 0 ? 1 : block_slot(ctx.decoded[method.index])
       a = insn.operands[0]
       bang = ctx.sym_id("!")
-      return [["BLKPUSH", a, len + 1, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
+      return [["BLKPUSH", a, slot, depth], ["SEND0", a, bang, 0], ["SEND0", a, bang, 0]]
     end
+    kw = kw_lowered(insn, ir, pc, ctx)
+    return kw if kw
     # 式展開: R[a] << R[a+1].to_s (to_s は R[a+1] に、<< の結果 (self) は R[a] に)
     if insn.name == "STRCAT"
       a = insn.operands[0]
@@ -763,6 +790,54 @@ module FpgaRom
     return [["LOADTRUE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETTRUE"
     return [["LOADFALSE", 0, 0, 0], ["RETURN", 0, 0, 0]] if insn.name == "RETFALSE"
     nil
+  end
+
+  # キーワード引数 (PicoRuby の vm.c と同じ意味、docs/spec.md §10)。印 KW (c の bit 8) 付きの呼び出しは R[k] に Hash を持つ
+  KW = 0x100
+
+  def self.kw_lowered(insn, ir, pc, ctx)
+    name = insn.name
+    ops = insn.operands
+    if %w[SEND SENDB SSEND SSENDB SUPER].include?(name)
+      spec = name == "SUPER" ? ops[1] : ops[2]
+      nk = spec >> 4
+      return nil if nk == 0
+      n = spec & 0xF
+      a = ops[0]
+      blk = name == "SUPER" || name.end_with?("B") # super はブロックの枠をいつも渡す
+      k = a + (n == 15 ? 1 : n) + 1 # Hash (か組) の場所。ブロックはその後ろ
+      final = lambda do |kwbit|
+        c = n | (blk ? 0x80 : 0) | kwbit
+        if name == "SUPER" then ["SUPER", a, ctx.sym_id(ctx.method_names[ir.index]), c]
+        elsif name.start_with?("SS") then ["SSEND", a, ctx.sym_id(ir.syms[ops[1]]), c]
+        else ["SEND", a, ctx.sym_id(ir.syms[ops[1]]), c]
+        end
+      end
+      if nk < 15
+        # 組を Hash にする。作業用レジスタ s は組とブロックより上 (__to_hash のフレームがそこから上を使う)
+        s = k + 2 * nk + 1
+        specs = [["ARRAY", k, 2 * nk, 0], ["MOVE", s, k, 0], ["SEND", s, ctx.sym_id("__to_hash"), 0], ["MOVE", k, s, 0]]
+        specs << ["MOVE", k + 1, k + 2 * nk, 0] if blk
+        return specs << final.call(KW)
+      end
+      # **h: 空なら印なしで呼ぶ (PicoRuby と同じくキーワード引数が無いことになる)
+      s = k + 2
+      specs = [["MOVE", s, k, 0], ["SEND", s, ctx.sym_id("empty?"), 0]]
+      nokw = [final.call(0)]
+      nokw.unshift(["MOVE", k, k + 1, 0]) if blk
+      kw_at = pc + specs.size + 1 + nokw.size + 1
+      specs << ["JMPNOT", s, kw_at, 0]
+      specs.concat(nokw)
+      specs << ["JMP", 0, kw_at + 1, 0]
+      return specs << final.call(KW)
+    end
+    # KARG / KEY_P / KEYEND: R[len+1] の Hash のメソッドを、フレームの上の作業用レジスタ N (= nregs) で呼ぶ
+    return nil unless %w[KARG KEY_P KEYEND].include?(name)
+    kpos = params_len(ctx.decoded[ir.index]) + 1
+    n = ir.nregs
+    return [["MOVE", n, kpos, 0], ["SEND", n, ctx.sym_id("__keyend"), 0]] if name == "KEYEND"
+    [["MOVE", n, kpos, 0], ["LOADSYM", n + 1, ctx.sym_id(ir.syms[ops[1]]), 0],
+     ["SEND", n, ctx.sym_id(name == "KARG" ? "__karg" : "key?"), 1], ["MOVE", ops[0], n, 0]]
   end
 
   # メソッド表の中身: [クラス, シンボル, 飛び先] の列
@@ -981,14 +1056,14 @@ module FpgaRom
 
     # ENTER: a = 必須 m1、b = nregs、c = 省略可能 o | 残り r << 5 | 後ろの必須 m2 << 6 (&blk は印が要らない。
     # ブロックはいつも R[len+1] に置く)。メソッドもブロックも同じ (proc かどうかはコアが今の Proc で見る)
+    # c の bit 11 = kd (キーワードか **opts を受ける: R[len+1] に Hash、ブロックは R[len+2])
     if name == "ENTER"
       aspec = ops[0]
-      if (aspec >> 1) & 0x3F != 0
-        raise Error, "#{source}: #{ctx.parents[irep.index] ? 'block' : 'method'} at #{where(irep, insn)} takes keyword parameters (not supported yet)"
-      end
       a = (aspec >> 18) & 0x1F
       b = irep.nregs
-      c = ((aspec >> 13) & 0x1F) | (((aspec >> 12) & 1) << 5) | (((aspec >> 7) & 0x1F) << 6)
+      kd = ((aspec >> 2) & 0x1F) > 0 || ((aspec >> 1) & 1) == 1 ? 1 : 0
+      c = ((aspec >> 13) & 0x1F) | (((aspec >> 12) & 1) << 5) | (((aspec >> 7) & 0x1F) << 6) | (kd << 11)
+      check_hash_layout(ctx) if kd == 1
     end
 
     # ARGARY (引数なしの super): b は mruby のまま (m1 << 11 | r << 10 | m2 << 5 | kd << 4 | lv)。

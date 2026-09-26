@@ -676,8 +676,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   代入されていなければ変換時に止める。空の本体のクラス (`class E < StandardError; end`、mruby は `EXEC` を出さない) も通す
 - **配列は `[...]`、`a[i]` (負の添字も)、`a[i] = v` (伸ばす)。** `GETIDX` は配列を整数で引く時だけその場で読み、ほか (Range で切り出す
   など) は `[]` を送る。文字列は下の「文字列と出力 (P2)」、Hash・Range は「Hash と Range (P3)」
-- **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`、呼び出しの splat (`f(*a)`)。** キーワード引数 (定義側も呼び出し側も)
-  は変換時に止める (Hash が要るので P3 の後。下の「引数 (P1d)」)
+- **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`・キーワード (`k:`、`**opts`)、呼び出しの splat (`f(*a)`、`f(**h)`)。**
+  下の「引数 (P1d)」
 - **pool の Float と 32bit に収まらない整数、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
@@ -751,7 +751,14 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
   `APOST` (a, *b, c = v: R[a] = 真ん中の配列、R[a+1..a+c] = 後ろ。配列でなければ [v])、
   `ARGARY` (引数なしの super: R[a] = 今のメソッドの引数の配列、R[a+1] = ブロック。b は mruby のまま)。
   どれも新しい配列を作る (mruby は ARYCAT / ARYPUSH で R[a] を伸ばすが、R[a] は同じ式の中で作った配列なので違いは見えない)
-- **変換時に止めるもの:** キーワード引数 (`ENTER` の key / kdict、呼び出しの nk、`ARGARY` の kd)、ブロックの外のフレームの `ARGARY`
+- **キーワード引数 (P3、PicoRuby の vm.c の `vm_op_enter` / OP_SEND と同じ意味):** 呼ぶ側は nk 組を Hash にしてから、印 KW (c の bit 8)
+  付きで呼ぶ (変換器が `ARRAY k 2nk` と作業用レジスタでの `__to_hash` に下げる。`**h` は空なら印なし)。印付きの呼び出しは
+  R[window(argc)] に Hash を持ち、ブロックの枠はその次。フレームは印を持つ (`new` は initialize へ、Proc#call はブロックへ渡す。
+  ほかの primitive はエラー)。`ENTER` の c の bit 11 (kd: キーワードか `**opts` を受ける) が立っていれば R[len+1] = Hash
+  (渡されなければ回路が空の Hash を作る。Hash の形 `@keys @vals @default @default_proc` は変換器が確かめる)、ブロックは R[len+2]。
+  kd でなければ Hash を最後の引数として数える (引数が 14 個以上なら止める)。`KARG` / `KEY_P` / `KEYEND` は、フレームの上の
+  作業用レジスタ (nregs) で `R[len+1].__karg(:k)` (Hash から消す) / `key?(:k)` / `__keyend` を呼ぶ形に下げる
+- **変換時に止めるもの:** ブロックの外のフレームの `ARGARY`、キーワード引数を受けるメソッドの引数なしの super (`ARGARY` の kd)
 
 ### 文字列と出力 (P2)
 
