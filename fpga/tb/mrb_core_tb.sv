@@ -264,6 +264,121 @@ module mrb_core_tb;
     run();
     expect_error(0);
 
+    // ---- メソッド呼び出し (レジスタ窓): add(3, 4)
+    begin_test("call and return");
+    prog.push_back(w(OP_LOADI_3, 2));                        // 0
+    prog.push_back(w(OP_LOADI_4, 3));                        // 1
+    prog.push_back(w(OP_SSEND, 1, 4, (6 << 8) | 2));         // 2: bp 0 -> 1
+    prog.push_back(w(OP_STOP));                              // 3
+    prog.push_back(w(OP_ENTER, 2));                          // 4: add
+    prog.push_back(w(OP_MOVE, 4, 1));
+    prog.push_back(w(OP_MOVE, 5, 2));
+    prog.push_back(w(OP_ADD, 4));
+    prog.push_back(w(OP_RETURN, 4));
+    run();
+    expect_halt();
+    expect_reg(1, vint(7));
+    if (dut.core.sp != 0 || dut.core.bp != 0) $fatal(1, "%s: sp=%0d bp=%0d after return", name, dut.core.sp, dut.core.bp);
+
+    begin_test("callee registers are cleared, RETNIL returns nil");
+    prog.push_back(w(OP_LOADI_5, 3));                        // 0: 呼び出し先の R2 と同じ場所
+    prog.push_back(w(OP_LOADI_1, 2));                        // 1: 引数
+    prog.push_back(w(OP_SSEND, 1, 5, (4 << 8) | 1));         // 2
+    prog.push_back(w(OP_SSEND0, 4, 7, (3 << 8) | 0));        // 3: 引数なし
+    prog.push_back(w(OP_STOP));                              // 4
+    prog.push_back(w(OP_ENTER, 1));                          // 5: 引数の後ろ (R2) は nil
+    prog.push_back(w(OP_RETURN, 2));                         // 6
+    prog.push_back(w(OP_ENTER, 0));                          // 7
+    prog.push_back(w(OP_RETNIL));                            // 8
+    prog.push_back(w(OP_LOADI_7, 4));                        // 9: (通らない)
+    run();
+    expect_halt();
+    expect_reg(1, VNIL);
+    expect_reg(4, VNIL);
+
+    begin_test("wrong number of arguments");
+    prog.push_back(w(OP_SSEND, 1, 2, (4 << 8) | 1));         // 0
+    prog.push_back(w(OP_STOP));                              // 1
+    prog.push_back(w(OP_ENTER, 2));                          // 2
+    run();
+    expect_error(2);
+
+    begin_test("stack overflow");
+    prog.push_back(w(OP_SSEND0, 0, 0, (1 << 8) | 0));        // 0: 自分を呼び続ける (bp は進まない)
+    run();
+    expect_error(0);
+    if (dut.core.sp != STACK_DEPTH) $fatal(1, "%s: sp=%0d", name, dut.core.sp);
+
+    begin_test("register window overflow");
+    prog.push_back(w(OP_SSEND0, 8, 0, (9 << 8) | 0));        // 0: bp を 8 ずつ進め、16 本を超える
+    run();
+    expect_error(0);
+
+    // ---- 定数
+    begin_test("constants");
+    prog.push_back(w(OP_LOADI_6, 1));
+    prog.push_back(w(OP_SETCONST, 1, 3));
+    prog.push_back(w(OP_GETCONST, 2, 3));
+    prog.push_back(w(OP_TDEF, 3));                           // R3 = nil
+    prog.push_back(w(OP_GETCONST, 4, 5));                    // 未定義
+    run();
+    expect_error(4);
+    expect_reg(2, vint(6));
+    expect_reg(3, VNIL);
+
+    // ---- 掛け算・割り算 (floor 側)
+    begin_test("mul div");
+    prog.push_back(w(OP_LOADI_7, 1)); prog.push_back(w(OP_LOADINEG, 2, 6)); prog.push_back(w(OP_MUL, 1));      // -42
+    prog.push_back(w(OP_LOADINEG, 3, 7)); prog.push_back(w(OP_LOADI_2, 4)); prog.push_back(w(OP_DIV, 3));      // -4
+    prog.push_back(w(OP_LOADI_7, 5)); prog.push_back(w(OP_LOADINEG, 6, 2)); prog.push_back(w(OP_DIV, 5));      // -4
+    prog.push_back(w(OP_LOADI32, 7, 16'h8000, 16'h0000)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_DIV, 7)); // INT_MIN
+    prog.push_back(w(OP_LOADI_1, 9)); prog.push_back(w(OP_LOADI_0, 10)); prog.push_back(w(OP_DIV, 9));       // 0 で割る
+    run();
+    expect_error(14);
+    expect_reg(1, vint(-42));
+    expect_reg(3, vint(-4));
+    expect_reg(5, vint(-4));
+    expect_reg(7, vint(32'h8000_0000));
+
+    // ---- 組み込みメソッド (SEND の b = 番号、c = 引数の数)
+    begin_test("builtins");
+    prog.push_back(w(OP_LOADINEG, 1, 7)); prog.push_back(w(OP_LOADI_3, 2)); prog.push_back(w(OP_SEND, 1, BI_MOD, 1));  // -7 % 3 = 2
+    prog.push_back(w(OP_LOADI_1, 3)); prog.push_back(w(OP_LOADI_4, 4)); prog.push_back(w(OP_SEND, 3, BI_SHL, 1));      // 16
+    prog.push_back(w(OP_LOADINEG, 5, 16)); prog.push_back(w(OP_LOADI_2, 6)); prog.push_back(w(OP_SEND, 5, BI_SHR, 1)); // -4
+    prog.push_back(w(OP_LOADI_5, 7)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_SEND, 7, BI_SHL, 1));     // 5 << -1 = 2
+    prog.push_back(w(OP_LOADI_6, 9)); prog.push_back(w(OP_LOADI_3, 10)); prog.push_back(w(OP_SEND, 9, BI_XOR, 1));     // 5
+    prog.push_back(w(OP_LOADI8, 11, 12)); prog.push_back(w(OP_SEND0, 11, BI_INV, 0));                                 // -13
+    prog.push_back(w(OP_LOADINEG, 12, 9)); prog.push_back(w(OP_SEND0, 12, BI_ABS, 0));                                // 9
+    prog.push_back(w(OP_LOADNIL, 13)); prog.push_back(w(OP_SEND0, 13, BI_NOT, 0));                                    // !nil = true
+    prog.push_back(w(OP_LOADNIL, 14)); prog.push_back(w(OP_LOADNIL, 15)); prog.push_back(w(OP_SEND, 14, BI_NEQ, 1));  // false
+    prog.push_back(w(OP_LOADI_6, 0)); prog.push_back(w(OP_SEND0, 0, BI_ODD, 0));                                      // false
+    prog.push_back(w(OP_STOP));
+    run();
+    expect_halt();
+    expect_reg(1, vint(2));
+    expect_reg(3, vint(16));
+    expect_reg(5, vint(-4));
+    expect_reg(7, vint(2));
+    expect_reg(9, vint(5));
+    expect_reg(11, vint(-13));
+    expect_reg(12, vint(9));
+    expect_reg(13, VTRUE);
+    expect_reg(14, VFALSE);
+    expect_reg(0, VFALSE);
+
+    begin_test("builtin errors");
+    prog.push_back(w(OP_LOADI_1, 1)); prog.push_back(w(OP_LOADI_0, 2)); prog.push_back(w(OP_SEND, 1, BI_MOD, 1));    // 0 で割った余り
+    run();
+    expect_error(2);
+    begin_test("builtin on nil");
+    prog.push_back(w(OP_SEND0, 1, BI_NEG, 0));
+    run();
+    expect_error(0);
+    begin_test("builtin with wrong argc");
+    prog.push_back(w(OP_SEND0, 1, BI_MOD, 0));
+    run();
+    expect_error(0);
+
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");
     $finish;

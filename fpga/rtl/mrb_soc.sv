@@ -4,7 +4,7 @@
 module mrb_soc
   import mrb_pkg::*;
 #(
-  parameter int    NREGS    = 16,
+  parameter int    NREGS    = RF_SIZE,
   parameter int    PC_BITS  = 10,
   parameter        ROM_FILE = "" // string。型を付けると Icarus が渡せない
 ) (

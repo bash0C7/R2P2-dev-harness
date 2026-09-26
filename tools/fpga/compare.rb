@@ -61,10 +61,16 @@ module FpgaCompare
     end
   end
 
+  # 入力の刺激を step の順に並べて返す。同じ step の行はファイルの順を保つ (後の行が勝つ)
   def read_stim(path)
     return [] unless path && File.file?(path)
-    File.readlines(path, chomp: true).map(&:strip).reject { |l| l.empty? || l.start_with?("#") }.map do |l|
+    rows = File.readlines(path, chomp: true).map(&:strip).reject { |l| l.empty? || l.start_with?("#") }.map do |l|
       l.split.map(&:to_i)
     end
+    sort_stim(rows)
+  end
+
+  def sort_stim(rows)
+    rows.each_with_index.sort_by { |(s, _, _), i| [s, i] }.map(&:first)
   end
 end

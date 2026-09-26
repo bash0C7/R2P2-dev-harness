@@ -583,11 +583,12 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 |---|---|
 | `rake fpga:setup` | 足りないシミュレータを入れる。macOS は `brew install verilator icarus-verilog surfer`、Linux は `apt-get install -y verilator iverilog` (root でなければ sudo) |
 | `rake fpga:doctor` | verilator / iverilog / vvp / surfer の有無と版。必須が欠けていれば落ちる |
-| `rake fpga:test` | 下の `test:fpga` + `fpga:tb` + `fpga:check` + `fpga:emu:check`。CI の `fpga` job が回す |
+| `rake fpga:test` | 下の `test:fpga` + `fpga:tb` + `fpga:check` + `fpga:emu:check` + ファズ 300 本。CI の `fpga` job が回す |
 | `rake test:fpga` | `tools/fpga/*_test.rb` (minitest)。シミュレータ不要。picoruby が要るものは無ければ skip。CI の `host` job でも回す |
 | `rake fpga:tb` | `fpga/tb/*_tb.sv` を全部、Verilator と Icarus の両方で回す |
 | `rake fpga:sim[tb]` / `fpga:sim:icarus[tb]` | 1本だけ。波形は `build/fpga/<tb>.fst` / `<tb>.icarus.fst` |
-| `rake fpga:check` | `fpga/corpus/*.mrb` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
+| `rake fpga:check` | `fpga/corpus/*.hex` を参照インタプリタとシミュレーションの両方で走らせて突き合わせる |
+| `rake fpga:fuzz[count,seed]` | ランダムな ROM を参照とシミュレーションで走らせ、トレースを全行比べる (差分ファズ) |
 | `rake fpga:emu[src,ms,ce_div,mhz]` | PERIDOT-Air のボードエミュレーター。実機の top をクロック `mhz` (既定 125MHz) で回し、LED とボタンの変化を実時間 (秒) で表示し、参照インタプリタと突き合わせる |
 | `rake fpga:emu:check` | コーパス全部をエミュレーターで 600ms 回し、LED の変化を参照と突き合わせる |
 | `rake fpga:rom[src]` | `.rb` / `.mrb` を PicoRuby の変換器で ROM イメージ (`build/fpga/rom/<name>.hex` と一覧 `.lst`) にする |
@@ -642,8 +643,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 
 ### 対応命令と値の表現 (#6)
 
-コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith) の `mrbc -v` に出る命令と、
-同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 38 命令。
+コーパス駆動で決めた。`fpga/corpus/*.rb` (blink / button / counter / pwm / arith / methods / math / blink_method) の
+`mrbc -v` に出る命令と、同じ族で回路がほぼ増えないもの (`LOADI_n` 全部、比較4種、`ADDI`/`SUBI`、`JMPIF`/`JMPNIL`) の 48 命令。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
 - **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
@@ -651,8 +652,17 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **値 = 2bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3。偽は nil と false だけ (0 は真)
 - **`EQ`** は Integer 同士なら値、それ以外は型が同じなら等しい (nil == nil、true == true)
 - **整数以外への算術・大小比較 (`ADD` `LT` など) と `ADDI`系はエラーで止まる。** mruby ならメソッド探索に行く所
-- **`RETURN` / `RETNIL` / `STOP` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
-- **irep は1つだけ。** メソッド定義・ブロック (子 irep)、pool (文字列・大きい数)、例外 (catch handler) は変換時に止める
+- **`STOP` と、一番外側の `RETURN` / `RETNIL` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
+- **`def` したメソッドを呼べる (`TDEF` `SSEND` `SSEND0` `ENTER` `RETURN` `RETNIL`)。** 再帰もできる。呼び出し先は変換時に
+  名前から静的に決める (同じ名前の再定義、定義していないメソッドの呼び出しは変換時に止める)。引数は必須のものだけ
+  (省略可能・残り・キーワード・ブロック引数は変換時に止める)。引数の数が合わなければ `ENTER` でエラー。
+  `TDEF` は実行時には R[a] に nil を入れるだけ (mruby はメソッド名の Symbol)。呼び出しの深さは 16 まで
+- **組み込みメソッド (`SEND` `SEND0`)。** `%` `!=` `-@` `<<` `>>` `&` `|` `^` `~` `!` `abs` `zero?` `even?` `odd?` だけ
+  (`tools/fpga/isa.rb` の `BUILTINS`)。受け手は Integer (`!` と `!=` は何でもよい)。`puts` など他のメソッドは変換時に止める
+- **`*` `/` `%` は Ruby と同じく floor 側に丸める** (`-7 / 2 = -4`、`-7 % 3 = 2`)。0 で割るとエラー。
+  `INT_MIN / -1` は折り返して `INT_MIN`。シフトは 32 以上ずらすと 0 (右は符号)、負の量は逆向き
+- **定数 (`GETCONST` `SETCONST`) は 16 個まで。** 名前は変換時に番号にする。代入前に読むとエラー
+- **ブロック (`BLOCK` `SENDB`、`times` `each` `loop`)、pool (文字列・大きい数)、例外 (catch handler) は変換時に止める**
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
 
@@ -674,7 +684,10 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
 - **`GETGV` / `SETGV` の `Syms[b]` は I/O ポート番号にする。** 対応表は `tools/fpga/io_map.rb`
   (`$LED`=0 出力、`$LED2`=1 出力、`$BUTTON`=2 入力)。ハードウェアはシンボル表を持たない。
   表に無いグローバル変数、入力ポートへの代入は変換時に止める
-- 未対応の命令は、命令名と iseq 内のバイト位置を全部並べて止める
+- **irep を親・子の順 (深さ優先) に1本の ROM に並べる。** `TDEF` の名前から呼び出し先の irep を引き、
+  `SSEND` / `SSEND0` の b を呼び出し先の先頭 pc、c を (呼び出し先の nregs << 8) | 引数の数 にする。`ENTER` の a は必須の引数の数
+- **`SEND` / `SEND0` の b は組み込みメソッドの番号、c は引数の数。** `GETCONST` / `SETCONST` の b は定数の番号
+- 未対応の命令は、命令名と場所 (irep の番号と iseq 内のバイト位置) を全部並べて止める
 
 ROM の空きは全 bit 1 (op 0xff = 未対応) で、プログラムの外へ出たコアはエラーで止まる。
 `rom_test.rb` がコーパス全部について、変換結果を `.dump` (`mrbc -v`) と1命令ずつ突き合わせる。
@@ -694,8 +707,16 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 ### CPU コア (#8)
 
 `fpga/rtl/mrb_core.sv`。**多サイクル、1命令 2 cycle** (FETCH で ROM を引き、EXEC で実行と書き戻し)。
-パイプラインは後回し。レジスタファイルは 16本 × 34bit (リセットで全部 nil)、`nregs` が 16 を超える
-プログラムは変換時に止める。`en` (クロックイネーブル) が 0 の cycle は何も進まない。
+パイプラインは後回し。`en` (クロックイネーブル) が 0 の cycle は何も進まない。
+
+- **レジスタ窓。** レジスタファイルは 128本 × 34bit を全フレームで共有し、R[i] は bp + i。`SSEND` は呼び出し先の bp を
+  呼び出し元の bp + a にし (呼び出し先の R0 = 呼び出し元の R[a]、ここに self を写す)、引数より後ろのレジスタを
+  1 cycle 1本ずつ nil で埋めてから (S_CLEAR) 飛ぶ。`RETURN` は R0 (= 呼び出し元の R[a]) に値を置いて戻る。
+  bp + 呼び出し先の nregs が 128 を超える、またはコールスタック (16段) が溢れるとエラー
+- **リセット後にレジスタファイルを1本ずつ nil で埋める (S_INIT、`en` に関係なく 128 cycle)。** 一括のリセットをしないのは、
+  ブロック RAM にできる形にしておくためと、Verilator 5.020 が `always_ff` の for ループでの配列への `<=` を
+  `BLKLOOPINIT` で受け付けないため
+- `*` `/` `%` は組み合わせ回路 (`x / y` `x % y` を floor に補正)
 `mrb_soc.sv` が ROM (1024語、同期読み出し) + コア + I/O (`mrb_io.sv`)。
 出力ポートは最後に書いた値を持ち (書く前は nil)、`GETGV` で読み戻せる。入力ポートは Integer で読める。
 `fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる。
@@ -718,6 +739,10 @@ L <step>                    命令数の上限 (fpga:check は 20000)
   `first difference at step 8, pc 8 (SUB)` と出た
 - **入力は step で与える。** `fpga/corpus/<name>.stim` に `<step> <port> <value>`。
   その step の命令から値が変わる (参照もシミュレーションも同じ)
+- **差分ファズ (`rake fpga:fuzz[count,seed]`)。** 対応命令からランダムに ROM を組み (R0..R11 に乱数を入れる前置き付き、
+  範囲外のレジスタ・0 で割る・深い再帰・未定義の定数・引数の数違いもわざと混ぜる)、参照とコアでトレースを1行残らず比べる。
+  `fpga:test` は seed 1 で 300 本。5000 本 (seed 2..6) 一致を確かめた。入力の刺激の適用順 (同じ port の行の順) の
+  食い違いはファズが見つけた。`%` の floor 補正を壊すと、ファズもコーパスも落ちる
 - **参照インタプリタ自体は別の実装と比べる** (`ref_vm_test.rb`):
   CRuby で同じ `.rb` を走らせ `trace_var` で拾った出力の系列 (入力を読まないプログラム)、
   picoruby host VM に `p [$LED, $LED2]` を足して走らせた最後の値 (止まるプログラム)

@@ -12,6 +12,29 @@ package mrb_pkg;
   localparam logic [1:0] TAG_TRUE  = 2'd2;
   localparam logic [1:0] TAG_INT   = 2'd3;
 
+  // コアの大きさ (tools/fpga/isa.rb)
+  localparam int RF_SIZE     = 128;
+  localparam int STACK_DEPTH = 16;
+  localparam int NCONST      = 16;
+
+  // SEND / SEND0 の組み込みメソッド (tools/fpga/isa.rb の BUILTINS)。ROM の b に入る番号
+  localparam int NBUILTIN = 14;
+  localparam logic [7:0] BI_MOD    = 8'd0; // % (1 arg)
+  localparam logic [7:0] BI_NEQ    = 8'd1; // != (1 arg)
+  localparam logic [7:0] BI_NEG    = 8'd2; // -@ (0 arg)
+  localparam logic [7:0] BI_SHL    = 8'd3; // << (1 arg)
+  localparam logic [7:0] BI_SHR    = 8'd4; // >> (1 arg)
+  localparam logic [7:0] BI_AND    = 8'd5; // & (1 arg)
+  localparam logic [7:0] BI_OR     = 8'd6; // | (1 arg)
+  localparam logic [7:0] BI_XOR    = 8'd7; // ^ (1 arg)
+  localparam logic [7:0] BI_INV    = 8'd8; // ~ (0 arg)
+  localparam logic [7:0] BI_NOT    = 8'd9; // ! (0 arg)
+  localparam logic [7:0] BI_ABS    = 8'd10; // abs (0 arg)
+  localparam logic [7:0] BI_ZERO   = 8'd11; // zero? (0 arg)
+  localparam logic [7:0] BI_EVEN   = 8'd12; // even? (0 arg)
+  localparam logic [7:0] BI_ODD    = 8'd13; // odd? (0 arg)
+  localparam logic [NBUILTIN-1:0] BI_ARGC1 = 14'b00000011111011;
+
   // I/O
   localparam int NPORTS = 4;
   localparam logic [NPORTS-1:0] IN_MASK = 4'b0100;
@@ -40,10 +63,17 @@ package mrb_pkg;
   localparam logic [7:0] OP_LOADFALSE = 8'd20; // B
   localparam logic [7:0] OP_GETGV     = 8'd21; // BB
   localparam logic [7:0] OP_SETGV     = 8'd22; // BB
+  localparam logic [7:0] OP_GETCONST  = 8'd29; // BB
+  localparam logic [7:0] OP_SETCONST  = 8'd30; // BB
   localparam logic [7:0] OP_JMP       = 8'd38; // S
   localparam logic [7:0] OP_JMPIF     = 8'd39; // BS
   localparam logic [7:0] OP_JMPNOT    = 8'd40; // BS
   localparam logic [7:0] OP_JMPNIL    = 8'd41; // BS
+  localparam logic [7:0] OP_SSEND     = 8'd47; // BBB
+  localparam logic [7:0] OP_SSEND0    = 8'd48; // BB
+  localparam logic [7:0] OP_SEND      = 8'd50; // BBB
+  localparam logic [7:0] OP_SEND0     = 8'd51; // BB
+  localparam logic [7:0] OP_ENTER     = 8'd57; // W
   localparam logic [7:0] OP_RETURN    = 8'd61; // B
   localparam logic [7:0] OP_RETNIL    = 8'd64; // Z
   localparam logic [7:0] OP_ADD       = 8'd69; // B
@@ -52,10 +82,13 @@ package mrb_pkg;
   localparam logic [7:0] OP_SUBI      = 8'd72; // BB
   localparam logic [7:0] OP_ADDILV    = 8'd73; // BBB
   localparam logic [7:0] OP_SUBILV    = 8'd74; // BBB
+  localparam logic [7:0] OP_MUL       = 8'd75; // B
+  localparam logic [7:0] OP_DIV       = 8'd76; // B
   localparam logic [7:0] OP_EQ        = 8'd77; // B
   localparam logic [7:0] OP_LT        = 8'd78; // B
   localparam logic [7:0] OP_LE        = 8'd79; // B
   localparam logic [7:0] OP_GT        = 8'd80; // B
   localparam logic [7:0] OP_GE        = 8'd81; // B
+  localparam logic [7:0] OP_TDEF      = 8'd107; // BBB
   localparam logic [7:0] OP_STOP      = 8'd118; // Z
 endpackage
