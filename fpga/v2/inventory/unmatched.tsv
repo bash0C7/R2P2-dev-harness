@@ -2,6 +2,9 @@
 # host_only: host にあるが C と mrblib に見つからない / source_only: C か mrblib にあるが host に無い (#ifdef、条件付きの定義)
 # unresolved: C の定義の呼び出しでクラスか名前が決まらない (定義の API の中身、実行時に名前が決まるクラス)
 # board_gem_not_on_host: 板 (R2P2) の gem で host の build に無い (計画 V4 で host の build に足す)
+# arena_outside_ops: vm.c の arena の restore で、どの命令からも辿れない所 (fpga/v2/inventory/ops.tsv)
+arena_outside_ops	vm.c mrb_protect_error (1264 行目の目安)
+arena_outside_ops	vm.c mrb_vm_exec (3205 行目の目安)
 board_gem_not_on_host	picoruby-ble
 board_gem_not_on_host	picoruby-ble-uart
 board_gem_not_on_host	picoruby-cyw43

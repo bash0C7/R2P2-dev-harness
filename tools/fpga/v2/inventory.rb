@@ -607,8 +607,9 @@ module FpgaV2
     UNMATCHED = File.join(ROOT, "fpga", "v2", "inventory", "unmatched.tsv")
 
     # 突き合わせで合わなかったもの。1 行に 種類<TAB>中身。黙って捨てずに commit して、増えたら inventory_test が気づく
-    def unmatched_tsv(result)
+    def unmatched_tsv(result, arena_outside_ops: [])
       rows = []
+      arena_outside_ops.each { |fn, line| rows << ["arena_outside_ops", "vm.c #{fn} (#{line} 行目の目安)"] }
       result.host_only.each { |r| rows << ["host_only", "#{r[:kind]} #{r[:owner]} #{r[:name]}"] }
       result.source_only.each { |e| rows << ["source_only", "#{e.kind} #{e.owner} #{e.name} #{e.src}"] }
       result.problems.each { |p| rows << ["unresolved", p] }
@@ -617,7 +618,8 @@ module FpgaV2
       "# 棚卸しの突き合わせで合わなかったもの (rake fpga:v2:inventory が作る)\n" \
         "# host_only: host にあるが C と mrblib に見つからない / source_only: C か mrblib にあるが host に無い (#ifdef、条件付きの定義)\n" \
         "# unresolved: C の定義の呼び出しでクラスか名前が決まらない (定義の API の中身、実行時に名前が決まるクラス)\n" \
-        "# board_gem_not_on_host: 板 (R2P2) の gem で host の build に無い (計画 V4 で host の build に足す)\n" +
+        "# board_gem_not_on_host: 板 (R2P2) の gem で host の build に無い (計画 V4 で host の build に足す)\n" \
+        "# arena_outside_ops: vm.c の arena の restore で、どの命令からも辿れない所 (fpga/v2/inventory/ops.tsv)\n" +
         rows.sort.map { |r| r.join("\t") }.join("\n") + "\n"
     end
 
