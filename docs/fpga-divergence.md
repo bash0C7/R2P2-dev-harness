@@ -21,6 +21,7 @@ P0〜P9 で作ったコアを、issue #4 の目標と mruby の仕様と PERIDOT
 | 今 | あるべき | 乖離 |
 |---|---|---|
 | `fpga:check` と `fpga:gap` の「一致」は参照 (`tools/fpga/ref_vm.rb`) とコアのトレースが同じこと | host の PicoRuby と出力が同じこと | 参照そのものが mruby と違っても「一致」になる。gem の test の adc_test は stub が FPGA に無いのに「一致」。host と比べているのは corpus の数本 (tasks sends int64 picotest caller) だけ |
+| (V0 で測った) gap で参照とコアが一致する 75 本 | host と同じ出力 | host と全部同じは 26 本、切った所まで同じ 23、違う 6、host で走らない 21 (2026-09-27、`rake fpga:gap` の host の列) |
 | 段の目標は gap の example が通る本数 | 3つの目標の乖離が減ること | 足りない所をプレリュード・gem・primitive で継ぎ足してきた (場当たり)。乖離は表にされず増えた |
 
 ## B. 命令の乖離

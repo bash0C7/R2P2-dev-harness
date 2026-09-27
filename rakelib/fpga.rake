@@ -605,7 +605,7 @@ namespace :fpga do
              "#{count.(:differs)} differ, #{count.(:blocked)} blocked"
     host = ->(v) { results.count { |r| r[:host] == v } }
     lines << "against host PicoRuby (the oracle): #{host.(:same)} same output, #{host.(:prefix)} same up to a cut (timeout or step limit), " \
-             "#{host.(:differs)} different output"
+             "#{host.(:differs)} different output, #{host.(:host_error)} not runnable on host (no gem or posix port)"
     lines << "blocked by (programs):"
     FpgaGap.histogram(results).each { |reason, n| lines << format("  %4d  %s", n, reason) }
     lines << "per program:"
