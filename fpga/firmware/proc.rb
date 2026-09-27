@@ -141,7 +141,7 @@ class Object
     p = __fpga_addr(b)
     e = __fpga_proc_env(p)
     mid = e > 0 ? __fpga_mkval(4, __fpga_ld32(e + 16)) : nil # L:TAG_SYM L:E_MID
-    __fpga_invoke(self_, p, args, nil, mid, c, nil, true)
+    __fpga_invoke(self_, p, args, nil, mid, __fpga_obj(c), nil, true) # c はクラスの番地
   end
 
   # C: include/mruby/proc.h MRB_PROC_ENV
