@@ -172,6 +172,13 @@ module FpgaV2
     # クラスの flags の下 5bit はインスタンスの tt (class.h の MRB_INSTANCE_TT_MASK)。見出しの語では H_FLAGS_SHIFT から
     # C: include/mruby/class.h MRB_INSTANCE_TT_MASK
     INSTANCE_TT_MASK = 0x1F
+    # クラスの flags の印 (class.h)。見出しの語では H_FLAGS_SHIFT だけ上 (flags の bit 17 / 18 / 19 は語の bit 29 / 30 / 31)
+    # C: include/mruby/class.h MRB_FL_CLASS_IS_INHERITED
+    CLASS_IS_INHERITED = 1 << 29
+    # C: include/mruby/class.h MRB_FL_CLASS_IS_ORIGIN
+    CLASS_IS_ORIGIN = 1 << 30
+    # C: include/mruby/class.h MRB_FL_CLASS_IS_PREPENDED
+    CLASS_IS_PREPENDED = 1 << 31
 
     # RException (error.h): 見出し + mesg (RString か 0) + backtrace (0 か RArray)。iv の表は IV (D06)
     # C: include/mruby/error.h RException (D04)
@@ -291,6 +298,10 @@ module FpgaV2
     CINFO_NONE   = 0
     CINFO_DIRECT = 2
     CI_MODFUNC_BIT = 8
+    # C: include/mruby/internal.h MRB_CI_SET_VISIBILITY_BREAK
+    CI_VISIBILITY_BREAK_BIT = 4
+    # C: include/mruby/internal.h MRB_CI_SET_GIVEN_CLASS
+    CI_GIVEN_CLASS_BIT = 16
     # mrb_callinfo の後ろの延長 (D11 罠の続き、D12 引数の数)。CI_CONT は続きの種類 (CONT_*)
     # C: none (D11)
     CI_CONT   = 3

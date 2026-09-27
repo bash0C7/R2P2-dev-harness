@@ -143,8 +143,8 @@ class Module
     while c > 0
       if __fpga_tt(c) == 15 # L:TT_ICLASS
         result.__fpga_push1(__fpga_obj(__fpga_ld32(c + 0))) # L:H_CLASS iclass の c
-      else
-        result.__fpga_push1(__fpga_obj(c)) # prepend の印 (MRB_FL_CLASS_IS_PREPENDED) は prepend と一緒に S5
+      elsif __fpga_and(__fpga_ld32(c + 4), 2147483648) == 0 # L:H_FLAGS L:CLASS_IS_PREPENDED
+        result.__fpga_push1(__fpga_obj(c))
       end
       c = __fpga_ld32(c + 8) # L:C_SUPER
     end
@@ -161,8 +161,7 @@ class Module
     unless new_name == old_name # mrb_alias_method
       e = __fpga_search(c, old_name)
       __fpga_method_search_error(c, old_name) if e == 0
-      __fpga_mt_set(__fpga_ld32(c + 12), new_name, e) # L:C_MT (MRB_PROC_ALIAS の Proc は S5)
-      __fpga_mcache_clear
+      __fpga_method_raw(c, new_name, e) # MRB_PROC_ALIAS の Proc は S5
     end
     self
   end
@@ -239,7 +238,7 @@ class Module
     while k < __fpga_alen(names)
       sym = __fpga_obj_to_sym(__fpga_aref(names, k))
       __fpga_name_error(sym, "undefined method '%n' for class '%C'", [__fpga_mkval(4, sym), self]) if __fpga_search(c, sym) == 0 # L:TAG_SYM mrb_undef_method_id
-      __fpga_mt_set(__fpga_ld32(c + 12), sym, 0) # L:C_MT
+      __fpga_method_raw(c, sym, 0)
       k += 1
     end
     __fpga_mcache_clear

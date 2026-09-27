@@ -120,7 +120,7 @@ module Kernel
   # C: src/kernel.c mrb_f_raise
   def self.raise(*args)
     __fpga_check_argc(args, 0, 2) # MRB_ARGS_OPT(2)
-    __fpga_sendv(self, :raise, args, nil, true) # 同じ関数 (Kernel#raise)
+    __fpga_f_raise(args)
   end
 
   # C: src/class.c mrb_obj_clone

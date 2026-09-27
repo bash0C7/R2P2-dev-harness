@@ -30,12 +30,53 @@ class Object
     __fpga_setreg(a, __fpga_obj(p))
   end
 
-  # mrb_proc_new の ci の側: upper は ci->proc、入れ物は ci の target class (mrb_vm_cref_class は D19)
-  # C: src/proc.c mrb_proc_new (D19)
+  # mrb_proc_new の ci の側: upper は ci->proc、入れ物は ci の cref (無ければ ci の target class)
+  # C: src/proc.c mrb_proc_new
   def __fpga_ci_proc_new(ci, irep, flags)
-    p = __fpga_proc_new(irep, __fpga_ci_tclass(ci), flags)
+    tc = __fpga_cref_class(ci)
+    tc = __fpga_ci_tclass(ci) if tc == 0
+    p = __fpga_proc_new(irep, tc, flags)
     __fpga_st32(p + 12, __fpga_ld32(ci + 8)) # L:P_UPPER L:CI_PROC
     p
+  end
+
+  # 定数の入れ物: upper の鎖の一番近い cref (MRB_PROC_CREF、クラスを与えられた MRB_PROC_GIVEN は飛ばす)。C の関数なら 0
+  # C: src/proc.c mrb_vm_cref_class
+  def __fpga_cref_class(ci)
+    p = __fpga_ld32(ci + 8) # L:CI_PROC
+    while p > 0 && __fpga_and(__fpga_ld32(p + 24), 3) == 0 && (__fpga_and(__fpga_ld32(p + 24), 16384) == 0 || __fpga_and(__fpga_ld32(p + 24), 32768) > 0) # L:P_FLAGS MRB_PROC_CFUNC_P L:PROC_CREF MRB_PROC_GIVEN
+      p = __fpga_ld32(p + 12) # L:P_UPPER
+    end
+    return 0 if p == 0 || __fpga_and(__fpga_ld32(p + 24), 3) > 0 # L:P_FLAGS
+    __fpga_proc_target_class(p)
+  end
+
+  # def / alias / undef の入れ物: クラスを与えられたフレームならその target class、ほかは cref (与えられた env ならその入れ物)
+  # C: src/proc.c mrb_vm_definee_class
+  def __fpga_definee_class(ci)
+    return __fpga_ci_tclass(ci) if __fpga_and(__fpga_ld8(ci + 2), 16) > 0 # L:CI_VIS L:CI_GIVEN_CLASS_BIT
+    p = __fpga_ld32(ci + 8) # L:CI_PROC
+    while p > 0 && __fpga_and(__fpga_ld32(p + 24), 3) == 0 # L:P_FLAGS MRB_PROC_CFUNC_P
+      return __fpga_proc_target_class(p) if __fpga_and(__fpga_ld32(p + 24), 16384) > 0 # L:PROC_CREF
+      return __fpga_ld32(__fpga_proc_env(p) + 0) if __fpga_given_class_env_p(p) # L:H_CLASS MRB_PROC_ENV(p)->c
+      p = __fpga_ld32(p + 12) # L:P_UPPER
+    end
+    0
+  end
+
+  # C: src/proc.c given_class_env_p
+  def __fpga_given_class_env_p(p)
+    e = __fpga_proc_env(p)
+    e > 0 && __fpga_and(__fpga_ld32(e + 4), 67108864) > 0 # L:H_FLAGS MRB_ENV_GIVEN_CLASS_P (flags の bit 14 は語の bit 26)
+  end
+
+  # C: src/vm.c check_target_class
+  def __fpga_check_target_class
+    ci = __fpga_ci
+    t = __fpga_definee_class(ci)
+    t = __fpga_ci_tclass(ci) if t == 0
+    __fpga_raise(TypeError, "no class/module to add method") if t == 0
+    t
   end
 
   # C: src/proc.c mrb_closure_new
@@ -75,6 +116,11 @@ class Object
     bidx = 1 + (n == 15 ? 1 : n) + kw
     vis = __fpga_and(__fpga_ld8(ci + 2), 15) # MRB_ENV_COPY_FLAGS_FROM_CI L:CI_VIS
     flags = nstacks + bidx * 256 + vis * 65536 # MRB_ENV_SET_LEN / MRB_ENV_SET_BIDX / flags の 16〜19bit
+    pr = __fpga_ld32(ci + 8) # L:CI_PROC
+    if tc > 0 && pr > 0 && __fpga_and(__fpga_ld32(pr + 24), 3) == 0 # L:P_FLAGS MRB_PROC_CFUNC_P
+      given = __fpga_and(__fpga_ld8(ci + 2), 16) > 0 || (__fpga_and(__fpga_ld32(pr + 24), 16384) == 0 && __fpga_given_class_env_p(pr)) # L:CI_VIS L:CI_GIVEN_CLASS_BIT L:PROC_CREF
+      flags += 16384 if given # MRB_ENV_SET_GIVEN_CLASS (flags の bit 14)
+    end
     __fpga_st32(e + 4, __fpga_shl(flags, 12) + 20) # L:H_FLAGS L:H_FLAGS_SHIFT L:TT_ENV
     __fpga_st32(e + 8, stack) # L:E_STACK
     __fpga_st32(e + 12, __fpga_image(0)) # L:E_CXT mrb_state.c
@@ -82,13 +128,13 @@ class Object
     e
   end
 
-  # ブロックを self と定義の入れ物 c で呼ぶ (class_eval の VISIBILITY_BREAK と GIVEN_CLASS の印は D19)
-  # C: src/vm.c yield_with_attr (D19)
+  # ブロックを self と定義の入れ物 c で呼ぶ (MRB_CI_SET_VISIBILITY_BREAK と MRB_CI_SET_GIVEN_CLASS)
+  # C: src/vm.c yield_with_attr
   def __fpga_yield_with_class(b, args, self_, c)
     p = __fpga_addr(b)
     e = __fpga_proc_env(p)
     mid = e > 0 ? __fpga_mkval(4, __fpga_ld32(e + 16)) : nil # L:TAG_SYM L:E_MID
-    __fpga_invoke(self_, p, args, nil, mid, c)
+    __fpga_invoke(self_, p, args, nil, mid, c, nil, true)
   end
 
   # C: include/mruby/proc.h MRB_PROC_ENV
