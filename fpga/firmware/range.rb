@@ -36,12 +36,15 @@ class Object
     r
   end
 
-  # 数同士は順序がある (Float の NaN は S5f)。nil の端は比べない。ほかは <=> で比べられなければ ArgumentError
+  # 数同士は順序がある (NaN の端は順序が無いので ArgumentError)。nil の端は比べない。ほかは <=> で比べられなければ ArgumentError
   # C: src/range.c r_check
   def __fpga_range_check(a, b)
     ta = __fpga_tag(a)
     tb = __fpga_tag(b)
-    return if (ta == 3 || ta == 5) && (tb == 3 || tb == 5) # L:TAG_INT L:TAG_FLOAT
+    if (ta == 3 || ta == 5) && (tb == 3 || tb == 5) # L:TAG_INT L:TAG_FLOAT
+      return if (ta == 3 || __fpga_f64_nan_p(__fpga_int(a)) == false) && (tb == 3 || __fpga_f64_nan_p(__fpga_int(b)) == false) # L:TAG_INT
+      __fpga_raise(ArgumentError, "bad value for range")
+    end
     return if ta == 0 || tb == 0 # L:TAG_NIL
     __fpga_raise(ArgumentError, "bad value for range") if __fpga_cmp(a, b) == -2
   end
@@ -88,15 +91,23 @@ class Object
   # C: include/mruby.h mrb_as_int
   def __fpga_as_int(v)
     return v if __fpga_tag(v) == 3 # L:TAG_INT
-    __fpga_halt if __fpga_tag(v) == 5 # L:TAG_FLOAT mrb_float_to_integer は S5f
+    return __fpga_float_to_integer(v) if __fpga_tag(v) == 5 # L:TAG_FLOAT mrb_ensure_integer_type
     __fpga_raisef(TypeError, "%Y cannot be converted to Integer", [v]) # mrb_ensure_integer_type
+  end
+
+  # C: src/numeric.c mrb_float_to_integer
+  def __fpga_float_to_integer(x)
+    __fpga_raise(TypeError, "non float value") unless __fpga_tag(x) == 5 # L:TAG_FLOAT
+    f = __fpga_int(x)
+    __fpga_raisef(RangeError, "float %f out of range", [x]) if __fpga_f64_inf_p(f) || __fpga_f64_nan_p(f)
+    __fpga_flo_to_i(x)
   end
 
   # 0、1、-1、比べられなければ -2
   # C: src/numeric.c mrb_cmp
   def __fpga_cmp(a, b)
     t = __fpga_tag(a)
-    return __fpga_cmpnum(a, b) if t == 3 || t == 5 # L:TAG_INT L:TAG_FLOAT cmpnum_total
+    return __fpga_cmpnum_total(a, b) if t == 3 || t == 5 # L:TAG_INT L:TAG_FLOAT
     if t == 7 && __fpga_tt(__fpga_addr(a)) == 18 # L:TAG_OBJ L:TT_STRING
       return -2 unless __fpga_tag(b) == 7 && __fpga_tt(__fpga_addr(b)) == 18 # L:TAG_OBJ L:TT_STRING
       return a <=> b # mrb_str_cmp (String#<=> と同じ関数)
@@ -104,20 +115,6 @@ class Object
     v = a <=> b
     return -2 unless __fpga_tag(v) == 3 # L:TAG_INT
     v
-  end
-
-  # C: src/numeric.c cmpnum
-  def __fpga_cmpnum(a, b)
-    __fpga_halt if __fpga_tag(a) == 5 || __fpga_tag(b) == 5 # L:TAG_FLOAT Float は S5f
-    if __fpga_tag(b) == 3 # L:TAG_INT
-      return 1 if a > b
-      return -1 if a < b
-      return 0
-    end
-    return -2 unless __fpga_kind_of(b, Numeric)
-    v = b <=> a
-    return -2 unless __fpga_tag(v) == 3 # L:TAG_INT
-    0 - v
   end
 
   # identical か、== が真 (mrb_equal_in_c の近道は見える意味を変えない)
