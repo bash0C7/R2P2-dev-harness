@@ -1,9 +1,9 @@
 # v2 のコアの参照 (Ruby コード)。回路がする命令の実行と罠 (設計 §1・§5・§14) を写す。firmware (mruby ソースコード) はこの上で走る。
 #
 # - 記憶は起動の像 (image.rb) のバイト列。値は 16 バイト (layout.rb)。VM のスタックも記憶の中 (firmware の GC が根として読む)
-# - 呼び出し: 特権の primitive の表 (symbol で引く) → メソッドの cache ({クラス, シンボル}) → 外れたら罠 `__trap_lookup(クラス, シンボル)`。
+# - 呼び出し: 特権の primitive の表 (symbol で引く) → メソッドの cache ({クラス, シンボル}) → 外れたら罠 `__fpga_trap_lookup(クラス, シンボル)`。
 #   罠が Proc を返せばそれを呼び、nil なら引数の前に :名前 を入れて method_missing を引き直す (mruby の vm.c の OP_SEND と同じ順)
-# - 回路が持たない命令は罠 `__op_<命令の名前>(a, b, c)`。firmware は `__fpga_reg` / `__fpga_setreg` で罠を起こしたフレームのレジスタを読み書きする
+# - 回路が持たない命令は罠 `__fpga_op_<命令の名前>(a, b, c)`。firmware は `__fpga_reg` / `__fpga_setreg` で罠を起こしたフレームのレジスタを読み書きする
 # - コンソールは __fpga_putc のバイト列
 require_relative "layout"
 require_relative "ops"
@@ -151,7 +151,7 @@ module FpgaV2
 
     # --- 実行
     def run
-      push_call(@entry, obj(@main), kind: :boot, mid: sym_id("__boot"))
+      push_call(@entry, obj(@main), kind: :boot, mid: sym_id("__fpga_boot"))
       loop do
         raise Error, "step limit #{@max}" if @steps >= @max
         step
@@ -275,12 +275,12 @@ module FpgaV2
       send_op(a, sym_id(OPSYM[name]), 1, false)
     end
 
-    # DIV: 整数同士は floor の商 (mruby の OP_DIV、int_div)。0 で割ると罠 __op_zerodiv、INT_MIN / -1 は桁あふれ
+    # DIV: 整数同士は floor の商 (mruby の OP_DIV、int_div)。0 で割ると罠 __fpga_op_zerodiv、INT_MIN / -1 は桁あふれ
     def div(a)
       x = reg(a)
       y = reg(a + 1)
       return send_op(a, sym_id("/"), 1, false) unless x[0] == TAG_INT && y[0] == TAG_INT
-      return trap_call("__op_zerodiv", [int(a)]) if y[1].zero?
+      return trap_call("__fpga_op_zerodiv", [int(a)]) if y[1].zero?
       r = x[1].div(y[1])
       return overflow("DIV", a) if r > INT_MAX
       setreg(a, int(r))
@@ -324,10 +324,10 @@ module FpgaV2
       send_op(a, sym_id(OPSYM[name]), 1, false)
     end
 
-    # 桁あふれ: 罠 __op_overflow(a, 演算) (firmware が RangeError を上げる)
+    # 桁あふれ: 罠 __fpga_op_overflow(a, 演算) (firmware が RangeError を上げる)
     def overflow(name, a)
       @stats[:overflow] += 1
-      trap_call("__op_overflow", [int(a), [TAG_SYM, sym_id(OPSYM[name])]])
+      trap_call("__fpga_op_overflow", [int(a), [TAG_SYM, sym_id(OPSYM[name])]])
     end
 
     # --- 呼び出し
@@ -360,7 +360,7 @@ module FpgaV2
         return call_entry(e, a, n, sym, ret_pc, dst, fcall)
       end
       @stats[:mcache_miss] += 1
-      trap_call("__trap_lookup", [obj(cls), [TAG_SYM, sym]], resume: [:send, a, n, sym, ret_pc, dst, fcall], above: a + n + 2)
+      trap_call("__fpga_trap_lookup", [obj(cls), [TAG_SYM, sym]], resume: [:send, a, n, sym, ret_pc, dst, fcall], above: a + n + 2)
     end
 
     # メソッド表の値 (Proc の番地 | 可視性) を呼ぶ。private は fcall でなければ見つからないのと同じ (mruby の vm.c: NoMethodError)
@@ -395,7 +395,7 @@ module FpgaV2
         @stats[:attr] += 1
         @pc_next = ret_pc
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
-        trap_call(n == 1 ? "__op_ivset" : "__op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
+        trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
         push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst)
       end
@@ -424,7 +424,7 @@ module FpgaV2
     end
 
     # ENTER (mruby の vm_op_enter、aspec: m1 5bit, o 5bit, r 1bit, m2 5bit, k 5bit, kd 1bit, b 1bit)。
-    # 必須・省略可能・残り (配列を回路が作る)・後ろの必須・ブロックを回路で並べる。キーワード (k, kd) は罠 __op_enter_kw
+    # 必須・省略可能・残り (配列を回路が作る)・後ろの必須・ブロックを回路で並べる。キーワード (k, kd) は罠 __fpga_op_enter_kw
     def enter(aspec)
       m1 = (aspec >> 18) & 0x1F
       o = (aspec >> 13) & 0x1F
@@ -432,10 +432,10 @@ module FpgaV2
       m2 = (aspec >> 7) & 0x1F
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
-      return trap_call("__op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd).zero?
+      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd).zero?
       argc = @f.argc
       if argc < m1 + m2 || (r.zero? && argc > m1 + o + m2)
-        return trap_call("__op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
+        return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
       end
       args = (1..argc).map { |k| reg(k) }
       blk = reg(argc + 1)
@@ -509,10 +509,10 @@ module FpgaV2
       raise Halt
     end
 
-    # --- 回路が持たない命令: __op_<名前>(a, b, c)
+    # --- 回路が持たない命令: __fpga_op_<名前>(a, b, c)
     def trap_op(i)
       @stats[:"op_#{i.name}"] += 1
-      trap_call("__op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)])
+      trap_call("__fpga_op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)])
     end
 
     # --- 特権の primitive (Image::PRIMS の並び)
