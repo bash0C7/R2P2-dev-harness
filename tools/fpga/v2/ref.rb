@@ -28,7 +28,8 @@ module FpgaV2
     ].freeze
 
     # tclass: 定義の入れ物 (mruby の ci->u.target_class)。メソッドは Proc の target_class、EXEC はそのクラス、一番外は Object
-    Frame = Struct.new(:irep, :pc, :bp, :proc, :mid, :kind, :resume, :dst, :tclass, :vis, keyword_init: true)
+    # argc は呼ばれた時の引数の数 (mruby の ci->n。ENTER が読む。罠をはさんでも変わらない)
+    Frame = Struct.new(:irep, :pc, :bp, :proc, :mid, :kind, :resume, :dst, :tclass, :vis, :argc, keyword_init: true)
 
     attr_reader :console, :stats, :steps
 
@@ -406,7 +407,7 @@ module FpgaV2
       tc = r32(pr + P_TCLASS)
       @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: @f.bp + a, proc: pr, mid: mid, kind: kind, resume: resume, dst: dst,
                      tclass: tc, vis: kind == :run ? VIS_PRIVATE : VIS_PUBLIC)
-      @argc = n
+      @f.argc = n
       @jumped = true
       @stats[:call] += 1
     end
@@ -416,7 +417,7 @@ module FpgaV2
       @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: 0, proc: pr, mid: mid, kind: kind, tclass: r32(pr + P_TCLASS), vis: VIS_PUBLIC)
       setreg(0, recv)
       setreg(1, NIL)
-      @argc = 0
+      @f.argc = 0
     end
 
     # ENTER (mruby の vm_op_enter、aspec: m1 5bit, o 5bit, r 1bit, m2 5bit, k 5bit, kd 1bit, b 1bit)。
@@ -428,8 +429,8 @@ module FpgaV2
       m2 = (aspec >> 7) & 0x1F
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
-      return trap_call("__op_enter_kw", [int(aspec), int(@argc)]) unless (kw | kd).zero?
-      argc = @argc
+      return trap_call("__op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd).zero?
+      argc = @f.argc
       if argc < m1 + m2 || (r.zero? && argc > m1 + o + m2)
         return trap_call("__op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
       end
