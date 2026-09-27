@@ -120,8 +120,9 @@ class Object
   # identical か、== が真 (mrb_equal_in_c の近道は見える意味を変えない)
   # C: src/object.c mrb_equal
   def __fpga_equal(a, b)
-    return true if __fpga_tag(a) == __fpga_tag(b) && __fpga_int(a) == __fpga_int(b) # mrb_obj_eq
-    a == b ? true : false
+    r = __fpga_equal_in_c(a, b)
+    return r == 1 if r >= 0
+    __fpga_sendv(a, :==, [b], nil, true) ? true : false # mrb_funcall_argv
   end
 end
 

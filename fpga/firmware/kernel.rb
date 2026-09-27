@@ -57,7 +57,7 @@ class BasicObject
   # != は == を送って反す (class.c の mrb_obj_not_equal_m)
   # C: src/class.c neq_iseq
   def !=(o)
-    self == o ? false : true
+    __fpga_sendv(self, :==, [o], nil, true) ? false : true # neq_iseq の OP_EQ (再定義は送る)
   end
 
   # C: src/class.c mrb_bob_not
