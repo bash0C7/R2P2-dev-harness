@@ -98,6 +98,18 @@ class Object
   end
 
   # 起動の時に作る例外の物 (mrb_init_exception の stack_err と nomem_err)
+  # 呼べない可視性のメソッド (回路が罠にする)。引数は呼んだ側の窓の R[a+1] から n 個
+  # C: src/vm.c vis_error
+  def __fpga_vis_error(a, n, mid, priv)
+    args = []
+    k = 1
+    while k <= n
+      args.__fpga_push1(__fpga_reg(a + k))
+      k += 1
+    end
+    __fpga_no_method_error(__fpga_addr(mid), args, "%s method '%n' called for %T", [priv ? "private" : "protected", mid, __fpga_reg(a)])
+  end
+
   # C: src/error.c mrb_init_exception
   def __fpga_init_exception
     __fpga_st32(31 * 4, __fpga_addr(__fpga_exc_new_str(SystemStackError, "stack level too deep"))) # L:IMG_stack_err L:WORD
