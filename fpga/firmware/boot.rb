@@ -316,4 +316,58 @@ end
   def __fpga_op_zerodiv(a)
     __fpga_halt
   end
+
+  # OP_ARYCAT の遅い道 (回路は Array 同士だけ): R[a] が nil なら splat(R[a+1])、そうでなければ R[a] に足す。R[a] が Array でなければ TypeError (S4)
+  # C: src/vm.c OP_ARYCAT
+  def __fpga_op_ARYCAT(a, b, c)
+    x = __fpga_reg(a)
+    s = __fpga_ary_splat(__fpga_reg(a + 1))
+    return __fpga_setreg(a, s) if x == nil
+    __fpga_halt unless __fpga_tag(x) == 7 && __fpga_tt(__fpga_addr(x)) == 17 # mrb_ensure_array_type の TypeError (S4) L:TAG_OBJ L:TT_ARRAY
+    k = 0
+    n = __fpga_alen(s)
+    while k < n
+      x.__fpga_push1(__fpga_aref(s, k))
+      k += 1
+    end
+  end
+
+  # array.c の mrb_ary_splat: Array なら複製、to_a に応じなければ [v]、to_a が nil なら [v]、ほかは to_a の結果の複製
+  # C: src/array.c mrb_ary_splat
+  def __fpga_ary_splat(v)
+    unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY
+      return [v] if __fpga_search(__fpga_addr(__fpga_class_of(v)), __fpga_addr(:to_a)) == 0 # mrb_respond_to
+      a = v.to_a
+      return [v] if a == nil
+      __fpga_halt unless __fpga_tag(a) == 7 && __fpga_tt(__fpga_addr(a)) == 17 # mrb_ensure_array_type の TypeError (S4) L:TAG_OBJ L:TT_ARRAY
+      v = a
+    end
+    d = []
+    k = 0
+    n = __fpga_alen(v)
+    while k < n
+      d.__fpga_push1(__fpga_aref(v, k))
+      k += 1
+    end
+    d
+  end
+
+  # OP_ARYPUSH の遅い道: R[a] が Array でない (mrb_ensure_array_type の TypeError、S4)
+  # C: src/vm.c OP_ARYPUSH
+  def __fpga_op_ARYPUSH(a, b, c)
+    __fpga_halt
+  end
+
+  # OP_GETGV: R[a] = 大域変数 Syms[b] (variable.c の mrb_gv_get、表は mrb_state.globals)。仮想の大域変数 ($~ など) は S5
+  # C: src/variable.c mrb_gv_get
+  def __fpga_op_GETGV(a, b, c)
+    row = __fpga_tbl_find(__fpga_image(2), __fpga_irep_sym(__fpga_irep, b)) # L:IMG_globals
+    __fpga_setreg(a, row == 0 ? nil : __fpga_ldv(row + 4))
+  end
+
+  # OP_SETGV: 大域変数 Syms[b] = R[a] (variable.c の mrb_gv_set)
+  # C: src/variable.c mrb_gv_set
+  def __fpga_op_SETGV(a, b, c)
+    __fpga_tbl_set(__fpga_image(2), __fpga_irep_sym(__fpga_irep, b), __fpga_reg(a)) # L:IMG_globals
+  end
 end

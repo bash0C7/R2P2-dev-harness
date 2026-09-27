@@ -93,7 +93,9 @@ class Array
     len = __fpga_ld32(a + 8) # L:A_LEN
     capa = __fpga_ld32(a + 12) # L:A_CAPA
     if len >= capa
-      capa = capa * 2 + 4
+      # array.c の ary_expand_capa: 4 より小さければ 4、足りるまで倍
+      capa = 4 if capa < 4 # L:ARY_DEFAULT_LEN
+      capa *= 2 while capa <= len
       buf = __fpga_alloc(capa * 16) # L:VALUE
       __fpga_copy(buf, __fpga_ld32(a + 16), len * 16) # L:A_PTR
       __fpga_st32(a + 16, buf)
@@ -113,6 +115,11 @@ class Array
 end
 
 class NilClass
+  # C: mrbgems/mruby-object-ext/src/object.c nil_to_a
+  def to_a
+    []
+  end
+
   # C: src/object.c nil_to_s
   def to_s
     ""
