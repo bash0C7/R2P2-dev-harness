@@ -107,6 +107,117 @@ module Kernel
 
   alias iterator? block_given? # kernel.c は block_given? と iterator? に同じ関数を置く
 
+  # --- defined? の実行時の helper (コンパイラが呼ぶ)。答えは CRuby の文字列 (凍った literal) か nil
+  # C: src/kernel.c mrb_f_defined_method
+  def __defined_method?(name)
+    sym = __fpga_obj_to_sym(name) # mrb_get_args の n
+    rt = __fpga_addr(:respond_to?)
+    if __fpga_func_basic_p(self, rt, Kernel) || __fpga_search(__fpga_addr(__fpga_class_of(self)), rt) == 0 # obj_respond_to、mrb_respond_to
+      found = __fpga_obj_respond_to_p(self, sym, true)
+    else
+      found = __fpga_sendv(self, :respond_to?, [__fpga_mkval(4, sym), true], nil, true) ? true : false # L:TAG_SYM mrb_funcall_argv2
+    end
+    found ? __fpga_obj_freeze("method") : nil
+  end
+
+  # C: src/kernel.c mrb_f_defined_ivar
+  def __defined_ivar?(name)
+    sym = __fpga_obj_to_sym(name)
+    return nil unless __fpga_iv_p(self) # mrb_iv_defined の obj_iv_p
+    __fpga_const_row(__fpga_addr(self), sym) > 0 ? __fpga_obj_freeze("instance-variable") : nil # mrb_obj_iv_defined
+  end
+
+  # 呼んだ側 (ci[-1]) の字句の scope で引く
+  # C: src/kernel.c mrb_f_defined_const
+  def __defined_const?(name)
+    sym = __fpga_obj_to_sym(name)
+    ci = __fpga_ld32(__fpga_image(0) + 12) - 64 # L:IMG_c L:CTX_CI L:CI_SIZE ci[-1]
+    return nil unless ci >= __fpga_cibase && __fpga_ld32(ci + 8) > 0 # L:CI_PROC
+    __fpga_vm_const_get_noraise(ci, sym) > 0 ? __fpga_obj_freeze("constant") : nil # mrb_vm_const_defined_p
+  end
+
+  # C: src/kernel.c mrb_f_defined_yield
+  def __defined_yield?
+    __fpga_block_given ? __fpga_obj_freeze("yield") : nil # mrb_f_block_given_p_m は ci[-1] を見る
+  end
+
+  # C: src/kernel.c mrb_f_defined_gvar
+  def __defined_gvar?(name)
+    sym = __fpga_obj_to_sym(name)
+    __fpga_tbl_find(__fpga_image(2), sym) > 0 ? __fpga_obj_freeze("global-variable") : nil # L:IMG_globals mrb_gv_defined
+  end
+
+  # C: src/kernel.c mrb_f_defined_cvar
+  def __defined_cvar?(name)
+    sym = __fpga_obj_to_sym(name)
+    ci = __fpga_ld32(__fpga_image(0) + 12) - 64 # L:IMG_c L:CTX_CI L:CI_SIZE ci[-1]
+    return nil unless ci >= __fpga_cibase && __fpga_ld32(ci + 8) > 0 # L:CI_PROC
+    c = __fpga_cv_scope_class(__fpga_ld32(ci + 8)) # L:CI_PROC mrb_vm_cv_defined_p
+    while c > 0 # mrb_mod_cv_defined
+      return __fpga_obj_freeze("class variable") if __fpga_const_row(c, sym) > 0
+      c = __fpga_ld32(c + 8) # L:C_SUPER
+    end
+    nil
+  end
+
+  # C: src/kernel.c mrb_f_defined_super
+  def __defined_super?
+    ci = __fpga_ld32(__fpga_image(0) + 12) - 64 # L:IMG_c L:CTX_CI L:CI_SIZE ci[-1]
+    return nil if ci < __fpga_cibase
+    mid = __fpga_ld32(ci + 4) # L:CI_MID
+    tc = __fpga_ci_tclass(ci)
+    if mid > 0 && tc > 0 && __fpga_ld32(tc + 8) > 0 # L:C_SUPER
+      return __fpga_obj_freeze("super") if __fpga_search(__fpga_ld32(tc + 8), mid) > 0 # L:C_SUPER
+    end
+    nil
+  end
+
+  # C: src/kernel.c mrb_f_defined_const_path
+  def __defined_const_path?(start, path)
+    __fpga_ensure_array_type(path) # mrb_get_args の A
+    len = __fpga_alen(path)
+    return nil if len == 0
+    return nil unless __fpga_tag(__fpga_aref(path, 0)) == 4 # L:TAG_SYM
+    i = 0
+    if __fpga_tag(start) == 0 # L:TAG_NIL
+      ci = __fpga_ld32(__fpga_image(0) + 12) - 64 # L:IMG_c L:CTX_CI L:CI_SIZE ci[-1]
+      return nil if ci < __fpga_cibase || __fpga_ld32(ci + 8) == 0 # L:CI_PROC
+      row = __fpga_vm_const_get_noraise(ci, __fpga_addr(__fpga_aref(path, 0)))
+      return nil if row == 0
+      outer = __fpga_ldv(row + 4)
+      i = 1
+    else
+      outer = start
+    end
+    while i < len
+      t = __fpga_tag(outer) == 7 ? __fpga_tt(__fpga_addr(outer)) : 0 # L:TAG_OBJ
+      return nil unless t == 9 || t == 10 || t == 11 # L:TT_CLASS L:TT_MODULE L:TT_SCLASS
+      return nil unless __fpga_tag(__fpga_aref(path, i)) == 4 # L:TAG_SYM
+      row = __fpga_const_walk(__fpga_addr(outer), __fpga_addr(__fpga_aref(path, i)), false) # mrb_const_get_noraise (const_get_nohook)
+      return nil if row == 0
+      outer = __fpga_ldv(row + 4)
+      i += 1
+    end
+    __fpga_obj_freeze("constant")
+  end
+
+  # C: src/kernel.c mrb_f_defined_method_on
+  def __defined_method_on?(recv, name)
+    sym = __fpga_obj_to_sym(name)
+    c = __fpga_search_class(__fpga_addr(__fpga_class_of(recv)), sym)
+    if c == 0 # MRB_METHOD_UNDEF_P
+      rtm = __fpga_addr(:respond_to_missing?)
+      if __fpga_func_basic_p(recv, rtm, Kernel) == false && __fpga_search(__fpga_addr(__fpga_class_of(recv)), rtm) > 0 # mrb_false、mrb_respond_to
+        return __fpga_obj_freeze("method") if __fpga_sendv(recv, :respond_to_missing?, [__fpga_mkval(4, sym), false], nil, true) # L:TAG_SYM
+      end
+      return nil
+    end
+    e = __fpga_search(c, sym)
+    return nil if __fpga_and(e, 3) == 1 # L:VIS_MASK L:VIS_PRIVATE
+    return nil if __fpga_and(e, 3) == 2 && __fpga_kind_of(self, __fpga_obj(c)) == false # L:VIS_MASK L:VIS_PROTECTED
+    __fpga_obj_freeze("method")
+  end
+
   # C: src/kernel.c mrb_f_block_given_p_m
   def self.block_given?
     __fpga_block_given
