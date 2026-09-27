@@ -6,6 +6,9 @@
 **目標:** `rake fpga:test` と `rake fpga:gap` を CPU の数だけ並列に回して待ち時間を縮め、gap で止まっている 5 本
 (picotest 3 本、pio 1 本、pitchdetector 1 本) をシミュレーターで動かすか、動かさない理由を gap に書く。
 
+**gem の決まり:** PicoRuby の gem の Ruby の部分 (mrblib) はそのまま使う (書き直さない)。PicoRuby で C の所だけを Ruby で書き
+(`fpga/gems/`)、コアで走らせる。回路にするのは Ruby では用をなさない (遅すぎて周期に間に合わない、など) と測って分かった時だけで、理由を書く。
+
 **作り:** 段の順は今までと同じ (spec → 参照 ref_vm.rb → oracle → RTL、テスト・fuzz・docs は同じ commit)。
 各段の頭に「変える意味 → 直す test と表」を書き出してから手を付ける (P8 までの後追いの反省。handoff 2026-09-27)。
 
@@ -96,7 +99,7 @@ target の VM を spawn する。`Dir`、`File.open`、`posix-io` を使う)。�
 
 | 変える意味 | 直す test と表 |
 |---|---|
-| FPGA 版の gem `fpga/gems/picotest.rb`: PicoRuby の `picotest/test.rb` と `double.rb` をそのまま使えるか確かめ、使えない所 (json、metaprog) だけ FPGA 版にする | `FpgaCorpus::GEMS` に picotest、gap_test |
+| PicoRuby の `picotest/test.rb` と `double.rb` をそのまま使う。足りない C の所 (metaprog など) があれば、その所だけ `fpga/gems/` に Ruby で書く | `FpgaCorpus::GEMS` に picotest、gap_test |
 | テストのファイルは Test の子クラスを定義するだけ。gap で走らせる時は、定義された子クラスを全部走らせる末尾 (Runner が target に渡すのと同じ呼び方) を付ける | gap.rb、gap_test |
 | `runner.rb` は gap で「host 側の係 (CRuby で走る)」として範囲の外にする。理由を gap の表に出す | gap.rb の out_of_scope、gap_test |
 | `File.dirname` / `File.expand_path` は作らない (runner の外で使う所が無い) | なし |
@@ -110,8 +113,7 @@ target の VM を spawn する。`Dir`、`File.open`、`posix-io` を使う)。�
 
 | 変える意味 | 直す test と表 |
 |---|---|
-| `PitchDetector#detect_pitch` は C (pitchdetector.c: ADC の標本を溜めて自己相関)。FPGA 版の gem は同じ計算を Ruby (Float、P5b) で書く。標本は ADC (P5c) から | `FpgaCorpus::GEMS`、gap_test |
-| `Note#freq_to_note` は mrblib の Ruby をそのまま | なし |
+| mrblib (`Note#freq_to_note` など) はそのまま。C の `detect_pitch` (pitchdetector.c: ADC の標本を溜めて自己相関) だけを `fpga/gems/` に Ruby (Float、P5b) で書く。標本は ADC (P5c) から。Ruby 版で1回の検出の時間を測り、`sleep_ms 10` の周期で用をなさなければ積和だけを回路 (デバイスのレジスタで起動・結果を読む) にし、Ruby 版と一致させる | `FpgaCorpus::GEMS`、gap_test |
 | `Signal.trap(:INT)` の扱いを決める (コアに Signal は無い。何もしない gem か、止める理由のまま) | gap の表 |
 | ADC の刺激 (stim) に正弦波の標本を入れる。エミュレーターにも同じ波を入れられるように | compare.rb の stim、emu |
 
