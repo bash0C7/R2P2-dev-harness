@@ -79,7 +79,7 @@ class FpgaRefVmTest < Minitest::Test
 
   # 止まるプログラムは、picoruby host VM (本物の mruby VM) の最後の値とも比べる
   def test_finite_corpus_agrees_with_picoruby
-    skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
+    skip "picoruby is not built (rake fpga:picoruby)" unless File.executable?(PICORUBY)
     checked = 0
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
       name = File.basename(src, ".rb")
@@ -102,7 +102,7 @@ class FpgaRefVmTest < Minitest::Test
   TASK_PROGRAMS = %w[tasks].freeze
 
   def test_task_corpus_agrees_with_picoruby
-    skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
+    skip "picoruby is not built (rake fpga:picoruby)" unless File.executable?(PICORUBY)
     TASK_PROGRAMS.each do |name|
       src = File.join(CORPUS, "#{name}.rb")
       trace = FpgaRefVm.new(FpgaConverter.read_hex(File.join(CORPUS, "#{name}.hex"))).run(400_000)

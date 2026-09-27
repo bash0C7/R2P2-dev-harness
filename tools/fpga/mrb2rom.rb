@@ -1,12 +1,12 @@
 # .mrb -> ROM イメージの変換器の入口 (mruby ソースコード)。PicoRuby (host VM) で走らせる:
 #
-#   mrbc -g -o converter.mrb tools/fpga/{isa,io_map,rite,rom,mrb2rom}.rb
-#   picoruby converter.mrb <in.mrb> <out.hex> <out.lst> [max_regs]
+#   cat tools/fpga/{isa,io_map,rite,rom,mrb2rom}.rb > converter.rb
+#   picoruby converter.rb <in.mrb> <out.hex> <out.lst> [max_regs]
 #
-# PicoRuby には require が無いので、使う file を mrbc で1つの .mrb にまとめて渡す (FpgaConverter.run がそうする)。
+# PicoRuby には require が無いので、使う file を書いた順に1つの .rb につないで渡す (FpgaConverter.run がそうする)。
 # 成功すると "ok <語数> words, nregs <n>" を出す。変換できない時は理由を出して exit 1。
 if ARGV.size < 3
-  STDERR.puts "usage: picoruby converter.mrb <in.mrb> <out.hex> <out.lst> [max_regs]"
+  STDERR.puts "usage: picoruby converter.rb <in.mrb> <out.hex> <out.lst> [max_regs]"
   exit 2
 end
 

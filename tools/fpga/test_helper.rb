@@ -6,7 +6,7 @@ module FpgaTestHelper
   CORPUS   = File.join(ROOT, "fpga", "corpus")
   VENDOR   = File.join(ROOT, "vendor", "picoruby")
   MRBC     = ENV["MRBC"] || File.join(VENDOR, "bin", "mrbc")
-  PICORUBY = File.join(VENDOR, "bin", "picoruby")
+  PICORUBY = FpgaConverter.default_picoruby # rake fpga:picoruby
   OPS_H    = File.join(VENDOR, "mrbgems", "picoruby-mruby", "lib", "mruby", "include", "mruby", "ops.h")
 
   # 最小の RITE0400 を組む。mrbc 無しで変換器のエラー経路を試すため。

@@ -397,7 +397,7 @@ class FpgaRomTest < Minitest::Test
   end
 
   def with_picoruby
-    skip "vendor/picoruby/bin/picoruby is not built" unless File.executable?(PICORUBY)
+    skip "picoruby is not built (rake fpga:picoruby)" unless File.executable?(PICORUBY)
     Dir.mktmpdir { |dir| yield dir }
   end
 

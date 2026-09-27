@@ -105,8 +105,8 @@
 | 変換器 (`isa` `io_map` `rite` `rom` `mrb2rom`) | mruby ソースコード、host の picoruby で走る。1 本 約 30 秒 | 熱い所 (命令の decode、表の組み立て) を top-level の型付きメソッドに切り出し、`suppify -t picoruby` の mrbgem を host の picoruby の build に足す (build_config の overlay。vendor/picoruby は commit しない) |
 | 参照インタプリタ `ref_vm.rb` | Ruby コード、CRuby で走る。check / gap / fuzz で毎回 | 命令の実行の芯を切り出し、`suppify -t cruby` の拡張 gem |
 
-- [ ] Q2〜Q5 の後に、どこで時間を食っているかを測る (変換器は picoruby の中の段ごとの時間、ref_vm は CRuby の profiler)。
-  並列化で足りていれば Q6 はやらず、理由を記録に書く
+- [x] Q2〜Q5 の後に、どこで時間を食っているかを測る (変換器は picoruby の中の段ごとの時間、ref_vm は CRuby の profiler)。
+  並列化で足りていれば Q6 はやらず、理由を記録に書く → **AOT はやらない** (記録と見つけたことを見る)
 - [ ] 切り出す前に、切り出すメソッドの入出力 (Integer、String、Array、Hash) を表にして、spinel が型を付けられるか確かめる
 - [ ] 確かめ方: 置き換える前に、元の版の出力を取っておく (変換器は commit 済みの corpus の生成物、ref_vm は check / gap / fuzz seed 1–4 の出力)。
   AOT 版で同じものを作り、変換器は `rake fpga:corpus:check` が bytes で同じ、ref_vm は出力が1字も違わないことを確かめる
@@ -185,6 +185,7 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
 
 | 日付 | 段 | 結果 |
 |---|---|---|
+| 2026-09-27 | Q6 測って AOT はやらない | 変換器の遅さ (CRuby の 200 倍) は host のテストの VM の debug (ESTALLOC_DEBUG の est_free が n²) で、AOT の出番ではなかった。debug 無しの VM (`rake fpga:picoruby`) で collections 34 秒 → 1.6 秒、出力は bytes で同じ。`fpga:corpus:check` 311 秒 → 17 秒、`test:fpga` 約 19 分 → 51 秒。ref_vm は 1 本 1〜2 秒で、並べた後の check / gap / fuzz の長さはシミュレーションの側 |
 | 2026-09-27 | Q1〜Q5 並列化 | CPU 4。`fpga:corpus:check` 1162 秒 → 311 秒。`fpga:test` 全体 1345 秒 (tb の Icarus で peridot_air_top を compile する所が 17 分ほどで一番長い)。check 39 行、gap (71 / 66 / 66 / 5)、fuzz seed 1–4 の要約は1本ずつ回した時と1字も違わない |
 
 ## 見つけたこと
@@ -194,3 +195,9 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
   `uninitialized constant FpgaIsa::CLASSES` で落ちた。mrbc で1つの .mrb (書いた順に1つの irep) にして渡すように直した
 - Q: gap の hex は basename で `build/fpga/gap/` に書いていた。example には同じ basename のものがあり、並べると取り合う。path から名前を作る
 - Q: 並べた後に一番長いのは tb の Icarus の compile (peridot_air_top_tb)。1 本の中の仕事なので並べても縮まない
+- Q6: host のテストの VM (PICORB_DEBUG) では picoruby-machine が ESTALLOC_DEBUG を定義し、est_free が解放のたびにヒープの全ブロックを
+  たどる。生きているオブジェクトが多いと n² (生きている配列 4 万で `format` 8000 回が 0.14 秒 → 4.2 秒)。変換器は debug 無しの VM で走らせる
+- Q6: picoruby.c は .mrb を走らせると、終わりに `mrb_read_irep` の irep を `mrc_irep_free` で解放してヒープを壊す (upstream の不具合)。
+  debug の VM は est_free の検査が黙って飛ばすので見えず、debug 無しの VM で SEGV になって分かった。変換器は1つの .rb につないで渡す
+- Q6: vendor の `rake all` は `vendor/picoruby/bin/` の symlink を最後に build したものへ向け替える。別の build_config を build する時は
+  `INSTALL_DIR` を別の所にする (`rake fpga:picoruby`)

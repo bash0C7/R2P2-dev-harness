@@ -603,9 +603,13 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 **並べて回す (`FPGA_JOBS`)。** `test:fpga` (ファイルごと)、`fpga:corpus` / `corpus:check` (1 本ごとの mrbc と変換器)、`fpga:tb` ((tb, シミュレーター) ごと)、`fpga:check` / `fpga:gap` / `fpga:emu:check` (1 本ごと)、`fpga:fuzz` (1 本ごと。program は親が seed の rng の順に作るので、seed ごとの program の列と要約は1本ずつ回した時と同じ) は CPU の数だけ並べて回す (`tools/fpga/parallel.rb`)。本数は `FPGA_JOBS` (既定は CPU の数、1 ならその場で順に)。出力は1本ずつ回した時と同じ順にまとめて出す。シミュレーションの実行ファイル (mrb_run_tb、board_emu) は並べる前に親が build する。1つの rake の中で並べるので、同じ worktree で rake の check / gap / fuzz を2つ同時に走らせない (build の dir を取り合う) は変わらない
 
 `fpga:test` は `vendor/picoruby` 無しで回る (コーパスの `.mrb` と ROM を commit してあるため)。`rake test` には含まれない。
-picoruby (host VM) が要るのは変換器を走らせる `fpga:rom` / `fpga:run` / `fpga:build` / `fpga:corpus`、
-mrbc が要るのはそれらに `.rb` を直接渡した時と `fpga:corpus`。どちらも `rake setup` と `rake test:host` で出来る
-(`PICORUBY=` / `MRBC=` で差し替えられる)。
+picoruby (host VM) が要るのは変換器を走らせる `fpga:rom` / `fpga:run` / `fpga:build` / `fpga:corpus`。この VM は
+`rake fpga:picoruby` が `build_config/fpga-tools.rb` (PICORB_DEBUG 無し) で `build/picoruby-fpga/` に build する (それらのタスクと
+`test:fpga` が先に呼ぶ。vendor/picoruby/bin の host のテストの VM とは別)。host のテストの VM は PICORB_DEBUG 付きで、
+picoruby-machine が ESTALLOC_DEBUG を定義し、est_free が解放のたびにヒープの全ブロックをたどる。変換器のように生きている
+オブジェクトの多いプログラムは n² で遅く (collections.mrb の変換 34 秒、callgrind で est_free が 68%)、debug 無しでは 1.6 秒。
+mrbc が要るのはそれらに `.rb` を直接渡した時と `fpga:corpus` (`rake setup` と `rake test:host` で出来る)。
+`PICORUBY=` / `MRBC=` で差し替えられる。
 
 ### 置き場所
 
@@ -1072,8 +1076,8 @@ primitive を組み合わせる
 
 ### ROM 形式と変換 (#7)
 
-`tools/fpga/rite.rb` が RITE0400 を読み、`tools/fpga/rom.rb` が ROM にする。**変換器は PicoRuby で書き、
-PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけをする (`FpgaConverter.run`)。**1命令1語の固定長 48bit**:
+`tools/fpga/rite.rb` が RITE0400 を読み、`tools/fpga/rom.rb` が ROM にする。**変換器は mruby ソースコードで書き、
+PicoRuby の host VM (`rake fpga:picoruby`) で走らせる。** rake は起動と受け渡しだけをする (`FpgaConverter.run`)。**1命令1語の固定長 48bit**:
 
 | bit | 中身 |
 |---|---|
@@ -1105,11 +1109,12 @@ ROM の空きは全 bit 1 (op 0xff = 未対応) で、プログラムの外へ�
 **変換器は mruby ソースコードで、PicoRuby と CRuby の共通部分で書く。** 同じ file を CRuby からも読み (`tools/fpga/converter.rb`)、
 参照インタプリタやテストが使う。`rom_test.rb` は、commit 済みの `.hex` `.lst` (PicoRuby の出力) と
 CRuby で走らせた結果が一致すること、境界の値 (負の相対ジャンプ、`LOADI32` の全 bit 1) で両者が一致することを見る。
-PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使えないもの:
+PicoRuby の host VM で実測した、使えないもの:
 
-- `require` / `require_relative` が無い。複数の file は `mrbc -o converter.mrb a.rb b.rb c.rb` で1つの .mrb (書いた順に1つの irep) にして渡す。
+- `require` / `require_relative` が無い。複数の file は書いた順に1つの .rb につないで渡す (`FpgaConverter.program_rb`)。
   `picoruby a.rb,b.rb,c.rb` と `,` でつなぐと file ごとに別の task になって同時に走り、CPU が混んでいると後の file が前の file の定義より先に
-  走る (並べて回した `test:fpga` で `uninitialized constant FpgaIsa::CLASSES` が出た)
+  走る (並べて回した `test:fpga` で `uninitialized constant FpgaIsa::CLASSES` が出た)。mrbc で .mrb にして渡すと、picoruby.c が終わりに
+  `mrb_read_irep` の irep を `mrc_irep_free` で解放してヒープを壊す (debug 無しの VM は SEGV、debug の VM は est_free の検査が黙って飛ばす)
 - `Struct`、`File.binread`、`String#force_encoding`、`Array#sort_by` `#sum` `#tally` `#flat_map` が無い
 - Enumerator の連鎖 (`each_with_index.map`、`map.with_index`) は `fiber required for enumerator` で落ちる
 - 正規表現はキャプチャ (`$1`) が取れない。`String#split(/\s+/)` は `TypeError`
