@@ -10,6 +10,21 @@ class FpgaGapTest < Minitest::Test
     assert_nil FpgaGap.out_of_scope("require 'gpio'\nrequire \"i2c\"\n")
   end
 
+  # Picotest::Runner は host (CRuby) で走る係
+  def test_picotest_runner_is_host_side
+    assert_equal "host side: Picotest::Runner", FpgaGap.out_of_scope("require 'picotest'\nPicotest::Runner.run(dir)\n")
+    assert_nil FpgaGap.out_of_scope("# Picotest::Runner が渡すのと同じ形\nrequire 'picotest'\n") # 注釈の中は数えない
+  end
+
+  # picotest のテストのファイルには Runner と同じ末尾 (test_* を順に呼んで JSON) を付ける
+  def test_picotest_tail_calls_each_test
+    tail = FpgaGap.picotest_tail("class ATest < Picotest::Test\n  def test_a\n  end\n  def helper\n  end\n  def test_b\n  end\nend\n")
+    assert_match(/my_test = ATest\.new/, tail)
+    assert_equal %w[test_a test_b], tail.scan(/^  my_test\.(test_\w+)$/).flatten
+    assert_match(/puts JSON\.generate\(my_test\.result\)/, tail)
+    assert_nil FpgaGap.picotest_tail("class A\nend\n")
+  end
+
   # 最初の1つで止めず、止まる理由を全部挙げる (Float のリテラルはもう理由にならない)
   def test_blockers_lists_every_reason
     bin = rite([op("LOADL"), 1, 0, op("SSEND"), 1, 0, 1, op("UNDEF"), 0, op("STOP")], syms: %w[foo], pool: [:float])

@@ -204,6 +204,8 @@ module FpgaFuzz
   DSEND_SYMS = { dsend: TASK_SYMS.values.max + 1, symat: TASK_SYMS.values.max + 2 }.freeze
   # 64bit の整数の断片 (pick 25) が送る Integer の primitive (桁あふれを見るもの) のシンボル
   INT64_SYMS = %w[IADD ISUB IMUL IDIV MOD NEG ABS SHL SHR].each_with_index.to_h { |n, i| [n, DSEND_SYMS.values.max + 1 + i] }.freeze
+  # caller の断片 (pick 26) の primitive のシンボル (__frame_pc と __rom_word は Integer、__truncate は String に置く)
+  CALLER_SYMS = { framepc: INT64_SYMS.values.max + 1, romw: INT64_SYMS.values.max + 2, strunc: INT64_SYMS.values.max + 3 }.freeze
   # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
   FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0,
                   2.0**63, -2.0**63, 9223372036854774784.0, -9223372036854777856.0, 2.0**62].freeze
@@ -244,8 +246,8 @@ module FpgaFuzz
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     inited = [] # タスクの断片 (pick 23) が __task_init した区画 (切り替えはたいていここへ)
     body.times do
-      pick = rng.rand(28)
-      pick = 25 if pick > 25 # 64bit の整数の断片は重くして、桁あふれに多く届くように
+      pick = rng.rand(29)
+      pick = 25 if pick > 26 # 64bit の整数の断片は重くして、桁あふれに多く届くように
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -559,6 +561,26 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("SEND"), 12, DSEND_SYMS[:dsend], [n, 3].min)
         end
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 26 # caller (P9): __frame_pc(k) (段の呼び出しの pc か nil)、__rom_word (ROM の語。ときどき外でエラー)、
+        # String#__truncate (定数 3 の文字列の長さを切る。長さより大きい n はエラー)
+        case rng.rand(3)
+        when 0
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(5), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, CALLER_SYMS[:framepc], 1)
+        when 1
+          words << if rng.rand(20).zero?
+                     encode(FpgaIsa.op("LOADI32"), 12, 0x7FFF, 0xFFFF)
+                   else
+                     encode(FpgaIsa.op("LOADI16"), 12, rng.rand(words.size + 40), 0)
+                   end
+          words << encode(FpgaIsa.op("SEND0"), 12, CALLER_SYMS[:romw], 0)
+        else
+          words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(HEAP_TEXT.bytesize + 3), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, CALLER_SYMS[:strunc], 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
       when 10 # 多重代入 (AREF)
         words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
       when 11 # 演算の落ち先: 配列 + 整数 は Array#+ (この表ではメソッド) を送る
@@ -574,6 +596,12 @@ module FpgaFuzz
     # ブロック: 外側の R0..R7 を読み書きし、配列を作って返す
     block_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 1, 4, 0) # |x|
+    frame_pc = lambda do |r| # caller (P9): 段の中から __frame_pc(k) (R[r] と R[r+1] を使い、値は後で上書きされる)
+      words << encode(FpgaIsa.op("LOADI8"), r, 0, 0)
+      words << encode(FpgaIsa.op("LOADI8"), r + 1, rng.rand(4), 0)
+      words << encode(FpgaIsa.op("SEND"), r, CALLER_SYMS[:framepc], 1)
+    end
+    frame_pc.call(2) if rng.rand(2).zero?
     words << encode(FpgaIsa.op("GETUPVAR"), 2, rng.rand(8), 1)
     words << encode(FpgaIsa.op("ADD"), 1, 0, 0)
     words << encode(FpgaIsa.op("SETUPVAR"), 1, rng.rand(8), 1)
@@ -583,6 +611,7 @@ module FpgaFuzz
     # ときどき外 (R4 以降、エラー) に触り、return / break で戻る (メソッドはもう無いので lambda でなければエラー)
     maker_at = words.size
     words << encode(FpgaIsa.op("ENTER"), 0, 4, 0)
+    frame_pc.call(1) if rng.rand(2).zero?
     words << encode(FpgaIsa.op("LOADI8"), 1, rng.rand(50), 0)
     words << encode(FpgaIsa.op("LOADI8"), 2, rng.rand(50), 0)
     words << :inner
@@ -721,6 +750,8 @@ module FpgaFuzz
       [FpgaIsa::CLS_INT, I2F_SYM, prim.("I2F")], [FpgaIsa::CLS_STRING, STOD_SYM, prim.("STOD")],
       *IFLT_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
       *INT64_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
+      [FpgaIsa::CLS_INT, CALLER_SYMS[:framepc], prim.("FRAMEPC")], [FpgaIsa::CLS_INT, CALLER_SYMS[:romw], prim.("ROMW")],
+      [FpgaIsa::CLS_STRING, CALLER_SYMS[:strunc], prim.("STRUNC")],
       [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
       [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
       [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],

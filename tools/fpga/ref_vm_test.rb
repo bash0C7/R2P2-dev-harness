@@ -55,7 +55,8 @@ class FpgaRefVmTest < Minitest::Test
   # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
   # watchdog の再起動、Task (区画の切り替え)、PSG の列 (仮想の時計で進む)、64bit の桁あふれ (CRuby は Bignum に上がる) は
   # CRuby では表せないので比べない (Task と int64 は下で picoruby と比べる)
-  CRUBY_CANNOT = %w[watchdog tasks psg mml int64].freeze
+  # picotest は PicoRuby の gem を使い、caller は CRuby と表し方 ("in 'Walker#inner'") が違うので、picoruby と比べる
+  CRUBY_CANNOT = %w[watchdog tasks psg mml int64 picotest caller].freeze
 
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
@@ -110,6 +111,30 @@ class FpgaRefVmTest < Minitest::Test
       _final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)
       assert_equal stdout, FpgaCompare.console(trace), name
     end
+  end
+
+  # picotest (P9): Picotest::Runner が板に渡すのと同じ形のスクリプト。picoruby host VM (picotest の gem 入り) の標準出力
+  # (テストごとの . F E S と、失敗の中身の JSON) と全部比べる
+  def test_picotest_corpus_agrees_with_picoruby
+    skip "picoruby is not built (rake fpga:picoruby)" unless File.executable?(PICORUBY)
+    src = File.join(CORPUS, "picotest.rb")
+    trace = FpgaRefVm.new(FpgaConverter.read_hex(File.join(CORPUS, "picotest.hex"))).run(2_000_000)
+    assert trace.last.start_with?("H "), trace.last
+    _final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)
+    assert_equal stdout, FpgaCompare.console(trace)
+  end
+
+  # プレリュードの RUBY_ENGINE などは host の PicoRuby と同じ値 (vendor/picoruby の version.h)
+  def test_prelude_versions_match_picoruby
+    skip "vendor/picoruby is not there" unless File.directory?(VENDOR)
+    core = File.read(File.join(ROOT, "fpga", "prelude", "core.rb"), encoding: "UTF-8")
+    mruby_h = File.read(File.join(VENDOR, "mrbgems", "picoruby-mruby", "lib", "mruby", "include", "mruby", "version.h"))
+    pico_h = File.read(File.join(VENDOR, "include", "version.h"))
+    mv = %w[MAJOR MINOR TEENY].map { |k| mruby_h[/#define MRUBY_RELEASE_#{k}\s+(\d+)/, 1] }.join(".")
+    assert_includes core, %(RUBY_ENGINE = "#{mruby_h[/#define MRUBY_RUBY_ENGINE\s+"(.+?)"/, 1]}")
+    assert_includes core, %(RUBY_VERSION = "#{mruby_h[/#define MRUBY_RUBY_VERSION\s+"(.+?)"/, 1]}")
+    assert_includes core, %(MRUBY_VERSION = "#{mv}")
+    assert_includes core, %(PICORUBY_VERSION = "#{pico_h[/#define PICORUBY_VERSION\s+"(.+?)"/, 1]}")
   end
 
   # PSG (P5e): 音程は C の psg_period_q8 と同じ式 (CHIP_CLOCK / 32 / 周波数 × 256 を丸める) で CRuby が計算した値、

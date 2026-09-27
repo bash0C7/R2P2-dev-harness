@@ -96,6 +96,7 @@ module mrb_core
     S_XSTART, S_XSCAN, S_XHIT, S_XMISS, S_XPOP, S_BRKW,
     S_CERR,               // コアのエラーを例外にする: Integer#__core_error を呼ぶ
     S_LF1, S_LF2, S_LF3,  // LOADF: ROM のデータの2語を読む
+    S_RW1, S_RW2,         // Integer#__rom_word: ROM の語を読む (P9)
     S_FP,                 // Float の primitive の結果で分かれる (値、Float の箱、String、エラー)
     S_FBOX,               // Float の箱を書く
     S_FSTR,               // Float の primitive が作った文字列を String に写す
@@ -777,6 +778,7 @@ module mrb_core
   logic                go_x, set_exc, clr_exc, set_htable;
   logic                go_fp;   // Float の primitive (S_PRIM の終わりに計算する)
   logic                go_loadf;
+  logic                go_romw, trunc_len; // __rom_word、String#__truncate (P9)
   logic                go_mend;  // 一番外の終わり (STOP、スタックが空の戻り) でタスクがある: __task_main_end を引く
   logic                go_task;  // タスクの primitive (__task_init / __task_switch / __task_on / __task_lock) の状態の更新
   logic                go_dsend; // __send: 名前を外して引数をずらし (S_SHIFT)、その名前を引く
@@ -834,6 +836,11 @@ module mrb_core
   end
 
   // __sym_at: R[a] がシンボル表 (TABLE の c から、メソッド表の前まで) の中か (Icarus のために wire に)
+  // __frame_pc(k) (P9): k 番目の段 (top から数える) の戻り先の1つ前。段が無ければ nil
+  logic                fp_in;
+  logic [PC_BITS-1:0]  fp_pc;
+  assign fp_in = ra1[INT_BITS-1:0] < INT_BITS'(sp);
+  assign fp_pc = ret_pc[{task_id, (SB-1)'(top - (SB-1)'(ra1[SB-2:0]))}] - PC_BITS'(1);
   logic symat_in;
   assign symat_in = ra[INT_BITS-1:0] < INT_BITS'(tbase) - INT_BITS'(symtab);
 
@@ -875,6 +882,8 @@ module mrb_core
     go_x      = 1'b0;
     go_fp     = 1'b0;
     go_loadf  = 1'b0;
+    go_romw   = 1'b0;
+    trunc_len = 1'b0;
     go_mend   = 1'b0;
     go_task   = 1'b0;
     go_dsend  = 1'b0;
@@ -1017,6 +1026,11 @@ module mrb_core
         PR_OBJID: begin err = prim_argc_bad; wval = objid; end
         // シンボル表 (TABLE の c から、メソッド表の前まで) の R[a] 番目 (表の外は nil)
         PR_SYMAT: begin err = prim_argc_bad || !ra_int; wval = symat_in ? {TAG_SYM, ra[INT_BITS-1:0]} : V_NIL; end
+        // caller (P9): 段の呼び出しの pc、ROM の語のデータの値 ({b, c})
+        PR_FRAMEPC: begin err = prim_argc_bad || !ra1_int; wval = fp_in ? mk_int(INT_BITS'(fp_pc)) : V_NIL; end
+        PR_ROMW: begin wr = 1'b0; go_romw = 1'b1; err = prim_argc_bad || !ra_int || ra[INT_BITS-1:0] >= INT_BITS'(1 << PC_BITS); end
+        // String#__truncate(n): 長さを n (0..bytesize) にして self
+        PR_STRUNC: begin err = prim_argc_bad || !ra_str || !ra1_int || ra1[INT_BITS-1:0] > INT_BITS'(arr_len); wval = ra; trunc_len = 1'b1; end
         PR_NAMESYM: begin
           wr        = 1'b0;
           go_lookup = 1'b1;
@@ -1409,6 +1423,7 @@ module mrb_core
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
       do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_sleep = 1'b0;
       go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0; go_mend = 1'b0; go_task = 1'b0; go_dsend = 1'b0;
+      go_romw = 1'b0; trunc_len = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
@@ -1465,6 +1480,7 @@ module mrb_core
       end
       S_FP: if (fk == FK_VAL) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = fval; end
       S_FBOX: begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
+      S_RW2: begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk_int(INT_BITS'(rom_data[31:0])); end
       S_LF3: if (op == OP_LOADI64) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk_int(INT_BITS'({fres[63:32], rom_data[31:0]})); end
       S_FSTR: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
       S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
@@ -1563,6 +1579,7 @@ module mrb_core
                     state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
                     state == S_SYMRD ? symtab + PC_BITS'(val_of(ra)) :
                     state == S_LF1 ? b[PC_BITS-1:0] :
+                    state == S_RW1 ? ra[PC_BITS-1:0] :
                     state == S_LF2 ? b[PC_BITS-1:0] + PC_BITS'(1) :
                     state == S_XSTART ? hbase :
                     state == S_XSCAN ? hbase + PC_BITS'(hi) + PC_BITS'(1) : pc;
@@ -1665,6 +1682,7 @@ module mrb_core
             if (wr) regs[ia[RB-1:0]] <= wval;
             if (set_up) regs[iu[RB-1:0]] <= ra;
             if (pop_len) heap[arr_p + HB'(1)] <= mk_int(INT_BITS'({16'd0, arr_len - 16'd1}));
+            if (trunc_len) heap[arr_p + HB'(1)] <= mk_int(INT_BITS'({16'd0, ra1[15:0]}));
             if (set_lam) heap[ha(val_of(ra1)) + HB'(1)] <= mk_int(val_of(heap[ha(val_of(ra1)) + HB'(1)]) | INT_BITS'(32'h0080_0000));
             if (set_const) begin
               consts[b[CB-1:0]] <= ra;
@@ -1985,6 +2003,8 @@ module mrb_core
               state  <= S_SET1;
             end else if (go_loadf) begin
               state <= S_LF1;
+            end else if (go_romw) begin
+              state <= S_RW1;
             end else if (go_fp) begin
               // Float の primitive を計算して結果を覚える (ref_vm.rb の float_prim と同じ順に調べる)
               begin : fpc
@@ -2515,6 +2535,12 @@ module mrb_core
           // ---- Symbol#to_s: S_SYMRD でシンボル表の語 {データの語アドレス, 長さ} を読み、STRING と同じに作る
           // ---- LOADF: ROM のデータの2語 (S_LF1 で上位の語を出し、S_LF2 で読んで下位の語を出す)
           S_LF1: state <= S_LF2;
+          // ---- Integer#__rom_word: S_RW1 で番地を出し、S_RW2 で読んだ語を R[a] に (m_we)
+          S_RW1: state <= S_RW2;
+          S_RW2: begin
+            pc    <= pc + PC_BITS'(1);
+            state <= S_FETCH;
+          end
           S_LF2: begin
             fres[63:32] <= rom_data[31:0];
             state       <= S_LF3;

@@ -168,7 +168,10 @@ package mrb_pkg;
   localparam logic [13:0] PR_DSEND    = 14'd87; // Object#__send (any)
   localparam logic [13:0] PR_SYMAT    = 14'd88; // Integer#__sym_at (0 arg)
   localparam logic [13:0] PR_OBJID    = 14'd89; // Object#__object_id (0 arg)
-  localparam int NPRIMS = 90;
+  localparam logic [13:0] PR_FRAMEPC  = 14'd90; // Object#__frame_pc (1 arg)
+  localparam logic [13:0] PR_ROMW     = 14'd91; // Integer#__rom_word (0 arg)
+  localparam logic [13:0] PR_STRUNC   = 14'd92; // String#__truncate (1 arg)
+  localparam int NPRIMS = 93;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
   localparam logic [3:0] CERR_ZERODIV     = 4'd1;
   localparam logic [3:0] CERR_NOMETHOD    = 4'd2;
@@ -278,6 +281,9 @@ package mrb_pkg;
       PR_DSEND   : return 8'hff;
       PR_SYMAT   : return 8'h00;
       PR_OBJID   : return 8'h00;
+      PR_FRAMEPC : return 8'h01;
+      PR_ROMW    : return 8'h00;
+      PR_STRUNC  : return 8'h01;
       default: return 8'h00;
     endcase
   endfunction

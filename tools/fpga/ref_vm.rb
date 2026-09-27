@@ -1271,6 +1271,19 @@ class FpgaRefVm
       fault! unless int?(x)
       set(step, a, x[1] < @tbase - (@symtab || 0) ? [FpgaIsa::TAG_SYM, x[1]] : NIL)
       return pc + 1
+    when "FRAMEPC"
+      # k 番目のフレームの呼び出しの命令の pc (積んだ戻り先の1つ前)。段が無ければ nil
+      k = reg(a + 1)
+      fault! unless int?(k)
+      @stats[:frame_pc] += 1 if k[1] < @stack.size
+      set(step, a, k[1] < @stack.size ? int((@stack[-1 - k[1]][0] - 1) & ((1 << FpgaIsa::PC_BITS) - 1)) : NIL)
+      return pc + 1
+    when "ROMW"
+      # ROM の x 番地の語のデータの値 ({b, c} の 32bit)
+      fault! unless int?(x) && x[1] < (1 << FpgaIsa::PC_BITS)
+      @stats[:rom_word] += 1
+      set(step, a, int(rom_word(x[1]) & 0xFFFF_FFFF))
+      return pc + 1
     when "ISA", "KINDOF"
       # (ISA_BIT | 受け手のクラス, 引数のクラス) があるか (親はたどらない)
       y = reg(a + 1)
@@ -1552,6 +1565,12 @@ class FpgaRefVm
       src = reg(a) # 確保で GC が走ると動く
       n[1].times { |k| @heap[p + 4 + k] = ary_get(src, i[1] + k) }
       set(step, a, [FpgaIsa::TAG_OBJ, p])
+    when "STRUNC"
+      n = reg(a + 1)
+      fault! unless int?(n) && n[1] <= len # 負の数は 64bit の大きな値なので外れる
+      @stats[:truncate] += 1
+      @heap[x[1] + 1] = int(n[1])
+      set(step, a, x)
     end
   end
 
@@ -1579,7 +1598,7 @@ class FpgaRefVm
   def builtin(step, name, a, argc)
     x = reg(a)
     y = argc == 1 ? reg(a + 1) : nil
-    return string_prim(step, name, a, x) if %w[SBYTES SGETB SASET SPUSH SSLICE SYMSTR].include?(name)
+    return string_prim(step, name, a, x) if %w[SBYTES SGETB SASET SPUSH SSLICE SYMSTR STRUNC].include?(name)
     if name == "NAMESYM"
       # (クラス, NAME_SYM) を親をたどらずに引く。無ければ nil
       fault! unless x[0] == FpgaIsa::TAG_CLASS

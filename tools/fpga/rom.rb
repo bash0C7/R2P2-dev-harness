@@ -175,6 +175,53 @@ module FpgaRom
   end
 
   # irep を先に親、次に子の順 (深さ優先) に並べる
+  # caller の表 (docs/spec.md §10「picotest と caller」)。コードの語を pc の順に見て、(行、ファイル、メソッド) が変わる所ごとに
+  # [pc, 行, ファイルのシンボル, メソッドのシンボル]。メソッドの無いフレーム (main、クラスの本体) は 0xFFFF、プレリュードと gem
+  # (host の PicoRuby では debug 情報の無い mrblib) と debug 情報の無い irep は 0xFFFE (caller は数えない)
+  CALLER_NO_METHOD = 0xFFFF
+  CALLER_SKIP = 0xFFFE
+
+  def self.caller_runs(ireps, words, data_base, ctx)
+    parents = {}
+    ireps.each { |ir| ir.reps.each { |c| parents[c.index] = ir.index } }
+    runs = []
+    last = nil
+    words.each do |w|
+      next unless w && w.pc < data_base
+      ir = w.irep
+      pos = ir ? ir.position(w.insn ? w.insn.addr : 0) : nil
+      key = if pos.nil? || library_file?(pos[0])
+              [0, 0, CALLER_SKIP]
+            else
+              [pos[1], ctx.sym_id(pos[0]), caller_method(ir, ctx, parents)]
+            end
+      next if key == last
+      runs << [w.pc] + key
+      last = key
+    end
+    runs
+  end
+
+  def self.library_file?(path)
+    path.include?("/fpga/prelude/") || path.include?("/fpga/gems/") || (path.include?("/mrbgems/") && path.include?("/mrblib/"))
+  end
+
+  # フレームのメソッドの名前のシンボル: メソッドの irep ならその名前、ブロックは外へたどる。main とクラスの本体は無し
+  def self.caller_method(ir, ctx, parents)
+    j = ir.index
+    while j
+      name = ctx.method_names[j]
+      if name
+        id = ctx.sym_id(name)
+        raise Error, "#{ctx.source}: too many symbols for the caller table" if id >= CALLER_SKIP
+        return id
+      end
+      return CALLER_NO_METHOD if ctx.bodies[j]
+      j = parents[j]
+    end
+    CALLER_NO_METHOD
+  end
+
   def self.flatten(irep, list)
     irep.index = list.size
     list << irep
@@ -205,6 +252,10 @@ module FpgaRom
     ctx.live = live_ireps(ireps, decoded, ctx)
     # 使われるクラスだけメソッド表に行を置く (プレリュードの例外のクラスなど、参照されないものを落とす)
     ctx.class_live = live_classes(ireps, decoded, ctx)
+    # プレリュードの caller が生きていれば、caller の表を置き、main の最初で $__caller_table に場所を入れる
+    caller_m = ctx.object.methods["caller"]
+    caller_on = caller_m && ctx.live[caller_m.index]
+    caller_at = nil
 
     ireps.each_with_index do |ir, i|
       next unless ctx.live[i]
@@ -278,6 +329,7 @@ module FpgaRom
         words << Word.new(ir.base, nil, FpgaIsa.op("ENTER").num, 0, ir.nregs, 0, ir, false)
         # 一般のグローバル変数を nil に (R0 を借りる)、self (main) を作る
         ctx.globals.each_with_index do |g, j|
+          caller_at = words.size if g == "$__caller_table" && caller_on # 表を置いてから LOADI32 に差し替える
           words << Word.new(ir.base + e + 2 * j, nil, FpgaIsa.op("LOADNIL").num, 0, 0, 0, ir, false)
           words << Word.new(ir.base + e + 2 * j + 1, nil, FpgaIsa.op("SETCONST").num, 0, ctx.consts.fetch(g), 0, ir, false)
         end
@@ -302,6 +354,20 @@ module FpgaRom
     # Float のリテラル (上位 32bit、下位 32bit の2語)
     ctx.floats.each do |hi, lo|
       [hi, lo].each { |v| words << Word.new(words.size, nil, 0, 0, (v >> 16) & 0xFFFF, v & 0xFFFF, nil, false) }
+    end
+
+    if caller_at
+      # caller の表: 1区間2語 {pc, 行} {ファイルのシンボル, メソッドのシンボル}
+      cbase = words.size
+      runs = caller_runs(ireps, words, data_base, ctx)
+      runs.each do |pc, line, file, mid|
+        words << Word.new(words.size, nil, 0, 0, pc, line & 0xFFFF, nil, false)
+        words << Word.new(words.size, nil, 0, 0, file, mid, nil, false)
+      end
+      raise Error, "#{source}: the caller table does not fit (#{cbase}, #{runs.size})" if cbase > 0x7FFF || runs.size > 0xFFFF
+      v = (cbase << 16) | runs.size
+      w = words[caller_at]
+      words[caller_at] = Word.new(w.pc, nil, FpgaIsa.op("LOADI32").num, 0, v >> 16, v & 0xFFFF, w.irep, false)
     end
 
     entries = method_entries(ctx)
@@ -617,6 +683,18 @@ module FpgaRom
       use.call("__core_error") unless ir.catches.empty? # 例外の表があればコアのエラーを例外にする
       decoded[i].each_with_index do |insn, k|
         ops = insn.operands
+        if (al = ctx.aliases[site_key(ir, k)])
+          # alias new old と、静的に解いた alias_method :new, :old (実行時は self を置くだけ)
+          owner, name, m = al
+          next unless recv[owner.id]
+          if used[name]
+            todo << m.index
+          else
+            waiting[name] ||= []
+            waiting[name] << m.index
+          end
+          next
+        end
         case insn.name
         when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM"
           use.call(ir.syms[ops[1]])
@@ -639,15 +717,6 @@ module FpgaRom
         when "RANGE_INC" then use.call("__range_inc")
         when "RANGE_EXC" then use.call("__range_exc")
         when "EXEC", "BLOCK", "LAMBDA" then todo << ir.reps[ops[1]].index
-        when "ALIAS"
-          owner, name, m = ctx.aliases[site_key(ir, decoded[i].index(insn))]
-          next unless recv[owner.id]
-          if used[name]
-            todo << m.index
-          else
-            waiting[name] ||= []
-            waiting[name] << m.index
-          end
         when "TDEF", "SDEF"
           owner = ctx.scope[ir.index]
           # def self.x はクラスの値が、def x はオブジェクトができ得る時だけ
@@ -911,7 +980,18 @@ module FpgaRom
           ctx.noops[site_key(irep, k)] = true
         when "private", "public", "protected", "module_function"
           ctx.noops[site_key(irep, k)] = true # 見え方は区別しない
-        when "extend", "prepend", "define_method", "alias_method"
+        when "alias_method"
+          # シンボルのリテラル2つなら alias と同じく静的に解く (mruby の Module#alias_method は self を返す)
+          names = argc == 2 ? [1, 2].map { |j| prev_def(insns, k, ops[0] + j) } : []
+          unless names.size == 2 && names.all? { |d| d && d.name == "LOADSYM" }
+            raise Error, "#{source}: alias_method at #{where(irep, insn)} takes two symbol literals in a class body"
+          end
+          new_name, old = names.map { |d| irep.syms[d.operands[1]] }
+          m = scope.methods[old]
+          raise Error, "#{source}: alias_method :#{new_name}, :#{old} at #{where(irep, insn)} must name a method defined earlier in the same class" unless m
+          scope.methods[new_name] = m
+          ctx.aliases[site_key(irep, k)] = [scope, new_name, m]
+        when "extend", "prepend", "define_method"
           raise Error, "#{source}: #{sym} in a class body at #{where(irep, insn)} is not supported"
         end
       when "GETIV", "SETIV"
@@ -1314,6 +1394,8 @@ module FpgaRom
     # クラスの本体の attr_* / include / private など: 実行時は nil を置くだけ
     return Word.new(pc, insn, FpgaIsa.op("LOADNIL").num, a, 0, 0, irep) if ctx.noops[site_key(irep, k)]
     return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if name == "ALIAS" # 表の行は analyze が足した
+    # 静的に解いた alias_method (表の行は analyze が足した): 値は self (クラスの本体なのでそのクラス)
+    return Word.new(pc, insn, FpgaIsa.op("MOVE").num, a, 0, 0, irep) if ctx.aliases[site_key(irep, k)] # LOADSELF と同じ
 
     # A::X: 入れ物を GETCONST / GETMCNST の連なりから解き、クラスならその即値、定数なら番号
     if name == "GETMCNST" || name == "SETMCNST"

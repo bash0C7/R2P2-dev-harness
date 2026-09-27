@@ -1687,6 +1687,46 @@ module mrb_core_tb;
     expect_reg(5, vsym(2));
     expect_reg(6, VNIL);
 
+    // ---- caller (P9): __frame_pc(k) は k 番目の段の呼び出しの pc (段が無ければ nil)、__rom_word は ROM の語のデータ ({b, c})、
+    //      String#__truncate(n) は長さを n にして self (長さより大きい n はエラー)
+    begin_test("caller primitives");
+    method_entry(CLS_OBJECT, 60, tgt_prim(PR_FRAMEPC));
+    method_entry(CLS_OBJECT, 61, 16'd20);
+    method_entry(CLS_INT, 62, tgt_prim(PR_ROMW));
+    method_entry(CLS_STRING, 63, tgt_prim(PR_STRUNC));
+    method_entry(CLS_STRING, 64, tgt_prim(PR_SBYTES));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_INT, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADI_0, 2));                        // 1
+    prog.push_back(w(OP_SSEND, 1, 60, 1));                   // 2: R1 = __frame_pc(0) = nil (段が無い)
+    prog.push_back(w(OP_SSEND0, 3, 61));                     // 3: R3 = m = 3 (m の中の __frame_pc(0))
+    prog.push_back(w(OP_LOADI8, 4, 40));                     // 4
+    prog.push_back(w(OP_SEND0, 4, 62));                      // 5: R4 = 40.__rom_word = "hell" の語
+    prog.push_back(w(OP_STRING, 5, 40, 5));                  // 6: R5 = "hello"
+    prog.push_back(w(OP_LOADI_2, 6));                        // 7
+    prog.push_back(w(OP_SEND, 5, 63, 1));                    // 8: R5 = "he" (self)
+    prog.push_back(w(OP_MOVE, 7, 5));                        // 9
+    prog.push_back(w(OP_SEND0, 7, 64));                      // 10: R7 = 2
+    prog.push_back(w(OP_MOVE, 8, 5));                        // 11
+    prog.push_back(w(OP_LOADI_3, 9));                        // 12
+    prog.push_back(w(OP_SEND, 8, 63, 1));                    // 13: "he".__truncate(3) はエラー
+    prog.push_back(w(OP_STOP));                              // 14
+    while (prog.size() < 20) prog.push_back(w(OP_NOP));
+    prog.push_back(w(OP_ENTER, 0, 5));                       // 20: m
+    prog.push_back(w(OP_LOADI_0, 2));                        // 21
+    prog.push_back(w(OP_SSEND, 1, 60, 1));                   // 22: R1 = __frame_pc(0) = 3
+    prog.push_back(w(OP_RETURN, 1));                         // 23
+    while (prog.size() < 40) prog.push_back(w(OP_NOP));
+    prog.push_back(48'h0000_6c6c_6568);                      // 40: "hell"
+    prog.push_back(48'h0000_0000_006f);                      // 41: "o"
+    run();
+    expect_error(13);
+    expect_reg(1, VNIL);
+    expect_reg(3, vint(3));
+    expect_reg(4, vint(64'h6c6c_6568));
+    expect_reg(7, vint(2));
+
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");
     $finish;

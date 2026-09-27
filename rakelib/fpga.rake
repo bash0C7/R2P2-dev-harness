@@ -566,7 +566,7 @@ namespace :fpga do
     lines = []
     count = ->(st) { results.count { |r| r[:status] == st } }
     in_scope = results.size - count.(:out_of_scope)
-    lines << "#{results.size} program(s): #{in_scope} in scope, #{count.(:out_of_scope)} out of scope (hardware the board lacks)"
+    lines << "#{results.size} program(s): #{in_scope} in scope, #{count.(:out_of_scope)} out of scope (hardware the board lacks, or host-side tools)"
     lines << "in scope: #{count.(:matched) + count.(:differs)} convert, #{count.(:matched)} match the reference, " \
              "#{count.(:differs)} differ, #{count.(:blocked)} blocked"
     lines << "blocked by (programs):"
