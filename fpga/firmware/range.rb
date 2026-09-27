@@ -110,7 +110,7 @@ class Object
     return __fpga_cmpnum_total(a, b) if t == 3 || t == 5 # L:TAG_INT L:TAG_FLOAT
     if t == 7 && __fpga_tt(__fpga_addr(a)) == 18 # L:TAG_OBJ L:TT_STRING
       return -2 unless __fpga_tag(b) == 7 && __fpga_tt(__fpga_addr(b)) == 18 # L:TAG_OBJ L:TT_STRING
-      return a <=> b # mrb_str_cmp (String#<=> と同じ関数)
+      return __fpga_str_cmp(a, b)
     end
     v = a <=> b
     return -2 unless __fpga_tag(v) == 3 # L:TAG_INT
