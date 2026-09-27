@@ -6,14 +6,18 @@
 # 数百 MB と数分を見込む。
 name: test
 
+# wip ブランチの push では回さない。main への push と draft でない PR だけで回す
+# (draft を外した時点は ready_for_review で拾う)。
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 jobs:
   host:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -36,6 +40,7 @@ jobs:
 
   # FPGA の HDL シミュレーション (docs/spec.md §10)。picoruby は要らないので host とは独立。
   fpga:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
