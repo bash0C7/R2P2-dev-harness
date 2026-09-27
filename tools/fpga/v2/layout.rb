@@ -322,6 +322,7 @@ module FpgaV2
     CONT_BOOT    = 4 # 起動 (戻ったら止まる)
     CONT_RUN     = 5 # __fpga_run (結果を dst へ)
     CONT_KWSEND  = 6 # キーワード引数を Hash にまとめた罠の続き (まとめた後の SEND)
+    CONT_BLKSEND = 7 # ブロックを Proc にした罠の続き (vm.c の ensure_block の後の SEND)
     # ci->kw (mrb_callinfo の kw の bit、CI_N の bit 4)
     CI_KW_BIT = 16
   end

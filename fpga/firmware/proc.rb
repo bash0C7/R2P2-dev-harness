@@ -198,6 +198,19 @@ class Object
   end
 end
 
+class Object
+  # 初期化済み (body がある) なら何もしない。e (env / target_class) は両方の欄を写す
+  # C: src/proc.c mrb_proc_copy
+  def __fpga_proc_copy(a, b)
+    return if __fpga_ld32(a + 8) > 0 # L:P_BODY
+    __fpga_st32(a + 24, __fpga_ld32(b + 24)) # L:P_FLAGS
+    __fpga_st32(a + 8, __fpga_ld32(b + 8)) # L:P_BODY
+    __fpga_st32(a + 12, __fpga_ld32(b + 12)) # L:P_UPPER
+    __fpga_st32(a + 16, __fpga_ld32(b + 16)) # L:P_ENV
+    __fpga_st32(a + 20, __fpga_ld32(b + 20)) # L:P_TCLASS
+  end
+end
+
 class Proc
   # C: src/proc.c proc_eql
   def ==(other)
@@ -207,23 +220,32 @@ class Proc
   alias eql? == # proc.c は == と eql? に同じ関数 proc_eql を置く
 
   # irep の番地 ^ (env >> 2) ^ MRB_TT_PROC
+  # C: src/proc.c proc_arity
+  def arity
+    __fpga_proc_arity(__fpga_addr(self))
+  end
+
   # C: src/proc.c proc_hash
   def hash
     p = __fpga_addr(self)
     __fpga_xor(__fpga_xor(__fpga_ld32(p + 8), __fpga_shr(__fpga_proc_env(p), 2)), 16) # L:P_BODY L:TT_PROC
   end
 
+  # 写した Proc はいつも orphan (元のメソッドから break / return できない)
+  # C: src/proc.c mrb_proc_init_copy
+  def initialize_copy(proc)
+    __fpga_raise(ArgumentError, "not a proc") unless __fpga_tag(proc) == 7 && __fpga_tt(__fpga_addr(proc)) == 16 # L:TAG_OBJ L:TT_PROC check_proc
+    __fpga_proc_copy(__fpga_addr(self), __fpga_addr(proc))
+    __fpga_st32(__fpga_addr(self) + 24, __fpga_or(__fpga_ld32(__fpga_addr(self) + 24), 512)) # L:P_FLAGS L:PROC_ORPHAN
+    self
+  end
+
   # Proc.new { } (proc.c の mrb_proc_s_new): ブロックの Proc を写し、initialize を送る。呼んだ所の env を持つ strict でない Proc は ORPHAN
   # C: src/proc.c mrb_proc_s_new
   def self.new(&blk)
     __fpga_raise(ArgumentError, "no block given") if __fpga_tag(blk) == 0 # L:TAG_NIL mrb_get_args の &!
-    b = __fpga_addr(blk)
     p = __fpga_slot(__fpga_addr(self), 16) # L:TT_PROC
-    __fpga_st32(p + 24, __fpga_ld32(b + 24)) # L:P_FLAGS mrb_proc_copy
-    __fpga_st32(p + 8, __fpga_ld32(b + 8)) # L:P_BODY
-    __fpga_st32(p + 12, __fpga_ld32(b + 12)) # L:P_UPPER
-    __fpga_st32(p + 16, __fpga_ld32(b + 16)) # L:P_ENV
-    __fpga_st32(p + 20, __fpga_ld32(b + 20)) # L:P_TCLASS
+    __fpga_proc_copy(p, __fpga_addr(blk))
     proc = __fpga_obj(p)
     __fpga_sendv(proc, :initialize, [], proc, true)
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI

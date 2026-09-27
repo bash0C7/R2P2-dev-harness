@@ -76,7 +76,7 @@ module FpgaV2
 
       def kind
         case @r.r8(@addr + CI_CONT)
-        when CONT_ADVANCE, CONT_SEND, CONT_VALUE, CONT_KWSEND then :trap
+        when CONT_ADVANCE, CONT_SEND, CONT_VALUE, CONT_KWSEND, CONT_BLKSEND then :trap
         when CONT_BOOT then :boot
         when CONT_RUN then :run
         else :call
@@ -97,6 +97,9 @@ module FpgaV2
           [:send, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), dst,
            fcall_of(@r.r32(@addr + CI_CFCALL))]
         when CONT_VALUE then [:value, @r.r32(@addr + CI_CA)]
+        when CONT_BLKSEND
+          [:blksend, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), nil,
+           fcall_of(@r.r32(@addr + CI_CFCALL))]
         when CONT_KWSEND
           [:kwsend, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), nil,
            fcall_of(@r.r32(@addr + CI_CFCALL))]
@@ -105,7 +108,7 @@ module FpgaV2
       end
     end
 
-    CONT_OF = { advance: CONT_ADVANCE, send: CONT_SEND, value: CONT_VALUE, kwsend: CONT_KWSEND }.freeze
+    CONT_OF = { advance: CONT_ADVANCE, send: CONT_SEND, value: CONT_VALUE, kwsend: CONT_KWSEND, blksend: CONT_BLKSEND }.freeze
     # 呼び出しの引数の数 n の中の印: CALL_KW はキーワードの Hash が引数の後ろにある (ci->kw)。窓は受け手、引数、kdict、ブロック
     CALL_ARGS = 0xFF
     CALL_KW = 0x100
@@ -437,6 +440,13 @@ module FpgaV2
     # SEND の本体 (kw ならキーワードの Hash は引数の後ろ)。n = 15 は配列を窓に広げる (mruby は ENTER が広げる、D12)
     def send_kw(a, sym, n, kw, blk, fcall, ret_pc)
       kn = kw ? 1 : 0
+      if blk # vm.c の ensure_block: nil でも Proc でもないブロックは to_proc で Proc に (罠)
+        bidx = a + (n == 15 ? 1 : n) + kn + 1
+        b = reg(bidx)
+        unless b[0] == TAG_NIL || (b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC])
+          return trap_call("__fpga_op_ensure_block", [int(bidx)], resume: [:blksend, a, n | (kw ? CALL_KW : 0), sym, ret_pc, nil, fcall], above: bidx + 1)
+        end
+      end
       setreg(a + (n == 15 ? 1 : n) + kn + 1, NIL) unless blk
       if n == 15
         list = ary_values(reg(a + 1)[1])
@@ -688,6 +698,9 @@ module FpgaV2
       case what
       when :value # 罠の結果を R[a] へ (attr)
         setreg(a, v)
+      when :blksend # ブロックを Proc にした後の SEND
+        @pc_next = ret_pc
+        return send_kw(a, sym, n & CALL_ARGS, (n & CALL_KW) != 0, true, fcall, ret_pc)
       when :kwsend # キーワードを Hash にまとめた後の SEND (ブロックは firmware が kdict の後ろに置いた)
         @pc_next = ret_pc
         return send_kw(a, sym, n, true, true, fcall, ret_pc)
