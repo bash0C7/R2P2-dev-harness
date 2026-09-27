@@ -553,6 +553,100 @@ class Object
   end
 
   # c (prepend されていれば origin) の表に sym = val (メソッド表の値 Proc | 可視性、undef は 0) を置く。表が無ければ作る
+  # --- 演算子の再定義の印 (class.c の bop_*、mrb_state.bop_redefined)。回路の Integer の演算と == の近道は、この bit が立っていれば送る
+  # C: src/class.c bop_class
+  def __fpga_bop_class(slot)
+    return __fpga_image(14) if slot < 9 # L:IMG_integer_class L:BOP_COUNT
+    return __fpga_image(18) if slot == 18 # L:IMG_symbol_class L:BOP_SYMBOL_EQ_SLOT
+    __fpga_image(13) # L:IMG_float_class
+  end
+
+  # C: src/class.c bop_mid
+  def __fpga_bop_mid(slot)
+    return __fpga_addr(:==) if slot == 18 # L:BOP_SYMBOL_EQ_SLOT
+    k = slot < 9 ? slot : slot - 9 # L:BOP_COUNT slot % MRB_BOP_COUNT
+    return __fpga_addr(:+) if k == 0
+    return __fpga_addr(:-) if k == 1
+    return __fpga_addr(:*) if k == 2
+    return __fpga_addr(:/) if k == 3
+    return __fpga_addr(:==) if k == 4
+    return __fpga_addr(:<) if k == 5
+    return __fpga_addr(:<=) if k == 6
+    return __fpga_addr(:>) if k == 7
+    __fpga_addr(:>=)
+  end
+
+  # 今の値が C の関数 (像の中の firmware の def) なら記録して bit を下ろす
+  # C: src/class.c bop_arm
+  def __fpga_bop_arm(slot)
+    __fpga_st32(45 * 4, __fpga_or(__fpga_ld32(45 * 4), __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
+    e = __fpga_search(__fpga_bop_class(slot), __fpga_bop_mid(slot))
+    return if e == 0 || __fpga_and(e, -4) >= __fpga_image(35) # L:IMG_heap_start MRB_METHOD_UNDEF_P、MRB_METHOD_FUNC_P でない
+    __fpga_st32(__fpga_image(46) + slot * 4, e) # L:IMG_bop_builtin L:WORD
+    __fpga_st32(45 * 4, __fpga_and(__fpga_ld32(45 * 4), 4294967295 - __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
+  end
+
+  # C: src/class.c bop_refresh
+  def __fpga_bop_refresh(slot)
+    b = __fpga_ld32(__fpga_image(46) + slot * 4) # L:IMG_bop_builtin L:WORD
+    return if b == 0
+    bit = __fpga_shl(1, slot)
+    w = __fpga_ld32(45 * 4) # L:IMG_bop_redefined L:WORD
+    w = __fpga_search(__fpga_bop_class(slot), __fpga_bop_mid(slot)) == b ? __fpga_and(w, 4294967295 - bit) : __fpga_or(w, bit)
+    __fpga_st32(45 * 4, w) # L:IMG_bop_redefined L:WORD
+  end
+
+  # C: src/class.c mrb_builtin_op_init
+  def __fpga_builtin_op_init
+    tbl = __fpga_alloc(19 * 4) # L:WORD MRB_BOP_SLOT_COUNT
+    k = 0
+    while k < 19
+      __fpga_st32(tbl + k * 4, 0) # L:WORD
+      k += 1
+    end
+    __fpga_st32(46 * 4, tbl) # L:IMG_bop_builtin L:WORD
+    k = 0
+    while k < 19
+      __fpga_bop_arm(k)
+      k += 1
+    end
+  end
+
+  # 起動の途中 (bop_builtin が 0) は何もしない。mid が 0 なら全部の slot
+  # C: src/class.c mrb_builtin_op_update
+  def __fpga_builtin_op_update(mid)
+    return if __fpga_image(46) == 0 # L:IMG_bop_builtin mrb->bootstrapping
+    k = 0
+    while k < 19
+      __fpga_bop_refresh(k) if mid == 0 || mid == __fpga_bop_mid(k)
+      k += 1
+    end
+  end
+
+  # c に == を定義した印 (MRB_FL_CLASS_EQ_DEFINED)。nil / true / false のクラスに届いたら bop の bit にも。
+  # 子のクラスへの印 (eq_defined_walk の heap の走査) は、回路が読む nil / true / false のクラスだけ祖先を辿って付ける (D61)
+  # C: src/class.c eq_defined_mark (D61)
+  def __fpga_eq_defined_mark(c)
+    __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
+    k = 15 # L:IMG_true_class
+    while k < 18 # L:IMG_symbol_class (true / false / nil の 3 つ)
+      nc = __fpga_image(k)
+      a = nc
+      while a > 0
+        if a == c || __fpga_ld32(a + 12) == __fpga_ld32(c + 12) # L:C_MT iclass は module の表を共有する
+          __fpga_st32(nc + 4, __fpga_or(__fpga_ld32(nc + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
+          a = 0
+        else
+          a = __fpga_ld32(a + 8) # L:C_SUPER
+        end
+      end
+      k += 1
+    end
+    if __fpga_and(__fpga_or(__fpga_or(__fpga_ld32(__fpga_image(17) + 4), __fpga_ld32(__fpga_image(15) + 4)), __fpga_ld32(__fpga_image(16) + 4)), 268435456) > 0 # L:IMG_nil_class L:IMG_true_class L:IMG_false_class L:H_FLAGS L:CLASS_EQ_DEFINED
+      __fpga_st32(45 * 4, __fpga_or(__fpga_ld32(45 * 4), 524288)) # L:IMG_bop_redefined L:WORD L:BOP_NIL_TRUE_FALSE_EQ
+    end
+  end
+
   # C: src/class.c mrb_define_method_raw
   def __fpga_method_raw(c, sym, val)
     named = c
@@ -561,6 +655,8 @@ class Object
     __fpga_st32(c + 12, __fpga_mt_new) if __fpga_ld32(c + 12) == 0 # L:C_MT mt_writable の mt_new
     __fpga_mt_set(__fpga_ld32(c + 12), sym, val) # L:C_MT
     __fpga_mcache_clear
+    __fpga_builtin_op_update(sym)
+    __fpga_eq_defined_mark(named) if sym == __fpga_addr(:==) && __fpga_image(46) > 0 # L:IMG_bop_builtin mrb->bootstrapping でない
   end
 
   # TDEF / SDEF: Irep[c] のメソッドの Proc を作って tc に Syms[b] で置き、method_added を呼ぶ
@@ -897,6 +993,7 @@ class Object
   # 0 は入れた、-1 は輪 (c の表と m の表が同じ)
   # C: src/class.c include_module_at
   def __fpga_include_module_at(c, ins_pos, m, search_super)
+    m0 = m
     klass_mt = __fpga_ld32(__fpga_class_origin(c) + 12) # L:C_MT
     while m > 0
       p = __fpga_ld32(c + 8) # L:C_SUPER
@@ -930,6 +1027,8 @@ class Object
       m = __fpga_ld32(m + 8) # L:C_SUPER
     end
     __fpga_mcache_clear
+    __fpga_builtin_op_update(0)
+    __fpga_eq_defined_mark(c) if __fpga_and(__fpga_ld32(m0 + 4), 268435456) > 0 && __fpga_image(46) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED L:IMG_bop_builtin
     0
   end
 
@@ -1015,6 +1114,7 @@ class Module
       e = __fpga_search(c, mid)
       __fpga_method_search_error(c, mid) if e == 0 # mrb_method_search
       __fpga_mt_set(__fpga_ld32(t + 12), mid, __fpga_and(e, -4) + vis) # L:C_MT mt_put
+      __fpga_builtin_op_update(mid)
       k += 1
     end
     __fpga_mcache_clear

@@ -356,13 +356,19 @@ module FpgaV2
       v[0] == TAG_UNDEF ? NIL : v # 数でない pool (文字列) は nil (vm.c の OP_LOADL の default)
     end
 
+    # mrb_state.bop_redefined の bit (mruby.h の MRB_BOP_*): 演算子を再定義したら、回路の近道をやめて送る (vm.c の OP_ADD / OP_CMP / OP_EQ)
+    BOP_SLOT = { "ADD" => 0, "SUB" => 1, "MUL" => 2, "DIV" => 3, "EQ" => 4, "LT" => 5, "LE" => 6, "GT" => 7, "GE" => 8 }.freeze
+    # firmware (像の中の Proc、C の関数の写し) の命令は再定義を見ない (C の演算子は Ruby のメソッドを呼ばない)
+    def bop = @f.proc < r32(IMG.fetch(:heap_start) * WORD) ? 0 : r32(IMG.fetch(:bop_redefined) * WORD)
+    def bop_int?(name) = (bop & (1 << BOP_SLOT.fetch(name))).zero?
+
     OPSYM = { "ADD" => "+", "SUB" => "-", "MUL" => "*", "DIV" => "/", "EQ" => "==", "LT" => "<", "LE" => "<=", "GT" => ">", "GE" => ">=" }.freeze
 
     # 整数同士なら回路で (64bit、桁あふれは罠)。ほかはメソッドを送る (mruby の OP_ADD と同じ)
     def arith(name, a)
       x = reg(a)
       y = reg(a + 1)
-      if x[0] == TAG_INT && y[0] == TAG_INT
+      if x[0] == TAG_INT && y[0] == TAG_INT && bop_int?(name)
         r = x[1].send(OPSYM[name].to_sym, y[1])
         return overflow(name, a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
@@ -374,7 +380,7 @@ module FpgaV2
     def div(a)
       x = reg(a)
       y = reg(a + 1)
-      return send_op(a, sym_id("/"), 1, false, fcall: :op) unless x[0] == TAG_INT && y[0] == TAG_INT
+      return send_op(a, sym_id("/"), 1, false, fcall: :op) unless x[0] == TAG_INT && y[0] == TAG_INT && bop_int?("DIV")
       return trap_call("__fpga_op_zerodiv", [int(a)]) if y[1].zero?
       r = x[1].div(y[1])
       return overflow("DIV", a) if r > INT_MAX
@@ -384,7 +390,7 @@ module FpgaV2
     # ADDI / SUBI: R[a] = R[a] ± b。整数でなければ R[a+1] = b にしてメソッドを送る
     def addi(a, imm, op)
       x = reg(a)
-      if x[0] == TAG_INT
+      if x[0] == TAG_INT && bop_int?(op == :+ ? "ADD" : "SUB")
         r = x[1].send(op, imm)
         return overflow(op == :+ ? "ADD" : "SUB", a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
@@ -396,7 +402,7 @@ module FpgaV2
     # ADDILV / SUBILV (mruby の OP_MATHILV): R[a] = R[a] ± c (a は局所変数の枠)。整数でなければ作業の枠 R[b] から送り、結果を R[a] へ
     def addilv(a, b, imm, op)
       x = reg(a)
-      if x[0] == TAG_INT
+      if x[0] == TAG_INT && bop_int?(op == :+ ? "ADD" : "SUB")
         r = x[1].send(op, imm)
         return overflow(op == :+ ? "ADD" : "SUB", a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
@@ -407,14 +413,21 @@ module FpgaV2
       dispatch(b, sym_id(op.to_s), 1, @pc_next, dst: a, fcall: :op)
     end
 
+    # OP_EQ の近道 (同じ即値は真、Symbol は偽) は、Integer / Float / Symbol の == と nil / true / false の == のどれも再定義されていない時だけ。
+    # heap の物は送る (mruby は同じ物で EQ_DEFINED の無いクラスなら真だが、送っても BasicObject#== が同じ答え)。Float は firmware (D50)
     def compare(name, a)
       x = reg(a)
       y = reg(a + 1)
-      if x[0] == TAG_INT && y[0] == TAG_INT
+      eq_mask = (1 << BOP_SLOT["EQ"]) | (1 << (BOP_COUNT + BOP_SLOT["EQ"])) | (1 << BOP_SYMBOL_EQ_SLOT) | BOP_NIL_TRUE_FALSE_EQ
+      if name == "EQ" && (bop & eq_mask).zero? && x[0] != TAG_OBJ && x[0] != TAG_FLOAT
+        return setreg(a, TRUE_) if x == y
+        return setreg(a, FALSE_) if x[0] == TAG_SYM
+      end
+      if x[0] == TAG_INT && y[0] == TAG_INT && bop_int?(name)
         return setreg(a, x[1].send(OPSYM[name].to_sym, y[1]) ? TRUE_ : FALSE_)
       end
-      if name == "EQ" && x[0] != TAG_OBJ && x[0] != TAG_FLOAT && y[0] != TAG_OBJ && y[0] != TAG_FLOAT
-        return setreg(a, x == y ? TRUE_ : FALSE_) # 即値同士は値で (mruby の OP_EQ の mrb_obj_eq)
+      if name == "EQ" && (bop & eq_mask).zero? && x[0] != TAG_OBJ && x[0] != TAG_FLOAT && y[0] != TAG_OBJ && y[0] != TAG_FLOAT
+        return setreg(a, FALSE_) # 違う即値 (nil / true / false / Integer と Symbol の組): 送っても BasicObject#== と Integer#== が偽
       end
       send_op(a, sym_id(OPSYM[name]), 1, false, fcall: :op)
     end
