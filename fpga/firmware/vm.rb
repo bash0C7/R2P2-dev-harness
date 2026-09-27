@@ -114,6 +114,11 @@ class Object
     __fpga_raise(LocalJumpError, __fpga_str_new(__fpga_lo(v), __fpga_hi(v)))
   end
 
+  # C: src/vm.c OP_MATCHERR
+  def __fpga_op_MATCHERR(a, b, c)
+    __fpga_raise(NoMatchingPatternError, "pattern not matched") unless __fpga_reg(a)
+  end
+
   # C: src/vm.c uvenv
   def __fpga_uvenv(up)
     p = __fpga_proc
