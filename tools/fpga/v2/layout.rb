@@ -16,6 +16,8 @@ module FpgaV2
     TAG_UNDEF = 6 # mruby の MRB_TT_UNDEF (引数の既定値の印など)
     TAG_OBJ   = 7 # ヒープのオブジェクトの番地
     TAG_NAMES = %w[nil false true int sym float undef obj].freeze
+    # 名前の無いシンボル (mruby の 0、.mrb の MRB_DUMP_NULL_SYM_LEN)
+    NULL_SYM = 0xFFFF_FFFF
 
     # 記憶の中の値: 16 バイト = {tag (u32), 0 (u32), 上位 32bit, 下位 32bit}
     VALUE = 16
@@ -61,10 +63,14 @@ module FpgaV2
     PROC_PRIM = 1
     PROC_LAMBDA = 1 << 2 # mruby の MRB_PROC_STRICT
 
-    # メソッド表 (ROM も実行時も同じ形): {数 (u32), 容量 (u32), [シンボル (u32), Proc の番地 (u32)] × 容量}。開番地法、空きはシンボル 0xFFFFFFFF
+    # メソッド表 (ROM も実行時も同じ形): 見出し {数 (u32), 容量 (u32), 行の並びの番地 (u32)} と、行 {シンボル (u32), 値 (u32)} × 容量。
+    # 開番地法 (位置 = シンボル & (容量 - 1) から1行ずつ)、空きはシンボル 0xFFFFFFFF。見出しと行を分けるのは、表を大きくしても
+    # 見出しの番地が変わらないため (module の iclass が同じ見出しを指す。mruby の iclass->mt = m->mt と同じ)。
+    # 値はメソッド表では Proc の番地、特権の primitive の表では primitive の番号
     MT_COUNT = 0
     MT_CAPA  = 4
-    MT_ENTRIES = 8
+    MT_ROWS  = 8
+    MT_HEAD  = 12
     MT_ENTRY = 8
     MT_EMPTY = 0xFFFF_FFFF
 
@@ -84,13 +90,24 @@ module FpgaV2
     IREP = 44
     # pool の文字列: tag = TAG_UNDEF、上位 = 長さ、下位 = バイト列の番地 (STRING 命令が RString を作る)
 
+    # 組み込みのクラスの表 (像の core_classes): 0〜7 は即値の tag のクラス、その後は回路が作るオブジェクトのクラス
+    CORE_ARRAY  = 8
+    CORE_STRING = 9
+    CORE_PROC   = 10
+    CORE_HASH   = 11
+    CORE_RANGE  = 12
+    CORE_OBJECT = 13
+    CORE_CLASS  = 14
+    CORE_MODULE = 15
+    CORE_COUNT  = 16
+
     # 起動の像の見出し (番地 0)
     IMG_MAGIC = "FPV2"
     IMG_VERSION = 1
     # 見出しの語 (番地 = 4 × 番号)
     IMG = {
       magic: 0, version: 1, heap_start: 2, heap_end: 3, sym_table: 4, sym_capa: 5, sym_count: 6,
-      core_classes: 7, main_obj: 8, fw_entry: 9, programs: 10, nprograms: 11, stack: 12, stack_end: 13
+      core_classes: 7, main_obj: 8, fw_entry: 9, programs: 10, nprograms: 11, stack: 12, stack_end: 13, prims: 14, ci: 15
     }.freeze
     IMG_WORDS = 16
   end

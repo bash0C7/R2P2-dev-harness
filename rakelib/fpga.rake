@@ -730,7 +730,7 @@ namespace :test do
     # 変換器を走らせるテスト (rom_test、gen_pkg_test) の VM。vendor/picoruby が無ければ (CI の fpga job) そのテストは skip する
     Rake::Task["fpga:picoruby"].invoke if vendor_ready?
     # テストのファイルごとに ruby を並べて回す (FPGA_JOBS)。出力はファイルの名前の順にまとめて出す
-    tests = Dir[File.join(HARNESS_ROOT, "tools", "fpga", "*_test.rb")].sort
+    tests = Dir[File.join(HARNESS_ROOT, "tools", "fpga", "**", "*_test.rb")].sort # v2/ も
     runs = FpgaParallel.threads(tests) do |test_file|
       out, st = Open3.capture2e(RbConfig.ruby, test_file)
       [test_file, out, st.success?]
