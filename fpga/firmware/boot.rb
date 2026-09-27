@@ -5,8 +5,8 @@ class Object
   # 起動 (mruby の mrb_open の後の mrb_load_irep): 像のプログラムを順に読み込み、main で実行する
   # C: src/load.c mrb_load_irep
   def __fpga_boot
-    progs = __fpga_image(10) # L:IMG_programs
-    n = __fpga_image(11) # L:IMG_nprograms
+    progs = __fpga_image(39) # L:IMG_programs
+    n = __fpga_image(40) # L:IMG_nprograms
     i = 0
     while i < n
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
@@ -127,8 +127,8 @@ class Object
       h = __fpga_and(__fpga_xor(h, __fpga_ld8(ptr + k)) * 16777619, 4294967295)
       k += 1
     end
-    tab = __fpga_image(4) # L:IMG_sym_table
-    mask = __fpga_image(5) - 1 # L:IMG_sym_capa
+    tab = __fpga_image(26) # L:IMG_symtbl
+    mask = __fpga_image(27) - 1 # L:IMG_symcapa
     i = __fpga_and(h, mask)
     while true
       p = __fpga_ld32(tab + i * 8)

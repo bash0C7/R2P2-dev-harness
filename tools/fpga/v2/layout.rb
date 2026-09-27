@@ -129,15 +129,72 @@ module FpgaV2
     CORE_MODULE = 15
     CORE_COUNT  = 16
 
-    # 起動の像の見出し (番地 0)
+    # 番地 0 は mrb_state (mruby.h の struct mrb_state の欄を同じ順で。使う欄だけ、jmp は無い)。語の番号 (番地 = 4 × 番号)。
+    # gc_* は mrb_state.gc (gc.h の struct mrb_gc) の欄。symtbl / symcapa / symidx はシンボル表 (D07: FNV の開番地法、行 8 バイト {名前の番地, 長さ})
+    # C: include/mruby.h mrb_state
+    IMG = {
+      c: 0, root_c: 1, globals: 2, exc: 3, top_self: 4,
+      object_class: 5, class_class: 6, module_class: 7, proc_class: 8, string_class: 9, array_class: 10, hash_class: 11,
+      range_class: 12, float_class: 13, integer_class: 14, true_class: 15, false_class: 16, nil_class: 17, symbol_class: 18,
+      kernel_module: 19, gc_arena: 20, gc_arena_capa: 21, gc_arena_idx: 22, gc_live: 23, gc_debt: 24,
+      symidx: 25, symtbl: 26, symcapa: 27, eException_class: 28, eStandardError_class: 29, nomem_err: 30, stack_err: 31,
+      arena_err: 32,
+      # 像だけの欄 (D18): 印、ヒープの範囲、組み込みのクラスの表、firmware の入口、programs、primitive の表
+      magic: 33, version: 34, heap_start: 35, heap_end: 36, core_classes: 37, fw_entry: 38, programs: 39, nprograms: 40,
+      prims: 41
+    }.freeze
+    IMG_WORDS = 48
     # C: none (D18)
     IMG_MAGIC = "FPV2"
-    IMG_VERSION = 1
-    # 見出しの語 (番地 = 4 × 番号)
-    IMG = {
-      magic: 0, version: 1, heap_start: 2, heap_end: 3, sym_table: 4, sym_capa: 5, sym_count: 6,
-      core_classes: 7, main_obj: 8, fw_entry: 9, programs: 10, nprograms: 11, stack: 12, stack_end: 13, prims: 14, ci: 15
-    }.freeze
-    IMG_WORDS = 16
+    IMG_VERSION = 2
+
+    # mrb_context (mruby.h の struct mrb_context)。バイトの位置
+    # C: include/mruby.h mrb_context
+    CTX_PREV   = 0
+    CTX_STBASE = 4
+    CTX_STEND  = 8
+    CTX_CI     = 12
+    CTX_CIBASE = 16
+    CTX_CIEND  = 20
+    CTX_SVARS  = 24
+    CTX_STATUS = 28
+    CTX_FIB    = 32
+    CTX_SIZE   = 36
+
+    # mrb_callinfo (mruby.h)。バイトの位置、番地は 32bit。n は下 4bit (15 は 15 以上、D12)、kw は bit 4
+    # vis は mruby の bit (下 2bit が可視性、bit 3 が module_function、internal.h の MRB_CI_VISIBILITY / MRB_CI_MODFUNC_P)
+    # pc は iseq の中の絶対の番地、stack は窓の先頭の値の番地、u は target_class (env は V2d)
+    # C: include/mruby.h mrb_callinfo
+    CI_N     = 0
+    CI_CCI   = 1
+    CI_VIS   = 2
+    CI_MID   = 4
+    CI_PROC  = 8
+    CI_BLK   = 12
+    CI_STACK = 16
+    CI_PC    = 20
+    CI_U     = 24
+    # cci の値 (vm.c の CINFO_*)
+    # C: src/vm.c CINFO_DIRECT
+    CINFO_NONE   = 0
+    CINFO_DIRECT = 2
+    CI_MODFUNC_BIT = 8
+    # mrb_callinfo の後ろの延長 (D11 罠の続き、D12 引数の数)。CI_CONT は続きの種類 (CONT_*)
+    # C: none (D11)
+    CI_CONT   = 3
+    CI_ARGC   = 28
+    CI_CA     = 32
+    CI_CN     = 36
+    CI_CSYM   = 40
+    CI_CRET   = 44
+    CI_CDST   = 48
+    CI_CFCALL = 52
+    CI_SIZE   = 64
+    CONT_NONE    = 0 # 普通の戻り (呼んだ側の R[a] か dst へ)
+    CONT_ADVANCE = 1 # 罠の命令を終えて次へ
+    CONT_SEND    = 2 # 探索の罠の続き (見つかれば呼ぶ、無ければ method_missing)
+    CONT_VALUE   = 3 # 罠の結果を R[a] へ (attr)
+    CONT_BOOT    = 4 # 起動 (戻ったら止まる)
+    CONT_RUN     = 5 # __fpga_run (結果を dst へ)
   end
 end

@@ -16,8 +16,7 @@ module FpgaV2
     MEM_SIZE = 32 * 1024 * 1024
     SYM_CAPA = 65_536
     STACK_VALUES = 65_536 # VM のスタック (値の並び)
-    CI_FRAMES = 4096
-    CI_SIZE = 64 # フレーム 1 つのバイト数 (ref.rb の CI_*)
+    CI_FRAMES = 4096 # mrb_context の ci の並びの数 (1 つは layout.rb の CI_SIZE バイト)
 
     # コアのクラス: [名前, 親, :class / :module, include する module]。mruby の class.c (mrb_init_class)、object.c、numeric.c ... の親と同じ
     CORE = [
@@ -410,8 +409,7 @@ end
 
     # --- 全体
     def build
-      w32(0, IMG_MAGIC.unpack1("N"))
-      w32(IMG[:version] * WORD, IMG_VERSION)
+      w32(IMG[:magic] * WORD, IMG_MAGIC.unpack1("N"))
       @sym_table = alloc(SYM_CAPA * 8, 8)
       prims = mtable(64)
       PRIMS.each_with_index { |n, k| mt_set(prims, intern(n), k) }
@@ -430,12 +428,25 @@ end
         w32(progs + k * 8 + 4, bin.bytesize)
       end
       stack = alloc(STACK_VALUES * VALUE, 16)
-      ci = alloc(CI_FRAMES * CI_SIZE, 16)
+      cis = alloc(CI_FRAMES * CI_SIZE, 16)
+      ctx = alloc(CTX_SIZE, 16) # mrb_context (root_c)
+      w32(ctx + CTX_STBASE, stack)
+      w32(ctx + CTX_STEND, stack + STACK_VALUES * VALUE)
+      w32(ctx + CTX_CIBASE, cis)
+      w32(ctx + CTX_CI, cis)
+      w32(ctx + CTX_CIEND, cis + CI_FRAMES * CI_SIZE)
+      globals = ivtable(64) # mrb_state.globals (大域変数の表、D06 の形)
       heap = (@brk + 63) & -64
-      { heap_start: heap, heap_end: MEM_SIZE, sym_table: @sym_table, sym_capa: SYM_CAPA, sym_count: @syms.size,
-        core_classes: core, main_obj: main, fw_entry: boot, programs: progs, nprograms: @programs.size,
-        stack: stack, stack_end: stack + STACK_VALUES * VALUE, prims: prims, ci: ci }.each { |k, v| w32(IMG.fetch(k) * WORD, v) }
-      w32(IMG[:sym_count] * WORD, @syms.size)
+      state = {
+        c: ctx, root_c: ctx, globals: globals, exc: 0, top_self: main,
+        object_class: "Object", class_class: "Class", module_class: "Module", proc_class: "Proc", string_class: "String",
+        array_class: "Array", hash_class: "Hash", range_class: "Range", float_class: "Float", integer_class: "Integer",
+        true_class: "TrueClass", false_class: "FalseClass", nil_class: "NilClass", symbol_class: "Symbol", kernel_module: "Kernel",
+        symidx: @syms.size, symtbl: @sym_table, symcapa: SYM_CAPA, eException_class: "Exception", eStandardError_class: "StandardError",
+        heap_start: heap, heap_end: MEM_SIZE, core_classes: core, fw_entry: boot, programs: progs, nprograms: @programs.size,
+        prims: prims, version: IMG_VERSION
+      }
+      state.each { |k, v| w32(IMG.fetch(k) * WORD, v.is_a?(String) ? @classes.fetch(v) : v) }
       @mem
     end
   end

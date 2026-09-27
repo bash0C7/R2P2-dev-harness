@@ -27,11 +27,74 @@ module FpgaV2
       GETIDX GETIDX0 SETIDX ARRAY ARRAY2 ARYCAT ARYPUSH
     ].freeze
 
-    # tclass: 定義の入れ物 (mruby の ci->u.target_class)。メソッドは Proc の target_class、EXEC はそのクラス、一番外は Object
-    # argc は呼ばれた時の引数の数 (mruby の ci->n。ENTER が読む。罠をはさんでも変わらない)
-    Frame = Struct.new(:irep, :pc, :bp, :proc, :mid, :kind, :resume, :dst, :tclass, :vis, :argc, keyword_init: true)
+    # フレーム = 記憶の中の mrb_callinfo (layout.rb の CI_*、計画 S2b)。Ci はその番地を読み書きする窓で、回路の ci のレジスタに当たる。
+    # フレームの間変わらない欄 (proc、irep、窓の先頭) だけを持ち (cache)、ほかは記憶を読み書きする
+    # - tclass: 定義の入れ物 (ci->u.target_class)。メソッドは Proc の target_class、EXEC はそのクラス、一番外は Object
+    # - argc: 呼ばれた時の引数の数 (ci->n と延長の argc、D12。ENTER が読む。罠をはさんでも変わらない)
+    # - kind / resume / dst: 罠の続き (延長の語、D11)
+    class Ci
+      include Layout
+      attr_reader :addr, :proc, :irep, :bp
 
-    attr_reader :console, :stats, :steps
+      def initialize(ref, addr)
+        @r = ref
+        @addr = addr
+        @proc = ref.r32(addr + CI_PROC)
+        @irep = ref.r32(@proc + P_BODY)
+        @bp = (ref.r32(addr + CI_STACK) - ref.stbase) / VALUE
+      end
+
+      def pc = @r.r32(@addr + CI_PC) - @r.r32(@irep + I_ISEQ)
+      def pc=(v)
+        @r.w32(@addr + CI_PC, @r.r32(@irep + I_ISEQ) + v)
+      end
+      def mid = @r.r32(@addr + CI_MID)
+      def tclass = @r.r32(@addr + CI_U)
+      def argc = @r.r32(@addr + CI_ARGC)
+
+      def argc=(n)
+        @r.w8(@addr + CI_N, [n, 15].min)
+        @r.w32(@addr + CI_ARGC, n)
+      end
+
+      # 可視性 0 public、1 private、2 protected、3 module_function (記憶の中は mruby の bit: private | MRB_CI_MODFUNC)
+      def vis
+        v = @r.r8(@addr + CI_VIS)
+        (v & CI_MODFUNC_BIT).zero? ? v & 3 : 3
+      end
+
+      def vis=(v)
+        @r.w8(@addr + CI_VIS, v == 3 ? VIS_PRIVATE | CI_MODFUNC_BIT : v)
+      end
+
+      def kind
+        case @r.r8(@addr + CI_CONT)
+        when CONT_ADVANCE, CONT_SEND, CONT_VALUE then :trap
+        when CONT_BOOT then :boot
+        when CONT_RUN then :run
+        else :call
+        end
+      end
+
+      def dst
+        d = @r.r32(@addr + CI_CDST)
+        d.zero? ? nil : d - 1
+      end
+
+      def resume
+        case @r.r8(@addr + CI_CONT)
+        when CONT_SEND
+          [:send, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), dst,
+           @r.r32(@addr + CI_CFCALL) == 1]
+        when CONT_VALUE then [:value, @r.r32(@addr + CI_CA)]
+        else [:advance]
+        end
+      end
+    end
+
+    CONT_OF = { advance: CONT_ADVANCE, send: CONT_SEND, value: CONT_VALUE }.freeze
+
+    attr_reader :console, :stats, :steps, :stbase
 
     def initialize(image, max_steps: 10_000_000)
       @m = image.dup.force_encoding(Encoding::BINARY)
@@ -41,17 +104,25 @@ module FpgaV2
       @stats = Hash.new(0)
       @cache = {}
       h = ->(k) { r32(IMG.fetch(k) * WORD) }
+      # 回路のレジスタに当たるもの (mrb_state と mrb_context から起動の時に読む定数の番地と、ヒープの bump の位置)
       @heap = h.(:heap_start)
       @heap_end = h.(:heap_end)
-      @stack = h.(:stack)
-      @stack_end = h.(:stack_end)
+      @ctx = h.(:c)
+      @stbase = r32(@ctx + CTX_STBASE)
+      @stend = r32(@ctx + CTX_STEND)
       @core = h.(:core_classes)
       @prims = h.(:prims)
-      @main = h.(:main_obj)
+      @main = h.(:top_self)
       @entry = h.(:fw_entry)
-      @frames = []
-      @object = r32(@main + H_CLASS)
+      @object = h.(:object_class)
+      @f = nil
     end
+
+    # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる
+    CRUBY_STATE = %i[
+      @m @max @steps @console @stats @cache @heap @heap_end @ctx @stbase @stend @core @prims @main @entry @object @f
+      @sym_ids @iseq_cache @pc_next @jumped
+    ].freeze
 
     # 使ったヒープのバイト数 (accept の記録。GC が無い間は確保の合計)
     def heap_used = @heap - r32(IMG.fetch(:heap_start) * WORD)
@@ -95,11 +166,11 @@ module FpgaV2
     def truthy?(v) = v[0] != TAG_NIL && v[0] != TAG_FALSE
 
     # --- レジスタ (今のフレームの窓)
-    def reg(i) = rv(@stack + (@f.bp + i) * VALUE)
+    def reg(i) = rv(@stbase + (@f.bp + i) * VALUE)
 
     def setreg(i, v)
-      a = @stack + (@f.bp + i) * VALUE
-      raise Error, "stack overflow" if a + VALUE > @stack_end
+      a = @stbase + (@f.bp + i) * VALUE
+      raise Error, "stack overflow" if a + VALUE > @stend
       wv(a, v)
     end
 
@@ -132,8 +203,8 @@ module FpgaV2
     def sym_id(name)
       @sym_ids ||= {}
       @sym_ids[name] ||= begin
-        tab = r32(IMG[:sym_table] * WORD)
-        capa = r32(IMG[:sym_capa] * WORD)
+        tab = r32(IMG[:symtbl] * WORD)
+        capa = r32(IMG[:symcapa] * WORD)
         i = Image.sym_hash(name) & (capa - 1)
         loop do
           p = r32(tab + i * 8)
@@ -145,7 +216,7 @@ module FpgaV2
     end
 
     def sym_name(id)
-      tab = r32(IMG[:sym_table] * WORD)
+      tab = r32(IMG[:symtbl] * WORD)
       @m.byteslice(r32(tab + id * 8), r32(tab + id * 8 + 4))
     end
 
@@ -404,23 +475,46 @@ module FpgaV2
     # フレームを積む。呼んだ側は ret_pc から続ける。dst は結果を置く呼んだ側のレジスタ (nil は呼ばれた側の R0 = 呼んだ側の R[a])
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
     def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil)
-      raise Error, "call depth" if @frames.size >= 512
+      ci = @f.addr + CI_SIZE
+      raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND) # mruby は SystemStackError (V2d)
       @f.pc = ret_pc
-      @frames.push(@f)
-      tc = r32(pr + P_TCLASS)
-      @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: @f.bp + a, proc: pr, mid: mid, kind: kind, resume: resume, dst: dst,
-                     tclass: tc, vis: kind == :run ? VIS_PRIVATE : VIS_PUBLIC)
-      @f.argc = n
+      write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n)
       @jumped = true
       @stats[:call] += 1
     end
 
+    # mrb_callinfo を 1 つ書いて今のフレームにする (ctx->ci も)
+    def write_ci(ci, pr, stack, mid, kind, resume, dst, n)
+      @m[ci, CI_SIZE] = ("\x00" * CI_SIZE).b
+      w8(ci + CI_CCI, kind == :call ? CINFO_NONE : CINFO_DIRECT)
+      w32(ci + CI_MID, mid)
+      w32(ci + CI_PROC, pr)
+      w32(ci + CI_STACK, stack)
+      w32(ci + CI_U, r32(pr + P_TCLASS))
+      cont = { trap: CONT_OF.fetch((resume || [:advance])[0]), boot: CONT_BOOT, run: CONT_RUN }.fetch(kind, CONT_NONE)
+      w8(ci + CI_CONT, cont)
+      w32(ci + CI_CDST, dst ? dst + 1 : 0)
+      if resume && resume[0] != :advance
+        _, ca, cn, csym, cret, _, fcall = resume
+        w32(ci + CI_CA, ca)
+        w32(ci + CI_CN, cn || 0)
+        w32(ci + CI_CSYM, csym || 0)
+        w32(ci + CI_CRET, cret || 0)
+        w32(ci + CI_CFCALL, fcall ? 1 : 0)
+        w32(ci + CI_CDST, resume[5] ? resume[5] + 1 : 0) if resume[0] == :send
+      end
+      w32(@ctx + CTX_CI, ci)
+      @f = Ci.new(self, ci)
+      @f.pc = 0
+      @f.vis = kind == :run ? VIS_PRIVATE : VIS_PUBLIC
+      @f.argc = n
+    end
+
     # 最初の呼び出し (起動)
     def push_call(pr, recv, kind:, mid:)
-      @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: 0, proc: pr, mid: mid, kind: kind, tclass: r32(pr + P_TCLASS), vis: VIS_PUBLIC)
+      write_ci(r32(@ctx + CTX_CIBASE), pr, @stbase, mid, kind, nil, nil, 0)
       setreg(0, recv)
       setreg(1, NIL)
-      @f.argc = 0
     end
 
     # ENTER (mruby の vm_op_enter、aspec: m1 5bit, o 5bit, r 1bit, m2 5bit, k 5bit, kd 1bit, b 1bit)。
@@ -470,15 +564,16 @@ module FpgaV2
 
     def ret(v)
       done = @f
-      raise Halt if @frames.empty?
-      @f = @frames.pop
+      raise Halt if done.addr == r32(@ctx + CTX_CIBASE)
+      w32(@ctx + CTX_CI, done.addr - CI_SIZE)
+      @f = Ci.new(self, done.addr - CI_SIZE)
       @jumped = true
       if done.kind == :trap
         resume_trap(done, v)
       elsif done.dst
         setreg(done.dst, v)
       else
-        wv(@stack + done.bp * VALUE, v) # 呼んだ側の R[a] は呼ばれた側の R0 (同じ場所)
+        wv(@stbase + done.bp * VALUE, v) # 呼んだ側の R[a] は呼ばれた側の R0 (同じ場所)
       end
     end
 
@@ -540,12 +635,12 @@ module FpgaV2
           when "__fpga_mid" then [TAG_SYM, trapped[0].mid] # 罠を起こしたフレームのメソッドの名前 (mruby の ci->mid)
           when "__fpga_proc" then int(trapped[0].proc) # 罠を起こしたフレームの Proc (定数の字句の鎖、super、def の upper)
           when "__fpga_frame_vis" then int(trapped[0].vis) # 罠を起こしたフレームの def の既定の可視性
-          when "__fpga_set_caller_vis" then (@frames.last.vis = args[0][1]; NIL) # 今のメソッドを呼んだフレームの既定の可視性 (private / module_function)
+          when "__fpga_set_caller_vis" then (Ci.new(self, @f.addr - CI_SIZE).vis = args[0][1]; NIL) # 今のメソッドを呼んだフレームの既定の可視性 (private / module_function)
           when "__fpga_class_of" then obj(class_of(args[0])) # 回路の class_of (特異クラスと iclass も含む)
           when "__fpga_sendv" then return sendv(args[0], args[1][1], args[2], args[3], args[4], a) # 名前で送る (send / __send__ / public_send)
           when "__fpga_image" then int(r32(args[0][1] * WORD)) # 起動の像の見出しの語
-          when "__fpga_reg" then rv(@stack + (trapped[0].bp + args[0][1]) * VALUE) # 罠を起こしたフレームのレジスタ
-          when "__fpga_setreg" then (wv(@stack + (trapped[0].bp + args[0][1]) * VALUE, args[1]); NIL)
+          when "__fpga_reg" then rv(@stbase + (trapped[0].bp + args[0][1]) * VALUE) # 罠を起こしたフレームのレジスタ
+          when "__fpga_setreg" then (wv(@stbase + (trapped[0].bp + args[0][1]) * VALUE, args[1]); NIL)
           when "__fpga_irep" then int(trapped[0].irep)
           when "__fpga_tclass" then obj(trapped[0].tclass) # 罠を起こしたフレームの定義の入れ物
           when "__fpga_and" then int(s64(args[0][1] & args[1][1]))
@@ -566,9 +661,12 @@ module FpgaV2
 
     # 一番近い罠のフレームと、その下 (罠を起こした) のフレーム: [起こしたフレーム, 罠のフレーム]
     def trapped
-      stack = @frames + [@f]
-      k = stack.rindex { |fr| fr.kind == :trap } or raise Error, "not inside a trap"
-      [stack[k - 1], stack[k]]
+      base = r32(@ctx + CTX_CIBASE)
+      ci = @f.addr
+      ci -= CI_SIZE while ci > base && Ci.new(self, ci).kind != :trap
+      raise Error, "not inside a trap" unless ci > base && Ci.new(self, ci).kind == :trap
+
+      [Ci.new(self, ci - CI_SIZE), Ci.new(self, ci)]
     end
 
     def alloc(n)
