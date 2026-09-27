@@ -110,6 +110,26 @@ class Object
     __fpga_no_method_error(__fpga_addr(mid), args, "%s method '%n' called for %T", [priv ? "private" : "protected", mid, __fpga_reg(a)])
   end
 
+  # SENDB のブロックの枠を Proc にする (回路が、nil でも Proc でもない時に罠にする)
+  # C: src/vm.c ensure_block
+  def __fpga_op_ensure_block(bidx)
+    __fpga_setreg(bidx, __fpga_type_convert_proc(__fpga_reg(bidx)))
+  end
+
+  # mrb_type_convert(val, MRB_TT_PROC, to_proc)
+  # C: src/object.c mrb_type_convert
+  def __fpga_type_convert_proc(val)
+    return val if __fpga_tag(val) == 7 && __fpga_tt(__fpga_addr(val)) == 16 # L:TAG_OBJ L:TT_PROC
+    unless __fpga_search(__fpga_addr(__fpga_class_of(val)), __fpga_addr(:to_proc)) > 0 # convert_type の mrb_respond_to
+      __fpga_raisef(TypeError, "can't convert %Y into Proc", [val])
+    end
+    v = __fpga_sendv(val, :to_proc, [], nil, true) # mrb_funcall_argv
+    unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 16 # L:TAG_OBJ L:TT_PROC
+      __fpga_raisef(TypeError, "%v cannot be converted to Proc by #to_proc", [val])
+    end
+    v
+  end
+
   # C: src/error.c mrb_init_exception
   def __fpga_init_exception
     __fpga_st32(31 * 4, __fpga_addr(__fpga_exc_new_str(SystemStackError, "stack level too deep"))) # L:IMG_stack_err L:WORD
