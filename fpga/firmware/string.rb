@@ -42,12 +42,17 @@ class String
 
   # C: src/string.c mrb_str_equal_m
   def ==(str2)
-    return false unless __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 # L:TAG_OBJ L:TT_STRING mrb_str_equal
-    a = __fpga_addr(self)
-    b = __fpga_addr(str2)
-    len = __fpga_ld32(a + 8) # L:S_LEN str_eql
-    return false unless len == __fpga_ld32(b + 8) # L:S_LEN
-    __fpga_memeq(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
+    __fpga_str_equal(self, str2)
+  end
+
+  # C: src/string.c mrb_str_eql
+  def eql?(str2)
+    __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 && __fpga_str_eql(self, str2) # L:TAG_OBJ L:TT_STRING
+  end
+
+  # C: src/string.c mrb_str_hash_m
+  def hash
+    __fpga_str_hash(self)
   end
 
   # C: src/string.c mrb_str_cmp_m
@@ -672,6 +677,51 @@ class Object
     __fpga_st8(buf + n + len, 0)
     __fpga_st32(a + 8, n + len) # L:S_LEN
     s
+  end
+
+  # C: src/string.c mrb_str_equal
+  def __fpga_str_equal(str1, str2)
+    return false unless __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 # L:TAG_OBJ L:TT_STRING
+    __fpga_str_eql(str1, str2)
+  end
+
+  # 長さと中身が同じ
+  # C: src/string.c str_eql
+  def __fpga_str_eql(str1, str2)
+    a = __fpga_addr(str1)
+    b = __fpga_addr(str2)
+    len = __fpga_ld32(a + 8) # L:S_LEN
+    return false unless len == __fpga_ld32(b + 8) # L:S_LEN
+    __fpga_memeq(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
+  end
+
+  # FNV-1a (32bit)。hval ^= 1 バイト、hval *= FNV_32_PRIME (0x01000193)
+  # C: src/string.c mrb_byte_hash_step
+  def __fpga_byte_hash_step(s, len, hval)
+    k = 0
+    while k < len
+      hval = __fpga_and(__fpga_xor(hval, __fpga_ld8(s + k)) * 16777619, 4294967295)
+      k += 1
+    end
+    hval
+  end
+
+  # C: src/string.c mrb_str_hash
+  def __fpga_str_hash(str)
+    s = __fpga_addr(str)
+    __fpga_byte_hash_step(__fpga_ld32(s + 16), __fpga_ld32(s + 8), 2166136261) # L:S_PTR L:S_LEN mrb_byte_hash (FNV1_32_INIT)
+  end
+
+  # 64bit の値の 8 バイトの mrb_byte_hash。バイトの順は host と R2P2 (どちらも little endian) の記憶の順
+  # C: src/string.c mrb_byte_hash
+  def __fpga_int64_byte_hash(n)
+    hval = 2166136261 # FNV1_32_INIT
+    k = 0
+    while k < 8
+      hval = __fpga_and(__fpga_xor(hval, __fpga_and(__fpga_shr(n, k * 8), 255)) * 16777619, 4294967295)
+      k += 1
+    end
+    hval
   end
 
   # C: src/string.c mrb_str_cat_str

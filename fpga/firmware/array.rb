@@ -212,6 +212,52 @@ class Array
   end
 
   alias member? include? # mruby-array-ext は include? と member? に同じ関数 ary_include を置く
+
+  # C: src/array.c mrb_ary_eql
+  def eql?(ary2)
+    return true if __fpga_tag(ary2) == 7 && __fpga_addr(ary2) == __fpga_addr(self) # L:TAG_OBJ ary_eq の mrb_obj_equal
+    return false unless __fpga_tag(ary2) == 7 && __fpga_tt(__fpga_addr(ary2)) == 17 # L:TAG_OBJ L:TT_ARRAY
+    return false unless __fpga_alen(self) == __fpga_alen(ary2)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    return true if __fpga_recursive_func_p(ci, __fpga_addr(:eql?), self, ary2)
+    i = 0
+    while i < __fpga_alen(self)
+      return false unless __fpga_aref(self, i).eql?(__fpga_aref(ary2, i))
+      i += 1
+    end
+    true
+  end
+
+  # 0 個は nil、1 個はその要素、ほかは自分 (enum.rb の |*val| の値)
+  # C: src/array.c mrb_ary_svalue
+  def __svalue
+    len = __fpga_alen(self)
+    return nil if len == 0
+    return __fpga_aref(self, 0) if len == 1
+    self
+  end
+
+  # __svalue の値と other が == か (mrb_equal_in_c)。== が Ruby なら :send (呼んだ mrblib が送る)
+  # C: src/array.c mrb_ary_svalue_eq
+  def __svalue_eq(other)
+    len = __fpga_alen(self)
+    v = len == 0 ? nil : (len == 1 ? __fpga_aref(self, 0) : self) # mrb_ary_svalue
+    r = __fpga_equal_in_c(v, other)
+    return :send if r < 0
+    r == 1
+  end
+
+  # C: mrbgems/mruby-array-ext/src/array.c ary_sub
+  def -(other)
+    __fpga_ensure_array_type(other) # mrb_get_args の A
+    __fpga_ary_subtract_internal(self, [other])
+  end
+
+  # C: mrbgems/mruby-array-ext/src/array.c ary_union
+  def |(other)
+    __fpga_ensure_array_type(other) # mrb_get_args の A
+    __fpga_ary_union_internal(self, [other])
+  end
 end
 
 class Object
@@ -331,6 +377,85 @@ class Object
         __fpga_str_cat_str(result, val)
       end
       k += 1
+    end
+    result
+  end
+
+  # --- mruby-array-ext の集合の演算。ary_memb は khash の set を作らず、いつも配列を辿る (D42)
+  # 引数を Array に (mrb_check_array_type、Array でなければ TypeError)
+  # C: mrbgems/mruby-array-ext/src/array.c ary_get_array_args
+  def __fpga_ary_get_array_args(argv)
+    converted = []
+    i = 0
+    while i < __fpga_alen(argv)
+      other = __fpga_aref(argv, i)
+      __fpga_raise(TypeError, "can't convert passed argument to Array") unless __fpga_tag(other) == 7 && __fpga_tt(__fpga_addr(other)) == 17 # L:TAG_OBJ L:TT_ARRAY
+      converted.__fpga_push1(other)
+      i += 1
+    end
+    converted
+  end
+
+  # v が arys のどれかの要素と eql? か (ary_elem_eql は mrb_eql)
+  # C: mrbgems/mruby-array-ext/src/array.c ary_memb_has (D42)
+  def __fpga_ary_memb_has(arys, v)
+    i = 0
+    while i < __fpga_alen(arys)
+      ary = __fpga_aref(arys, i)
+      j = 0
+      while j < __fpga_alen(ary)
+        return true if __fpga_eql(v, __fpga_aref(ary, j))
+        j += 1
+      end
+      i += 1
+    end
+    false
+  end
+
+  # kept の前の kept_len 個に v と eql? なものが無ければ真 (初めて会う)
+  # C: mrbgems/mruby-array-ext/src/array.c ary_memb_first (D42)
+  def __fpga_ary_memb_first(v, kept, kept_len)
+    i = 0
+    while i < kept_len && i < __fpga_alen(kept)
+      return false if __fpga_eql(v, __fpga_aref(kept, i))
+      i += 1
+    end
+    true
+  end
+
+  # C: mrbgems/mruby-array-ext/src/array.c ary_subtract_internal
+  def __fpga_ary_subtract_internal(ary, argv)
+    return __fpga_ary_subseq(ary, 0, __fpga_alen(ary)) if __fpga_alen(argv) == 0 # mrb_ary_dup
+    argv = __fpga_ary_get_array_args(argv)
+    result = []
+    i = 0 # ary_subtract_body
+    while i < __fpga_alen(ary)
+      p = __fpga_aref(ary, i)
+      result.__fpga_push1(p) unless __fpga_ary_memb_has(argv, p)
+      i += 1
+    end
+    result
+  end
+
+  # C: mrbgems/mruby-array-ext/src/array.c ary_union_add
+  def __fpga_ary_union_add(src, result)
+    i = 0
+    while i < __fpga_alen(src)
+      elem = __fpga_aref(src, i)
+      result.__fpga_push1(elem) if __fpga_ary_memb_first(elem, result, __fpga_alen(result))
+      i += 1
+    end
+  end
+
+  # C: mrbgems/mruby-array-ext/src/array.c ary_union_internal
+  def __fpga_ary_union_internal(ary, argv)
+    argv = __fpga_ary_get_array_args(argv)
+    result = []
+    __fpga_ary_union_add(ary, result) # ary_union_body
+    i = 0
+    while i < __fpga_alen(argv)
+      __fpga_ary_union_add(__fpga_aref(argv, i), result)
+      i += 1
     end
     result
   end

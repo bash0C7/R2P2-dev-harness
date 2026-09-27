@@ -103,7 +103,116 @@ class Object
     t = __fpga_tt(__fpga_addr(obj))
     __fpga_halt if t == 9 || t == 10 || t == 15 # L:TT_CLASS L:TT_MODULE L:TT_ICLASS copy_class は S5
     __fpga_iv_copy(dest, obj) if t == 8 || t == 11 || t == 12 || t == 13 || t == 14 # L:TT_OBJECT L:TT_SCLASS L:TT_HASH L:TT_CDATA L:TT_EXCEPTION
-    dest.initialize_copy(obj) unless __fpga_func_basic_p(dest, __fpga_addr(:initialize_copy), Kernel)
+    return if __fpga_func_basic_p(dest, __fpga_addr(:initialize_copy), Kernel)
+    __fpga_sendv(dest, :initialize_copy, [obj], nil, true) # mrb_funcall_argv (private の initialize_copy も呼ぶ)
+  end
+
+  # MakeID: 番地 (即値は値) と tt の xor
+  # C: src/etc.c mrb_obj_id
+  def __fpga_obj_id(obj)
+    t = __fpga_tag(obj)
+    return __fpga_xor(4, 0) if t == 0 # L:TAG_NIL MakeID(4, MRB_TT_FALSE)
+    return __fpga_xor(0, 0) if t == 1 # L:TAG_FALSE MakeID(0, MRB_TT_FALSE)
+    return __fpga_xor(2, 1) if t == 2 # L:TAG_TRUE MakeID(2, MRB_TT_TRUE)
+    return __fpga_xor(__fpga_addr(obj), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
+    return __fpga_xor(obj, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
+    __fpga_halt if t == 5 # L:TAG_FLOAT mrb_float_id は S5f
+    __fpga_xor(__fpga_addr(obj), __fpga_tt(__fpga_addr(obj)))
+  end
+
+  # C: include/mruby/object.h mrb_frozen_p
+  def __fpga_frozen_p(o)
+    __fpga_and(__fpga_ld32(o + 4), 2048) > 0 # L:H_FLAGS L:H_FROZEN
+  end
+
+  # C: src/error.c mrb_check_frozen
+  def __fpga_check_frozen(o)
+    __fpga_raisef(FrozenError, "can't modify frozen %T", [__fpga_obj(o)]) if __fpga_frozen_p(o) # frozen_error
+  end
+
+  # 呼び出しの鎖 (ci) に、同じメソッドが同じ受け手 (と引数) で積まれているか。ci は C の関数の ci (firmware の def のフレーム)。
+  # method_p は ci[-1] から、func_p は ci[-2] から cibase まで
+  # C: src/kernel.c mrb_recursive_method_p
+  def __fpga_recursive_method_p(ci, mid, obj1, obj2)
+    base = __fpga_ld32(__fpga_image(0) + 16) # L:IMG_c L:CTX_CIBASE
+    c = ci - 64 # L:CI_SIZE
+    while c >= base
+      if __fpga_ld32(c + 4) == mid # L:CI_MID
+        st = __fpga_ld32(c + 16) # L:CI_STACK
+        s0 = __fpga_ldv(st)
+        if __fpga_tag(obj1) == __fpga_tag(s0) && __fpga_int(obj1) == __fpga_int(s0) # mrb_obj_eq
+          return true if __fpga_tag(obj2) == 0 # L:TAG_NIL
+          s1 = __fpga_ldv(st + 16) # L:VALUE
+          return true if __fpga_tag(obj2) == __fpga_tag(s1) && __fpga_int(obj2) == __fpga_int(s1)
+        end
+      end
+      c -= 64 # L:CI_SIZE
+    end
+    false
+  end
+
+  # C: src/kernel.c mrb_recursive_func_p
+  def __fpga_recursive_func_p(ci, mid, obj1, obj2)
+    base = __fpga_ld32(__fpga_image(0) + 16) # L:IMG_c L:CTX_CIBASE
+    c = ci - 128 # ci[-2] (CI_SIZE の 2 つ)
+    while c >= base
+      if __fpga_ld32(c + 4) == mid # L:CI_MID
+        st = __fpga_ld32(c + 16) # L:CI_STACK
+        s0 = __fpga_ldv(st)
+        if __fpga_tag(obj1) == __fpga_tag(s0) && __fpga_int(obj1) == __fpga_int(s0) # mrb_obj_eq
+          return true if __fpga_tag(obj2) == 0 # L:TAG_NIL
+          s1 = __fpga_ldv(st + 16) # L:VALUE
+          return true if __fpga_tag(obj2) == __fpga_tag(s1) && __fpga_int(obj2) == __fpga_int(s1)
+        end
+      end
+      c -= 64 # L:CI_SIZE
+    end
+    false
+  end
+
+  # 同じものか、Integer / Float / String は型と値、ほかは eql? (Kernel#eql? のままなら偽)
+  # C: src/object.c mrb_eql
+  def __fpga_eql(obj1, obj2)
+    return true if __fpga_tag(obj1) == __fpga_tag(obj2) && __fpga_int(obj1) == __fpga_int(obj2) # mrb_obj_eq
+    t = __fpga_tag(obj1)
+    if t == 3 # L:TAG_INT
+      return false unless __fpga_tag(obj2) == 3 # L:TAG_INT
+      return __fpga_int(obj1) == __fpga_int(obj2)
+    elsif t == 5 # L:TAG_FLOAT
+      return false unless __fpga_tag(obj2) == 5 # L:TAG_FLOAT
+      return __fpga_float_eq(obj1, obj2)
+    elsif t == 7 && __fpga_tt(__fpga_addr(obj1)) == 18 # L:TAG_OBJ L:TT_STRING
+      return false unless __fpga_tag(obj2) == 7 && __fpga_tt(__fpga_addr(obj2)) == 18 # L:TAG_OBJ L:TT_STRING
+      return __fpga_str_equal(obj1, obj2)
+    end
+    return false if __fpga_func_basic_p(obj1, __fpga_addr(:eql?), Kernel) # mrb_obj_equal_m
+    obj1.eql?(obj2) ? true : false
+  end
+
+  # double の == (soft-float の __eqdf2): ビットが同じ (NaN を除く) か、両方とも ±0
+  # C: none (D17)
+  def __fpga_float_eq(a, b)
+    x = __fpga_int(a)
+    y = __fpga_int(b)
+    nan_x = __fpga_and(x, 9218868437227405312) == 9218868437227405312 && __fpga_and(x, 4503599627370495) > 0 # 指数が全部 1 で仮数が 0 でない
+    return false if nan_x
+    return true if x == y
+    __fpga_and(x, 9223372036854775807) == 0 && __fpga_and(y, 9223372036854775807) == 0
+  end
+
+  # C の中で == が決まるか: 1 真、0 偽、-1 は == が Ruby (VM で送る)。bop_redefined は見ない (D43)
+  # C: src/object.c mrb_equal_in_c
+  def __fpga_equal_in_c(obj1, obj2)
+    return 1 if __fpga_tag(obj1) == __fpga_tag(obj2) && __fpga_int(obj1) == __fpga_int(obj2) # mrb_obj_eq
+    t1 = __fpga_tag(obj1)
+    t2 = __fpga_tag(obj2)
+    return 0 if t1 == 3 && t2 == 3 # L:TAG_INT
+    __fpga_halt if (t1 == 3 && t2 == 5) || (t1 == 5 && t2 == 3) # L:TAG_INT L:TAG_FLOAT mrb_int_float_cmp は S5f
+    return 0 if t1 == 4 && t2 == 4 # L:TAG_SYM
+    m = __fpga_and(__fpga_search(__fpga_addr(__fpga_class_of(obj1)), __fpga_addr(:==)), -4) # L:VIS_MASK (~3)
+    return -1 if m == 0 || m >= __fpga_image(35) # L:IMG_heap_start 像の外の Proc は Ruby のメソッド (MRB_METHOD_CFUNC_P でない)
+    return 0 if m == __fpga_and(__fpga_search(__fpga_addr(BasicObject), __fpga_addr(:==)), -4) # L:VIS_MASK (~3) mrb_obj_equal_m
+    obj1 == obj2 ? 1 : 0
   end
 end
 
@@ -132,6 +241,69 @@ module Kernel
     d
   end
 
+  # === は == (NaN の Float は偽)
+  # C: src/kernel.c mrb_eqq_m
+  def ===(arg)
+    if __fpga_tag(self) == 5 # L:TAG_FLOAT
+      x = __fpga_int(self)
+      return false if __fpga_and(x, 9218868437227405312) == 9218868437227405312 && __fpga_and(x, 4503599627370495) > 0 # isnan
+    end
+    __fpga_equal(self, arg)
+  end
+
+  # rescue *list と when *list の中身: 自分 (配列か to_a) の要素のどれかが v と === か
+  # C: src/kernel.c mrb_obj_ceqq
+  def __case_eqq(v)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
+    if __fpga_tag(self) == 7 && __fpga_tt(__fpga_addr(self)) == 17 # L:TAG_OBJ L:TT_ARRAY
+      ary = self
+    elsif __fpga_tag(self) == 0 # L:TAG_NIL
+      return false
+    elsif __fpga_search(__fpga_addr(__fpga_class_of(self)), __fpga_addr(:to_a)) == 0 # mrb_respond_to
+      return (self === v) ? true : false
+    else
+      ary = to_a
+      return self === v if __fpga_tag(ary) == 0 # L:TAG_NIL
+      __fpga_ensure_array_type(ary)
+    end
+    len = __fpga_alen(ary)
+    i = 0
+    while i < len && i < __fpga_alen(ary)
+      return true if __fpga_aref(ary, i) === v
+      i += 1
+    end
+    false
+  end
+
+  # C: src/kernel.c mrb_obj_hash
+  def hash
+    __fpga_obj_id(self)
+  end
+
+  # C: src/kernel.c mrb_obj_equal_m
+  def eql?(obj)
+    __fpga_tag(self) == __fpga_tag(obj) && __fpga_int(self) == __fpga_int(obj) # mrb_obj_equal
+  end
+
+  # 即値はそのまま。特異クラスがあればそれも凍らせる
+  # C: src/kernel.c mrb_obj_freeze
+  def freeze
+    return self unless __fpga_tag(self) == 7 # L:TAG_OBJ mrb_immediate_p
+    b = __fpga_addr(self)
+    unless __fpga_frozen_p(b)
+      __fpga_st32(b + 4, __fpga_or(__fpga_ld32(b + 4), 2048)) # L:H_FLAGS L:H_FROZEN
+      c = __fpga_ld32(b + 0) # L:H_CLASS
+      __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 2048)) if __fpga_tt(c) == 11 # L:H_FLAGS L:H_FROZEN L:TT_SCLASS
+    end
+    self
+  end
+
+  # C: src/kernel.c mrb_obj_frozen
+  def frozen?
+    __fpga_tag(self) == 7 ? __fpga_frozen_p(__fpga_addr(self)) : true # L:TAG_OBJ mrb_immediate_p
+  end
+
   # C: src/kernel.c mrb_obj_init_copy
   def initialize_copy(orig)
     return self if __fpga_tag(orig) == __fpga_tag(self) && __fpga_int(orig) == __fpga_int(self) # mrb_obj_equal
@@ -143,17 +315,9 @@ module Kernel
 end
 
 class BasicObject
-  # MakeID: 番地 (即値は値) と tt の xor
-  # C: src/etc.c mrb_obj_id
+  # C: src/class.c mrb_obj_id_m
   def __id__
-    t = __fpga_tag(self)
-    return __fpga_xor(4, 0) if t == 0 # L:TAG_NIL MakeID(4, MRB_TT_FALSE)
-    return __fpga_xor(0, 0) if t == 1 # L:TAG_FALSE MakeID(0, MRB_TT_FALSE)
-    return __fpga_xor(2, 1) if t == 2 # L:TAG_TRUE MakeID(2, MRB_TT_TRUE)
-    return __fpga_xor(__fpga_addr(self), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
-    return __fpga_xor(self, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
-    __fpga_halt if t == 5 # L:TAG_FLOAT mrb_float_id は S5f
-    __fpga_xor(__fpga_addr(self), __fpga_tt(__fpga_addr(self)))
+    __fpga_obj_id(self)
   end
 end
 
@@ -216,6 +380,11 @@ class Module
   # C: src/class.c mrb_mod_to_s
   def inspect
     __fpga_mod_to_s(self)
+  end
+
+  # C: src/class.c mrb_mod_eqq
+  def ===(obj)
+    __fpga_kind_of(obj, self)
   end
 
   # C: src/class.c mrb_mod_include_p
