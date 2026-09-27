@@ -352,6 +352,21 @@ class NilClass
     ""
   end
 
+  # C: src/object.c false_and
+  def &(obj2)
+    false
+  end
+
+  # C: src/object.c false_xor
+  def ^(obj2)
+    obj2 ? true : false
+  end
+
+  # C: src/object.c nil_match
+  def =~(obj2)
+    nil
+  end
+
   # C: src/object.c nil_inspect
   def inspect
     "nil"
@@ -369,6 +384,16 @@ class NilClass
 end
 
 class TrueClass
+  # C: src/object.c true_and
+  def &(obj2)
+    obj2 ? true : false
+  end
+
+  # C: src/object.c true_xor
+  def ^(obj2)
+    obj2 ? false : true
+  end
+
   # C: src/object.c true_to_s
   def to_s
     "true"
@@ -383,6 +408,16 @@ class TrueClass
 end
 
 class FalseClass
+  # C: src/object.c false_and
+  def &(obj2)
+    false
+  end
+
+  # C: src/object.c false_xor
+  def ^(obj2)
+    obj2 ? true : false
+  end
+
   # C: src/object.c false_to_s
   def to_s
     "false"

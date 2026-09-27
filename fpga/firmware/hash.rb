@@ -175,7 +175,8 @@ class Object
       return __fpga_tag(b) == t && __fpga_int(a) == __fpga_int(b)
     elsif t == 5 # L:TAG_FLOAT
       return false unless __fpga_tag(b) == 5 # L:TAG_FLOAT
-      return __fpga_float_bits_eq(a, b) # fa == mrb_float(b) か、NaN の同じもの (mrb_obj_eq)
+      return true if __fpga_f64_cmp(__fpga_int(a), __fpga_int(b)) == 0 # fa == mrb_float(b)
+      return __fpga_int(a) == __fpga_int(b) # mrb_obj_eq (NaN は通し番号まで同じもの)
     end
     eql = false
     c = __fpga_h_check_modified_init(h)
