@@ -7758,10 +7758,10 @@
 7480  000065737361  asse
 7481  0000745f7472  rt_t
 7482  000000657572  rue.
-7483  0000735f6f6e  no_s
-7484  00005f686375  uch_
-7485  00006874656d  meth
-7486  00000000646f  od..
+7483  00006f6e5f5f  __no
+7484  00006375735f  _suc
+7485  0000656d5f68  h_me
+7486  0000646f6874  thod
 7487  00006d6f682f  /hom
 7488  000073752f65  e/us
 7489  0000522f7265  er/R
@@ -8278,7 +8278,7 @@
 7999  7476  6     :actual
 8000  7478  5     :@base
 8001  7480  11    :assert_true
-8002  7483  14    :no_such_method
+8002  7483  16    :__no_such_method
 8003  7487  51    :/home/user/R2P2-dev-harness/fpga/corpus/picotest.rb
 8004  7500  6     :Object
 8005  7502  8     :NilClass
@@ -9395,7 +9395,7 @@
  401  :actual
  402  :@base
  403  :assert_true
- 404  :no_such_method
+ 404  :__no_such_method
  405  :/home/user/R2P2-dev-harness/fpga/corpus/picotest.rb
  406  :Object
  407  :NilClass

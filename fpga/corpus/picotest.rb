@@ -42,7 +42,7 @@ class CalcTest < Picotest::Test
   end
 
   def test_error
-    nil.no_such_method
+    nil.__no_such_method
   end
 end
 
