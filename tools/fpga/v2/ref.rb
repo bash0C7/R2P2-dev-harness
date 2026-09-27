@@ -53,6 +53,9 @@ module FpgaV2
       @object = r32(@main + H_CLASS)
     end
 
+    # 使ったヒープのバイト数 (accept の記録。GC が無い間は確保の合計)
+    def heap_used = @heap - r32(IMG.fetch(:heap_start) * WORD)
+
     # --- 記憶
     def r8(a) = @m.getbyte(a)
     def w8(a, v) = @m.setbyte(a, v & 0xFF)

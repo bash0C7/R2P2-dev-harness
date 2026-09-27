@@ -759,6 +759,39 @@ namespace :fpga do
       puts "  reached: " + stats.sort.map { |k, v| "#{k} #{v}" }.join(", ")
       raise "#{bad.size} program(s) differ (kept in #{fpga_rel(dir)})" unless bad.empty?
     end
+
+    desc "Acceptance: mruby test/t per assert on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:accept or rake fpga:v2:accept[string])"
+    task :accept, [:names] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/accept"
+      acc = FpgaV2::Accept
+      errors = acc.check_scope
+      raise "scope.tsv is wrong:\n  #{errors.join("\n  ")}" unless errors.empty?
+      names = args[:names] ? args[:names].split(/[ +]/) : acc.names
+      results = FpgaParallel.map(names) { |n| acc.check(n, picoruby: FpgaConverter.default_picoruby) }
+      dir = File.join(FPGA_BUILD_DIR, "v2accept")
+      FileUtils.mkdir_p dir
+      rows = results.map do |r|
+        File.binwrite(File.join(dir, "#{r.file}.host.txt"), r.host_out)
+        File.binwrite(File.join(dir, "#{r.file}.ref.txt"), r.ref_out + (r.ref_error ? "\n[ref stopped: #{r.ref_error}]\n" : ""))
+        st = r.ref_stats
+        [r.file, r.rows.size, r.in_scope.size, r.same, format("%.1f", st[:sec]), st[:insn], st[:trap], st[:heap], r.ref_error.to_s]
+      end
+      head = %w[file asserts in_scope same sec insn trap heap ref_stopped]
+      File.write(File.join(dir, "summary.tsv"), ([head] + rows).map { |x| x.join("\t") }.join("\n") + "\n")
+      rows.each { |x| puts format("%-16s %4d asserts %4d in scope %4d same  %6ss %10d insns %6d traps %9d heap  %s", *x[0..7], x[8][0, 60]) }
+      in_scope = results.sum { |r| r.in_scope.size }
+      same = results.sum(&:same)
+      sec = results.sum { |r| r.ref_stats[:sec] }
+      insn = results.sum { |r| r.ref_stats[:insn] }
+      puts "v2 accept: #{results.size} file(s), #{in_scope} assert(s) in scope, #{same} same as host " \
+           "(ref #{insn} insns in #{format('%.1f', sec)} s, #{sec.positive? ? (insn / sec).round : 0} insns/s). details in #{fpga_rel(dir)}"
+      next if args[:names]
+
+      # 範囲内の assert の数は減らない (scope.tsv で落ちたものを外せないように)
+      min = File.read(acc::IN_SCOPE_MIN).to_i
+      raise "assert(s) in scope went down: #{in_scope} < #{min} (#{fpga_rel(acc::IN_SCOPE_MIN)})" if in_scope < min
+      puts "  in scope went up (#{min} -> #{in_scope}): raise #{fpga_rel(acc::IN_SCOPE_MIN)}" if in_scope > min
+    end
   end
 end
 
