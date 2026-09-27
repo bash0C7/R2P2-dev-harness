@@ -50,45 +50,45 @@
 
 **Files:** 新規 `tools/fpga/parallel.rb`、`tools/fpga/parallel_test.rb`
 
-- [ ] `FpgaParallel.map(items, jobs: FpgaParallel.jobs) { |item| ... }`: fork で `jobs` 本の子を起こし、結果を Marshal で pipe から返す。
+- [x] `FpgaParallel.map(items, jobs: FpgaParallel.jobs) { |item| ... }`: fork で `jobs` 本の子を起こし、結果を Marshal で pipe から返す。
   **返す順は items の順** (出力を今と同じ並びにするため)。子の例外は親で同じ message の例外にする (黙って落とさない)。
   `jobs == 1` なら fork しない (今と同じ動き。調べる時に使う)
-- [ ] `FpgaParallel.threads(items, jobs:)`: 外の process を待つだけの所 (mrbc、変換器) 用の thread 版。順と例外は同じ
-- [ ] `jobs` は環境変数 `FPGA_JOBS`、無ければ `Etc.nprocessors`。macOS と Linux の両方で動く (fork は両方ある)
-- [ ] test: 順が保たれる、子の例外が親に来る、`jobs: 1` で fork しない、空の items
-- [ ] 確かめ方: `ruby tools/fpga/parallel_test.rb`
+- [x] `FpgaParallel.threads(items, jobs:)`: 外の process を待つだけの所 (mrbc、変換器) 用の thread 版。順と例外は同じ
+- [x] `jobs` は環境変数 `FPGA_JOBS`、無ければ `Etc.nprocessors`。macOS と Linux の両方で動く (fork は両方ある)
+- [x] test: 順が保たれる、子の例外が親に来る、`jobs: 1` で fork しない、空の items
+- [x] 確かめ方: `ruby tools/fpga/parallel_test.rb`
 
 ### Q2 corpus の build (gen_pkg_test、fpga:corpus)
 
 **Files:** `tools/fpga/corpus.rb` (`build_all`)
 
-- [ ] `build_all` の `sources.to_h` を `FpgaParallel.threads` にする。1 本ごとの tmpdir は今も別
-- [ ] 確かめ方: `rake fpga:corpus:check` が並列前と同じ (生成物の bytes が同じ = 差分なし)。gen_pkg_test の秒数を記録に書く
+- [x] `build_all` の `sources.to_h` を `FpgaParallel.threads` にする。1 本ごとの tmpdir は今も別
+- [x] 確かめ方: `rake fpga:corpus:check` が並列前と同じ (生成物の bytes が同じ = 差分なし)。gen_pkg_test の秒数を記録に書く
 
 ### Q3 test:fpga のファイル
 
 **Files:** `rakelib/fpga.rake` (`test:fpga`)
 
-- [ ] テストのファイルごとに process を起こして並列に回し、出力はファイルごとにまとめて順に出す。1 本でも落ちたら落ちたファイルの名前を並べて rake を止める
-- [ ] 確かめ方: 失敗 0 の数 (runs、assertions) が並列前と同じ。わざと1本落とすと rake が止まり、その名前が出る
+- [x] テストのファイルごとに process を起こして並列に回し、出力はファイルごとにまとめて順に出す。1 本でも落ちたら落ちたファイルの名前を並べて rake を止める
+- [x] 確かめ方: 失敗 0 の数 (runs、assertions) が並列前と同じ。わざと1本落とすと rake が止まり、その名前が出る
 
 ### Q4 check、gap、emu:check、tb
 
 **Files:** `rakelib/fpga.rake`
 
-- [ ] check: 1 本ごと (参照 + sim + compare) を `FpgaParallel.map`。`ok ...` の行は今と同じ順で出す
-- [ ] gap: `FpgaGap.check` と参照・sim を 1 本ごとに。sim の name を program ごとに
-- [ ] emu:check: 1 本ごと。board_emu の build は親で先に
-- [ ] tb: (tb, sim) ごと。icarus の出力先が tb ごとに分かれているか確かめてから
-- [ ] 確かめ方: check の 39 行、gap の数と blocked の表、emu:check、tb の PASS が並列前と同じ
+- [x] check: 1 本ごと (参照 + sim + compare) を `FpgaParallel.map`。`ok ...` の行は今と同じ順で出す
+- [x] gap: `FpgaGap.check` と参照・sim を 1 本ごとに。sim の name を program ごとに
+- [x] emu:check: 1 本ごと。board_emu の build は親で先に
+- [x] tb: (tb, sim) ごと。icarus の出力先が tb ごとに分かれているか確かめてから
+- [x] 確かめ方: check の 39 行、gap の数と blocked の表、emu:check、tb の PASS が並列前と同じ
 
 ### Q5 fuzz
 
 **Files:** `rakelib/fpga.rake` (`fpga:fuzz`)
 
-- [ ] 親で `count` 本の program (words、max、stim、heap) を今と同じ rng の順に作る → 子で参照と sim → stats と endings を親で足す
-- [ ] 違ったら、今と同じく **最初の番号の** 違いを `fail_seed<seed>_<i>.*` に残して止める
-- [ ] 確かめ方: seed 1–4 の要約の行 (halt / error / step limit / GC / reached) が並列前と1字も違わない
+- [x] 親で `count` 本の program (words、max、stim、heap) を今と同じ rng の順に作る → 子で参照と sim → stats と endings を親で足す
+- [x] 違ったら、今と同じく **最初の番号の** 違いを `fail_seed<seed>_<i>.*` に残して止める
+- [x] 確かめ方: seed 1–4 の要約の行 (halt / error / step limit / GC / reached) が並列前と1字も違わない
 
 ### Q6 host 側の AOT (spinel + suppify。Q2〜Q5 の後に測って決める)
 
@@ -180,3 +180,17 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
 - `rake fpga:test` (並列)、`rake fpga:gap`、fuzz seed 1–4
 - 計画 (2026-09-26 の方) の「記録」に1行、「見つけたこと」に書く
 - commit は `fpga: ...`、push
+
+## 記録
+
+| 日付 | 段 | 結果 |
+|---|---|---|
+| 2026-09-27 | Q1〜Q5 並列化 | CPU 4。`fpga:corpus:check` 1162 秒 → 311 秒。`fpga:test` 全体 1345 秒 (tb の Icarus で peridot_air_top を compile する所が 17 分ほどで一番長い)。check 39 行、gap (71 / 66 / 66 / 5)、fuzz seed 1–4 の要約は1本ずつ回した時と1字も違わない |
+
+## 見つけたこと
+
+- Q: 変換器を `picoruby isa.rb,io_map.rb,rite.rb,rom.rb,mrb2rom.rb` と `,` でつないで走らせていたが、PicoRuby は file ごとに別の task
+  にして同時に走らせる (picoruby.c の [tasks])。1本ずつ回していた時はたまたま順に終わっていただけで、並べて CPU が混むと
+  `uninitialized constant FpgaIsa::CLASSES` で落ちた。mrbc で1つの .mrb (書いた順に1つの irep) にして渡すように直した
+- Q: gap の hex は basename で `build/fpga/gap/` に書いていた。example には同じ basename のものがあり、並べると取り合う。path から名前を作る
+- Q: 並べた後に一番長いのは tb の Icarus の compile (peridot_air_top_tb)。1 本の中の仕事なので並べても縮まない

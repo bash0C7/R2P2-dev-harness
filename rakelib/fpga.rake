@@ -223,18 +223,22 @@ namespace :fpga do
     require_fpga_tools!
     tbs = fpga_testbenches
     raise "no testbenches in fpga/tb/" if tbs.empty?
-    failed = []
-    tbs.each do |tb|
-      %w[verilator icarus].each do |sim|
+    # (tb, シミュレーター) ごとに並べる。build の dir は tb ごと・シミュレーターごとに別。出力は組ごとにまとめて出す
+    runs = FpgaParallel.map(tbs.product(%w[verilator icarus])) do |tb, sim|
+      ok, out = fpga_capture do
         puts "\n=== #{tb} (#{sim}) ==="
         begin
           sim == "verilator" ? fpga_sim_verilator(tb) : fpga_sim_icarus(tb)
+          true
         rescue StandardError => e
-          warn e.message
-          failed << "#{tb} (#{sim})"
+          puts e.message
+          false
         end
       end
+      ["#{tb} (#{sim})", ok, out]
     end
+    runs.each { |_, _, out| print out }
+    failed = runs.reject { |_, ok, _| ok }.map(&:first)
     raise "fpga testbenches failed: #{failed.join(', ')}" unless failed.empty?
     puts "\nall #{tbs.size} testbench(es) passed on verilator and icarus"
   end
@@ -245,8 +249,8 @@ end
 # fpga/corpus/*.rb が対象のプログラム。.mrb .dump .hex .lst は commit してあり (tools/fpga/corpus.rb)、
 # CI の fpga job は picoruby 無しでそれを使う。
 #
-# .mrb -> ROM の変換器 (tools/fpga/mrb2rom.rb ほか) は PicoRuby で書いてあり、PicoRuby の host VM で走らせる
-# (FpgaConverter.run)。rake は起動と、参照インタプリタ (CRuby) やシミュレーションとの受け渡しだけをする。
+# .mrb -> ROM の変換器 (tools/fpga/mrb2rom.rb ほか) は mruby ソースコードで、PicoRuby の host VM で走らせる
+# (FpgaConverter.run)。rake は起動と、参照インタプリタ (Ruby コード、CRuby) やシミュレーションとの受け渡しだけをする。
 require_relative "../tools/fpga/converter"
 require_relative "../tools/fpga/ref_vm"
 require_relative "../tools/fpga/compare"
@@ -256,6 +260,9 @@ require_relative "../tools/fpga/quartus"
 require_relative "../tools/fpga/emu"
 require_relative "../tools/fpga/fuzz"
 require_relative "../tools/fpga/gap"
+require_relative "../tools/fpga/parallel"
+require "open3"
+require "stringio"
 
 FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
 FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
@@ -310,14 +317,18 @@ end
 
 # PERIDOT-Air のボードエミュレーターで src を ms だけ走らせ、ピンの変化を表示する。
 # <name>.buttons があればボタンを押す (その時は参照との突き合わせはしない)。返り値は参照と一致したか。
+# CE_DIV と MHz に合う board_emu (build してあればそれ)。[実行ファイル, シミュレーションの CE_DIV, 時刻の倍率]
+def fpga_emu_exe(ce_div, mhz)
+  sim_ce, k = FpgaEmu.scale(ce_div, fast: ENV["FPGA_EMU_EXACT"].nil?)
+  [fpga_board_emu(sim_ce, k, [(mhz * 1000.0 / k).round, 1].max), sim_ce, k]
+end
+
 def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
   hex = File.extname(src) == ".hex" ? src : fpga_rom(src)
   name = File.basename(src, ".*")
   buttons = File.join(File.dirname(src), "#{name}.buttons")
   buttons = nil unless File.file?(buttons)
-  sim_ce, k = FpgaEmu.scale(ce_div, fast: ENV["FPGA_EMU_EXACT"].nil?)
-
-  exe = fpga_board_emu(sim_ce, k, [(mhz * 1000.0 / k).round, 1].max)
+  exe, sim_ce, k = fpga_emu_exe(ce_div, mhz)
   FileUtils.mkdir_p FPGA_ROM_DIR
   log = File.join(FPGA_ROM_DIR, "#{name}.emu.log")
   cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}", "+mhz=#{mhz}"]
@@ -366,6 +377,16 @@ def fpga_board_emu(ce_div, time_scale, ms_cycles)
                 "-j", "0", "-GCE_DIV=#{ce_div}", "-GTIME_SCALE=#{time_scale}", "-GMS_CYCLES=#{ms_cycles}",
                 "--Mdir", mdir, "--top-module", "board_emu_tb", "-o", "board_emu", *sources)
   exe
+end
+
+# fork した子の puts をまとめて親へ返す (並べて回した時に出力が混ざらないように)。[ブロックの値, 出力]
+def fpga_capture
+  old = $stdout
+  $stdout = StringIO.new
+  value = yield
+  [value, $stdout.string]
+ensure
+  $stdout = old
 end
 
 # シミュレーションで走らせてトレースを返す。トレースなどは build/fpga/rom/<name>.* に書く
@@ -435,9 +456,11 @@ namespace :fpga do
     desc "Emulate PERIDOT-Air for every fpga/corpus/*.hex (600 ms, 125MHz, CE_DIV=1000) and compare the LEDs with the reference"
     task :check do
       require_fpga_tools!
-      failed = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort.reject do |hex|
-        fpga_emulate(hex, ms: 600, ce_div: 1000, verbose: false)
-      end
+      fpga_emu_exe(1000, FpgaEmu::DEFAULT_MHZ) # 並べる前に親で build する
+      hexes = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort
+      runs = FpgaParallel.map(hexes) { |hex| fpga_capture { fpga_emulate(hex, ms: 600, ce_div: 1000, verbose: false) } }
+      runs.each { |_, out| print out }
+      failed = hexes.zip(runs).reject { |_, (ok, _)| ok }.map(&:first)
       raise "board emulation differs from the reference: #{failed.map { |h| File.basename(h) }.join(', ')}" unless failed.empty?
     end
   end
@@ -447,8 +470,8 @@ namespace :fpga do
     require_fpga_tools!
     hexes = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort
     raise "no fpga/corpus/*.hex. Run `rake fpga:corpus`" if hexes.empty?
-    failed = []
-    hexes.each do |hex|
+    fpga_runner # 並べる前に親で1回だけ build する
+    rows = FpgaParallel.map(hexes) do |hex|
       name = File.basename(hex, ".hex")
       stim = fpga_stim_path(hex)
       ref = fpga_ref_trace(hex, stim: stim, max: FPGA_DEFAULT_STEPS)
@@ -456,13 +479,10 @@ namespace :fpga do
       File.write(File.join(FPGA_ROM_DIR, "#{name}.ref.trace"), ref.join("\n") + "\n")
       sim = fpga_sim_trace(hex, name: name, stim: stim, max: FPGA_DEFAULT_STEPS)
       r = FpgaCompare.compare(ref, sim)
-      if r.ok
-        puts format("ok %-10s %5d I/O writes, %s", name, r.io_count, r.ending)
-      else
-        puts "FAIL #{name}\n#{r.message}"
-        failed << name
-      end
+      [name, r.ok, r.ok ? format("ok %-10s %5d I/O writes, %s", name, r.io_count, r.ending) : "FAIL #{name}\n#{r.message}"]
     end
+    rows.each { |_, _, line| puts line }
+    failed = rows.reject { |_, ok, _| ok }.map(&:first)
     raise "reference and simulation differ: #{failed.join(', ')} (traces in build/fpga/rom/)" unless failed.empty?
   end
 
@@ -477,33 +497,46 @@ namespace :fpga do
     endings = Hash.new(0)
     stats = Hash.new(0)
     gc_progs = 0
-    count.times do |i|
+    # program は親で rng の順に作る (seed ごとの program の列は1本ずつ回した時と同じ)。参照とシミュレーションを並べる
+    progs = Array.new(count) do |i|
       heap = i % 4 == 3 # 4本に1本はヒープ (配列・Proc・GC) を突く形
       words = heap ? FpgaFuzz.heap_program(rng) : FpgaFuzz.program(rng)
-      max = heap ? FpgaFuzz::HEAP_STEPS : 400
-      stim = FpgaFuzz.stim(rng)
-      hex = File.join(dir, "prog.hex")
+      [i, heap, words, heap ? FpgaFuzz::HEAP_STEPS : 400, FpgaFuzz.stim(rng)]
+    end
+    fpga_runner
+    fpga_runner(FpgaFuzz::HEAP_WORDS)
+    runs = FpgaParallel.map(progs) do |i, heap, words, max, stim|
+      hex = File.join(dir, "prog#{i}.hex")
       File.write(hex, FpgaFuzz.hex(words))
       stim_file = nil
       unless stim.empty?
-        stim_file = File.join(dir, "prog.stimsrc")
+        stim_file = File.join(dir, "prog#{i}.stimsrc")
         File.write(stim_file, stim.map { |r| r.join(" ") + "\n" }.join)
       end
       heap_size = heap ? FpgaFuzz::HEAP_WORDS : FpgaIsa::HEAP_SIZE # ヒープを突く形は小さいヒープで GC を何度も起こす
       vm = FpgaRefVm.new(words, stim: stim, heap_size: heap_size)
       ref = vm.run(max)
-      vm.stats.each { |k, v| stats[k] += v }
-      gc_progs += 1 if vm.gcs > 0
-      sim = fpga_sim_trace(hex, name: "fuzz", stim: stim_file, max: max, heap: heap ? FpgaFuzz::HEAP_WORDS : nil)
-      if ref != sim
+      sim = fpga_sim_trace(hex, name: "fuzz#{i}", stim: stim_file, max: max, heap: heap ? FpgaFuzz::HEAP_WORDS : nil)
+      same = ref == sim
+      File.delete(hex) if same
+      File.delete(stim_file) if same && stim_file
+      File.delete(*Dir[File.join(FPGA_ROM_DIR, "fuzz#{i}.*")]) if same
+      [vm.stats, vm.gcs, same ? nil : [ref, sim], ref.last.split.first]
+    end
+    runs.each_with_index do |(vstats, gcs, diff, ending), i|
+      if diff
+        ref, sim = diff
+        stim = progs[i][4]
         keep = File.join(dir, "fail_seed#{seed}_#{i}")
-        FileUtils.cp hex, "#{keep}.hex"
+        FileUtils.mv File.join(dir, "prog#{i}.hex"), "#{keep}.hex"
         File.write("#{keep}.ref.trace", ref.join("\n") + "\n")
         File.write("#{keep}.sim.trace", sim.join("\n") + "\n")
         File.write("#{keep}.stim", stim.map { |r| r.join(" ") + "\n" }.join)
         raise "fuzz: program #{i} (seed #{seed}) differs.\n#{FpgaCompare.divergence(ref, sim, nil)}\nkept in #{fpga_rel(keep)}.*"
       end
-      endings[ref.last.split.first] += 1
+      vstats.each { |k, v| stats[k] += v }
+      gc_progs += 1 if gcs > 0
+      endings[ending] += 1
     end
     puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
          "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{stats[:gc]} GC in #{gc_progs} program(s))\n" \
@@ -518,13 +551,16 @@ namespace :fpga do
     dir = File.join(FPGA_BUILD_DIR, "gap")
     FileUtils.rm_rf dir
     FileUtils.mkdir_p dir
-    results = FpgaGap.targets.map { |path| FpgaGap.check(path, mrbc: mrbc, dir: dir) }
-    # 変換できたものは参照とコアで走らせて突き合わせる
-    results.each do |r|
-      next unless r[:status] == :converted
-      ref = fpga_ref_trace(r[:hex], stim: nil, max: FPGA_DEFAULT_STEPS)
-      sim = fpga_sim_trace(r[:hex], name: "gap", stim: nil, max: FPGA_DEFAULT_STEPS)
-      r[:status] = FpgaCompare.compare(ref, sim).ok ? :matched : :differs
+    fpga_runner # 並べる前に親で1回だけ build する
+    # 1 本ごとに変換し、変換できたものは参照とコアで走らせて突き合わせる
+    results = FpgaParallel.map(FpgaGap.targets) do |path|
+      r = FpgaGap.check(path, mrbc: mrbc, dir: dir)
+      if r[:status] == :converted
+        ref = fpga_ref_trace(r[:hex], stim: nil, max: FPGA_DEFAULT_STEPS)
+        sim = fpga_sim_trace(r[:hex], name: "gap_#{File.basename(r[:hex], '.hex')}", stim: nil, max: FPGA_DEFAULT_STEPS)
+        r[:status] = FpgaCompare.compare(ref, sim).ok ? :matched : :differs
+      end
+      r
     end
     lines = []
     count = ->(st) { results.count { |r| r[:status] == st } }
@@ -626,8 +662,14 @@ end
 namespace :test do
   desc "Run the FPGA Ruby tools' tests (tools/fpga, no simulator needed)"
   task :fpga do
-    Dir[File.join(HARNESS_ROOT, "tools", "fpga", "*_test.rb")].sort.each do |test_file|
-      ruby test_file
+    # テストのファイルごとに ruby を並べて回す (FPGA_JOBS)。出力はファイルの名前の順にまとめて出す
+    tests = Dir[File.join(HARNESS_ROOT, "tools", "fpga", "*_test.rb")].sort
+    runs = FpgaParallel.threads(tests) do |test_file|
+      out, st = Open3.capture2e(RbConfig.ruby, test_file)
+      [test_file, out, st.success?]
     end
+    runs.each { |test_file, out, _| puts "#{RbConfig.ruby} #{test_file}", out }
+    failed = runs.reject { |_, _, ok| ok }.map { |test_file, _, _| File.basename(test_file) }
+    raise "tools/fpga tests failed: #{failed.join(', ')}" unless failed.empty?
   end
 end

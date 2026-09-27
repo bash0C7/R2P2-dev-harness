@@ -600,6 +600,8 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
 | `rake fpga:flash` | 最後の `fpga:build` を openFPGALoader で SRAM に書く。**実機では未確認** |
 
+**並べて回す (`FPGA_JOBS`)。** `test:fpga` (ファイルごと)、`fpga:corpus` / `corpus:check` (1 本ごとの mrbc と変換器)、`fpga:tb` ((tb, シミュレーター) ごと)、`fpga:check` / `fpga:gap` / `fpga:emu:check` (1 本ごと)、`fpga:fuzz` (1 本ごと。program は親が seed の rng の順に作るので、seed ごとの program の列と要約は1本ずつ回した時と同じ) は CPU の数だけ並べて回す (`tools/fpga/parallel.rb`)。本数は `FPGA_JOBS` (既定は CPU の数、1 ならその場で順に)。出力は1本ずつ回した時と同じ順にまとめて出す。シミュレーションの実行ファイル (mrb_run_tb、board_emu) は並べる前に親が build する。1つの rake の中で並べるので、同じ worktree で rake の check / gap / fuzz を2つ同時に走らせない (build の dir を取り合う) は変わらない
+
 `fpga:test` は `vendor/picoruby` 無しで回る (コーパスの `.mrb` と ROM を commit してあるため)。`rake test` には含まれない。
 picoruby (host VM) が要るのは変換器を走らせる `fpga:rom` / `fpga:run` / `fpga:build` / `fpga:corpus`、
 mrbc が要るのはそれらに `.rb` を直接渡した時と `fpga:corpus`。どちらも `rake setup` と `rake test:host` で出来る
@@ -1100,12 +1102,14 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
 ROM の空きは全 bit 1 (op 0xff = 未対応) で、プログラムの外へ出たコアはエラーで止まる。
 `rom_test.rb` がコーパス全部について、変換結果を `.dump` (`mrbc -v`) と1命令ずつ突き合わせる。
 
-**変換器は PicoRuby と CRuby の共通部分で書く。** 同じ file を CRuby からも読み (`tools/fpga/converter.rb`)、
+**変換器は mruby ソースコードで、PicoRuby と CRuby の共通部分で書く。** 同じ file を CRuby からも読み (`tools/fpga/converter.rb`)、
 参照インタプリタやテストが使う。`rom_test.rb` は、commit 済みの `.hex` `.lst` (PicoRuby の出力) と
 CRuby で走らせた結果が一致すること、境界の値 (負の相対ジャンプ、`LOADI32` の全 bit 1) で両者が一致することを見る。
 PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使えないもの:
 
-- `require` / `require_relative` が無い。複数の file は `picoruby a.rb,b.rb,c.rb` と `,` でつないで渡す
+- `require` / `require_relative` が無い。複数の file は `mrbc -o converter.mrb a.rb b.rb c.rb` で1つの .mrb (書いた順に1つの irep) にして渡す。
+  `picoruby a.rb,b.rb,c.rb` と `,` でつなぐと file ごとに別の task になって同時に走り、CPU が混んでいると後の file が前の file の定義より先に
+  走る (並べて回した `test:fpga` で `uninitialized constant FpgaIsa::CLASSES` が出た)
 - `Struct`、`File.binread`、`String#force_encoding`、`Array#sort_by` `#sum` `#tally` `#flat_map` が無い
 - Enumerator の連鎖 (`each_with_index.map`、`map.with_index`) は `fiber required for enumerator` で落ちる
 - 正規表現はキャプチャ (`$1`) が取れない。`String#split(/\s+/)` は `TypeError`
