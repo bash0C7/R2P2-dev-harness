@@ -40,6 +40,24 @@ module Kernel
 end
 
 class BasicObject
+  # == / equal? は同じものか (class.c の mrb_obj_equal_m、即値は値で)
+  def ==(o)
+    __fpga_tag(self) == __fpga_tag(o) && __fpga_int(self) == __fpga_int(o)
+  end
+
+  def equal?(o)
+    __fpga_tag(self) == __fpga_tag(o) && __fpga_int(self) == __fpga_int(o)
+  end
+
+  # != は == を送って反す (class.c の mrb_obj_not_equal_m)
+  def !=(o)
+    self == o ? false : true
+  end
+
+  def !
+    self ? false : true
+  end
+
   # 例外は V2d。それまでは止める (mruby は NoMethodError を上げる)
   def method_missing(name, *args)
     __fpga_halt
