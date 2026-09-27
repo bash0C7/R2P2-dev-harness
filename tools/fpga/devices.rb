@@ -1,4 +1,4 @@
-# CPU コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI) の参照モデル。docs/spec.md §10「デバイス (P5)」。
+# CPU コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI、PSG の列) の参照モデル。docs/spec.md §10「デバイス (P5)」。
 #
 # コアは primitive の __io_read(addr) / __io_write(addr, value) でデバイスのレジスタを読み書きする (16bit の番地、
 # 値は 32bit の Integer)。RTL (fpga/rtl/mrb_dev.sv) と参照インタプリタ (ref_vm.rb) と、CRuby での突き合わせ
@@ -57,6 +57,19 @@ module FpgaDevices
   I2C_PRESENT_DEFAULT = [0, 0x5000_0000, 0, 0].freeze # 0x3C (SSD1306) と 0x3E (AQM0802 の LCD)
   SPI_TX        = 0x190 # 1バイト送る
   SPI_RX        = 0x191 # 返事の次のバイト (刺激。無ければ 0xFF)
+  # PSG のパケットの列 (P5e、C の ports/common/psg.c の ring buffer と rp2040 port の psg_process_packets)。
+  # PSG そのもの (音) は FPGA の外。取り出したパケットはトレースの P 行になる
+  PSG_DELAY     = 0x1A0 # 次に積むパケットの遅延 (ms)
+  PSG_AUX       = 0x1A1 # 次に積むパケットの aux (16bit)
+  PSG_PUSH      = 0x1A2 # {op, reg, val, arg} を書くと積む (満杯か止めていれば捨てる)
+  PSG_FREE      = 0x1A3 # 空きの数 (止めていれば 0)
+  PSG_EMPTY     = 0x1A4 # 空なら 1。書くと列を捨てる (buffer_flush)
+  PSG_SELECT    = 0x1A5 # 出力 (0 止める、1 PWM、2 MCP4922)。書くと列と時計を初めから (C の reset_psg / deinit)
+  PSG_DIRECT_REG  = 0x1A6 # {reg, val} を列を通さずに (write_reg_direct)
+  PSG_DIRECT_MUTE = 0x1A7 # {tr, flag} を列を通さずに (mute_direct)
+  PSG_SLOTS     = 256 # 255 まで入る
+  PSG_OP_DIRECT_REG  = 0x80 # P 行の op (列を通さない書き込み)
+  PSG_OP_DIRECT_MUTE = 0x81
   # 刺激で与える番地 (レベル)
   LEVEL_INPUTS = [GPIO_EXT_LOW, GPIO_EXT_HIGH, *(ADC_BASE...ADC_BASE + ADC_INPUTS), *(I2C_PRESENT...I2C_PRESENT + 4)].freeze
   # 刺激で与える番地 (届いた順のバイトの列)
@@ -82,6 +95,7 @@ module FpgaDevices
       @levels = Hash.new { |h, k| h[k] = [] }
       stim.each { |st, a, v| @levels[a] << [st, v & MASK] if LEVEL_INPUTS.include?(a) }
       @caused = 0
+      @psg_out = [] # 取り出したパケット (再起動でも捨てない。トレースに出す)
       reset(0)
     end
 
@@ -97,13 +111,23 @@ module FpgaDevices
       @queue = []
       @last = nil # 前の tick のピンの値
       @wdt = nil  # [期限 (µs), ms]
+      psg_reset(0)
+      @psg_ms = nil # 前の tick の仮想の時計の ms
       @unreg = 0
     end
 
     attr_reader :pwm
 
+    # 取り出した (か、列を通さずに書いた) PSG のパケット [ms, {op, reg, val, arg}, aux] を取り出す (トレースの P 行)
+    def take_psg
+      out = @psg_out
+      @psg_out = []
+      out
+    end
+
     # 命令を始める前。vtime はそれまでの仮想の時計 (µs)。watchdog の期限を過ぎていれば :reboot
     def tick(step, vtime)
+      psg_tick(vtime / 1000)
       now = pin_levels(step)
       irq_events(now, (vtime & MASK) / 1000) if @last && @slots.any? # 時刻は C と同じく time_us_32() / 1000
       @last = now
@@ -111,6 +135,43 @@ module FpgaDevices
       @caused = 1
       reset(step)
       :reboot
+    end
+
+    # PSG の列を初めから (C の reset_psg。sel が 0 なら止めた状態 = rb.buf が無い)
+    def psg_reset(sel)
+      @psg_sel = sel
+      @psg_ring = [] # [遅延, {op, reg, val, arg}, aux]
+      @psg_g = 0     # g_tick_ms
+      @psg_due = false
+      @psg_delay = 0
+      @psg_aux = 0
+    end
+
+    # C は 1ms ごとの tick で g_tick_ms を進め、先頭の遅延が来たパケットを全部取り出す (空になったら g_tick_ms = 0)。
+    # ここは命令の区切りごとに1つずつ取り出す (ms の境を越えた tick から、取り出せなくなるまで)。取り出した時刻は
+    # C と同じ ms (まとめて進めた時は、遅延が来た ms = 今の ms - 残りの g)
+    def psg_tick(ms)
+      @psg_ms ||= ms
+      if ms > @psg_ms
+        @psg_g += ms - @psg_ms if @psg_sel != 0
+        @psg_ms = ms
+        @psg_due = true
+      end
+      return unless @psg_due && @psg_sel != 0
+      if @psg_ring.empty?
+        @psg_g = 0
+        @psg_due = false
+        return
+      end
+      delay, word, aux = @psg_ring[0]
+      if delay > @psg_g
+        @psg_due = false
+        return
+      end
+      @psg_g -= delay
+      @psg_ring.shift
+      @psg_out << [ms - @psg_g, word, aux]
+      @psg_g = 0 if @psg_ring.empty?
     end
 
     # RP2040 の gpio_irq_callback と同じ: ピンの事象を、そのピンで有効な mask の和で絞り、最初に重なる枠へ
@@ -210,6 +271,9 @@ module FpgaDevices
         @qp[addr] += 1
         b
       when WDT_REMAIN then @wdt ? [@wdt[0] - vtime, 0].max & MASK : 0
+      when PSG_FREE then @psg_sel.zero? ? 0 : PSG_SLOTS - 1 - @psg_ring.size
+      when PSG_EMPTY then @psg_ring.empty? ? 1 : 0
+      when PSG_SELECT then @psg_sel
       when RNG
         x = @rng
         x ^= (x << 13) & MASK
@@ -239,6 +303,14 @@ module FpgaDevices
         end
       when WDT_ENABLE, WDT_REBOOT then @wdt = [vtime + value * 1000, value]
       when WDT_DISABLE then @wdt = nil
+      when PSG_DELAY then @psg_delay = value
+      when PSG_AUX then @psg_aux = value & 0xFFFF
+      when PSG_PUSH
+        @psg_ring << [@psg_delay, value, @psg_aux] if @psg_sel != 0 && @psg_ring.size < PSG_SLOTS - 1
+      when PSG_EMPTY then @psg_ring.clear
+      when PSG_SELECT then psg_reset(value)
+      when PSG_DIRECT_REG then @psg_out << [(vtime / 1000) & MASK, (PSG_OP_DIRECT_REG << 24) | ((value & 0xFF00) << 8) | (value & 0xFF), 0]
+      when PSG_DIRECT_MUTE then @psg_out << [(vtime / 1000) & MASK, (PSG_OP_DIRECT_MUTE << 24) | ((value & 0xFF00) << 8) | (value & 0xFF), 0]
       when WDT_FEED then @wdt = [vtime + @wdt[1] * 1000, @wdt[1]] if @wdt
       end
     end

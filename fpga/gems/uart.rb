@@ -123,4 +123,9 @@ class UART
     @buf = ""
     self
   end
+
+  # 最後に読んだバイトを受けた時刻 (µs)。FPGA の UART は受けた時刻を持たないので nil (uart-midi は今の時刻を使う)
+  def last_read_timestamp_us
+    nil
+  end
 end

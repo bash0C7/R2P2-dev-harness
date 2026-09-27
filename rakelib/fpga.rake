@@ -394,6 +394,7 @@ end
 def fpga_show_outputs(trace)
   names = FpgaIoMap::PORTS.to_h { |p| [p.num, p.name] }
   FpgaCompare.outputs(trace).each { |port, v| puts "  #{names[port] || port} = #{v.inspect}" }
+  FpgaPsg.format_events(FpgaPsg.from_trace(trace)).each { |l| puts l } # PSG の音 (P 行)
   puts "  (#{trace.last})"
 end
 

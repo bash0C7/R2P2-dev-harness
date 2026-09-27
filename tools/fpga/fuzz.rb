@@ -80,10 +80,10 @@ module FpgaFuzz
       cls = CLASS_POOL.sample(random: rng)
       sym = rng.rand(NSYMS)
       tgt = case rng.rand(20)
-            when 0 then (FpgaIsa::TGT_IVAR << 14) | rng.rand(4)  # インスタンス変数 (attr_reader)。範囲外もある
-            when 1 then (FpgaIsa::TGT_IVSET << 14) | rng.rand(4) # attr_writer
+            when 0 then FpgaIsa.tgt(FpgaIsa::TGT_IVAR, rng.rand(4))  # インスタンス変数 (attr_reader)。範囲外もある
+            when 1 then FpgaIsa.tgt(FpgaIsa::TGT_IVSET, rng.rand(4)) # attr_writer
             when 2..8 then PROLOGUE + rng.rand(len - PROLOGUE)    # メソッド
-            else (FpgaIsa::TGT_PRIM << 14) | FUZZ_PRIMS.sample(random: rng)
+            else FpgaIsa.tgt(FpgaIsa::TGT_PRIM, FUZZ_PRIMS.sample(random: rng))
             end
       entries << [cls, sym, tgt]
     end
@@ -388,7 +388,8 @@ module FpgaFuzz
                                         encode(FpgaIsa.op("LOADI32"), 14, v >> 16, v & 0xFFFF))
           words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
         end
-      when 22 # IRQ と watchdog: 小さいピンを登録し、出力で上げ下げして事象を取る。ときどき解除、watchdog を数 ms で有効 / feed
+      when 22 # IRQ と watchdog: 小さいピンを登録し、出力で上げ下げして事象を取る。ときどき解除、watchdog を数 ms で有効 / feed。
+        # PSG の列: 選ぶ、小さい遅延で積む、空き・空かを読む、flush、列を通さない書き込み
         io_w = lambda do |addr, v|
           words << encode(FpgaIsa.op("LOADI16"), 13, addr, 0)
           words << encode(FpgaIsa.op("LOADI16"), 14, v, 0)
@@ -400,7 +401,7 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
         end
         pin = rng.rand(4)
-        case rng.rand(6)
+        case rng.rand(8)
         when 0
           io_w.(0x160, pin)
           io_w.(0x161, rng.rand(16))
@@ -416,6 +417,17 @@ module FpgaFuzz
         when 3
           io_w.(0x164, rng.rand(18))
           io_r.(0x165)
+        when 6
+          io_w.(0x1A5, rng.rand(4).zero? ? 0 : 1) if rng.rand(3).zero?
+          rng.rand(1..3).times do
+            io_w.(0x1A0, rng.rand(3))
+            io_w.(0x1A1, rng.rand(0x1000))
+            io_w.(0x1A2, rng.rand(0x10000))
+          end
+          io_r.([0x1A3, 0x1A4, 0x1A5].sample(random: rng))
+        when 7
+          io_w.([0x1A4, 0x1A6, 0x1A7].sample(random: rng), rng.rand(0x10000))
+          io_r.([0x1A3, 0x1A4].sample(random: rng))
         else
           io_w.([0x170, 0x172, 0x172, 0x171, 0x175].sample(random: rng), rng.rand(4))
           io_r.([0x173, 0x174].sample(random: rng))
@@ -656,7 +668,7 @@ module FpgaFuzz
       else w
       end
     end
-    prim = ->(name) { (FpgaIsa::TGT_PRIM << 14) | FpgaIsa.prim(name) }
+    prim = ->(name) { FpgaIsa.tgt(FpgaIsa::TGT_PRIM, FpgaIsa.prim(name)) }
     ary = FpgaIsa::CLS_ARRAY
     entries = [
       [ary, S[:push], prim.("PUSH")], [ary, S[:shl], prim.("APUSH")], [ary, S[:size], prim.("SIZE")],
@@ -682,11 +694,11 @@ module FpgaFuzz
       [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
       [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
       [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],
-      [P_CLS, S[:ia], (FpgaIsa::TGT_IVAR << 14) | 0], [P_CLS, S[:ib], (FpgaIsa::TGT_IVAR << 14) | 1],
-      [Q_CLS, S[:ic], (FpgaIsa::TGT_IVAR << 14) | 2],
+      [P_CLS, S[:ia], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0)], [P_CLS, S[:ib], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 1)],
+      [Q_CLS, S[:ic], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 2)],
       [P_CLS, FpgaIsa::OP_SYMS.index("initialize"), init_at], [P_CLS, S[:get], pget_at], [Q_CLS, S[:get], qget_at],
-      [P_CLS, S[:geta], (FpgaIsa::TGT_IVAR << 14) | 0], [P_CLS, S[:getb], (FpgaIsa::TGT_IVAR << 14) | 1],
-      [P_CLS, S[:setb], (FpgaIsa::TGT_IVSET << 14) | 1],
+      [P_CLS, S[:geta], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0)], [P_CLS, S[:getb], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 1)],
+      [P_CLS, S[:setb], FpgaIsa.tgt(FpgaIsa::TGT_IVSET, 1)],
       [FpgaIsa::CLS_OBJECT, S[:isa], prim.("ISA")], [FpgaIsa::CLS_OBJECT, S[:respond], prim.("RESPOND")],
       [FpgaIsa::ISA_BIT | P_CLS, P_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, Q_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, P_CLS, 1]
     ]

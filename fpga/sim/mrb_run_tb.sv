@@ -18,7 +18,7 @@ module mrb_run_tb;
   import mrb_pkg::*;
   parameter int HEAP_WORDS = HEAP_SIZE; // ファズは小さいヒープで GC を突く (rake が -G で渡す)
 
-  localparam int PC_BITS  = 14;
+  localparam int PC_BITS  = 15;
   localparam int NREGS    = RF_SIZE; // 参照インタプリタ (ref_vm.rb) と同じ大きさ
   localparam int MAX_STIM = 256;
 
@@ -120,6 +120,9 @@ endtask
       if (dut.core.io_we)
         $fdisplay(fd, "O %0d %0d %0d %h", cur, dut.core.io_addr,
                   dut.core.io_wdata[VAL_BITS-1 -: TAG_BITS], dut.core.io_wdata[INT_BITS-1:0]);
+      // PSG の列から取り出したパケット (tick は命令を始める前なので次の命令の step)、列を通さない書き込みは O 行の後
+      if (dut.dev.psg_ev)
+        $fdisplay(fd, "P %0d %0d %h %h", dut.dev.psg_ev_tick ? step : cur, dut.dev.psg_ev_ms, dut.dev.psg_ev_word, dut.dev.psg_ev_aux);
       if (dut.core.error) begin
         $fdisplay(fd, "E %0d %0d %h", cur, dut.core.dbg_pc, dut.core.dbg_op);
         finish();

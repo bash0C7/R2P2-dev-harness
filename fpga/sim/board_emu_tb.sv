@@ -14,6 +14,7 @@
 //                  デバイス (mrb_dev.sv) の GPIO のピンの値の変化は "GPIO<n>"、UART の送信は1バイトずつ "UART"、
 //                  PWM の設定の変化は "PWM<n>" (周波数 mHz) と "PWMDUTY<n>" (1/1000 %)、watchdog の再起動は "REBOOT"、
 //                  I2C の番地・送ったバイト・終わりは "I2CADDR" "I2C" "I2CSTOP"、SPI で送ったバイトは "SPI" (表示器は emu.rb が組み立てる)
+//                  PSG の出力の選択は "PSGSEL"、列から取り出したパケットは "PSG" と "PSGAUX" (音は emu.rb が組み立てる)
 //   +button=<file> ボタン操作。1行 "<ms> <0|1>" (1 = 押す。D[0] を GND に落とす)
 //   +dump=<fst>    波形 (長い時間を回すと大きくなる)
 `timescale 1ns / 1ps
@@ -81,10 +82,16 @@ module board_emu_tb;
           16'h181: $fdisplay(fd, "%0d I2C %0d", now_us(), dut.soc.io_wdata[7:0]);
           16'h183: $fdisplay(fd, "%0d I2CSTOP 0", now_us());
           16'h190: $fdisplay(fd, "%0d SPI %0d", now_us(), dut.soc.io_wdata[7:0]);
+          16'h1A5: $fdisplay(fd, "%0d PSGSEL %0d", now_us(), dut.soc.io_wdata[31:0]);
           default: ;
         endcase
       end
       if (dut.soc.tx_valid && dut.soc.en) $fdisplay(fd, "%0d UART %0d", now_us(), dut.soc.tx_byte);
+      // PSG の列から取り出したパケット ({op, reg, val, arg} と aux。音は emu.rb が psg_decode.rb で組み立てる)
+      if (dut.soc.dev.psg_ev) begin
+        $fdisplay(fd, "%0d PSG %0d", now_us(), dut.soc.dev.psg_ev_word);
+        $fdisplay(fd, "%0d PSGAUX %0d", now_us(), dut.soc.dev.psg_ev_aux);
+      end
       if (dut.soc.halted && !halted_q) $fdisplay(fd, "%0d HALT %0d", now_us(), dut.soc.core.pc);
       if (dut.soc.error && !error_q) $fdisplay(fd, "%0d ERROR %0d", now_us(), dut.soc.core.pc);
       led_q = led;

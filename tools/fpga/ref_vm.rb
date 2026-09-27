@@ -126,7 +126,9 @@ class FpgaRefVm
         break
       end
       # 命令を始める前にデバイスが見る (IRQ の事象、watchdog)。期限を過ぎていれば再起動して pc 0 から
-      if @dev.tick(step, vtime(step, false)) == :reboot
+      rebooting = @dev.tick(step, vtime(step, false)) == :reboot
+      psg_lines(step) # PSG の列から取り出したもの (再起動の tick でも、B 行より先)
+      if rebooting
         @trace << "B #{step}"
         @stats[:reboot] += 1
         boot(step)
@@ -243,10 +245,10 @@ class FpgaRefVm
     @regs[@bp + s + 1] = e.a1
     @regs[@bp + s + 2] = e.a2
     r = lookup(FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"))
-    return :error unless r && (r[0] >> 14) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH
+    return :error unless r && FpgaIsa.tgt_kind(r[0]) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH
     @call_kw = 0
     frame(pc, s, 2, false, r[1])
-    r[0] & 0x3FFF
+    FpgaIsa.tgt_value(r[0])
   end
 
   # ---- タスク (docs/spec.md §10「Task (P6)」)。区画ごとにレジスタとコールスタックを持ち、切り替えは小さな状態を入れ替えるだけ
@@ -255,12 +257,12 @@ class FpgaRefVm
   # 割り込みの間は tick を止める。呼べなければ (表に無い、区画かスタックが足りない) nil
   def task_call(pc, sym, recv)
     r = lookup(FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index(sym))
-    return nil unless r && (r[0] >> 14) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH && @bp + @fn + 2 < @rlim
+    return nil unless r && FpgaIsa.tgt_kind(r[0]) == FpgaIsa::TGT_PC && @stack.size < FpgaIsa::STACK_DEPTH && @bp + @fn + 2 < @rlim
     @tlock = true
     @regs[@bp + @fn] = recv
     @call_kw = 0
     frame(pc - 1, @fn, 0, false, r[1], true)
-    r[0] & 0x3FFF
+    FpgaIsa.tgt_value(r[0])
   end
 
   # 一番外の終わり (STOP、スタックが空の戻り)。タスクがあれば止まる前に __task_main_end (残りのタスクを走らせ、終わったら
@@ -657,15 +659,15 @@ class FpgaRefVm
       # (self のクラス, @名前) を引く。無ければ nil
       r = lookup(class_of(@regs[@bp]), b)
       if r
-        fault! unless (r[0] >> 14) == FpgaIsa::TGT_IVAR
-        set(step, a, @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)])
+        fault! unless FpgaIsa.tgt_kind(r[0]) == FpgaIsa::TGT_IVAR
+        set(step, a, @heap[ivar_addr(@regs[@bp], FpgaIsa.tgt_value(r[0]))])
       else
         set(step, a, NIL)
       end
     when "SETIV"
       r = lookup(class_of(@regs[@bp]), b)
-      fault! unless r && (r[0] >> 14) == FpgaIsa::TGT_IVAR
-      @heap[ivar_addr(@regs[@bp], r[0] & 0x3FFF)] = reg(a) # ヒープへの書き込みはトレースに出さない
+      fault! unless r && FpgaIsa.tgt_kind(r[0]) == FpgaIsa::TGT_IVAR
+      @heap[ivar_addr(@regs[@bp], FpgaIsa.tgt_value(r[0]))] = reg(a) # ヒープへの書き込みはトレースに出さない
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "LOADF"
       # Float のリテラル: ROM のデータの2語 (上位 32bit、下位 32bit) から箱を作る
@@ -894,8 +896,8 @@ class FpgaRefVm
   # 見つかった飛び先へ: メソッド (フレームを作る)、primitive、インスタンス変数の読み書き (attr_*)
   def dispatch(step, pc, a, argc, blk, t, found)
     @stats[:found] += 1
-    tgt = t & 0x3FFF
-    case t >> 14
+    tgt = FpgaIsa.tgt_value(t)
+    case FpgaIsa.tgt_kind(t)
     when FpgaIsa::TGT_PRIM then prim(step, pc, tgt, a, argc, blk)
     when FpgaIsa::TGT_PC
       frame(pc, a, argc, blk, found)
@@ -1224,6 +1226,18 @@ class FpgaRefVm
     end
     x = reg(a)
     case name
+    when "OBJID"
+      id = case x[0]
+           when FpgaIsa::TAG_INT then int(x[1] * 2 + 1)
+           when FpgaIsa::TAG_NIL then int(8)
+           when FpgaIsa::TAG_TRUE then int(20)
+           when FpgaIsa::TAG_FALSE then int(0)
+           when FpgaIsa::TAG_SYM then int((x[1] << 8) | 12)
+           when FpgaIsa::TAG_CLASS then int((x[1] << 8) | 28)
+           else NIL
+           end
+      set(step, a, id)
+      return pc + 1
     when "SYMAT"
       # シンボル表 (TABLE の c から、メソッド表の前まで) の x 番目
       fault! unless int?(x)
@@ -1286,6 +1300,14 @@ class FpgaRefVm
 
   # __io_read(addr) / __io_write(addr, value): 番地 0..3 は GETGV / SETGV と同じポート、0x100 から上はデバイス
   # (devices.rb)。書き込みはトレースの O 行 (ポート番号 = 番地)。デバイスには Integer だけを書ける
+  # PSG の列から取り出したパケット: P <step> <ms> <{op, reg, val, arg}> <aux>
+  def psg_lines(step)
+    @dev.take_psg.each do |ms, word, aux|
+      @stats[:psg] += 1
+      @trace << format("P %d %d %08x %04x", step, ms & MASK, word & MASK, aux)
+    end
+  end
+
   def io_prim(step, pc, name, a)
     addr = reg(a + 1)
     fault! unless int?(addr) && addr[1] < 0x10000
@@ -1310,6 +1332,7 @@ class FpgaRefVm
     @dev.write(n, v[1], vtime(step, true)) if FpgaDevices.device?(n)
     set(step, a, v) # RTL と同じく W 行が先
     @trace << format("O %d %d %d %08x", step, n, v[0], v[1])
+    psg_lines(step)
     pc + 1
   end
 
@@ -1520,9 +1543,9 @@ class FpgaRefVm
     set(step, a, [FpgaIsa::TAG_OBJ, p])
     init = lookup(id, FpgaIsa::OP_SYMS.index("initialize"))
     return pc + 1 unless init
-    fault! unless (init[0] >> 14) == FpgaIsa::TGT_PC
+    fault! unless FpgaIsa.tgt_kind(init[0]) == FpgaIsa::TGT_PC
     frame(pc, a, argc, blk, init[1], true)
-    init[0] & 0x3FFF
+    FpgaIsa.tgt_value(init[0])
   end
 
   def builtin(step, name, a, argc)

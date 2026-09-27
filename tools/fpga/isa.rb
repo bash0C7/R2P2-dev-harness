@@ -88,7 +88,7 @@ module FpgaIsa
   #   KARG KEY_P KEYEND  キーワード引数の Hash (R[len+1]) のメソッドの呼び出し。キーワード付きの SEND も下げる (rom.rb の kw_lowered)
   #   ALIAS         クラスの本体の alias は表の行 (静的に足す)。命令は NOP
   LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL HASH HASHADD HASHCAT RANGE_INC RANGE_EXC
-                KARG KEY_P KEYEND ALIAS].freeze
+                KARG KEY_P KEYEND ALIAS OCLASS SCLASS].freeze
 
   # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
   # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
@@ -99,12 +99,30 @@ module FpgaIsa
   ISA_BIT = 0x4000
   # (クラス, NAME_SYM) の飛び先はクラスの名前のシンボルの番号 (Module#name)
   NAME_SYM = 0xFFFD
-  # 飛び先の上位 2bit: 0 = メソッドの先頭 pc、1 = primitive の番号 (下の PRIMS)、
-  # 2 = インスタンス変数の番号 (GETIV / SETIV、attr_reader)、3 = インスタンス変数の番号 (attr_writer: R[a+1] を書いて返す)
+  # 飛び先の種類は上位の bit で: 0xxx = メソッドの先頭 pc (15bit)、10xx = primitive の番号 (14bit、下の PRIMS)、
+  # 110x = インスタンス変数の番号 (13bit。GETIV / SETIV、attr_reader)、111x = インスタンス変数の番号 (attr_writer: R[a+1] を書いて返す)
   TGT_PC    = 0
   TGT_PRIM  = 1
   TGT_IVAR  = 2
   TGT_IVSET = 3
+  TGT_PREFIX = [0x0000, 0x8000, 0xC000, 0xE000].freeze
+
+  # 種類と値から飛び先の 16bit
+  def self.tgt(kind, value)
+    TGT_PREFIX[kind] | value
+  end
+
+  def self.tgt_kind(t)
+    if t < 0x8000 then TGT_PC
+    elsif t < 0xC000 then TGT_PRIM
+    elsif t < 0xE000 then TGT_IVAR
+    else TGT_IVSET
+    end
+  end
+
+  def self.tgt_value(t)
+    t & [0x7FFF, 0x3FFF, 0x1FFF, 0x1FFF][tgt_kind(t)]
+  end
   # 親クラスをたどる段数の上限 (ランダムな表で輪になっても止まるように)
   MAX_SUPER_DEPTH = 32
 
@@ -170,7 +188,10 @@ module FpgaIsa
     # 動的な呼び出し (P7): __send(名前, 引数...) は名前の Symbol を外して、残りの引数でそのメソッドを呼ぶ
     ["Object", "__send", -1, "DSEND"],
     # シンボル表の i 番目の Symbol (表の外は nil)。String#to_sym がプログラムのシンボルを探すのに使う
-    ["Integer", "__sym_at", 0, "SYMAT"]
+    ["Integer", "__sym_at", 0, "SYMAT"],
+    # object_id の数 (P5e)。即値だけ (Integer 2n+1、nil 8、true 20、false 0、Symbol s<<8|12、クラス c<<8|28)、
+    # ヒープのオブジェクトは nil (コピー GC で動くので決まった数を持てない)
+    ["Object", "__object_id", 0, "OBJID"]
   ].freeze
 
   def self.prim(const_name)
@@ -259,8 +280,8 @@ module FpgaIsa
   RF_SIZE     = 128 # タスク1つの区画のレジスタの数
   TASKS       = 8   # 区画の数 (タスクの数の上限。main を含む)
   STACK_DEPTH = 32 # コールスタックの段 (区画ごと)
-  NCONST      = 64
-  PC_BITS     = 14
+  NCONST      = 256
+  PC_BITS     = 15
 
   def self.op(name_or_num)
     o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]

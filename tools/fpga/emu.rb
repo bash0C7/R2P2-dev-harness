@@ -2,10 +2,12 @@
 # 参照インタプリタ (ref_vm.rb) と LED の変化の系列を突き合わせる。rake fpga:emu が使う。
 #
 # ログは1行 "<us> <what> <value>"。what は LED / LED2 / GPIO<n> / UART (送ったバイト) / PWM<n> (mHz) / PWMDUTY<n> (1/1000 %) /
-# REBOOT (watchdog) / I2CADDR / I2C / I2CSTOP / SPI (表示器は displays.rb が組み立てて最後に出す) / BUTTON / HALT / ERROR / END。
+# REBOOT (watchdog) / I2CADDR / I2C / I2CSTOP / SPI (表示器は displays.rb が組み立てて最後に出す) / PSGSEL / PSG / PSGAUX
+# (PSG の音は psg_decode.rb が組み立てて最後に出す) / BUTTON / HALT / ERROR / END。
 require_relative "converter"
 require_relative "compare"
 require_relative "displays"
+require_relative "psg_decode"
 
 module FpgaEmu
   DEFAULT_MHZ = 125 # Raspberry Pi Pico と同じ
@@ -35,7 +37,23 @@ module FpgaEmu
     [ce_div / k, k]
   end
 
-  BUS = %w[I2CADDR I2C I2CSTOP SPI].freeze
+  BUS = %w[I2CADDR I2C I2CSTOP SPI PSGSEL PSG PSGAUX].freeze
+
+  # PSG の列から取り出したパケットから、声ごとの音の変わり目 (時刻は µs)
+  def psg_events(events)
+    chip = FpgaPsg::Chip.new
+    word = nil
+    events.each do |e|
+      case e.what
+      when "PSGSEL" then chip.select(e.us)
+      when "PSG" then word = e.value
+      when "PSGAUX"
+        chip.apply(e.us, word, e.value) if word
+        word = nil
+      end
+    end
+    chip.events
+  end
 
   # I2C / SPI の書き込みと GPIO の出力の値から、displays.rb の列を作る
   def display_events(events)
@@ -71,7 +89,7 @@ module FpgaEmu
       out << format_event(e)
     end
     lines = out.compact.map { |x| x.is_a?(Array) ? format("%8.3f s  uart   %s", x[0] / 1_000_000.0, x[1].inspect) : x }
-    lines + FpgaDisplays.format(FpgaDisplays.decode(display_events(events)))
+    lines + FpgaPsg.format_events(psg_events(events), unit: :us) + FpgaDisplays.format(FpgaDisplays.decode(display_events(events)))
   end
 
   def format_event(e)

@@ -104,8 +104,8 @@ module FpgaRom
           next if w.value == PAD
           out << "# method table (#{table_size} words)\n" if out.index("# method table").nil?
           cls = (w.op << 8) | w.a
-          kind = w.c >> 14
-          tgt = w.c & 0x3FFF
+          kind = FpgaIsa.tgt_kind(w.c)
+          tgt = FpgaIsa.tgt_value(w.c)
           isa = (cls & FpgaIsa::ISA_BIT) != 0
           what = if w.b == FpgaIsa::SUPER_SYM then "super #{w.c}"
                  elsif w.b == FpgaIsa::NIVARS_SYM then "ivars #{w.c}"
@@ -371,7 +371,8 @@ module FpgaRom
   #   class_at / exec_at: CLASS / EXEC の場所 -> クラス / 本体の irep。consts: 定数の名前 (字句の path) -> 番号
   class Context
     attr_reader :source, :decoded, :classes, :scope, :bodies, :parents, :class_at, :exec_at, :consts, :const_keys,
-                :method_names, :noops, :aliases, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value, :floats, :float_at
+                :method_names, :noops, :aliases, :cref, :globals, :strings, :string_at, :class_deps, :body_class, :class_value, :floats, :float_at,
+                :meta_irep, :civ
     attr_accessor :class_live # クラスの番号 -> メソッド表に行を置くか (live_classes)
     attr_accessor :live # irep の番号 -> ROM に置くか (live_ireps)
     attr_accessor :lambdas # lambda にするブロックの irep の番号 -> true
@@ -407,6 +408,8 @@ module FpgaRom
       @class_value = {} # クラスの番号 -> 値として現れ得るか (live_classes)
       @body_class = {} # クラスの本体の irep の番号 -> そのクラス
       @class_deps = {} # 親クラス・入れ物・include の引数の定数の場所 -> それを使うクラス (そのクラスが生きていれば生きる)
+      @meta_irep = {}  # 特異メソッド (def self.x、class << self の中の def) と class << self の本体の irep の番号 -> true
+      @civ = {}        # クラスの (特異メソッドと本体の) インスタンス変数の場所 -> 定数の名前 ("Cls::@x")
       FpgaIsa::OP_SYMS.each { |s| sym_id(s) } # 演算の落ち先は固定の番号
     end
 
@@ -617,6 +620,7 @@ module FpgaRom
         when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM"
           use.call(ir.syms[ops[1]])
           use.call("to_proc") if sym_block_slot(insn, ir, k, ctx)
+          use.call("__const_str") if defined_const(insn, ir, k, ctx) == true
           nk = insn.name == "LOADSYM" || insn.name.end_with?("0") ? 0 : ops[2] >> 4
           use.call(nk == 15 ? "empty?" : "__to_hash") if nk > 0
         when "SUPER"
@@ -646,7 +650,7 @@ module FpgaRom
         when "TDEF", "SDEF"
           owner = ctx.scope[ir.index]
           # def self.x はクラスの値が、def x はオブジェクトができ得る時だけ
-          next unless insn.name == "SDEF" ? mrecv[owner.id] : recv[owner.id]
+          next unless insn.name == "SDEF" || ctx.meta_irep[ir.index] ? mrecv[owner.id] : recv[owner.id]
           m = ir.reps[ops[2]].index
           name = ir.syms[ops[1]]
           if used[name]
@@ -725,6 +729,7 @@ module FpgaRom
     i -= 1 while i >= 0 && !(insns[i].operands[0] == reg && !%w[SETGV SETCONST SETMCNST SETIV JMP JMPIF JMPNOT JMPNIL].include?(insns[i].name))
     return nil if i < 0
     d = insns[i]
+    return "" if d.name == "OCLASS" # ::X (一番外)
     sym = irep.syms[d.operands[1]]
     if d.name == "GETCONST"
       ctx.lexical_names(ctx.cref[irep.index], sym).each do |n|
@@ -734,6 +739,7 @@ module FpgaRom
     end
     return nil unless d.name == "GETMCNST"
     base = const_path(ctx, irep, insns, i, d.operands[0])
+    return sym if base == ""
     base && ctx.klass_named(base) ? "#{base}::#{sym}" : nil
   end
 
@@ -796,7 +802,13 @@ module FpgaRom
         end
       when "TDEF"
         m = irep.reps[ops[2]]
-        scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
+        if ctx.meta_irep[irep.index] && ctx.bodies[irep.index]
+          # class << self の中の def は特異メソッド
+          scope.meta_methods[irep.syms[ops[1]]] = m
+          ctx.meta_irep[m.index] = true
+        else
+          scope.methods[irep.syms[ops[1]]] = m # 後の定義が勝つ (静的に決める)
+        end
         ctx.method_names[m.index] = irep.syms[ops[1]]
         analyze(m, scope, ctx, cref)
       when "ALIAS"
@@ -817,8 +829,23 @@ module FpgaRom
         end
         m = irep.reps[ops[2]]
         scope.meta_methods[irep.syms[ops[1]]] = m
+        ctx.meta_irep[m.index] = true
         ctx.method_names[m.index] = irep.syms[ops[1]]
         analyze(m, scope, ctx, cref)
+      when "SCLASS"
+        # class << self (クラスの本体で): 本体の def は特異メソッド。実行時は self のまま本体を走らせる (SCLASS は何もしない)
+        d = prev_def(insns, k, ops[0])
+        j = k + 1
+        unless ctx.bodies[irep.index] && d && d.name == "LOADSELF" && j < insns.size && insns[j].name == "EXEC" &&
+               insns[j].operands[0] == ops[0]
+          raise Error, "#{source}: class << at #{where(irep, insn)} is only supported as `class << self` in a class body"
+        end
+        body = irep.reps[insns[j].operands[1]]
+        ctx.exec_at[site_key(irep, j)] = body
+        ctx.bodies[body.index] = true
+        ctx.body_class[body.index] = scope
+        ctx.meta_irep[body.index] = true
+        analyze(body, scope, ctx, cref)
       when "BLOCK", "LAMBDA"
         block = irep.reps[ops[1]]
         ctx.parents[block.index] = irep
@@ -888,10 +915,17 @@ module FpgaRom
         end
       when "GETIV", "SETIV"
         name = irep.syms[ops[1]]
-        if ctx.bodies[irep.index]
-          raise Error, "#{source}: #{name} in a class body at #{where(irep, insn)} (class-level instance variables are not supported)"
+        if ctx.bodies[irep.index] || meta_context?(ctx, irep)
+          # クラスのインスタンス変数 (本体と特異メソッドの self はクラス): クラスごとの定数 (始めに nil) にする
+          key = "#{scope.name}::#{name}"
+          unless ctx.globals.include?(key)
+            ctx.globals << key
+            ctx.const_slot(key, key)
+          end
+          ctx.civ[site_key(irep, k)] = key
+        else
+          scope.add_ivar(name)
         end
-        scope.add_ivar(name)
       when "SETCV"
         scope.cvars << irep.syms[ops[1]] unless scope.cvars.include?(irep.syms[ops[1]])
       when "SUPER"
@@ -899,6 +933,16 @@ module FpgaRom
         raise Error, "#{source}: super outside a method at #{where(irep, insn)}" unless ctx.method_names[irep.index]
       end
     end
+  end
+
+  # irep (かそれを囲むブロック) が特異メソッドか class << self の本体か (self がクラス)
+  def self.meta_context?(ctx, irep)
+    cur = irep
+    while cur
+      return true if ctx.meta_irep[cur.index]
+      cur = ctx.parents[cur.index]
+    end
+    false
   end
 
   # include したモジュールごとに iclass を作り、探索の親の輪を C -> iclass (後に include したものが先) -> 元の親 にする
@@ -993,6 +1037,19 @@ module FpgaRom
     false
   end
 
+  # defined?(X) (PicoRuby の compiler は self.__defined_const?(:X) にする) の X: クラスかモジュールなら true、
+  # 知らない名前なら false。クラスでない定数は実行時まで決まらないので nil (変換で止める)。形でなければ :none
+  def self.defined_const(insn, ir, k, ctx)
+    return :none unless insn.name == "SSEND" && ir.syms[insn.operands[1]] == "__defined_const?" && (insn.operands[2] & 0xFF) == 1 && k > 0
+    prev = ctx.decoded[ir.index][k - 1]
+    return :none unless prev.name == "LOADSYM" && prev.operands[0] == insn.operands[0] + 1
+    name = ir.syms[prev.operands[1]]
+    names = ctx.lexical_names(ctx.cref[ir.index] || [], name)
+    return true if names.any? { |n| ctx.klass_named(n) }
+    return nil if names.any? { |n| ctx.const_keys[n] }
+    false
+  end
+
   # &:sym の形 (キーワード引数の無い SENDB / SSENDB で、直前の LOADSYM がブロックの枠を埋めた) ならブロックの枠、ほかは nil
   def self.sym_block_slot(insn, ir, k, ctx)
     return nil unless (insn.name == "SENDB" || insn.name == "SSENDB") && (insn.operands[2] >> 4).zero? && k > 0
@@ -1015,6 +1072,13 @@ module FpgaRom
     end
     kw = kw_lowered(insn, ir, pc, ctx)
     return kw if kw
+    # defined?(X): クラスかモジュールなら "constant" (Object#__const_str)、知らない名前なら nil
+    dc = defined_const(insn, ir, k, ctx)
+    if dc != :none
+      raise Error, "#{ctx.source}: defined?(#{ir.syms[ctx.decoded[ir.index][k - 1].operands[1]]}) of a constant that is not a class is not supported" if dc.nil?
+      return [["SSEND0", insn.operands[0], ctx.sym_id("__const_str"), 0]] if dc
+      return [["LOADNIL", insn.operands[0], 0, 0]]
+    end
     # &:sym (P7): ブロックの枠を LOADSYM で埋めた直後の SENDB は、先に枠へ to_proc を送る (mruby の OP_SENDB が
     # Proc でないブロックに to_proc を送るのと同じ。回路は呼び出しの途中でもう1つ呼べないので変換器が足す)
     slot = sym_block_slot(insn, ir, k, ctx)
@@ -1110,7 +1174,7 @@ module FpgaRom
       next unless ctx.symbols.key?(pr[1])
       k = ctx.klass_named(pr[0])
       next if k.methods[pr[1]]
-      entries << [k.id, ctx.symbols[pr[1]], (FpgaIsa::TGT_PRIM << 14) | i]
+      entries << [k.id, ctx.symbols[pr[1]], FpgaIsa.tgt(FpgaIsa::TGT_PRIM, i)]
     end
     # 親クラスへの輪。メタクラスは本当の親のメタクラスへ、Object のメタクラスは Class へ
     ctx.classes.each do |k|
@@ -1130,14 +1194,14 @@ module FpgaRom
       if k.origin
         layout = ivar_layout(ctx, k.owner) # include したクラスの並びでの番号
         (k.origin.ivar_names + k.origin.attrs.keys.map { |a| "@#{a}" }).uniq.each do |n|
-          entries << [k.id, ctx.sym_id(n), (FpgaIsa::TGT_IVAR << 14) | layout.index(n)] if layout.index(n)
+          entries << [k.id, ctx.sym_id(n), FpgaIsa.tgt(FpgaIsa::TGT_IVAR, layout.index(n))] if layout.index(n)
         end
         attr_entries(ctx, k, k.origin.attrs, layout, entries)
         next
       end
       layout = ivar_layout(ctx, k)
       parent = ivar_layout(ctx, k.real_super_id ? ctx.klass_id(k.real_super_id) : nil)
-      (layout - parent).each { |n| entries << [k.id, ctx.sym_id(n), (FpgaIsa::TGT_IVAR << 14) | layout.index(n)] }
+      (layout - parent).each { |n| entries << [k.id, ctx.sym_id(n), FpgaIsa.tgt(FpgaIsa::TGT_IVAR, layout.index(n))] }
       attr_entries(ctx, k, k.attrs, layout, entries)
       entries << [k.id, FpgaIsa::NIVARS_SYM, layout.size] unless layout.empty?
     end
@@ -1160,8 +1224,8 @@ module FpgaRom
     attrs.each do |name, mode|
       slot = layout.index("@#{name}")
       next unless slot
-      entries << [k.id, ctx.sym_id(name), (FpgaIsa::TGT_IVAR << 14) | slot] if mode.include?("r")
-      entries << [k.id, ctx.sym_id("#{name}="), (FpgaIsa::TGT_IVSET << 14) | slot] if mode.include?("w")
+      entries << [k.id, ctx.sym_id(name), FpgaIsa.tgt(FpgaIsa::TGT_IVAR, slot)] if mode.include?("r")
+      entries << [k.id, ctx.sym_id("#{name}="), FpgaIsa.tgt(FpgaIsa::TGT_IVSET, slot)] if mode.include?("w")
     end
   end
 
@@ -1230,6 +1294,12 @@ module FpgaRom
       return Word.new(pc, insn, FpgaIsa.op(name == "GETCV" ? "GETCONST" : "SETCONST").num, a, slot, 0, irep)
     end
 
+    # クラスのインスタンス変数: クラスごとの定数
+    key = ctx.civ[site_key(irep, k)]
+    return Word.new(pc, insn, FpgaIsa.op(name == "GETIV" ? "GETCONST" : "SETCONST").num, a, ctx.consts.fetch(key), 0, irep) if key
+    return Word.new(pc, insn, FpgaIsa.op("NOP").num, 0, 0, 0, irep) if name == "SCLASS" # class << self
+    return Word.new(pc, insn, FpgaIsa.op("CLASS").num, a, FpgaIsa::CLS_OBJECT, 0, irep) if name == "OCLASS" # ::X の入れ物
+
     # インスタンス変数: b = @名前 のシンボルの番号 (実行時に self のクラスで番号を引く)
     b = ctx.sym_id(irep.syms[ops[1]]) if name == "GETIV" || name == "SETIV"
 
@@ -1247,8 +1317,8 @@ module FpgaRom
     # A::X: 入れ物を GETCONST / GETMCNST の連なりから解き、クラスならその即値、定数なら番号
     if name == "GETMCNST" || name == "SETMCNST"
       base = const_path(ctx, irep, ctx.decoded[irep.index], k, name == "GETMCNST" ? a : a + 1)
-      full = base ? "#{base}::#{irep.syms[b]}" : nil
-      unless full && ctx.klass_named(base)
+      full = base == "" ? irep.syms[b] : (base ? "#{base}::#{irep.syms[b]}" : nil)
+      unless full && (base == "" || ctx.klass_named(base))
         raise Error, "#{source}: #{name} at #{where(irep, insn)} looks in something that is not a known class or module"
       end
       kl = ctx.klass_named(full)

@@ -669,7 +669,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **`STOP` と、一番外側の `RETURN` / `RETNIL` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
 - **`*` `/` `%` は Ruby と同じく floor 側に丸める** (`-7 / 2 = -4`、`-7 % 3 = 2`)。0 で割るとエラー。
   `INT_MIN / -1` は折り返して `INT_MIN`。シフトは 32 以上ずらすと 0 (右は符号)、負の量は逆向き
-- **定数 (`GETCONST` `SETCONST`) は 64 個まで (一般のグローバル変数とクラス変数も同じ表)。** 名前は変換時に字句の入れ子
+- **定数 (`GETCONST` `SETCONST`) は 256 個まで (一般のグローバル変数、クラス変数、クラスのインスタンス変数も同じ表)。** 名前は変換時に字句の入れ子
   (Ruby の cref: `module A; class B` の中なら `A::B::X`、`A::X`、`X`。`class A::B` の中なら `A::B::X`、`X`) の順に探して番号にする。
   クラスの名前なら `CLASS` (クラスの即値) にする。代入前に読むとエラー。親クラスの定数は探さない
 - **`A::X` (`GETMCNST` / `SETMCNST`) と `class A::B`** は、入れ物を直前の `GETCONST` / `GETMCNST` の連なりから静的に解く。
@@ -691,8 +691,8 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 - **クラスの番号。** 組み込みは固定 (`CLASSES`: Object 1、NilClass 2、TrueClass 3、FalseClass 4、Integer 5、Symbol 6、
   Array 7、Proc 8、Class 9、Module 10 ...)、プログラムのクラスとモジュールは 32 から。クラスメソッド (`def self.x`) は
   メタクラス (番号 | 0x8000) のメソッド。Class の即値の受け手はそのメタクラスで引く
-- **表の1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。** 飛び先の上位 2bit が種類: 0 = メソッドの先頭 pc、
-  1 = primitive (回路が持つメソッド、`PRIMS`)、2 = インスタンス変数を読む、3 = 書く (下の「オブジェクト」)。(クラス, `SUPER_SYM` = 0xFFFF) の飛び先は親クラスの番号
+- **表の1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。** 飛び先の種類は上位の bit で: 0xxx = メソッドの先頭 pc (15bit)、
+  10xx = primitive (回路が持つメソッド、`PRIMS`)、110x = インスタンス変数を読む、111x = 書く (下の「オブジェクト」。P5e で pc を 15bit にした)。(クラス, `SUPER_SYM` = 0xFFFF) の飛び先は親クラスの番号
   (メタクラスは親のメタクラスへ、Object のメタクラスは Class へ)。空きは全 bit 1
 - **開番地法のハッシュ表。** 位置は (クラス × 5 + シンボル) & (大きさ − 1) から1語ずつ。大きさは詰め率 2/3 までの2の冪 (16 以上)。
   コアは 1 cycle に1語比べる (S_LOOKUP / S_PROBE)。見つからなければ親の輪を引き、32 段で諦める (表が壊れていても止まる)
@@ -991,6 +991,34 @@ PicoRuby の mruby-task (`src/task.c`、`src/task_queue.c`、`mrblib/queue.rb`) 
 - **突き合わせ。** mruby-task の examples と picoruby-mruby の example は、参照インタプリタと RTL で一致し、host の picoruby
   (tick は 4ms、timeslice 3) とは tick の数・番地・UINT32_MAX の表し方の違いだけ (statistics.rb は `&:join` が要る)
 
+### PSG と MIDI (P5e)
+
+PicoRuby の picoruby-psg (C の ports/common/psg.c と src/mruby/psg.c)、midibase・midibase-mml・uart-midi。
+
+- **PSG の音源は FPGA の外 (DAC / PWM の先) とみなす。** 回路 (mrb_dev) はパケットの列 (ring buffer、256 枠で 255 まで) だけを持つ。
+  0x1A0 次に積むパケットの遅延 (ms)、0x1A1 aux (16bit)、0x1A2 に {op, reg, val, arg} を書くと積む (満杯か止めていれば捨てる)、
+  0x1A3 空きの数 (止めていれば 0)、0x1A4 空なら 1 (書くと flush)、0x1A5 出力 (0 止める、1 PWM、2 MCP4922。書くと列と時計を
+  初めから)、0x1A6 / 0x1A7 列を通さないレジスタの書き込みと mute
+- **取り出しは C の psg_process_packets と同じ時刻。** C は 1ms ごとの tick で g_tick_ms を1つ進め、先頭の遅延が来たパケットを
+  全部取り出す (空になったら g_tick_ms = 0)。ここは仮想の時計の ms の境を越えた命令の区切りで g を進め、そこから命令の区切りごとに
+  1つずつ取り出す (同じ ms のものは続く数命令で)。取り出したパケットと列を通さない書き込みはトレースに
+  `P <step> <ms> <{op, reg, val, arg}> <aux>` を出す (ms は C が取り出す ms)。参照と RTL で同じ
+- **音は P 行から組み立てる** (`tools/fpga/psg_decode.rb`、C の PSG_process_packet と PSG_write_reg と同じ意味で、声ごとの
+  音程・音量・音色の変わり目。波形・エンベロープ・LFO・パンは作らない)。`rake fpga:run` とエミュレーター (ログの PSG / PSGAUX /
+  PSGSEL) が出す
+- **gem。** fpga/gems/psg.rb に C の部分 (`PSG.note_to_period` `set_tuning` (平均律と純正律)、Driver の `send_reg`
+  `voice_write` `mute` `set_pan` `set_timbre` `set_legato` `set_lfo` `buffer_empty?` `buffer_flush` `deinit` `select_pwm`
+  `select_mcp4922` `write_reg_direct` `mute_direct`)。Ruby の部分 (Driver#join、Synth、Sound、MIDIController、PRS) と midibase・
+  midibase-mml・uart-midi は PicoRuby の mrblib をそのまま使う。PicoRuby の gem が使う小物: Signal.trap (覚えて前のものを返すだけ)、
+  PicoRubyVM.memory_statistics と ObjectSpace.count_objects (NotImplementedError)、File (開くと NotImplementedError)、
+  `object_id` (即値だけ。ヒープのオブジェクトはコピー GC で動くので NotImplementedError)、UART#last_read_timestamp_us (nil)、
+  `defined?(Const)` (変換器がクラスなら "constant"、知らない名前なら nil に解く)
+- **変換器が足したもの。** `class << self` (本体の def は特異メソッド)、クラスのインスタンス変数 (本体と特異メソッドの @x は
+  クラスごとの定数、始めは nil)、`::X` (OCLASS)。ROM を 32768 語 (PC 15bit) にし、メソッド表の飛び先の種類を上位の bit で
+  分けた (0xxx pc、10xx primitive、110x インスタンス変数、111x attr_writer)。定数は 256 まで
+- **決めごと。** MML の Player は `delta_ticks * 60_000_000` を計算するので、32bit の Integer では桁があふれて待ち時間が違う
+  (R2P2 の PicoRuby は 64bit。P8 で直す)
+
 ### 動的な呼び出し (P7)
 
 - **`__send(名前, 引数...)`** (回路の primitive、Object、引数の数は何でも)。R[a+1] の Symbol を名前にし、残りの引数とブロックの枠を
@@ -1040,7 +1068,8 @@ PicoRuby の host VM で走らせる。** rake は起動と受け渡しだけを
   一番外の先頭で nil にする (`LOADNIL R0` + `SETCONST`、self を作る前)
 - **並び: pc 0 に `TABLE`、irep を親・子の順 (深さ優先)、データ (pool の文字列とシンボルの名前、1語 4バイト)、
   シンボル表 (シンボル番号 → {データの語アドレス, 長さ})、例外の表 (あれば。pc 1 の `HTABLE` が指す)、最後にメソッド表。**
-  ROM は 16384 語 (`PC_BITS` = 14。Float とデバイスの gem を入れた collections.rb が 8192 語を越えたため)。
+  ROM は 32768 語 (`PC_BITS` = 15。P5b で Float とデバイスの gem を入れた collections.rb が 8192 語を、P5e で PSG と MML の
+  gem を入れたプログラムが 16384 語を越えたため)。
   入り切らなければ変換時に止める
 - **シンボルはプログラム全体で番号を振る。** 演算の落ち先 (`+ - * / == < <= > >= [] []=`) は 0 から固定
   (`OP_SYMS`、コアが番号を知っている)。`SEND` 系の b、`LOADSYM` / `TDEF` / `SDEF` の b はシンボルの番号
@@ -1131,7 +1160,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
   ブロック RAM にできる形にしておくためと、Verilator 5.020 が `always_ff` の for ループでの配列への `<=` を
   `BLKLOOPINIT` で受け付けないため
 - `*` `/` `%` は組み合わせ回路 (`x / y` `x % y` を floor に補正)
-`mrb_soc.sv` が ROM (16384語 × 48bit、同期読み出し) + コア + I/O (`mrb_io.sv`)。
+`mrb_soc.sv` が ROM (32768語 × 48bit、同期読み出し) + コア + I/O (`mrb_io.sv`)。
 出力ポートは最後に書いた値を持ち (書く前は nil)、`GETGV` で読み戻せる。入力ポートは Integer で読める。
 `fpga/tb/mrb_core_tb.sv` が全対応命令とエラー停止を1つずつ確かめる (配列の伸長、GC 後も生きている配列、
 ブロックの中の return、`sleep_ms` の待ち時間も)。

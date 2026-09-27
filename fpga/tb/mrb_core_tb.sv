@@ -72,7 +72,7 @@ module mrb_core_tb;
   endfunction
 
   function automatic logic [15:0] tgt_prim(input logic [13:0] p);
-    return {TGT_PRIM, p};
+    return {2'b10, p};
   endfunction
 
   // (クラス, シンボル) -> 飛び先 を変換器と同じハッシュ (クラス * 5 + シンボル) と開番地法で入れる
@@ -884,12 +884,12 @@ module mrb_core_tb;
     //      (クラス, @名前) の番号で読み書きする。attr は IVAR / IVSET の行、super は見つかったクラスの親から引く
     begin_test("objects, attr, super, is_a?, respond_to?");
     method_entry(16'd32, NIVARS_SYM, 16'd2);
-    method_entry(16'd32, 16'd40, {TGT_IVAR, 14'd0});         // @a
-    method_entry(16'd32, 16'd41, {TGT_IVAR, 14'd1});         // @b
+    method_entry(16'd32, 16'd40, {3'b110, 13'd0});         // @a
+    method_entry(16'd32, 16'd41, {3'b110, 13'd1});         // @b
     method_entry(16'd32, SYM_INIT, 16'd27);
-    method_entry(16'd32, 16'd42, {TGT_IVAR, 14'd0});         // attr_reader :a
-    method_entry(16'd32, 16'd43, {TGT_IVSET, 14'd1});        // attr_writer :b
-    method_entry(16'd32, 16'd46, {TGT_IVAR, 14'd1});         // attr_reader :b
+    method_entry(16'd32, 16'd42, {3'b110, 13'd0});         // attr_reader :a
+    method_entry(16'd32, 16'd43, {3'b111, 13'd1});        // attr_writer :b
+    method_entry(16'd32, 16'd46, {3'b110, 13'd1});         // attr_reader :b
     method_entry(16'd32, 16'd45, 16'd33);                    // P#get
     method_entry(16'd32, SUPER_SYM, CLS_OBJECT);
     method_entry(16'd33, SUPER_SYM, 16'd32);
