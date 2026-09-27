@@ -570,6 +570,10 @@ mruby のバイトコード (`.mrb`、RITE0400) を、ソフト VM ではなく�
 設計: [シミュレーション環境](superpowers/specs/2026-09-26-fpga-sim-env-design.md)、
 [CPU コアと道具立て](superpowers/specs/2026-09-26-fpga-mruby-core-design.md)
 
+**この節の作りは、目標 (mruby の意味で `.mrb` を実行する、PicoRuby のプログラムが動く、PERIDOT-Air に載る) から大きく外れている。**
+乖離は [fpga-divergence.md](fpga-divergence.md) にまとめた (正しさの基準、命令、実行時のモデル、gem とプレリュード、資源)。
+作りはその表を正本に計画し直す。
+
 ```
 fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $readmemh)
                                                       |                         |
@@ -707,7 +711,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   `SSEND` は R0 (self) を R[a] に写してから引く。メソッドなら新しいフレーム (底は bp + a、R0 = 受け手、
   R[1..引数の数] = 引数、その次がブロックの枠。ブロックを渡さなければ nil) を作って飛び、primitive なら S_PRIM でその場で実行する。
   引数の数 15 は splat (R[1] が引数の配列、ブロックの枠は R[2])。primitive は `new` と Proc#`call` だけが受ける。
-  呼び出しの深さは 16 まで
+  呼び出しの深さは区画ごとに 32 まで (`STACK_DEPTH`)
 - **メソッドとブロックの先頭の `ENTER`** が引数を調べて並べ (下の「引数 (P1d)」)、nregs までを nil で埋める (S_CLEAR)。
   クラスの本体は mruby が `ENTER` を出さないので、変換器が先頭に足す
 - **クラスの定義は実行時にも本体を走らせる。** `CLASS` は R[a] = クラスの即値、`EXEC` はそれを self にして本体を呼ぶ
@@ -894,7 +898,7 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **外からの入力は刺激** (`<name>.stim` の1行 `<step> <番地> <値>`): 0x106 / 0x107 はその step からの値、0x121 は1行が1バイトで、
   その step から届いた順に読める。**入力はテストベンチが S_FETCH (命令を始める前) で次の step のものにする** ので、
   1命令が数 cycle かかっても (primitive がデバイスを読んでも) その命令の step の値が見える
-- **gem は FPGA 版を Ruby で書く** (`fpga/gems/<名前>.rb`)。API は PicoRuby の gem (mrblib と sig、C の port の関数) と同じで、
+- **(この方針は誤り。[fpga-divergence.md](fpga-divergence.md) の D。規則は「PicoRuby の gem の mrblib はそのまま使い、C の所だけを `fpga/gems/` に mruby ソースコードで書く」で、下の gem の多くはこれに違反している)** **gem は FPGA 版を Ruby で書く** (`fpga/gems/<名前>.rb`)。API は PicoRuby の gem (mrblib と sig、C の port の関数) と同じで、
   C の関数をデバイスのレジスタを読み書きする Ruby にした。PicoRuby の mrblib をそのまま使わないのは、`Object.const_defined?`、
   `module Kernel`、C の port が前提の書き方が多く、変換器の範囲を広げるより同じ API を書き直す方が小さいため。
   今あるもの: gpio (`GPIO.new(pin, flags)`、`read` `write` `high?` `low?`、`read_at` ... ピンは 0..31)、machine
@@ -1210,7 +1214,7 @@ PicoRuby の host VM で実測した、使えないもの:
 - **レジスタ窓。** レジスタファイルは 128本 × 68bit を全フレームで共有し、R[i] は bp + i。呼び出しは呼び出し先の bp を
   呼び出し元の bp + a にし (呼び出し先の R0 = 呼び出し元の R[a] = 受け手)、呼び出し先の `ENTER` が残りのレジスタを
   1 cycle 1本ずつ nil で埋める (S_CLEAR)。`RETURN` は R0 (= 呼び出し元の R[a]) に値を置いて戻る。
-  bp + nregs が 128 を超える、またはコールスタック (16段) が溢れるとエラー
+  bp + nregs が 128 を超える、またはコールスタック (区画ごとに 32 段) が溢れるとエラー
 - **実行中の命令は ir に取っておく。** メソッド探索の間、ROM の出力は表の語になるため (EXEC は ROM から、ほかの状態は ir から読む)
 - **リセット後にレジスタファイルを1本ずつ nil で埋める (S_INIT、`en` に関係なく 128 cycle)。** 一括のリセットをしないのは、
   ブロック RAM にできる形にしておくためと、Verilator 5.020 が `always_ff` の for ループでの配列への `<=` を
