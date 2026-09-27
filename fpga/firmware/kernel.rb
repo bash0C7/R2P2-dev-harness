@@ -75,15 +75,6 @@ class BasicObject
 end
 
 module Kernel
-  # C: src/kernel.c mrb_eqq_m
-  def ===(arg)
-    if __fpga_tag(self) == 5 # L:TAG_FLOAT NaN は何とも等しくない
-      bits = __fpga_int(self)
-      return false if __fpga_and(__fpga_shr(bits, 52), 2047) == 2047 && __fpga_and(bits, 4503599627370495) > 0 # 指数が全部 1 で仮数が 0 でない
-    end
-    __fpga_equal(self, arg)
-  end
-
   # C: src/kernel.c mrb_obj_not_match
   def !~(arg)
     (self =~ arg) ? false : true
@@ -144,22 +135,6 @@ module Kernel
     c
   end
 
-  # C: src/kernel.c mrb_obj_freeze
-  def freeze
-    if __fpga_tag(self) == 7 # L:TAG_OBJ
-      a = __fpga_addr(self)
-      __fpga_st32(a + 4, __fpga_or(__fpga_ld32(a + 4), 2048)) # L:H_FLAGS frozen の bit 11
-      k = __fpga_ld32(a + 0) # L:H_CLASS
-      __fpga_st32(k + 4, __fpga_or(__fpga_ld32(k + 4), 2048)) if __fpga_tt(k) == 11 # L:H_FLAGS L:TT_SCLASS
-    end
-    self
-  end
-
-  # C: src/kernel.c mrb_obj_frozen
-  def frozen?
-    __fpga_tag(self) == 7 ? __fpga_and(__fpga_ld32(__fpga_addr(self) + 4), 2048) > 0 : true # L:TAG_OBJ L:H_FLAGS
-  end
-
   # C: src/kernel.c obj_is_instance_of
   def instance_of?(c)
     __fpga_raisef(TypeError, "%v is not a class", [c]) unless __fpga_tag(c) == 7 && __fpga_class_p(__fpga_addr(c)) # L:TAG_OBJ mrb_get_args の c (ensure_class_type)
@@ -169,11 +144,6 @@ module Kernel
   # C: src/kernel.c mrb_obj_id_m
   def object_id
     __fpga_obj_id(self)
-  end
-
-  # C: src/kernel.c mrb_obj_equal_m
-  def eql?(o)
-    __fpga_tag(self) == __fpga_tag(o) && __fpga_int(self) == __fpga_int(o)
   end
 
   # C: src/string.c mrb_encoding

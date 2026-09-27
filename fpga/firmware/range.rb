@@ -165,6 +165,15 @@ class Range
     __fpga_range_excl(self) == __fpga_range_excl(obj)
   end
 
+  # C: src/range.c range_eql
+  def eql?(obj)
+    return true if __fpga_tag(obj) == 7 && __fpga_addr(obj) == __fpga_addr(self) # L:TAG_OBJ mrb_obj_equal
+    return false unless __fpga_tag(obj) == 7 && __fpga_tt(__fpga_addr(obj)) == 19 # L:TAG_OBJ L:TT_RANGE mrb_range_p
+    return false unless __fpga_eql(__fpga_range_beg(self), __fpga_range_beg(obj))
+    return false unless __fpga_eql(__fpga_range_end(self), __fpga_range_end(obj))
+    __fpga_range_excl(self) == __fpga_range_excl(obj)
+  end
+
   # C: src/range.c range_include
   def include?(val)
     beg = __fpga_range_beg(self)

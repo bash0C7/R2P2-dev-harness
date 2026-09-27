@@ -116,7 +116,37 @@ class Object
   # C: src/variable.c mrb_iv_set
   def __fpga_iv_set(obj, sym, v)
     __fpga_raise(ArgumentError, "cannot set instance variable") unless __fpga_iv_p(obj)
+    __fpga_check_frozen(__fpga_addr(obj)) # mrb_obj_iv_set
     __fpga_tbl_set(__fpga_iv_tbl(__fpga_addr(obj)), sym, v)
+  end
+
+  # 行を消す (開番地法の表なので、消した行を除いて行の並びを作り直す)。消した値か undef
+  # C: src/variable.c mrb_iv_remove (D06)
+  def __fpga_iv_remove(obj, sym)
+    return __fpga_undef unless __fpga_iv_p(obj)
+    o = __fpga_addr(obj)
+    __fpga_check_frozen(o)
+    t = __fpga_ld32(o + 60) # L:IV
+    row = __fpga_tbl_find(t, sym)
+    return __fpga_undef if row == 0
+    val = __fpga_ldv(row + 4)
+    capa = __fpga_ld32(t + 4) # L:MT_CAPA
+    old = __fpga_ld32(t + 8) # L:MT_ROWS
+    rows = __fpga_alloc(capa * 20) # L:IV_ENTRY
+    k = 0
+    while k < capa
+      __fpga_st32(rows + k * 20, 4294967295) # L:IV_ENTRY L:MT_EMPTY
+      k += 1
+    end
+    __fpga_st32(t + 8, rows) # L:MT_ROWS
+    __fpga_st32(t + 0, 0) # L:MT_COUNT
+    k = 0
+    while k < capa
+      e = __fpga_ld32(old + k * 20) # L:IV_ENTRY
+      __fpga_tbl_set(t, e, __fpga_ldv(old + k * 20 + 4)) if e < 4294967295 && (e == sym) == false # L:IV_ENTRY L:MT_EMPTY
+      k += 1
+    end
+    val
   end
 
   # OP_GETIV / OP_SETIV: R[a] = self.@Syms[b] / self.@Syms[b] = R[a]

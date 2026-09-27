@@ -416,7 +416,8 @@ end
           mt_set(r32(meta + C_ROM), sym, new_proc(irep_rep(ir, i.c), meta) | rom_vis(c, sym, true))
         when "ALIAS"
           old = mt_get(r32(c + C_ROM), irep_sym(ir, i.b)) or raise Error, "firmware alias: #{sym_name(irep_sym(ir, i.b))} is not defined yet"
-          mt_set(r32(c + C_ROM), irep_sym(ir, i.a), old)
+          # 同じ C の関数を別の名前で置く ROM の行は、その名前の可視性を持つ (hash.c の initialize_copy は private、replace は public)
+          mt_set(r32(c + C_ROM), irep_sym(ir, i.a), (old & ~VIS_MASK) | rom_vis(c, irep_sym(ir, i.a), false))
         when "LOADSELF", "LOADNIL", "RETURN", "RETNIL", "NOP"
         else raise Error, "firmware class body: #{i.name} is not allowed"
         end

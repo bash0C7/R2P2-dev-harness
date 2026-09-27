@@ -79,6 +79,65 @@ module FpgaV2
     RG_EXCL = 12
     # C: include/mruby/range.h RANGE_INITIALIZED_FLAG
     RANGE_INITIALIZED_FLAG = 1
+    # RHash (hash.h の MRB_32BIT の形): size、hsh (ar は hash_entry の並びの番地、ht は hash_table の番地)。iv の表は IV (D06)。
+    # ar の ea_capa と ea_n_used、ht の ib_bit は見出しの flags (H_FLAGS_SHIFT から上) に置く (32bit の DEFINE_FLAG_ACCESSOR)
+    # C: include/mruby/hash.h RHash (D04)
+    HS_SIZE = 8
+    HS_HSH = 12
+    # hash_table (hash.c、MRB_32BIT): ea の番地、ea_capa、ea_n_used、ib (uint32_t の並び) の先頭
+    # C: src/hash.c hash_table
+    HT_EA = 0
+    HT_EA_CAPA = 4
+    HT_EA_N_USED = 8
+    HT_IB = 12
+    # hash_entry (hash.c): key と val の値 2 つ。消した行は key が undef
+    # C: src/hash.c hash_entry
+    HASH_ENTRY = 32
+    HE_KEY = 0
+    HE_VAL = 16
+    # flags の bit (hash.h)。ar の ea_capa は bit 0〜4、ea_n_used は bit 5〜9、ht の ib_bit は bit 0〜4
+    # C: include/mruby/hash.h MRB_HASH_AR_EA_CAPA_MASK
+    MRB_HASH_AR_EA_CAPA_MASK = 31
+    MRB_HASH_AR_EA_N_USED_SHIFT = 5
+    MRB_HASH_AR_EA_N_USED_MASK = 992
+    MRB_HASH_IB_BIT_MASK = 31
+    MRB_HASH_DEFAULT = 1024
+    MRB_HASH_PROC_DEFAULT = 2048
+    MRB_HASH_HT = 4096
+    # hash.c の大きさの定数 (IB_INIT_BIT は ib_upper_bound_for(16) <= AR_MAX_SIZE なので 5、EA_MAX_CAPA は IB_MAX_CAPA - 2)
+    # C: src/hash.c AR_MAX_SIZE
+    AR_MAX_SIZE = 16
+    AR_DEFAULT_CAPA = 4
+    IB_INIT_BIT = 5
+    IB_TYPE_BIT = 32
+    EA_N_RESERVED_INDICES = 2
+    EA_MAX_INCREASE = 65_535
+    EA_MAX_CAPA = 2_147_483_646
+    # index_buckets_iter (hash.c): 各欄 4 バイト (h は RHash の番地)
+    # C: src/hash.c index_buckets_iter
+    IT_H = 0
+    IT_BIT = 4
+    IT_MASK = 8
+    IT_INITIAL_POS = 12
+    IT_POS = 16
+    IT_ARY_INDEX = 20
+    IT_EA_INDEX = 24
+    IT_SHIFT1 = 28
+    IT_SHIFT2 = 32
+    IT_STEP = 36
+    IT_SIZE = 40
+    # struct h_check_modified (hash.c): flags、tbl、ht_ea_capa、ht_ea
+    # C: src/hash.c h_check_modified
+    HCM_FLAGS = 0
+    HCM_TBL = 4
+    HCM_EA_CAPA = 8
+    HCM_EA = 12
+    HCM_SIZE = 16
+    # C: src/hash.c H_CHECK_MODIFIED_FLAGS_MASK
+    H_CHECK_MODIFIED_FLAGS_MASK = 4127
+    # 見出しの語の frozen の bit (MRB_OBJECT_HEADER の frozen:1、tt 8bit と gc の色 3bit の上)
+    # C: include/mruby/object.h MRB_OBJECT_HEADER
+    H_FROZEN = 2048
     # RProc (proc.h): irep の番地か primitive の番号、上の Proc、env、target_class、flags
     # C: include/mruby/proc.h RProc (D15)
     P_BODY   = 8
@@ -98,6 +157,10 @@ module FpgaV2
     PROC_SCOPE  = 2048
     PROC_CREF   = 16_384
     PROC_METHOD_FLAGS = PROC_STRICT | PROC_SCOPE | PROC_CREF # vm.c の vm_define_method と mrb_method_proc_new
+
+    # 命令の番号 (ops.h の OPCODE の並び。mrb_proc_arity が irep の最初の命令を見る)
+    # C: include/mruby/ops.h OPCODE
+    OP_ENTER = 57
 
     # REnv (proc.h): 見出し + stack (値の並びの番地) + cxt (mrb_context、0 は閉じた env) + mid。
     # 長さ (下 8bit) と blk の位置 (8〜13bit) は見出しの flags (H_FLAGS の 12bit から、MRB_ENV_LEN / MRB_ENV_BIDX)
