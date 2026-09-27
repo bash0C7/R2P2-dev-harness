@@ -125,14 +125,7 @@ module Kernel
 
   # C: src/class.c mrb_obj_clone
   def clone
-    return self unless __fpga_tag(self) == 7 # L:TAG_OBJ mrb_immediate_p
-    __fpga_raise(TypeError, "can't clone singleton class") if __fpga_tt(__fpga_addr(self)) == 11 # L:TT_SCLASS
-    p = __fpga_slot(__fpga_addr(__fpga_obj_class(self)), __fpga_tt(__fpga_addr(self)))
-    __fpga_st32(p + 0, __fpga_singleton_class_clone(self)) # L:H_CLASS
-    c = __fpga_obj(p)
-    __fpga_init_copy(c, self)
-    __fpga_st32(p + 4, __fpga_or(__fpga_ld32(p + 4), __fpga_and(__fpga_ld32(__fpga_addr(self) + 4), 2048))) # L:H_FLAGS frozen の bit 11
-    c
+    __fpga_obj_clone(self)
   end
 
   # C: src/kernel.c obj_is_instance_of
@@ -222,6 +215,18 @@ class Object
     bidx = __fpga_and(__fpga_shr(f, 8), 63) # MRB_ENV_BIDX
     return -1 if bidx >= __fpga_and(f, 255) # MRB_ENV_LEN
     bidx
+  end
+
+  # C: src/class.c mrb_obj_clone
+  def __fpga_obj_clone(obj)
+    return obj unless __fpga_tag(obj) == 7 # L:TAG_OBJ mrb_immediate_p
+    __fpga_raise(TypeError, "can't clone singleton class") if __fpga_tt(__fpga_addr(obj)) == 11 # L:TT_SCLASS
+    p = __fpga_slot(__fpga_addr(__fpga_obj_class(obj)), __fpga_tt(__fpga_addr(obj)))
+    __fpga_st32(p + 0, __fpga_singleton_class_clone(obj)) # L:H_CLASS
+    c = __fpga_obj(p)
+    __fpga_init_copy(c, obj)
+    __fpga_st32(p + 4, __fpga_or(__fpga_ld32(p + 4), __fpga_and(__fpga_ld32(__fpga_addr(obj) + 4), 2048))) # L:H_FLAGS frozen の bit 11
+    c
   end
 
   # 特異クラスを写す (clone)。特異クラスでなければ元のクラス
