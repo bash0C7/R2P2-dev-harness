@@ -29,20 +29,6 @@ module FpgaV2
     # 固定長の枠 (mruby の RVALUE に当たる)。見出し + 56 バイト
     SLOT = 64
 
-    # ヒープのブロック (V2c): 確保したものは全部 {見出し 8 バイト, 中身}。番地は中身の先頭 (オブジェクトなら RBasic)。
-    # 見出し: +0 大きさ (見出しを含むバイト数、8 の倍数)、+4 flags。ヒープは先頭から大きさでたどれる
-    BLOCK = 8
-    B_SIZE = 0
-    B_FLAGS = 4
-    BF_MARK = 1 # GC の印 (sweep で消す)
-    BF_FREE = 2 # 空きのブロック (中身の先頭の語は次の空きのブロックの番地)
-    BF_PERM = 4 # 解放しない (読み込んだ irep、実行時のシンボルの名前。mruby もシンボルと irep は GC で消さない)
-    # 作りかけのオブジェクトを守る (mruby の GC の arena、MRB_GC_ARENA_SIZE): 回路は最近確保したブロックをこの数だけ覚え、GC は根にする
-    ARENA = 100
-    # 起動の像の中のオブジェクト (コアのクラスなど。ブロックではない) の GC の色は見出しの gc の色 (H_FLAGS の bit 8)。
-    # 印の値は GC ごとに反す (像の gc_color、mruby の白と黒の入れ替えと同じ考え)
-    GC_COLOR_BIT = 1 << 8
-
     # tt (mruby の enum mrb_vtype と同じ番号、value.h の MRB_VTYPE_FOREACH の並び)
     TT = {
       FALSE: 0, TRUE: 1, SYMBOL: 2, UNDEF: 3, FREE: 4, FLOAT: 5, INTEGER: 6, CPTR: 7, OBJECT: 8, CLASS: 9, MODULE: 10,
@@ -132,9 +118,8 @@ module FpgaV2
     # 見出しの語 (番地 = 4 × 番号)
     IMG = {
       magic: 0, version: 1, heap_start: 2, heap_end: 3, sym_table: 4, sym_capa: 5, sym_count: 6,
-      core_classes: 7, main_obj: 8, fw_entry: 9, programs: 10, nprograms: 11, stack: 12, stack_end: 13, prims: 14, ci: 15,
-      free_list: 16, gc_color: 17, roots: 18, nroots: 19, mark_stack: 20, mark_stack_end: 21
+      core_classes: 7, main_obj: 8, fw_entry: 9, programs: 10, nprograms: 11, stack: 12, stack_end: 13, prims: 14, ci: 15
     }.freeze
-    IMG_WORDS = 24
+    IMG_WORDS = 16
   end
 end
