@@ -211,10 +211,10 @@ module FpgaV2
       when "JMPNIL" then jump(@pc_next + s16(b)) if reg(a)[0] == TAG_NIL
       when "SEND", "SSEND", "SENDB", "SSENDB"
         setreg(a, reg(0)) if i.name.start_with?("SS")
-        send(a, irep_sym(@f.irep, b), c, i.name.end_with?("B"))
+        send_op(a, irep_sym(@f.irep, b), c, i.name.end_with?("B"))
       when "SEND0", "SSEND0"
         setreg(a, reg(0)) if i.name == "SSEND0"
-        send(a, irep_sym(@f.irep, b), 0, false)
+        send_op(a, irep_sym(@f.irep, b), 0, false)
       when "ENTER" then enter(a)
       when "RETURN" then ret(reg(a))
       when "RETURN_BLK" # ブロックでなければ RETURN と同じ (vm.c: MRB_PROC_ENV_P でない)。ブロックは V2d
@@ -229,9 +229,9 @@ module FpgaV2
       when "DIV" then div(a)
       # GETIDX / GETIDX0 / SETIDX: mruby は Array・Hash・String の近道を持つが、見える意味は [] / []= を送るのと同じ
       # (再定義も効く)。v2 は送る。近道は Array#[] などを回路の primitive にすることで得る
-      when "GETIDX" then send(a, sym_id("[]"), 1, false)
-      when "GETIDX0" then (setreg(a, reg(b)); setreg(a + 1, int(0)); send(a, sym_id("[]"), 1, false))
-      when "SETIDX" then send(a, sym_id("[]="), 2, false)
+      when "GETIDX" then send_op(a, sym_id("[]"), 1, false)
+      when "GETIDX0" then (setreg(a, reg(b)); setreg(a + 1, int(0)); send_op(a, sym_id("[]"), 1, false))
+      when "SETIDX" then send_op(a, sym_id("[]="), 2, false)
       when "ADDI" then addi(a, b, :+)
       when "SUBI" then addi(a, b, :-)
       when "ADDILV" then addilv(a, b, c, :+)
@@ -261,14 +261,14 @@ module FpgaV2
         return overflow(name, a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
       end
-      send(a, sym_id(OPSYM[name]), 1, false)
+      send_op(a, sym_id(OPSYM[name]), 1, false)
     end
 
     # DIV: 整数同士は floor の商 (mruby の OP_DIV、int_div)。0 で割ると罠 __op_zerodiv、INT_MIN / -1 は桁あふれ
     def div(a)
       x = reg(a)
       y = reg(a + 1)
-      return send(a, sym_id("/"), 1, false) unless x[0] == TAG_INT && y[0] == TAG_INT
+      return send_op(a, sym_id("/"), 1, false) unless x[0] == TAG_INT && y[0] == TAG_INT
       return trap_call("__op_zerodiv", [int(a)]) if y[1].zero?
       r = x[1].div(y[1])
       return overflow("DIV", a) if r > INT_MAX
@@ -284,7 +284,7 @@ module FpgaV2
         return setreg(a, int(r))
       end
       setreg(a + 1, int(imm))
-      send(a, sym_id(op.to_s), 1, false)
+      send_op(a, sym_id(op.to_s), 1, false)
     end
 
     # ADDILV / SUBILV (mruby の OP_MATHILV): R[a] = R[a] ± c (a は局所変数の枠)。整数でなければ作業の枠 R[b] から送り、結果を R[a] へ
@@ -310,7 +310,7 @@ module FpgaV2
       if name == "EQ" && x[0] != TAG_OBJ && x[0] != TAG_FLOAT && y[0] != TAG_OBJ && y[0] != TAG_FLOAT
         return setreg(a, x == y ? TRUE_ : FALSE_) # 即値同士は値で (mruby の OP_EQ の mrb_obj_eq)
       end
-      send(a, sym_id(OPSYM[name]), 1, false)
+      send_op(a, sym_id(OPSYM[name]), 1, false)
     end
 
     # 桁あふれ: 罠 __op_overflow(a, 演算) (firmware が RangeError を上げる)
@@ -320,7 +320,7 @@ module FpgaV2
     end
 
     # --- 呼び出し
-    def send(a, sym, c, blk)
+    def send_op(a, sym, c, blk)
       n = c & 0x0F
       raise Error, "keyword arguments (c = #{c}) are not supported yet" unless (c >> 4).zero?
       raise Error, "splat (n = 15) is not supported yet" if n == 15

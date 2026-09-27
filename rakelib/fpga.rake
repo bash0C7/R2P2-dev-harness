@@ -724,6 +724,44 @@ namespace :fpga do
   end
 end
 
+# v2 のコア (docs/superpowers/plans/2026-09-27-fpga-v2.md)。参照 v2 と firmware を host の PicoRuby と比べる
+namespace :fpga do
+  namespace :v2 do
+    desc "Run fpga/v2/programs/*.rb on the v2 reference + firmware and compare the output with host PicoRuby"
+    task check: "fpga:picoruby" do
+      require_relative "../tools/fpga/v2/build"
+      progs = Dir[File.join(FPGA_DIR, "v2", "programs", "*.rb")].sort
+      results = FpgaParallel.map(progs) do |path|
+        host, = Open3.capture2(FpgaConverter.default_picoruby, path)
+        out, ref = FpgaV2::Build.run_source(File.read(path))
+        [File.basename(path, ".rb"), host.b == out, ref.steps, ref.stats[:trap]]
+      end
+      results.each { |name, ok, steps, traps| puts format("%-4s %-16s %8d insns %6d traps", ok ? "ok" : "DIFF", name, steps, traps) }
+      bad = results.reject { |r| r[1] }.map(&:first)
+      raise "differ from host: #{bad.join(', ')}" unless bad.empty?
+    end
+
+    desc "Differential fuzzing of v2: random mruby source programs on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:fuzz[100,1])"
+    task :fuzz, [:count, :seed] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/fuzz"
+      count = (args[:count] || 100).to_i
+      seed = (args[:seed] || 1).to_i
+      rng = Random.new(seed)
+      srcs = Array.new(count) { FpgaV2::Fuzz.program(rng) } # 親が seed の順に作る (並べても同じ列)
+      results = FpgaParallel.map(srcs) { |src| FpgaV2::Fuzz.check(src, picoruby: FpgaConverter.default_picoruby) }
+      dir = File.join(FPGA_BUILD_DIR, "v2fuzz")
+      FileUtils.mkdir_p dir
+      bad = results.each_with_index.reject { |r, _| r.ok }
+      bad.each { |r, i| File.write(File.join(dir, "seed#{seed}_#{i}.rb"), r.src) }
+      stats = Hash.new(0)
+      results.each { |r| r.stats.each { |k, v| stats[k] += v } }
+      puts "v2 fuzz: #{count} program(s) (seed #{seed}), #{count - bad.size} same as host, #{bad.size} differ"
+      puts "  reached: " + stats.sort.map { |k, v| "#{k} #{v}" }.join(", ")
+      raise "#{bad.size} program(s) differ (kept in #{fpga_rel(dir)})" unless bad.empty?
+    end
+  end
+end
+
 namespace :test do
   desc "Run the FPGA Ruby tools' tests (tools/fpga, no simulator needed)"
   task :fpga do

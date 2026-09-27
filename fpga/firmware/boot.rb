@@ -86,7 +86,7 @@ class Object
       k += 1
     end
     ir = __fpga_alloc(44) # L:IREP
-    __fpga_st32(ir, nlocals * 65536 + nregs) # L:I_NLOCALS
+    __fpga_st32(ir + 0, nlocals * 65536 + nregs) # L:I_NLOCALS (u16 nlocals、u16 nregs)
     __fpga_st32(ir + 4, ilen) # L:I_ILEN
     __fpga_st32(ir + 8, iseq) # L:I_ISEQ
     __fpga_st32(ir + 12, pool) # L:I_POOL
@@ -182,7 +182,7 @@ class Object
 
   # --- メソッド表 (class.c の mt)。開番地法、詰め率 3/4 を超えたら倍の行の並びに写す (見出しは同じ番地のまま)
   def __mt_set(t, sym, val)
-    count = __fpga_ld32(t) # L:MT_COUNT
+    count = __fpga_ld32(t + 0) # L:MT_COUNT
     capa = __fpga_ld32(t + 4) # L:MT_CAPA
     if (count + 1) * 4 > capa * 3
       __mt_grow(t, capa * 2)

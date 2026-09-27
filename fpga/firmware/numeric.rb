@@ -41,10 +41,6 @@ class Integer
     __fpga_xor(self, y)
   end
 
-  def !=(y)
-    self == y ? false : true
-  end
-
   # 四則と比較のメソッド (numeric.c の int_plus ... int_equal)。self が受け手の式と send から呼ばれる。
   # 局所変数同士にすると回路の命令 (ADD、EQ ...) になる。整数でない相手は V2d / V2e (Float と例外)
   def ==(y)
