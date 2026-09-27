@@ -90,12 +90,27 @@
 - [ ] 違ったら、今と同じく **最初の番号の** 違いを `fail_seed<seed>_<i>.*` に残して止める
 - [ ] 確かめ方: seed 1–4 の要約の行 (halt / error / step limit / GC / reached) が並列前と1字も違わない
 
-### Q6 変換器の AOT (Q2 の後に測って決める)
+### Q6 host 側の AOT (spinel + suppify。Q2〜Q5 の後に測って決める)
 
-- 変換器は mruby ソースコードで、host の picoruby で走る。1 本 約 30 秒で、corpus の build (gen_pkg_test、fpga:corpus) と gap の時間の大半
-- Q2 の並列化の後も遅ければ、変換器を AOT でネイティブのアセンブラーにして host 側を速くする。出力 (hex、lst) が今と bytes で同じことを
-  `rake fpga:corpus:check` で確かめる。FPGA のコアで走るものは対象外 (mruby bytecode のまま)
-- AOT の道具と実績の場所は user に確かめる (この repo の checkout と GitHub の issue / PR / branch には "AOT" が見つからなかった)
+道具と実績: [spinel](https://github.com/matz/spinel) (Ruby の AOT コンパイラー、C を出す) と
+[bash0C7/suppify](https://github.com/bash0C7/suppify) (spinel で compile できるコードを C のライブラリにし、
+`-t cruby` は CRuby の拡張 gem、`-t picoruby` は PicoRuby の mrbgem にする)。R2P2-ESP32 で `picoruby-otmeiwa_aot`
+を実機の ELF に入れた実績がある。spinel は `spinel.pin` の commit に合わせる。
+制約 (suppify の README): top-level のメソッドだけ、自作のクラスは不可、型は RBS (sidecar か inline) で全部書く。
+
+対象は host で走る遅い所だけ。FPGA のコアで走るものは対象外 (mruby bytecode のまま):
+
+| 遅い所 | 何か | AOT の形 |
+|---|---|---|
+| 変換器 (`isa` `io_map` `rite` `rom` `mrb2rom`) | mruby ソースコード、host の picoruby で走る。1 本 約 30 秒 | 熱い所 (命令の decode、表の組み立て) を top-level の型付きメソッドに切り出し、`suppify -t picoruby` の mrbgem を host の picoruby の build に足す (build_config の overlay。vendor/picoruby は commit しない) |
+| 参照インタプリタ `ref_vm.rb` | Ruby コード、CRuby で走る。check / gap / fuzz で毎回 | 命令の実行の芯を切り出し、`suppify -t cruby` の拡張 gem |
+
+- [ ] Q2〜Q5 の後に、どこで時間を食っているかを測る (変換器は picoruby の中の段ごとの時間、ref_vm は CRuby の profiler)。
+  並列化で足りていれば Q6 はやらず、理由を記録に書く
+- [ ] 切り出す前に、切り出すメソッドの入出力 (Integer、String、Array、Hash) を表にして、spinel が型を付けられるか確かめる
+- [ ] 確かめ方: 変換器は `rake fpga:corpus:check` の生成物が bytes で同じ。ref_vm は check / gap / fuzz seed 1–4 の出力が1字も違わない。
+  AOT 版と元の版を選べるようにし (環境変数)、元の版は正本として残す
+- [ ] build の手順 (spinel の build、`SPINEL` / `SPINEL_LIB`) を `rake fpga:doctor` / `fpga:setup` に足す。macOS と Linux の両方
 
 ### Q の終わり
 
