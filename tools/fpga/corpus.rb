@@ -1,4 +1,4 @@
-# fpga/corpus/*.rb (CPU コアの対象にする Ruby プログラムの集合) の生成物。
+# fpga/corpus/*.rb (CPU コアの対象にする mruby ソースコードの集合) の生成物。
 #
 # 各 <name>.rb から次を作って commit しておく:
 #   <name>.mrb   mrbc の出力
@@ -10,6 +10,7 @@
 require "open3"
 require "tmpdir"
 require "fileutils"
+require_relative "parallel"
 require_relative "converter"
 
 module FpgaCorpus
@@ -106,9 +107,9 @@ module FpgaCorpus
     end
   end
 
-  # name => { "mrb" =>, "dump" =>, "hex" =>, "lst" => }
+  # name => { "mrb" =>, "dump" =>, "hex" =>, "lst" => }。1 本ごとに mrbc と変換器 (外の process) を回すので thread で並べる
   def build_all(mrbc, picoruby)
-    sources.to_h do |src|
+    FpgaParallel.threads(sources) do |src|
       name = File.basename(src, ".rb")
       mrb, dump = compile(src, mrbc)
       hex, lst = Dir.mktmpdir do |dir|
@@ -118,7 +119,7 @@ module FpgaCorpus
         [File.read(paths[1]), File.read(paths[2])]
       end
       [name, { "mrb" => mrb, "dump" => dump, "hex" => hex, "lst" => lst }]
-    end
+    end.to_h
   end
 
   def write(mrbc, picoruby)

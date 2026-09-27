@@ -122,7 +122,7 @@ module FpgaGap
     return { path: path, status: :blocked, reasons: reasons } unless reasons.empty?
 
     image = FpgaRom.from_binary(bin, rel(path), FpgaIsa::RF_SIZE)
-    hex = File.join(dir, File.basename(path, ".rb") + ".hex")
+    hex = File.join(dir, rel(path).tr("/", "_").delete_suffix(".rb") + ".hex") # 同じ basename の example があるので path から (並べて回す)
     File.write(hex, image.hex)
     { path: path, status: :converted, reasons: [], hex: hex }
   rescue FpgaRom::Error, Rite::Error => e
