@@ -77,7 +77,7 @@ class Object
       __fpga_ary_set(regs, m1 + o, []) if r > 0
       skip = argc - m1 - m2 if o > 0 && argc > m1 + m2
     else
-      rnum = argc - m1 - o - m2
+      rnum = r > 0 ? argc - m1 - o - m2 : 0
       k = 0
       while k < m1 + o
         __fpga_ary_set(regs, k, __fpga_aref(argv, k))
@@ -85,7 +85,7 @@ class Object
       end
       __fpga_ary_set(regs, m1 + o, __fpga_ary_subseq(argv, m1 + o, rnum)) if r > 0
       k = 0
-      while k < m2
+      while k < m2 && argc - m2 > m1
         __fpga_ary_set(regs, m1 + o + r + k, __fpga_aref(argv, m1 + o + rnum + k))
         k += 1
       end

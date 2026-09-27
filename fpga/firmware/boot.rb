@@ -28,7 +28,7 @@ class Object
   end
 
   # 版の定数 (version.c、値は include/mruby/version.h と platform.h を展開したもの)。MRUBY_PLATFORM は OS の無い板なので
-  # platform.h の決まりのとおり "unknown-none"。MRUBY_REVISION は revision.h の無い build の "HEAD"。frozen の印は S5
+  # platform.h の決まりのとおり "unknown-none"。MRUBY_REVISION は revision.h の無い build の "HEAD"
   # C: src/version.c mrb_init_version
   def __fpga_init_version
     obj = __fpga_ld32(__fpga_image(5) + 60) # L:IMG_object_class L:C_IV
@@ -37,10 +37,10 @@ class Object
     __fpga_tbl_set(obj, __fpga_addr(:RUBY_ENGINE), "mruby")
     __fpga_tbl_set(obj, __fpga_addr(:RUBY_ENGINE_VERSION), mruby_version)
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_VERSION), mruby_version)
-    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_PLATFORM), "unknown-none")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_PLATFORM), __fpga_obj_freeze("unknown-none")) # mrb_str_new_lit_frozen
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_RELEASE_NO), 40000)
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_RELEASE_DATE), "2026-04-20")
-    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_REVISION), "HEAD")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_REVISION), __fpga_obj_freeze("HEAD")) # mrb_str_new_lit_frozen
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_DESCRIPTION), "mruby 4.0.0 (2026-04-20)")
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_COPYRIGHT), "mruby - Copyright (c) 2010-2026 mruby developers")
   end
