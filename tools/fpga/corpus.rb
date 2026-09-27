@@ -37,7 +37,14 @@ module FpgaCorpus
     "ssd1306" => [format(PICORUBY_MRBLIB, "ssd1306", "ssd1306"), %w[SSD1306]],
     "uc8151" => [format(PICORUBY_MRBLIB, "uc8151", "uc8151"), %w[UC8151]],
     "hcsr04" => [format(PICORUBY_MRBLIB, "hcsr04", "hcsr04"), %w[HCSR04]],
-    "rotary_encoder" => [format(PICORUBY_MRBLIB, "rotary_encoder", "rotary_encoder"), %w[RotaryEncoder]]
+    "rotary_encoder" => [format(PICORUBY_MRBLIB, "rotary_encoder", "rotary_encoder"), %w[RotaryEncoder]],
+    # PSG と MIDI (P5e)。psg の C の部分は fpga/gems/psg.rb、Ruby の部分と midibase 系は PicoRuby の mrblib
+    "psg" => [["psg.rb", *%w[prs driver midi_controller sound synth].map { |f| format(PICORUBY_MRBLIB, "psg", f) }], %w[PSG]],
+    "midibase" => [[*%w[midibase clock parser router session voice_allocator].map { |f| format(PICORUBY_MRBLIB, "midibase", f) },
+                    "midibase_fpga.rb"], %w[MIDIBASE]],
+    "signal" => ["signal.rb", %w[Signal]], "picorubyvm" => ["picorubyvm.rb", %w[PicoRubyVM ObjectSpace]], "file" => ["file.rb", %w[File]],
+    "midibase-mml" => [%w[clock parser sequence player].map { |f| format(PICORUBY_MRBLIB, "midibase-mml", f) }, []],
+    "uart-midi" => [[format(PICORUBY_MRBLIB, "uart-midi", "uart-midi")], []]
   }.freeze
   REQUIRE = /^\s*require\s*\(?\s*["']([^"']+)["']/
 
@@ -67,11 +74,11 @@ module FpgaCorpus
           raise UnknownGem, "require '#{name}' is not supported on the FPGA core (#{src})" if strict
           next
         end
-        path = File.expand_path(GEMS[name][0], GEMS_DIR)
-        next if seen.include?(path)
-        seen << path
-        visit.call(File.read(path))
-        files << path # 使う gem を先に (後置の順)
+        paths = Array(GEMS[name][0]).map { |f| File.expand_path(f, GEMS_DIR) }
+        next if seen.include?(paths[0])
+        seen << paths[0]
+        visit.call(paths.map { |p| File.read(p) }.join("\n"))
+        files.concat(paths) # 使う gem を先に (後置の順)
       end
     end
     visit.call(File.read(src))

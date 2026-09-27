@@ -94,6 +94,18 @@ class Object
     end
   end
 
+  # defined?(X) の値 (X がクラスかモジュールの時。変換器が __defined_const? をこれにする)
+  def __const_str
+    "constant"
+  end
+
+  # 即値だけ (ヒープのオブジェクトはコピー GC で動くので決まった数を持てない)
+  def object_id
+    id = __object_id
+    raise NotImplementedError, "object_id of a heap object is not available on the FPGA core" if id.nil?
+    id
+  end
+
   def __send__(name, *args, &blk)
     send(name, *args, &blk)
   end

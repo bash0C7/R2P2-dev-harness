@@ -25,7 +25,7 @@ module mrb_core
 #(
   parameter int NREGS   = RF_SIZE, // タスク1つの区画のレジスタの数 (区画の中の全フレームで共有)
   parameter int NTASKS  = TASKS,  // 区画の数 (タスクの数の上限。2 の冪)
-  parameter int PC_BITS = 14,
+  parameter int PC_BITS = 15,
   parameter int HEAP_WORDS = HEAP_SIZE // ヒープの語数 (2 の冪。半分ずつ使う)
 ) (
   input  logic                clk,
@@ -522,14 +522,15 @@ module mrb_core
   assign iv_cls  = iv_hdr[31:16];
   assign iv_ok   = iv_obj[VAL_BITS-1 -: TAG_BITS] == TAG_OBJ &&
                    inst_ok(iv_cls) &&
-                   {2'b00, lk_tgt[13:0]} < iv_hdr[15:0];
-  assign iv_addr = iv_obj[HB-1:0] + HB'(1) + HB'(lk_tgt[13:0]);
+                   {3'b000, lk_tgt[12:0]} < iv_hdr[15:0];
+  assign iv_addr = iv_obj[HB-1:0] + HB'(1) + HB'(lk_tgt[12:0]);
   // S_LKDONE の分かれ方
   logic lk_kind_pc, lk_kind_prim, lk_kind_iv, lk_kind_ivset;
-  assign lk_kind_pc    = lk_tgt[15:14] == TGT_PC;
-  assign lk_kind_prim  = lk_tgt[15:14] == TGT_PRIM;
-  assign lk_kind_iv    = lk_tgt[15:14] == TGT_IVAR;
-  assign lk_kind_ivset = lk_tgt[15:14] == TGT_IVSET;
+  // 飛び先の種類 (isa.rb の tgt_kind): 0xxx pc、10xx primitive、110x インスタンス変数、111x attr_writer
+  assign lk_kind_pc    = !lk_tgt[15];
+  assign lk_kind_prim  = lk_tgt[15:14] == 2'b10;
+  assign lk_kind_iv    = lk_tgt[15:13] == 3'b110;
+  assign lk_kind_ivset = lk_tgt[15:13] == 3'b111;
   // new: クラスの番号 (R[a] の Class の即値) が Object かプログラムのクラスか
   logic new_ok;
   assign new_ok = ra[VAL_BITS-1 -: TAG_BITS] == TAG_CLASS && inst_ok(ra[15:0]) && ra[31:16] == 16'd0;
@@ -739,6 +740,20 @@ module mrb_core
   assign t_in     = val_of(ra1) < 32'(NTASKS);
   assign ra2_proc = tag_of(ra2) == TAG_OBJ && heap[ha(val_of(ra2))][31:16] == CLS_PROC;
 
+  // __object_id: 即値の object_id (Integer 2n+1、nil 8、true 20、false 0、Symbol s<<8|12、クラス c<<8|28)。ヒープは nil
+  logic [VAL_BITS-1:0] objid;
+  always_comb begin
+    case (ra[VAL_BITS-1 -: TAG_BITS])
+      TAG_INT:   objid = {TAG_INT, ra[INT_BITS-2:0], 1'b1};
+      TAG_NIL:   objid = {TAG_INT, 32'd8};
+      TAG_TRUE:  objid = {TAG_INT, 32'd20};
+      TAG_FALSE: objid = {TAG_INT, 32'd0};
+      TAG_SYM:   objid = {TAG_INT, ra[23:0], 8'd12};
+      TAG_CLASS: objid = {TAG_INT, ra[23:0], 8'd28};
+      default:   objid = V_NIL;
+    endcase
+  end
+
   // __sym_at: R[a] がシンボル表 (TABLE の c から、メソッド表の前まで) の中か (Icarus のために wire に)
   logic symat_in;
   assign symat_in = ra[INT_BITS-1:0] < 32'(tbase) - 32'(symtab);
@@ -914,6 +929,8 @@ module mrb_core
           err      = prim_argc_bad || !ra_str || !ra1_int || !ra2_int || !s_slice_ok;
         end
         PR_SYMSTR: begin wr = 1'b0; go_sym = 1'b1; err = prim_argc_bad || tag_of(ra) != TAG_SYM; end
+        // object_id の数 (即値だけ。ヒープのオブジェクトは nil)
+        PR_OBJID: begin err = prim_argc_bad; wval = objid; end
         // シンボル表 (TABLE の c から、メソッド表の前まで) の R[a] 番目 (表の外は nil)
         PR_SYMAT: begin err = prim_argc_bad || !ra_int; wval = symat_in ? {TAG_SYM, ra[INT_BITS-1:0]} : V_NIL; end
         PR_NAMESYM: begin

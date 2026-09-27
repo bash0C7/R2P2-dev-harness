@@ -28,6 +28,18 @@ module FpgaGap
   ATTRS = %w[attr_reader attr_writer attr_accessor].freeze
   DECLARATIONS = (ATTRS + %w[include private public protected module_function]).freeze
   ROOT = File.expand_path("../..", __dir__)
+  # PicoRuby の gem が、使う側 (プログラム) が定義する前提で呼ぶメソッド (ADC#init_additional_params)
+  HOOKS = %w[init_additional_params].freeze
+
+  # FPGA 版の gem (と使う PicoRuby の mrblib) のどれかが定義するメソッドの名前。gem の中の呼び出しが、受け手の型しだいで
+  # 別の gem のメソッドになるもの (MIDIBASE::Session の player の next_event など) を止める理由に数えないため
+  def gem_methods
+    @gem_methods ||= FpgaCorpus::GEMS.values.flat_map { |files, _| Array(files) }.flat_map do |f|
+      src = File.read(File.expand_path(f, FpgaCorpus::GEMS_DIR))
+      src.scan(/^\s*(?:private\s+)?(?:def\s+(?:self\.)?|alias\s+)([a-z_]\w*[?!=]?)/).flatten +
+        src.scan(/^\s*attr_(?:reader|accessor)\s+(.*)$/).flatten.flat_map { |l| l.scan(/:(\w+)/).flatten }
+    end.uniq
+  end
 
   def targets
     vendor = Dir[File.join(ROOT, "vendor/picoruby/mrbgems/*/{example,examples,sample}/**/*.rb")]
@@ -61,6 +73,7 @@ module FpgaGap
       loaded = {} # レジスタ -> 直前の LOADSYM の名前 (attr_* の引数)
       decoded[i].each do |insn|
         defined[ir.syms[insn.operands[1]]] = true if %w[TDEF DEF SDEF].include?(insn.name)
+        defined[ir.syms[insn.operands[0]]] = true if insn.name == "ALIAS" # alias 新 旧
         loaded[insn.operands[0]] = ir.syms[insn.operands[1]] if insn.name == "LOADSYM"
         next unless insn.name == "SSEND" && ATTRS.include?(ir.syms[insn.operands[1]])
         (insn.operands[2] & 0xF).times do |j|
@@ -72,6 +85,8 @@ module FpgaGap
       end
     end
     DECLARATIONS.each { |n| defined[n] = true }
+    HOOKS.each { |n| defined[n] = true }
+    gem_methods.each { |n| defined[n] = true }
     FpgaIsa::PRIMS.each { |pr| defined[pr[1]] = true }
     found = {}
     ireps.each_with_index do |ir, i|

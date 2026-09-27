@@ -3,6 +3,7 @@ require_relative "converter"
 require_relative "ref_vm"
 require_relative "compare"
 require_relative "oracle"
+require_relative "psg_decode"
 
 class FpgaRefVmTest < Minitest::Test
   include FpgaTestHelper
@@ -46,8 +47,8 @@ class FpgaRefVmTest < Minitest::Test
 
   # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、ピンへの代入の系列を比べる。止まるプログラムは
   # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
-  # watchdog の再起動と Task (区画の切り替え) は CRuby では表せないので比べない (Task は下で picoruby と比べる)
-  CRUBY_CANNOT = %w[watchdog tasks].freeze
+  # watchdog の再起動、Task (区画の切り替え)、PSG の列 (仮想の時計で進む) は CRuby では表せないので比べない (Task は下で picoruby と比べる)
+  CRUBY_CANNOT = %w[watchdog tasks psg].freeze
 
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
@@ -102,5 +103,24 @@ class FpgaRefVmTest < Minitest::Test
       _final, stdout = FpgaOracle.picoruby_run(src, picoruby: PICORUBY)
       assert_equal stdout, FpgaCompare.console(trace), name
     end
+  end
+
+  # PSG (P5e): 音程は C の psg_period_q8 と同じ式 (CHIP_CLOCK / 32 / 周波数 × 256 を丸める) で CRuby が計算した値、
+  # 音はトレースの P 行を psg_decode.rb で組み立てた並び (250ms ごとに C4 E4 G4 C5)
+  def test_psg_corpus_matches_the_c_formulas
+    k = 2_000_000 / 32.0
+    q8 = ->(f) { ((k / f) * 256 + 0.5).to_i }
+    eq = ->(n, a4 = 440.0) { a4 * 2**((n - 69) / 12.0) }
+    period = ->(q) { (q + 128) >> 8 }
+    half = q8.(eq.(60)) + ((q8.(eq.(61)) - q8.(eq.(60))) * 0.5).to_i
+    expected = [period.(q8.(eq.(60))), q8.(eq.(60)) >> 8, period.(q8.(eq.(69))), period.(half), (k / eq.(130) + 0.5).to_i,
+                period.(q8.(eq.(60) * 5 / 4)), period.(q8.(eq.(69, 442.0)))]
+    assert_equal [239, 238], expected[0, 2] # picoruby-psg の README
+    trace = FpgaRefVm.new(FpgaConverter.read_hex(File.join(CORPUS, "psg.hex"))).run(400_000)
+    assert trace.last.start_with?("H "), trace.last
+    assert_equal expected.map(&:to_s), FpgaCompare.console(trace).lines.first(7).map(&:strip)
+    notes = FpgaPsg.from_trace(trace).select { |_, v, n| v.zero? && n }.map { |t, _, n| [t, n[0]] }
+    assert_equal %w[C4 E4 G4 C5], notes.map(&:last)
+    assert_equal [250, 250, 250], notes.each_cons(2).map { |(a, _), (b, _)| b - a }
   end
 end

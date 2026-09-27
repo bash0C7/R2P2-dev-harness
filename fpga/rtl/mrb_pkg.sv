@@ -44,17 +44,13 @@ package mrb_pkg;
   localparam int RF_SIZE     = 128;
   localparam int TASKS       = 8;
   localparam int STACK_DEPTH = 32;
-  localparam int NCONST      = 64;
+  localparam int NCONST      = 256;
   localparam int INSNS_PER_US = 16; // 仮想の時計: 始めた命令この数で 1µs
   localparam int LOCKED_INSNS_PER_US = 256; // 割り込みを止めている間の命令はこの数で 1µs
 
   // メソッド表 (tools/fpga/isa.rb)。1語 = {クラス, シンボル, 飛び先}。飛び先の上位 2bit が種類
   localparam logic [15:0] SUPER_SYM = 16'hffff;
   localparam int MAX_SUPER_DEPTH = 32;
-  localparam logic [1:0] TGT_PC = 2'd0;
-  localparam logic [1:0] TGT_PRIM = 2'd1;
-  localparam logic [1:0] TGT_IVAR = 2'd2;
-  localparam logic [1:0] TGT_IVSET = 2'd3;
   localparam logic [15:0] NIVARS_SYM = 16'hfffe;
   localparam logic [15:0] ISA_BIT = 16'h4000;
   localparam logic [15:0] NAME_SYM = 16'hfffd;
@@ -171,7 +167,8 @@ package mrb_pkg;
   localparam logic [13:0] PR_HALT     = 14'd86; // Object#__halt (0 arg)
   localparam logic [13:0] PR_DSEND    = 14'd87; // Object#__send (any)
   localparam logic [13:0] PR_SYMAT    = 14'd88; // Integer#__sym_at (0 arg)
-  localparam int NPRIMS = 89;
+  localparam logic [13:0] PR_OBJID    = 14'd89; // Object#__object_id (0 arg)
+  localparam int NPRIMS = 90;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
   localparam logic [2:0] CERR_ZERODIV     = 3'd1;
   localparam logic [2:0] CERR_NOMETHOD    = 3'd2;
@@ -272,6 +269,7 @@ package mrb_pkg;
       PR_HALT    : return 8'h00;
       PR_DSEND   : return 8'hff;
       PR_SYMAT   : return 8'h00;
+      PR_OBJID   : return 8'h00;
       default: return 8'h00;
     endcase
   endfunction

@@ -6,7 +6,7 @@ module mrb_soc
 #(
   parameter int    NREGS    = RF_SIZE,
   parameter int    NTASKS   = TASKS,
-  parameter int    PC_BITS  = 14,
+  parameter int    PC_BITS  = 15,
   parameter int    HEAP_WORDS = HEAP_SIZE,
   parameter        ROM_FILE = "" // string。型を付けると Icarus が渡せない
 ) (

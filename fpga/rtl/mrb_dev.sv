@@ -1,4 +1,4 @@
-// コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI)。番地と意味は tools/fpga/devices.rb (参照モデル) と同じ。
+// コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI、PSG の列)。番地と意味は tools/fpga/devices.rb (参照モデル) と同じ。
 // コアは primitive の __io_read / __io_write で読み書きする (16bit の番地、0x100 から上)。
 // 読み出しは組み合わせ。re は読んだ cycle のパルス (UART の RX、RNG、IRQ の登録と事象は読むと進む)。
 // tick は命令を始める前 (コアの S_FETCH の en の cycle) のパルスで、ピンを標本にして IRQ の事象を積み、watchdog の期限を見る。
@@ -56,7 +56,9 @@ module mrb_dev
                           WDT_ENABLE = 16'h170, WDT_DISABLE = 16'h171, WDT_FEED = 16'h172, WDT_CAUSED = 16'h173,
                           WDT_REMAIN = 16'h174, WDT_REBOOT = 16'h175,
                           I2C_ADDR = 16'h180, I2C_ACK = 16'h182, I2C_RX = 16'h184, I2C_PRESENT = 16'h185,
-                          SPI_RX = 16'h191;
+                          SPI_RX = 16'h191,
+                          PSG_DELAY = 16'h1A0, PSG_AUX = 16'h1A1, PSG_PUSH = 16'h1A2, PSG_FREE = 16'h1A3, PSG_EMPTY = 16'h1A4,
+                          PSG_SELECT = 16'h1A5, PSG_DIRECT_REG = 16'h1A6, PSG_DIRECT_MUTE = 16'h1A7;
   localparam int NSLOT = 16;  // IRQ の枠 (RP2040 の port と同じ)
   localparam int QLEN  = 32;  // 事象の列 (31 で満杯)
 
@@ -119,6 +121,41 @@ module mrb_dev
   logic        i2c_ack;
   assign i2c_ack = i2c_present[i2c_addr[6:5]][i2c_addr[4:0]];
 
+  // ---- PSG のパケットの列 (devices.rb の psg_tick。C の ports/common/psg.c の ring buffer と rp2040 port の
+  //      psg_process_packets)。256 枠で 255 まで入る。PSG そのもの (音) は外。取り出したパケットは psg_ev でテストベンチへ
+  //      (トレースの P 行)。C は 1ms ごとの tick でまとめて取り出すが、ここは命令の区切り (tick) ごとに1つずつ
+  logic [31:0] psg_dl [256];
+  logic [31:0] psg_wd [256];
+  logic [15:0] psg_ax [256];
+  logic [7:0]  psg_h, psg_t;   // 取り出す位置、積む位置
+  logic [31:0] psg_sel, psg_g, psg_delay, psg_aux, psg_ms;
+  logic        psg_due;
+  logic [7:0]  psg_n;
+  assign psg_n = psg_t - psg_h;
+  logic        p_cross, p_due1, p_empty, p_pop, p_empty_after, p_run;
+  logic [31:0] p_g1, p_g2, p_gn;
+  assign p_cross = ms[31:0] > psg_ms;
+  assign p_g1    = psg_g + (p_cross && psg_sel != 32'd0 ? ms[31:0] - psg_ms : 32'd0);
+  assign p_due1  = psg_due || p_cross;
+  assign p_run   = p_due1 && psg_sel != 32'd0;
+  assign p_empty = psg_n == 8'd0;
+  assign p_pop   = p_run && !p_empty && psg_dl[psg_h] <= p_g1;
+  assign p_g2    = p_pop ? p_g1 - psg_dl[psg_h] : p_g1;
+  assign p_empty_after = p_pop ? psg_n == 8'd1 : p_empty;
+  assign p_gn    = p_run && p_empty_after ? 32'd0 : p_g2;
+  // 取り出した (か列を通さずに書いた) パケット: ms、{op, reg, val, arg}、aux。tick は命令を始める前 (P 行の step は次の命令)
+  logic        psg_ev, psg_ev_tick;
+  logic [31:0] psg_ev_ms, psg_ev_word;
+  logic [15:0] psg_ev_aux;
+  logic        psg_direct;
+  assign psg_direct  = we && (addr == PSG_DIRECT_REG || addr == PSG_DIRECT_MUTE);
+  assign psg_ev_tick = tick && p_pop;
+  assign psg_ev      = psg_ev_tick || psg_direct;
+  assign psg_ev_ms   = psg_ev_tick ? ms[31:0] - p_g2 : ms[31:0];
+  assign psg_ev_word = psg_ev_tick ? psg_wd[psg_h] :
+                       {addr == PSG_DIRECT_REG ? 8'h80 : 8'h81, wdata[15:8], 8'd0, wdata[7:0]};
+  assign psg_ev_aux  = psg_ev_tick ? psg_ax[psg_h] : 16'd0;
+
   logic [31:0] adc_r;
   always_comb begin
     adc_r = 32'd0;
@@ -161,6 +198,9 @@ module mrb_dev
       I2C_PRESENT, I2C_PRESENT + 16'd1, I2C_PRESENT + 16'd2, I2C_PRESENT + 16'd3:
                      rdata = {TAG_INT, i2c_present[addr[1:0] - 2'd1]};
       SPI_RX:        rdata = {TAG_INT, spi_rx_count == spi_rp ? 32'd255 : {24'd0, spi_rx_bytes[spi_rp[7:0]]}};
+      PSG_FREE:      rdata = {TAG_INT, psg_sel == 32'd0 ? 32'd0 : 32'd255 - 32'(psg_n)};
+      PSG_EMPTY:     rdata = {TAG_INT, 31'd0, psg_n == 8'd0};
+      PSG_SELECT:    rdata = {TAG_INT, psg_sel};
       default:       rdata = V_NIL;
     endcase
   end
@@ -204,6 +244,14 @@ module mrb_dev
       i2c_addr  <= '0;
       i2c_rp    <= '0;
       spi_rp    <= '0;
+      psg_h     <= '0;
+      psg_t     <= '0;
+      psg_sel   <= '0;
+      psg_g     <= '0;
+      psg_delay <= '0;
+      psg_aux   <= '0;
+      psg_ms    <= '0;
+      psg_due   <= 1'b0;
     end else begin
       reboot <= 1'b0;
       if (tick && wdt_due) begin
@@ -231,7 +279,21 @@ module mrb_dev
         have_last <= 1'b0;
         wdt_en    <= 1'b0;
         i2c_addr  <= '0;
+        // PSG の列も初めから (この tick で取り出したものは psg_ev で出ている)
+        psg_h     <= '0;
+        psg_t     <= '0;
+        psg_sel   <= '0;
+        psg_g     <= '0;
+        psg_delay <= '0;
+        psg_aux   <= '0;
+        psg_ms    <= '0;
+        psg_due   <= 1'b0;
       end else if (tick) begin
+        // PSG の列: ms の境を越えたら g を進め、先頭の遅延が来ていれば1つ取り出す
+        if (p_cross) psg_ms <= ms[31:0];
+        psg_g   <= p_gn;
+        psg_due <= p_run ? p_pop : p_due1;
+        if (p_pop) psg_h <= psg_h + 8'd1;
         // ピンの事象 (RP2040 の gpio_irq_callback と同じ): ピンの順に、そのピンの枠の mask の和で絞り、最初に重なる枠へ
         begin : irq_tick
           logic [3:0]  en_m, ev;
@@ -305,6 +367,23 @@ module mrb_dev
             WDT_DISABLE:   wdt_en <= 1'b0;
             I2C_ADDR:      i2c_addr <= wdata[31:0];
             WDT_FEED:      if (wdt_en) wdt_dead <= vtime + 64'(wdt_ms) * 64'd1000;
+            PSG_DELAY:     psg_delay <= wdata[31:0];
+            PSG_AUX:       psg_aux <= {16'd0, wdata[15:0]};
+            PSG_PUSH: if (psg_sel != 32'd0 && psg_n != 8'd255) begin
+              psg_dl[psg_t] <= psg_delay;
+              psg_wd[psg_t] <= wdata[31:0];
+              psg_ax[psg_t] <= psg_aux[15:0];
+              psg_t         <= psg_t + 8'd1;
+            end
+            PSG_EMPTY:     psg_h <= psg_t; // buffer_flush
+            PSG_SELECT: begin
+              psg_sel   <= wdata[31:0];
+              psg_h     <= psg_t;
+              psg_g     <= '0;
+              psg_due   <= 1'b0;
+              psg_delay <= '0;
+              psg_aux   <= '0;
+            end
             default: ;
           endcase
         end

@@ -322,6 +322,24 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
     `SEND 枠 :to_proc` を足す。`Symbol#to_proc` はプレリュード (`proc { |o, *a| o.__send(sym, *a) }` を引数の数で分けたもの)。
     LOADSYM 以外の値 (`&obj`) を渡すものは今は止めない (Proc でなければ呼んだ所でエラー)
 
+### P8 64bit の Integer
+
+- R2P2 (Pico 2) の PicoRuby は `MRB_INT64` (build_config/r2p2-picoruby-pico2_w)。コアの Integer は 32bit で、桁があふれると
+  黙って折り返す (MML の Player の `delta_ticks * 60_000_000` で見つけた)。値を {tag 4bit, 64bit} にし、演算・比較・
+  リテラル (LOADL は 64bit を ROM のデータから)・デバイスの 32bit のレジスタ (符号拡張)・Float との変換・トレースを 64bit にする
+- **P8 の設計。** PicoRuby の mruby (MRB_INT64、MRB_NO_BOXING、bigint なし) と同じ意味。
+  - **値は {tag 4bit, 64bit}** (VAL_BITS 68)。レジスタ・ヒープ・定数・ポートの語も 68bit。ヒープの番地・長さ・見出しは下の bit
+  - **桁あふれは RangeError** (mruby は bigint が無いと VM の演算は "integer overflow"、メソッドは "integer overflow in
+    addition" など)。回路は +、-、*、ADDI / SUBI、`-@`、`abs`、`/` と `%` の MIN / -1、`<<`、`**` (プレリュード) で桁あふれを見て
+    コアのエラー (CERR_OVERFLOW、プレリュードが RangeError にする) にする。今の折り返しは黙って違うのでやめる
+  - **リテラル。** LOADI32 は 32bit を符号拡張、pool の 32bit に入らない整数は LOADL64 (ROM のデータの2語、LOADF と同じ形) にする
+  - **デバイスのレジスタは 32bit のまま。** __io_read は 32bit を符号拡張 (-1 は -1 のまま。今の gem の意味を変えない)、
+    __io_write は下の 32bit (範囲の外は RangeError?。devices.rb と同じにする)。TIME_US は 64bit を1回で読めるようにする
+  - **Float との変換** (`to_i` は 64bit に入らなければ RangeError、`to_f` はそのまま)。Integer#to_s / format / inspect はプレリュードの
+    計算がそのまま 64bit で動く
+  - **トレース** の W / O 行の値は 16 桁の16進。tb の期待値、ファズの値の範囲、トレースを読む道具 (compare、displays、emu) を合わせる
+  - 突き合わせ: CRuby は Bignum に上がるので、桁あふれの所は picoruby host (64bit) と比べる。MML の example の待ち時間
+
 ## 記録
 
 | 日付 | 段 | 範囲内 | 変換を通る | 一致 | メモ |
@@ -345,6 +363,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P5d I2C・SPI・表示器・Time・hcsr04・rotary_encoder | 65 | 47 (example は 17 / 32) | 47 | buses.rb (刺激)、display.rb を追加。ヒープ 65536 語 (parameter)。表示器はトレースのデコーダーでエミュレーターが描く。止める理由は Task (P6)、psg (P5e)、picotest、pio、pitchdetector |
 | 2026-09-26 | P6 Task | 66 | 50 (example は 19 / 32) | 50 | tasks.rb を追加 (host の picoruby とも比べる)。区画 8 つ、スケジューラーは task.c を写した Ruby。仮想の時計を 16 命令で 1µs に。mruby-task の examples 9 本は参照と RTL が一致、host とは表し方の違いだけ。止める理由は psg (P5e)、picotest、pio、pitchdetector |
 | 2026-09-27 | P7 動的な send と &:sym | 67 | 51 (example は 19 / 32) | 51 | sends.rb を追加 (CRuby と host の picoruby とも比べる)。mruby-task の statistics.rb も通った (host とは tick の単位だけ)。止める理由は psg / midibase-mml / uart-midi (P5e)、picotest、pio、pitchdetector |
+| 2026-09-27 | P5e PSG・MML・MIDI | 69 | 64 (example は 27 / 32) | 64 | psg.rb、singletons.rb を追加。PSG の列 (256 枠) と P 行、psg / midibase / midibase-mml / uart-midi は PicoRuby の mrblib をそのまま使う。`class << self`、クラスのインスタンス変数、`::X`、`defined?(X)`。ROM 32768 語、定数 256。止める理由は picotest、pio、pitchdetector、File (dirname / expand_path) |
 
 ## 見つけたこと
 
@@ -494,3 +513,13 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 - P7: host の picoruby は `send("hello")` (String の名前) も受けた。最初は TypeError にしていたので、シンボル表を引く
   `Integer#__sym_at` を足して String#to_sym をプレリュードで書いた。回路は新しいシンボルを作れないので無い名前は ArgumentError
 - P7: Icarus だけ tb が止まらなかった (always_comb の式の条件に関数の呼び出し `val_of(ra) < ...` を置いた。P2 で見つけた Icarus の癖と同じ)。wire に出した
+- P5e: PicoRuby の psg と midibase 系の mrblib は `class << self`、モジュールのインスタンス変数 (`@voice_programs`)、`::MIDIBASE`
+  (OCLASS) を使っていて変換で止まった。変換器に足した (クラスのインスタンス変数はクラスごとの定数)
+- P5e: `defined?(Machine)` は PicoRuby の compiler では `self.__defined_const?(:Machine)` の呼び出しになる (命令ではない)。
+  変換器がクラスかどうかで静的に解く
+- P5e: 定数 64、ROM 16384 語では足りなかった (twinkle で 19000 語)。定数 256、ROM 32768 語 (PC 15bit) にし、メソッド表の
+  飛び先の種類を上位 2bit から上位の可変長の bit に変えた (pc を 15bit に)
+- P5e: gap の止める理由の数え方の誤り: `alias` で定義した名前 (RotaryEncoder#cw)、受け手しだいで別の gem のメソッドになる呼び出し
+  (Session の player の `next_event`)、使う側が定義する前提の hook (ADC#init_additional_params) を「無いメソッド」と数えていた
+- P5e: MML の Player は `delta_ticks * 60_000_000 / (ppqn * tempo)` を計算する。32bit の Integer では桁があふれ、待ち時間が
+  負になって全部の音が数 ms に詰まった。R2P2 の PicoRuby は `MRB_INT64`。黙って違う所なので P8 (64bit の Integer) を計画に入れた

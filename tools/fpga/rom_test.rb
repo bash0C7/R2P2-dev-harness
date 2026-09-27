@@ -45,6 +45,8 @@ class FpgaRomTest < Minitest::Test
     "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE],
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
+    "GETIV" => %w[GETCONST], "SETIV" => %w[SETCONST], # クラスのインスタンス変数 (クラスごとの定数)
+    "SCLASS" => %w[NOP], "OCLASS" => %w[CLASS], # class << self (本体は特異メソッド)、::X
     "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF], "ALIAS" => %w[NOP],
     "HASH" => %w[ARRAY], "HASHADD" => %w[ARRAY], "HASHCAT" => %w[SEND], "RANGE_INC" => %w[SEND], "RANGE_EXC" => %w[SEND]
   }.freeze
@@ -147,8 +149,8 @@ class FpgaRomTest < Minitest::Test
   end
 
   def test_rejects_unsupported_instruction_with_location
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("SCLASS"), 1, op("STOP")])) }
-    assert_match(/unsupported instruction\(s\): SCLASS at byte 001/, e.message)
+    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("NOP"), op("UNDEF"), 1, op("STOP")])) }
+    assert_match(/unsupported instruction\(s\): UNDEF at byte 001/, e.message)
   end
 
   # 呼び出しは b = シンボルの番号、c = 引数の数 | ブロックを渡す印 << 7。演算の落ち先のシンボルは 0 から固定
@@ -290,11 +292,11 @@ class FpgaRomTest < Minitest::Test
       RUBY
       p_id = image.class_names.key("P")
       q_id = image.class_names.key("Q")
-      assert_equal [FpgaIsa::TGT_IVAR << 14 | 0, FpgaIsa::TGT_IVSET << 14 | 1], [full_lookup(image, p_id, "x"), full_lookup(image, p_id, "y=")]
-      assert_equal [FpgaIsa::TGT_IVAR << 14 | 0, FpgaIsa::TGT_IVAR << 14 | 1], [full_lookup(image, p_id, "@x"), full_lookup(image, p_id, "@y")]
+      assert_equal [FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0), FpgaIsa.tgt(FpgaIsa::TGT_IVSET, 1)], [full_lookup(image, p_id, "x"), full_lookup(image, p_id, "y=")]
+      assert_equal [FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0), FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 1)], [full_lookup(image, p_id, "@x"), full_lookup(image, p_id, "@y")]
       # Q の並び: @x @y (P から) + @z + @name (include)。Q の行は増えた分だけで、@x は親を辿って引く
-      assert_equal [0, 2], [lookup(image, q_id, "@x"), full_lookup(image, q_id, "@z") & 0x3FFF]
-      assert_equal 3, full_lookup(image, q_id, "@name") & 0x3FFF
+      assert_equal [0, 2], [lookup(image, q_id, "@x"), FpgaIsa.tgt_value(full_lookup(image, q_id, "@z"))]
+      assert_equal 3, FpgaIsa.tgt_value(full_lookup(image, q_id, "@name"))
       assert_nil full_lookup(image, q_id, "@x")
       assert_equal [2, 4], [nivars(image, p_id), nivars(image, q_id)]
       # is_a? が出てくるので ISA の行がある (祖先を辿らずに1回で引く)
@@ -309,7 +311,7 @@ class FpgaRomTest < Minitest::Test
   def test_rejects_unsupported_object_features
     with_mrbc do
       { "class A; extend Comparable; end" => /extend in a class body/,
-        "class A; @n = 1; end" => /class-level instance variables/,
+        "o = 1; class << o; def f; end; end" => /only supported as `class << self` in a class body/,
         "class A; def f = [1].each { super() }; end" => /super inside a block/ }.each do |src, msg|
         e = assert_raises(FpgaRom::Error) { compile(src) }
         assert_match msg, e.message, src
@@ -418,7 +420,7 @@ class FpgaRomTest < Minitest::Test
     mask = image.table_size - 1
     FpgaIsa::MAX_SUPER_DEPTH.times do
       t = probe(image, cls, sym, mask)
-      return t & 0x3FFF if t
+      return FpgaIsa.tgt_value(t) if t
       cls = probe(image, cls, FpgaIsa::SUPER_SYM, mask)
       return nil unless cls
     end
@@ -463,9 +465,9 @@ class FpgaRomTest < Minitest::Test
   def test_picoruby_converter_stops_with_the_location
     with_picoruby do |dir|
       e = assert_raises(FpgaConverter::Error) do
-        picoruby_convert(dir, rite([op("NOP"), op("SCLASS"), 1, op("STOP")]))
+        picoruby_convert(dir, rite([op("NOP"), op("UNDEF"), 1, op("STOP")]))
       end
-      assert_match(/unsupported instruction\(s\): SCLASS at byte 001/, e.message)
+      assert_match(/unsupported instruction\(s\): UNDEF at byte 001/, e.message)
       e = assert_raises(FpgaConverter::Error) { picoruby_convert(dir, rite([op("STOP")], nregs: 17), max_regs: 16) }
       assert_match(/needs 17 registers/, e.message)
     end
