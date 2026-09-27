@@ -1020,7 +1020,7 @@ class Class
   # C: src/class.c mrb_class_initialize
   def initialize(*args, &blk)
     __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
-    __fpga_yield_with_class(blk, [self], self, self) unless __fpga_tag(blk) == 0 # L:TAG_NIL
+    __fpga_yield_with_class(blk, [self], self, __fpga_addr(self)) unless __fpga_tag(blk) == 0 # L:TAG_NIL
     self
   end
 

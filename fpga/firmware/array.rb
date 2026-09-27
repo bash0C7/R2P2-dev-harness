@@ -207,6 +207,13 @@ class Array
     __fpga_aref(self, len - 1)
   end
 
+  # C: src/array.c mrb_ary_clear
+  def clear
+    __fpga_check_frozen(__fpga_addr(self)) # ary_modify の ary_modify_check
+    __fpga_st32(__fpga_addr(self) + 8, 0) # L:A_LEN
+    self
+  end
+
   # C: src/array.c mrb_ary_to_s
   def to_s
     ret = "["
