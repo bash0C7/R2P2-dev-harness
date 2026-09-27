@@ -18,21 +18,22 @@ module FpgaV2
     STACK_VALUES = 65_536 # VM のスタック (値の並び)
     CI_FRAMES = 4096 # mrb_context の ci の並びの数 (1 つは layout.rb の CI_SIZE バイト)
 
-    # コアのクラス: [名前, 親, :class / :module, include する module]。mruby の class.c (mrb_init_class)、object.c、numeric.c ... の親と同じ
+    # コアのクラス: [名前, 親, :class / :module]。mruby の C が定義するもの (class.c の mrb_init_class、object.c、numeric.c、error.c の
+    # mrb_init_exception ...) と同じ親。mrblib が定義するもの (Comparable、NameError、NoMethodError、StopIteration) と include は mrblib がする
     CORE = [
       ["BasicObject", nil, :class], ["Object", "BasicObject", :class], ["Module", "Object", :class], ["Class", "Module", :class],
-      ["Kernel", nil, :module], ["Comparable", nil, :module], ["Enumerable", nil, :module],
+      ["Kernel", nil, :module], ["Enumerable", nil, :module],
       ["NilClass", "Object", :class], ["TrueClass", "Object", :class], ["FalseClass", "Object", :class],
-      ["Numeric", "Object", :class, "Comparable"], ["Integer", "Numeric", :class], ["Float", "Numeric", :class],
-      ["Symbol", "Object", :class, "Comparable"], ["String", "Object", :class, "Comparable"],
-      ["Array", "Object", :class, "Enumerable"], ["Hash", "Object", :class, "Enumerable"], ["Range", "Object", :class, "Enumerable"],
+      ["Numeric", "Object", :class], ["Integer", "Numeric", :class], ["Float", "Numeric", :class],
+      ["Symbol", "Object", :class], ["String", "Object", :class],
+      ["Array", "Object", :class], ["Hash", "Object", :class], ["Range", "Object", :class],
       ["Proc", "Object", :class],
       ["Exception", "Object", :class], ["ScriptError", "Exception", :class], ["NotImplementedError", "ScriptError", :class],
       ["StandardError", "Exception", :class], ["RuntimeError", "StandardError", :class], ["FrozenError", "RuntimeError", :class],
-      ["ArgumentError", "StandardError", :class], ["TypeError", "StandardError", :class], ["NameError", "StandardError", :class],
-      ["NoMethodError", "NameError", :class], ["IndexError", "StandardError", :class], ["KeyError", "IndexError", :class],
-      ["StopIteration", "IndexError", :class], ["RangeError", "StandardError", :class], ["FloatDomainError", "RangeError", :class],
-      ["ZeroDivisionError", "StandardError", :class], ["LocalJumpError", "StandardError", :class],
+      ["ArgumentError", "StandardError", :class], ["LocalJumpError", "StandardError", :class], ["RangeError", "StandardError", :class],
+      ["FloatDomainError", "RangeError", :class], ["RegexpError", "StandardError", :class], ["TypeError", "StandardError", :class],
+      ["ZeroDivisionError", "StandardError", :class], ["SyntaxError", "ScriptError", :class], ["IndexError", "StandardError", :class],
+      ["KeyError", "IndexError", :class], ["NoMatchingPatternError", "StandardError", :class],
       ["SystemStackError", "Exception", :class], ["NoMemoryError", "Exception", :class]
     ].freeze
     # インスタンスの tt (MRB_SET_INSTANCE_TT をする所: error.c、string.c、array.c、hash.c、range.c、proc.c、symbol.c、numeric.c、object.c)。
@@ -62,8 +63,9 @@ module FpgaV2
 
     attr_reader :mem, :syms, :classes, :top
 
-    def initialize(firmware:, programs: [])
+    def initialize(firmware:, mrblib: nil, programs: [])
       @fw_bin = firmware
+      @mrblib = mrblib
       @programs = programs
       @mem = "\0".b * MEM_SIZE
       @brk = IMG_WORDS * WORD
@@ -217,7 +219,6 @@ end
       # 定数 (Object::Integer ...。mruby の mrb_define_class が Object に置く)
       CORE.each { |name, *| iv_set(r32(@classes["Object"] + C_IV), @syms.fetch(name), TAG_OBJ, @classes[name]) }
       # include (iclass を親との間に挟む。iclass は module の表の見出しを共有する)
-      CORE.each { |name, _, _, inc| include_module(@classes[name], @classes.fetch(inc)) if inc }
       CORE_INCLUDES.each { |name, inc| include_module(@classes[name], @classes.fetch(inc)) }
       # クラスの見出しのクラス: クラスはメタクラス、module は Module
       klass = @classes["Class"]
@@ -450,6 +451,7 @@ end
         w32(progs + k * 8, a)
         w32(progs + k * 8 + 4, bin.bytesize)
       end
+      mrblib = @mrblib ? bytes(@mrblib) : 0 # mruby の mrblib/*.rb を 1 つの .mrb にしたもの (起動の時に mrb_init_mrblib が読む)
       stack = alloc(STACK_VALUES * VALUE, 16)
       cis = alloc(CI_FRAMES * CI_SIZE, 16)
       ctx = alloc(CTX_SIZE, 16) # mrb_context (root_c)
@@ -467,7 +469,7 @@ end
         true_class: "TrueClass", false_class: "FalseClass", nil_class: "NilClass", symbol_class: "Symbol", kernel_module: "Kernel",
         symidx: @syms.size, symtbl: @sym_table, symcapa: SYM_CAPA, eException_class: "Exception", eStandardError_class: "StandardError",
         heap_start: heap, heap_end: MEM_SIZE, core_classes: core, fw_entry: boot, programs: progs, nprograms: @programs.size,
-        prims: prims, version: IMG_VERSION
+        prims: prims, mrblib: mrblib, version: IMG_VERSION
       }
       state.each { |k, v| w32(IMG.fetch(k) * WORD, v.is_a?(String) ? @classes.fetch(v) : v) }
       @mem

@@ -1,0 +1,118 @@
+# firmware: 回路が持たない命令のうち、配列の多重代入、シンボル、メソッドの定義の遅い道 (mruby の src/vm.c の CASE、計画 S4-4)。
+# a, b, c は命令の operand、__fpga_reg / __fpga_setreg は罠を起こしたフレームのレジスタ
+class Object
+  # OP_AREF: R[a] = R[b][c] (Array でなければ c == 0 の時だけ R[b]、ほかは nil)
+  # C: src/vm.c OP_AREF
+  def __fpga_op_AREF(a, b, c)
+    v = __fpga_reg(b)
+    unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY
+      return __fpga_setreg(a, c == 0 ? v : nil)
+    end
+    __fpga_setreg(a, __fpga_ary_ref(v, c))
+  end
+
+  # C: src/array.c mrb_ary_ref
+  def __fpga_ary_ref(ary, n)
+    len = __fpga_alen(ary)
+    n += len if n < 0
+    return nil if n < 0 || len <= n
+    __fpga_aref(ary, n)
+  end
+
+  # OP_ASET: R[b][c] = R[a]
+  # C: src/vm.c OP_ASET
+  def __fpga_op_ASET(a, b, c)
+    __fpga_ary_set(__fpga_ensure_array_type(__fpga_reg(b)), c, __fpga_reg(a))
+  end
+
+  # C: src/array.c mrb_ary_set
+  def __fpga_ary_set(ary, n, val)
+    len = __fpga_alen(ary)
+    if n < 0
+      n += len
+      __fpga_raisef(IndexError, "index %i out of array", [n - len]) if n < 0
+    end
+    while __fpga_alen(ary) <= n # ary_expand_capa と ary_fill_with_nil
+      ary.__fpga_push1(nil)
+    end
+    __fpga_stv(__fpga_ld32(__fpga_addr(ary) + 16) + n * 16, val) # L:A_PTR L:VALUE
+  end
+
+  # OP_APOST: *rest, post = R[a] (b = 前の数、c = 後ろの数)
+  # C: src/vm.c OP_APOST
+  def __fpga_op_APOST(a, b, c)
+    v = __fpga_reg(a)
+    v = [v] unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY ary_new_from_regs
+    len = __fpga_alen(v)
+    pre = b
+    post = c
+    if len > pre + post
+      rest = []
+      k = pre
+      while k < len - post
+        rest.__fpga_push1(__fpga_aref(v, k))
+        k += 1
+      end
+      __fpga_setreg(a, rest)
+      k = 0
+      while k < post
+        __fpga_setreg(a + 1 + k, __fpga_aref(v, len - post + k))
+        k += 1
+      end
+    else
+      __fpga_setreg(a, [])
+      idx = 0
+      while idx + pre < len
+        __fpga_setreg(a + 1 + idx, __fpga_aref(v, pre + idx))
+        idx += 1
+      end
+      while idx < post
+        __fpga_setreg(a + 1 + idx, nil)
+        idx += 1
+      end
+    end
+  end
+
+  # OP_ARYSPLAT: R[a] = mrb_ary_splat(R[a])
+  # C: src/vm.c OP_ARYSPLAT
+  def __fpga_op_ARYSPLAT(a, b, c)
+    __fpga_setreg(a, __fpga_ary_splat(__fpga_reg(a)))
+  end
+
+  # OP_INTERN: R[a] = R[a].to_sym (String から)
+  # C: src/vm.c OP_INTERN
+  def __fpga_op_INTERN(a, b, c)
+    __fpga_setreg(a, __fpga_mkval(4, __fpga_intern_str(__fpga_ensure_string_type(__fpga_reg(a))))) # L:TAG_SYM
+  end
+
+  # OP_SYMBOL: R[a] = Pool[b] の文字列のシンボル (pool の文字列は {TAG_UNDEF, 長さ << 32 | 番地})
+  # C: src/vm.c OP_SYMBOL
+  def __fpga_op_SYMBOL(a, b, c)
+    v = __fpga_ldv(__fpga_ld32(__fpga_irep + 12) + b * 16) # L:I_POOL L:VALUE
+    __fpga_setreg(a, __fpga_mkval(4, __fpga_intern(__fpga_lo(v), __fpga_hi(v)))) # L:TAG_SYM
+  end
+
+  # OP_TCLASS: R[a] = 定義の入れ物 (check_target_class。mrb_vm_definee_class の cref は D19)
+  # C: src/vm.c OP_TCLASS (D19)
+  def __fpga_op_TCLASS(a, b, c)
+    t = __fpga_tclass
+    __fpga_raise(TypeError, "no class/module to add method") if __fpga_tag(t) == 0 # L:TAG_NIL
+    __fpga_setreg(a, t)
+  end
+
+  # OP_DEF: R[a] (クラス) に Syms[b] を R[a+1] (Proc) で定義し、R[a] = :名前。可視性はフレームの既定 (MRB_METHOD_VDEFAULT_FL)。
+  # method_added の hook は S5
+  # C: src/vm.c OP_DEF
+  def __fpga_op_DEF(a, b, c)
+    sym = __fpga_irep_sym(__fpga_irep, b)
+    __fpga_define(__fpga_addr(__fpga_reg(a)), sym, __fpga_addr(__fpga_reg(a + 1)), __fpga_frame_vis)
+    __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
+  end
+
+  # OP_ERR: LocalJumpError (Pool[a] の文言)
+  # C: src/vm.c OP_ERR
+  def __fpga_op_ERR(a, b, c)
+    v = __fpga_ldv(__fpga_ld32(__fpga_irep + 12) + a * 16) # L:I_POOL L:VALUE
+    __fpga_raise(LocalJumpError, __fpga_str_new(__fpga_lo(v), __fpga_hi(v)))
+  end
+end

@@ -28,8 +28,13 @@ module FpgaV2
 
     def firmware = compile(firmware_sources)
 
+    # mruby の mrblib (mruby ソースコード、そのまま)。mruby の tasks/mrblib.rake と同じく名前の順に 1 つの .mrb に
+    MRBLIB_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems", "picoruby-mruby", "lib", "mruby", "mrblib")
+    def mrblib_sources = Dir[File.join(MRBLIB_DIR, "*.rb")].sort
+    def mrblib = compile(mrblib_sources)
+
     def image(programs)
-      Image.new(firmware: firmware, programs: programs).build
+      Image.new(firmware: firmware, mrblib: mrblib, programs: programs).build
     end
 
     # プログラム (.rb の中身) を走らせてコンソールの出力を返す

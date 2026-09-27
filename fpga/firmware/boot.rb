@@ -5,6 +5,12 @@ class Object
   # 起動 (mruby の mrb_open の後の mrb_load_irep): 像のプログラムを順に読み込み、main で実行する
   # C: src/load.c mrb_load_irep
   def __fpga_boot
+    __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
+    lib = __fpga_image(42) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
+    if lib > 0
+      __fpga_run(__fpga_load(lib), self)
+      __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD
+    end
     progs = __fpga_image(39) # L:IMG_programs
     n = __fpga_image(40) # L:IMG_nprograms
     i = 0
@@ -15,6 +21,24 @@ class Object
       i += 1
     end
     __fpga_halt
+  end
+
+  # 版の定数 (version.c、値は include/mruby/version.h と platform.h を展開したもの)。MRUBY_PLATFORM は OS の無い板なので
+  # platform.h の決まりのとおり "unknown-none"。MRUBY_REVISION は revision.h の無い build の "HEAD"。frozen の印は S5
+  # C: src/version.c mrb_init_version
+  def __fpga_init_version
+    obj = __fpga_ld32(__fpga_image(5) + 60) # L:IMG_object_class L:C_IV
+    mruby_version = "4.0.0"
+    __fpga_tbl_set(obj, __fpga_addr(:RUBY_VERSION), "4.0")
+    __fpga_tbl_set(obj, __fpga_addr(:RUBY_ENGINE), "mruby")
+    __fpga_tbl_set(obj, __fpga_addr(:RUBY_ENGINE_VERSION), mruby_version)
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_VERSION), mruby_version)
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_PLATFORM), "unknown-none")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_RELEASE_NO), 40000)
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_RELEASE_DATE), "2026-04-20")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_REVISION), "HEAD")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_DESCRIPTION), "mruby 4.0.0 (2026-04-20)")
+    __fpga_tbl_set(obj, __fpga_addr(:MRUBY_COPYRIGHT), "mruby - Copyright (c) 2010-2026 mruby developers")
   end
 
   # 捕まらなかった例外を出して止まる (mrb_print_error)。backtrace を残すのは S5 なので、backtrace の無い時の形
@@ -174,6 +198,18 @@ end
     true
   end
 
+  # C: none (D17)
+  def __fpga_memcmp(a, b, n)
+    k = 0
+    while k < n
+      x = __fpga_ld8(a + k)
+      y = __fpga_ld8(b + k)
+      return x - y unless x == y
+      k += 1
+    end
+    0
+  end
+
   # --- メソッドの探索の罠 (class.c の mrb_method_search_vm)。cls から親へ、実行時の表、ROM の表の順に引く。
   # 見つかればメソッド表の値 (Proc の番地 | 可視性) を cache に入れて返す。無いか undef (値 0、mruby の MRB_MT_REMOVED) なら nil
   # (回路が method_missing を引き直す)。
@@ -299,6 +335,13 @@ end
     __fpga_setreg(a, __fpga_str_new(__fpga_lo(v), __fpga_hi(v)))
   end
 
+  # OP_STRCAT: R[a] (String) の後ろに R[a+1] を文字列にして足す (mrb_str_concat)
+  # C: src/vm.c OP_STRCAT
+  def __fpga_op_STRCAT(a, b, c)
+    s = __fpga_ensure_string_type(__fpga_reg(a))
+    __fpga_str_cat_str(s, __fpga_obj_as_string(__fpga_reg(a + 1)))
+  end
+
   # OP_TDEF: target_class に Syms[b] を Irep[c] で定義し、R[a] = :名前 (定義はこの時点から効く)。
   # Proc の upper は定義したフレームの Proc (定数の字句の鎖、mruby の mrb_proc_new)。可視性はフレームの既定
   # (一番外は private、private / module_function の後はそれ)
@@ -318,7 +361,7 @@ end
   def __fpga_op_ARYCAT(a, b, c)
     x = __fpga_reg(a)
     s = __fpga_ary_splat(__fpga_reg(a + 1))
-    return __fpga_setreg(a, s) if x == nil
+    return __fpga_setreg(a, s) if __fpga_tag(x) == 0
     __fpga_ensure_array_type(x)
     k = 0
     n = __fpga_alen(s)
@@ -334,7 +377,7 @@ end
     unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY
       return [v] if __fpga_search(__fpga_addr(__fpga_class_of(v)), __fpga_addr(:to_a)) == 0 # mrb_respond_to
       a = v.to_a
-      return [v] if a == nil
+      return [v] if __fpga_tag(a) == 0
       __fpga_ensure_array_type(a)
       v = a
     end

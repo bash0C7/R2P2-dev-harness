@@ -52,7 +52,8 @@ module FpgaV2
     def ref(name, max_steps:)
       progs = files(name).map { |f| Build.compile([f]) }
       @firmware ||= Build.firmware
-      r = Ref.new(Image.new(firmware: @firmware, programs: progs).build, max_steps: max_steps)
+      @mrblib ||= Build.mrblib
+      r = Ref.new(Image.new(firmware: @firmware, mrblib: @mrblib, programs: progs).build, max_steps: max_steps)
       t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       err = nil
       begin

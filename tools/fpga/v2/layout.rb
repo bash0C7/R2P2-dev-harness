@@ -179,9 +179,9 @@ module FpgaV2
       kernel_module: 19, gc_arena: 20, gc_arena_capa: 21, gc_arena_idx: 22, gc_live: 23, gc_debt: 24,
       symidx: 25, symtbl: 26, symcapa: 27, eException_class: 28, eStandardError_class: 29, nomem_err: 30, stack_err: 31,
       arena_err: 32,
-      # 像だけの欄 (D18): 印、ヒープの範囲、組み込みのクラスの表、firmware の入口、programs、primitive の表
+      # 像だけの欄 (D18): 印、ヒープの範囲、組み込みのクラスの表、firmware の入口、programs、primitive の表、mrblib の .mrb (0 は無し)
       magic: 33, version: 34, heap_start: 35, heap_end: 36, core_classes: 37, fw_entry: 38, programs: 39, nprograms: 40,
-      prims: 41
+      prims: 41, mrblib: 42
     }.freeze
     IMG_WORDS = 48
     # C: none (D18)
