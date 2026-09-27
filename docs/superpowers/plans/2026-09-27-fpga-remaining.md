@@ -108,8 +108,11 @@
 - [ ] Q2〜Q5 の後に、どこで時間を食っているかを測る (変換器は picoruby の中の段ごとの時間、ref_vm は CRuby の profiler)。
   並列化で足りていれば Q6 はやらず、理由を記録に書く
 - [ ] 切り出す前に、切り出すメソッドの入出力 (Integer、String、Array、Hash) を表にして、spinel が型を付けられるか確かめる
-- [ ] 確かめ方: 変換器は `rake fpga:corpus:check` の生成物が bytes で同じ。ref_vm は check / gap / fuzz seed 1–4 の出力が1字も違わない。
-  AOT 版と元の版を選べるようにし (環境変数)、元の版は正本として残す
+- [ ] 確かめ方: 置き換える前に、元の版の出力を取っておく (変換器は commit 済みの corpus の生成物、ref_vm は check / gap / fuzz seed 1–4 の出力)。
+  AOT 版で同じものを作り、変換器は `rake fpga:corpus:check` が bytes で同じ、ref_vm は出力が1字も違わないことを確かめる
+- [ ] 確かめたら**元の版は消して AOT 版だけにする**。二つを並べて残さない、環境変数での切り替えも作らない。
+  戻す手段は git の commit だけ: 置き換えは「変換器」「ref_vm」でそれぞれ1 commit (AOT 版を足す・元を消す・rake とテストを直すを同じ commit)
+  にし、`git revert <commit>` 1つで元に戻るようにする
 - [ ] build の手順 (spinel の build、`SPINEL` / `SPINEL_LIB`) を `rake fpga:doctor` / `fpga:setup` に足す。macOS と Linux の両方
 
 ### Q の終わり
