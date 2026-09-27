@@ -149,8 +149,61 @@ class Range
   def initialize(*args)
     __fpga_check_argc(args, 2, 3) # MRB_ARGS_ANY の後の mrb_get_args の oo|b
     ex = __fpga_alen(args) == 3 ? __fpga_aref(args, 2) : false
-    __fpga_range_ptr_init(__fpga_addr(self), __fpga_aref(args, 0), __fpga_aref(args, 1), ex ? true : false) # frozen の印は S5
-    self
+    __fpga_range_ptr_init(__fpga_addr(self), __fpga_aref(args, 0), __fpga_aref(args, 1), ex ? true : false) # range_ptr_replace
+    __fpga_obj_freeze(self)
+  end
+
+  # C: src/range.c range_initialize_copy
+  def initialize_copy(src)
+    return self if __fpga_tag(self) == __fpga_tag(src) && __fpga_int(self) == __fpga_int(src) # mrb_obj_equal
+    unless __fpga_tag(src) == 7 && __fpga_addr(__fpga_obj_class(src)) == __fpga_addr(__fpga_obj_class(self)) # L:TAG_OBJ mrb_obj_is_instance_of
+      __fpga_raise(TypeError, "wrong argument class")
+    end
+    __fpga_range_ptr_init(__fpga_addr(self), __fpga_range_beg(src), __fpga_range_end(src), __fpga_range_excl(src)) # range_ptr_replace
+    __fpga_obj_freeze(self)
+  end
+
+  # C: src/range.c range_num_to_a
+  def __num_to_a
+    beg = __fpga_range_beg(self)
+    en = __fpga_range_end(self)
+    __fpga_st32(__fpga_ld32(__fpga_image(0) + 12) + 4, 0) # L:IMG_c L:CTX_CI L:CI_MID mrb->c->ci->mid = 0
+    __fpga_raise(RangeError, "cannot convert endless range to an array") if __fpga_tag(en) == 0 # L:TAG_NIL
+    if __fpga_tag(beg) == 3 # L:TAG_INT
+      if __fpga_tag(en) == 3 # L:TAG_INT
+        a = beg
+        b = en
+        return [] if a > b
+        __fpga_raise(RangeError, "integer range too long") if __fpga_int_sub_overflow(b, a)
+        len = b - a
+        unless __fpga_range_excl(self)
+          __fpga_raise(RangeError, "integer range too long") if len == 9223372036854775807 # MRB_INT_MAX
+          len += 1
+        end
+        ary = []
+        i = 0
+        while i < len
+          ary.__fpga_push1(a + i)
+          i += 1
+        end
+        return ary
+      end
+      if __fpga_tag(en) == 5 # L:TAG_FLOAT
+        a = beg
+        b = __fpga_int(en)
+        return [] if __fpga_int_float_cmp(a, b) == 1 # a > b (double の比べ)
+        alen = __fpga_f64_to_int(__fpga_f64_sub(b, __fpga_f64_from_int(a))) + (__fpga_range_excl(self) ? 1 : 0)
+        ary = []
+        i = 0
+        while i < alen
+          ary.__fpga_push1(a + i)
+          i += 1
+        end
+        __fpga_st32(__fpga_addr(ary) + 8, alen - 1) if alen > 0 # L:A_LEN C の ARY_SET_LEN(ary, i) は最後に alen - 1
+        return ary
+      end
+    end
+    nil
   end
 
   # C: src/range.c range_eq
