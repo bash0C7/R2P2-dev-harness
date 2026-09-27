@@ -135,6 +135,15 @@ class Object
     end
   end
 
+# String を intern (名前のバイトを写して持つ。mruby の mrb_intern、static でない方)
+def __intern_str(s)
+  a = __fpga_addr(s)
+  len = __fpga_ld32(a + 8) # L:S_LEN
+  buf = __fpga_alloc(len + 1)
+  __fpga_copy(buf, __fpga_ld32(a + 16), len) # L:S_PTR
+  __intern(buf, len)
+end
+
   def __memeq(a, b, n)
     k = 0
     while k < n
@@ -145,7 +154,8 @@ class Object
   end
 
   # --- メソッドの探索の罠 (class.c の mrb_method_search_vm)。cls から親へ、実行時の表、ROM の表の順に引く。
-  # 見つかれば cache に入れて Proc を返す。無ければ nil (回路が method_missing を引き直す)。
+  # 見つかればメソッド表の値 (Proc の番地 | 可視性) を cache に入れて返す。無いか undef (値 0、mruby の MRB_MT_REMOVED) なら nil
+  # (回路が method_missing を引き直す)。
   # 自分がまた罠に入らないよう、中では命令と __fpga_* だけを使う (!= や ! はメソッドの呼び出しになるので使わない)
   def __trap_lookup(cls, sym)
     c = __fpga_addr(cls)
@@ -165,8 +175,9 @@ class Object
               n = capa
             elsif e == s
               pr = __fpga_ld32(rows + i * 8 + 4)
+              return nil if pr == 0 # undef: 親をたどらずに無い
               __fpga_mcache_fill(__fpga_addr(cls), s, pr)
-              return __fpga_obj(pr)
+              return pr
             else
               i = __fpga_and(i + 1, capa - 1)
               n += 1
@@ -260,13 +271,16 @@ class Object
     __fpga_setreg(a, __str_new(__fpga_lo(v), __fpga_hi(v)))
   end
 
-  # OP_TDEF: target_class に Syms[b] を Irep[c] で定義し、R[a] = :名前 (定義はこの時点から効く)
+  # OP_TDEF: target_class に Syms[b] を Irep[c] で定義し、R[a] = :名前 (定義はこの時点から効く)。
+  # Proc の upper は定義したフレームの Proc (定数の字句の鎖、mruby の mrb_proc_new)。可視性はフレームの既定
+  # (一番外は private、private / module_function の後はそれ)
   def __op_TDEF(a, b, c)
     ir = __fpga_irep
     sym = __irep_sym(ir, b)
     target = __fpga_addr(__fpga_tclass)
-    __mt_set(__fpga_ld32(target + 12), sym, __proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), target)) # L:C_MT L:I_REPS
-    __fpga_mcache_clear
+    pr = __proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), target) # L:I_REPS
+    __fpga_st32(pr + 12, __fpga_proc) # L:P_UPPER
+    __define(target, sym, pr, __fpga_frame_vis)
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end
 

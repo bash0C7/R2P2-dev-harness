@@ -40,11 +40,15 @@ module FpgaV2
     C_SUPER = 8
     C_MT    = 12
     C_ROM   = 16
-    C_IV    = 20
+    C_IV    = 60 # 定数とクラスのインスタンス変数 (mruby と同じく iv の表に)。IV と同じ位置
     C_NAME  = 24
-    C_OUTER = 28
+    C_OUTER = 28 # 入れ物のクラス。特異クラスでは付いているオブジェクト (mruby の __attached__)
     # RObject: iv の表
-    O_IV = 8
+    O_IV = 60
+    # iv の表 (インスタンス変数と定数) は、iv を持てる型 (mruby の obj_iv_p: OBJECT CLASS MODULE SCLASS HASH CDATA EXCEPTION) の枠の
+    # この位置 (最後の語)。表: 見出し {数, 容量, 行の並び} と、行 {シンボル (u32), 値 (VALUE)} (20 バイト)。空きはシンボル MT_EMPTY
+    IV = 60
+    IV_ENTRY = 20
     # RString: 長さ (バイト)、容量、中身の番地
     S_LEN  = 8
     S_CAPA = 12
@@ -61,6 +65,8 @@ module FpgaV2
     P_FLAGS  = 24
     PROC_IREP = 0 # flags の下位 2bit: 本体の種類
     PROC_PRIM = 1
+    PROC_IVGET = 2 # attr_reader (本体はシンボル @x)
+    PROC_IVSET = 3 # attr_writer
     PROC_LAMBDA = 1 << 2 # mruby の MRB_PROC_STRICT
 
     # メソッド表 (ROM も実行時も同じ形): 見出し {数 (u32), 容量 (u32), 行の並びの番地 (u32)} と、行 {シンボル (u32), 値 (u32)} × 容量。
@@ -73,6 +79,11 @@ module FpgaV2
     MT_HEAD  = 12
     MT_ENTRY = 8
     MT_EMPTY = 0xFFFF_FFFF
+    # メソッド表の値の下位 2bit は可視性 (Proc の番地は 8 の倍数)。mruby の MRB_METHOD_VISIBILITY
+    VIS_PUBLIC = 0
+    VIS_PRIVATE = 1
+    VIS_PROTECTED = 2
+    VIS_MASK = 3
 
     # irep (mruby の mrb_irep、irep.h)。記憶の中の構造体 (オブジェクトではない)
     I_NLOCALS = 0  # u16 nlocals, u16 nregs

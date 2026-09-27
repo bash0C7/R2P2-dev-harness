@@ -11,8 +11,12 @@ module FpgaV2
 
     module_function
 
-    # 1本の mruby ソースコード
+    # 1本の mruby ソースコード (整数と def のもの、クラスのもの)
     def program(rng)
+      rng.rand(2).zero? ? int_program(rng) : class_program(rng)
+    end
+
+    def int_program(rng)
       lines = []
       vars = %w[a b c]
       vars.each { |v| lines << "#{v} = #{literal(rng)}" }
@@ -31,6 +35,48 @@ module FpgaV2
       end
       rng.rand(4..10).times { lines << statement(rng, vars, defs) }
       lines.join("\n") + "\n"
+    end
+
+    # クラス (V2b): 継承の鎖、super、再オープンと再定義 (実行した時から効く)、条件付きの def、親と外側の定数、attr_accessor、
+    # method_missing、module の include、特異メソッド。出力は puts で
+    def class_program(rng)
+      l = []
+      l << "module M#{rng.rand(3)}\n  K = #{literal(rng)}\n  def mix\n    #{literal(rng)}\n  end\nend"
+      mod = l[0][/module (\w+)/, 1]
+      depth = rng.rand(1..3)
+      names = (0...depth).map { |k| "C#{k}" }
+      names.each_with_index do |c, k|
+        sup = k.zero? ? "" : " < #{names[k - 1]}"
+        body = []
+        body << "  K#{k} = #{literal(rng)}"
+        body << "  attr_accessor :v"
+        body << "  include #{mod}" if rng.rand(3).zero?
+        body << "  def initialize(v)\n    @v = v\n  end" if k.zero?
+        body << "  def f(x)\n    #{k.zero? ? "x + #{literal(rng)}" : "super(x) * 2 + K#{k - 1}"}\n  end"
+        body << "  def g\n    K0 + #{literal(rng)}\n  end"
+        if rng.rand(2).zero?
+          body << "  if #{literal(rng)} > 0\n    def h\n      1\n    end\n  else\n    def h\n      2\n    end\n  end"
+        else
+          body << "  def h\n    3\n  end"
+        end
+        body << "  def method_missing(name, *args)\n    name.to_s.size + args.size\n  end" if rng.rand(3).zero?
+        l << "class #{c}#{sup}\n#{body.join("\n")}\nend"
+      end
+      obj = names.last
+      l << "o = #{obj}.new(#{literal(rng)})"
+      rng.rand(4..8).times do
+        l << case rng.rand(8)
+             when 0 then "puts o.f(#{literal(rng)})"
+             when 1 then "puts o.g"
+             when 2 then "puts o.h"
+             when 3 then "o.v = #{literal(rng)}\nputs o.v"
+             when 4 then "class #{names.sample(random: rng)}\n  def h\n    #{literal(rng)}\n  end\nend\nputs o.h"
+             when 5 then "puts o.respond_to?(:mix), o.respond_to?(:nope)"
+             when 6 then "def o.s\n  #{literal(rng)}\nend\nputs o.s"
+             else "puts o.is_a?(#{names.first}), o.is_a?(#{mod})"
+             end
+      end
+      l.join("\n") + "\n"
     end
 
     def literal(rng)

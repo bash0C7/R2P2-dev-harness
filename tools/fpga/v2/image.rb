@@ -48,7 +48,8 @@ module FpgaV2
       __fpga_ld8 __fpga_st8 __fpga_ld32 __fpga_st32 __fpga_ldv __fpga_stv __fpga_addr __fpga_obj __fpga_tag __fpga_mkval
       __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
-      __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem
+      __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc __fpga_frame_vis __fpga_set_caller_vis
+      __fpga_class_of __fpga_sendv
     ].freeze
 
     # 回路が名前で送るシンボル (演算の落ち先と method_missing。mruby の MRB_OPSYM と同じく presym)
@@ -127,6 +128,28 @@ module FpgaV2
       head
     end
 
+# iv の表 (インスタンス変数と定数、layout.rb の IV)。行は {シンボル, 値 16 バイト}
+def ivtable(capa = 16)
+  head = alloc(MT_HEAD, 4)
+  rows = alloc(capa * IV_ENTRY, 4)
+  capa.times { |i| w32(rows + i * IV_ENTRY, MT_EMPTY) }
+  w32(head + MT_COUNT, 0)
+  w32(head + MT_CAPA, capa)
+  w32(head + MT_ROWS, rows)
+  head
+end
+
+def iv_set(head, sym, tag, v)
+  capa = r32(head + MT_CAPA)
+  raise Error, "iv table full" if (r32(head + MT_COUNT) + 1) * 4 > capa * 3
+  rows = r32(head + MT_ROWS)
+  i = sym & (capa - 1)
+  i = (i + 1) & (capa - 1) until [MT_EMPTY, sym].include?(r32(rows + i * IV_ENTRY))
+  w32(head + MT_COUNT, r32(head + MT_COUNT) + 1) if r32(rows + i * IV_ENTRY) == MT_EMPTY
+  w32(rows + i * IV_ENTRY, sym)
+  wval(rows + i * IV_ENTRY + 4, tag, v)
+end
+
     def mt_set(head, sym, val)
       capa = r32(head + MT_CAPA)
       if (r32(head + MT_COUNT) + 1) * 4 > capa * 3 # 詰め率 3/4 を超えたら倍にする
@@ -181,8 +204,11 @@ module FpgaV2
         w32(c + C_MT, mtable)
         w32(c + C_ROM, mtable)
         w32(c + C_NAME, intern(name))
+        w32(c + C_IV, ivtable(name == "Object" ? 128 : 16))
         @classes[name] = c
       end
+      # 定数 (Object::Integer ...。mruby の mrb_define_class が Object に置く)
+      CORE.each { |name, *| iv_set(r32(@classes["Object"] + C_IV), @syms.fetch(name), TAG_OBJ, @classes[name]) }
       # include (iclass を親との間に挟む。iclass は module の表の見出しを共有する)
       CORE.each { |name, _, _, inc| include_module(@classes[name], @classes.fetch(inc)) if inc }
       CORE_INCLUDES.each { |name, inc| include_module(@classes[name], @classes.fetch(inc)) }
@@ -198,6 +224,8 @@ module FpgaV2
           w32(meta + C_SUPER, sup_meta)
           w32(meta + C_MT, mtable)
           w32(meta + C_ROM, mtable)
+          w32(meta + C_IV, ivtable)
+          w32(meta + C_OUTER, c) # 付いているクラス (__attached__)
           w32(c + H_CLASS, meta)
         end
       end
@@ -208,6 +236,7 @@ module FpgaV2
       w32(ic + C_SUPER, r32(c + C_SUPER))
       w32(ic + C_MT, r32(m + C_MT))
       w32(ic + C_ROM, r32(m + C_ROM))
+      w32(ic + C_IV, r32(m + C_IV)) # module の iv (定数) を共有する (mruby の ic->iv = m->iv)
       w32(c + C_SUPER, ic)
     end
 
@@ -218,6 +247,8 @@ module FpgaV2
       w32(meta + C_SUPER, cls)
       w32(meta + C_MT, mtable)
       w32(meta + C_ROM, mtable)
+      w32(meta + C_IV, ivtable)
+      w32(meta + C_OUTER, c)
       w32(c + H_CLASS, meta)
       meta
     end
