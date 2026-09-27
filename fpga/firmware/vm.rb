@@ -115,4 +115,61 @@ class Object
     v = __fpga_ldv(__fpga_ld32(__fpga_irep + 12) + a * 16) # L:I_POOL L:VALUE
     __fpga_raise(LocalJumpError, __fpga_str_new(__fpga_lo(v), __fpga_hi(v)))
   end
+
+  # C: src/vm.c uvenv
+  def __fpga_uvenv(up)
+    p = __fpga_proc
+    while up > 0
+      p = __fpga_ld32(p + 12) # L:P_UPPER
+      return 0 if p == 0
+      up -= 1
+    end
+    __fpga_proc_env(p)
+  end
+
+  # OP_ARGARY (BS): 引数を super に渡す形にする。R[a] = 引数の配列、R[a+1] = キーワードの Hash (d)、その次にブロック
+  # b = m1:6 r:1 m2:5 kd:1 lv:4。lv が 0 なら今の枠、ほかは lv-1 段上の env から
+  # C: src/vm.c vm_op_argary
+  def __fpga_op_ARGARY(a, b, c)
+    m1 = __fpga_and(__fpga_shr(b, 11), 63)
+    r = __fpga_and(__fpga_shr(b, 10), 1)
+    m2 = __fpga_and(__fpga_shr(b, 5), 31)
+    kd = __fpga_and(__fpga_shr(b, 4), 1)
+    lv = __fpga_and(b, 15)
+    ci = __fpga_ci
+    __fpga_raise(NoMethodError, "super called outside of method") if __fpga_ld32(ci + 4) == 0 || __fpga_ci_tclass(ci) == 0 # L:CI_MID L_NOSUPER
+    if lv == 0
+      stack = __fpga_ld32(ci + 16) + 16 # L:CI_STACK L:VALUE regs + 1
+    else
+      e = __fpga_uvenv(lv - 1)
+      __fpga_raise(NoMethodError, "super called outside of method") if e == 0
+      __fpga_raise(NoMethodError, "super called outside of method") if __fpga_and(__fpga_shr(__fpga_ld32(e + 4), 12), 255) <= m1 + r + m2 + kd + 1 # L:H_FLAGS L:H_FLAGS_SHIFT MRB_ENV_LEN
+      stack = __fpga_ld32(e + 8) + 16 # L:E_STACK L:VALUE
+    end
+    ary = []
+    k = 0
+    while k < m1
+      ary.__fpga_push1(__fpga_ldv(stack + k * 16)) # L:VALUE
+      k += 1
+    end
+    if r > 0
+      rest = __fpga_ldv(stack + m1 * 16) # L:VALUE
+      if __fpga_tag(rest) == 7 && __fpga_tt(__fpga_addr(rest)) == 17 # L:TAG_OBJ L:TT_ARRAY mrb_array_p
+        k = 0
+        len = __fpga_alen(rest)
+        while k < len
+          ary.__fpga_push1(__fpga_aref(rest, k))
+          k += 1
+        end
+      end
+    end
+    k = 0
+    while k < m2
+      ary.__fpga_push1(__fpga_ldv(stack + (m1 + r + k) * 16)) # L:VALUE
+      k += 1
+    end
+    __fpga_setreg(a, ary)
+    __fpga_setreg(a + 1, __fpga_ldv(stack + (m1 + r + m2) * 16)) # L:VALUE
+    __fpga_setreg(a + 2, __fpga_ldv(stack + (m1 + r + m2 + 1) * 16)) if kd > 0 # L:VALUE
+  end
 end

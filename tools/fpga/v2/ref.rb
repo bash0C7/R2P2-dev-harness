@@ -740,7 +740,7 @@ module FpgaV2
           when "__fpga_unwind" then return unwind(args[0][1], args[1][1]) # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
           when "__fpga_unwind_ret" then return unwind_ret(args[0][1], args[1]) # ci から値を返す (vm.c の L_RETURN)
           when "__fpga_run" then return run_irep(args[0][1], args[1], a)
-          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5])
+          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5], args[6]) # 7 つ目はキーワードの Hash
           else raise Error, "primitive #{name} is not implemented"
           end
       setreg(a, r)
@@ -802,12 +802,12 @@ module FpgaV2
       push_frame(pr, base, 0, kind: :run, mid: 0, ret_pc: @pc_next, dst: a)
     end
 
-    # __fpga_invoke(recv, proc, args の配列, blk, mid): proc (メソッド表の値でも可、可視性の bit は見ない) を recv で呼ぶ。
+    # __fpga_invoke(recv, proc, args の配列, blk, mid, tclass, kdict): proc (メソッド表の値でも可、可視性の bit は見ない) を recv で呼ぶ。
     # mid は呼ばれるフレームのメソッドの名前 (super の先も元の名前、mruby の ci->mid)。戻り値は R[a] へ
     # tclass を渡すと、呼ばれるフレームの定義の入れ物をそれにする (vm.c の mrb_yield_with_class、class_eval / instance_exec)
-    def invoke(recv, pr, args, blk, mid, a, tclass = nil)
+    def invoke(recv, pr, args, blk, mid, a, tclass = nil, kdict = nil)
       base = r16(@f.irep + I_NREGS)
-      list = window(base, recv, args, blk)
+      list = window(base, recv, args, blk, kdict)
       call_proc(pr & ~VIS_MASK, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a)
       w32(@f.addr + CI_U, tclass[1]) if tclass && tclass[0] == TAG_OBJ && (r32((pr & ~VIS_MASK) + P_FLAGS) & 3) == PROC_IREP
     end

@@ -582,31 +582,50 @@ class Object
   # C: src/vm.c OP_SUPER
   def __fpga_op_SUPER(a, b, c)
     n = __fpga_and(b, 15)
-    __fpga_halt if n == 15 || b > 15 # splat とキーワードの super は後で
+    nk = __fpga_shr(b, 4)
     recv = __fpga_reg(0)
     mid = __fpga_mid
     owner = __fpga_ld32(__fpga_proc + 20) # L:P_TCLASS
-    start = __fpga_ld32(owner + 8)
+    __fpga_raise(NoMethodError, "super called outside of method") if __fpga_addr(mid) == 0 || owner == 0
+    start = __fpga_ld32(owner + 8) # L:C_SUPER
     if __fpga_tt(owner) == 10 # L:TT_MODULE
       k = __fpga_addr(__fpga_class_of(recv))
-      mt = __fpga_ld32(owner + 12)
-      while k > 0 && !(__fpga_tt(k) == 15 && __fpga_ld32(k + 12) == mt) # L:TT_ICLASS
-        k = __fpga_ld32(k + 8)
+      mt = __fpga_ld32(owner + 12) # L:C_MT
+      while k > 0 && (__fpga_tt(k) == 15 && __fpga_ld32(k + 12) == mt) == false # L:TT_ICLASS
+        k = __fpga_ld32(k + 8) # L:C_SUPER
       end
-      start = k > 0 ? __fpga_ld32(k + 8) : 0
+      start = k > 0 ? __fpga_ld32(k + 8) : 0 # L:C_SUPER
+    elsif __fpga_kind_of(recv, __fpga_obj(owner)) == false
+      __fpga_raise(TypeError, "self has wrong type to call super in this context")
+    end
+    kidx = a + (n == 15 ? 1 : n) + 1
+    kdict = nil
+    if nk == 15
+      kdict = __fpga_ensure_hash_type(__fpga_reg(kidx))
+    elsif nk > 0 # hash_new_from_regs
+      kdict = __fpga_hash_new_capa(nk)
+      i = 0
+      while i < nk
+        __fpga_hash_set(kdict, __fpga_reg(kidx + i * 2), __fpga_reg(kidx + i * 2 + 1))
+        i += 1
+      end
+    end
+    blk = __fpga_reg(kidx + (nk == 15 ? 1 : nk * 2)) # mrb_bidx(n, nk)
+    if n == 15
+      args = __fpga_reg(a + 1)
+    else
+      args = []
+      k = 1
+      while k <= n
+        args.__fpga_push1(__fpga_reg(a + k))
+        k += 1
+      end
     end
     e = __fpga_search(start, __fpga_addr(mid))
-    args = []
-    k = 1
-    while k <= n
-      args.push(__fpga_reg(a + k))
-      k += 1
-    end
-    blk = __fpga_reg(a + n + 1)
     if e == 0 # vm.c の prepare_missing (method_missing の再定義は S5)
       __fpga_no_method_error(__fpga_addr(mid), args, "no superclass method '%n' for %T", [mid, recv])
     end
-    __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid))
+    __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid, nil, kdict))
   end
 
 end
