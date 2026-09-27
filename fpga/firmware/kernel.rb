@@ -65,9 +65,8 @@ class BasicObject
     self ? false : true
   end
 
-  # 例外は V2d。それまでは止める (mruby は NoMethodError を上げる)
   # C: src/class.c mrb_obj_missing
   def method_missing(name, *args)
-    __fpga_halt
+    __fpga_no_method_error(__fpga_addr(name), args, "undefined method '%n' for %T", [name, self]) # mrb_method_missing
   end
 end

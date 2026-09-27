@@ -294,14 +294,15 @@ module FpgaV2
         setreg(a, reg(0)) if i.name == "SSEND0"
         send_op(a, irep_sym(@f.irep, b), 0, false, fcall: i.name == "SSEND0")
       when "ENTER" then enter(a)
-      when "RETURN" then ret(reg(a))
-      when "RETURN_BLK" # ブロックでなければ RETURN と同じ (vm.c: MRB_PROC_ENV_P でない)。ブロックは V2d
-        raise Error, "RETURN_BLK in a block is V2d" if @f.kind == :block
-        ret(reg(a))
-      when "RETNIL" then ret(NIL)
-      when "RETSELF" then ret(reg(0))
-      when "RETTRUE" then ret(TRUE_)
-      when "RETFALSE" then ret(FALSE_)
+      when "RETURN" then return_op(reg(a))
+      when "RETURN_BLK" # env のある strict でないブロックは罠 (vm.c の OP_RETURN_BLK)。ほかは RETURN と同じ
+        f = r32(@f.proc + P_FLAGS)
+        return trap_op(i) if (f & PROC_ENVSET) != 0 && (f & PROC_STRICT).zero?
+        return_op(reg(a))
+      when "RETNIL" then return_op(NIL)
+      when "RETSELF" then return_op(reg(0))
+      when "RETTRUE" then return_op(TRUE_)
+      when "RETFALSE" then return_op(FALSE_)
       when "STOP" then stop
       when "ADD", "SUB", "MUL" then arith(i.name, a)
       when "DIV" then div(a)
@@ -476,6 +477,8 @@ module FpgaV2
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
         push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst)
+        b = rv(@stbase + (@f.bp + n + 1) * VALUE)
+        w32(@f.addr + CI_BLK, b[1]) if b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC]
       end
     end
 
@@ -483,7 +486,7 @@ module FpgaV2
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
     def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil)
       ci = @f.addr + CI_SIZE
-      raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND) # mruby は SystemStackError (V2d)
+      raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND) # mruby は SystemStackError (mrb->stack_err、S5)
       @f.pc = ret_pc
       write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n)
       @jumped = true
@@ -584,9 +587,32 @@ module FpgaV2
       obj(ary)
     end
 
+    # irep に catch handler があるか (vm.c の irep->clen > 0)
+    def catch? = r32(@f.irep + I_CLEN).positive?
+
+    # RETURN 系 (vm.c の L_RETURN): catch があれば ensure を見るので罠 __fpga_op_return(v)、無ければ回路で戻る
+    def return_op(v)
+      return trap_call("__fpga_op_return", [v]) if catch?
+
+      ret(v)
+    end
+
+    # vm.c の cipop: env を unshare し、渡したブロック (ci->blk) が strict でなく、その env が 1 つ下の ci の env なら ORPHAN にする
+    def cipop(ci)
+      env_unshare(r32(ci + CI_U))
+      b = r32(ci + CI_BLK)
+      return if b.zero?
+
+      bf = r32(b + P_FLAGS)
+      below = r32(ci - CI_SIZE + CI_U)
+      if (bf & PROC_STRICT).zero? && (bf & PROC_ENVSET) != 0 && env?(below) && r32(b + P_ENV) == below
+        w32(b + P_FLAGS, bf | PROC_ORPHAN)
+      end
+    end
+
     def ret(v)
       done = @f
-      env_unshare(r32(done.addr + CI_U))
+      cipop(done.addr)
       raise Halt if done.addr == r32(@ctx + CTX_CIBASE)
       w32(@ctx + CTX_CI, done.addr - CI_SIZE)
       @f = Ci.new(self, done.addr - CI_SIZE)
@@ -623,6 +649,7 @@ module FpgaV2
     end
 
     def stop
+      return trap_call("__fpga_op_stop", [NIL]) if @f.kind == :run && catch?
       return ret(NIL) if @f.kind == :run
       raise Halt
     end
@@ -676,11 +703,39 @@ module FpgaV2
           when "__fpga_core" then obj(r32(@core + args[0][1] * WORD)) # 組み込みのクラスの表
           when "__fpga_rem" then int(args[0][1].remainder(args[1][1])) # 0 に向けて切った剰余 (C の %、除算器の余り)。0 で割るのは呼ぶ側が調べる
           when "__fpga_halt" then raise Halt
+          when "__fpga_unwind" then return unwind(args[0][1], args[1][1]) # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
+          when "__fpga_unwind_ret" then return unwind_ret(args[0][1], args[1]) # ci から値を返す (vm.c の L_RETURN)
           when "__fpga_run" then return run_irep(args[0][1], args[1], a)
           when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a)
           else raise Error, "primitive #{name} is not implemented"
           end
       setreg(a, r)
+    end
+
+    # 上の ci を cipop して ci を今のフレームにする
+    def pop_to(ci)
+      top = r32(@ctx + CTX_CI)
+      raise Error, "unwind to a frame that is not below" unless ci <= top && ci >= r32(@ctx + CTX_CIBASE)
+
+      k = top
+      while k > ci
+        cipop(k)
+        k -= CI_SIZE
+      end
+      w32(@ctx + CTX_CI, ci)
+      @f = Ci.new(self, ci)
+    end
+
+    # __fpga_unwind(ci, pc): ci の上を捨て、ci の pc (iseq の中の位置) から続ける
+    def unwind(ci, pc)
+      pop_to(ci)
+      jump(pc)
+    end
+
+    # __fpga_unwind_ret(ci, v): ci の上を捨て、ci から v を返す (続きは ret のとおり)
+    def unwind_ret(ci, v)
+      pop_to(ci)
+      ret(v)
     end
 
     # 一番近い罠のフレームと、その下 (罠を起こした) のフレーム: [起こしたフレーム, 罠のフレーム]
@@ -695,7 +750,7 @@ module FpgaV2
 
     def alloc(n)
       a = (@heap + 7) & -8
-      raise Error, "heap exhausted (GC is V2c)" if a + n > @heap_end
+      raise Error, "heap exhausted (GC is S6)" if a + n > @heap_end
       @heap = a + n
       a
     end

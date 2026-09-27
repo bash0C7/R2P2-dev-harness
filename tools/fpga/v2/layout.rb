@@ -39,7 +39,8 @@ module FpgaV2
     # C: include/mruby/value.h MRB_VTYPE_FOREACH
     TT = {
       FALSE: 0, TRUE: 1, SYMBOL: 2, UNDEF: 3, FREE: 4, FLOAT: 5, INTEGER: 6, CPTR: 7, OBJECT: 8, CLASS: 9, MODULE: 10,
-      SCLASS: 11, HASH: 12, CDATA: 13, EXCEPTION: 14, ICLASS: 15, PROC: 16, ARRAY: 17, STRING: 18, RANGE: 19, ENV: 20
+      SCLASS: 11, HASH: 12, CDATA: 13, EXCEPTION: 14, ICLASS: 15, PROC: 16, ARRAY: 17, STRING: 18, RANGE: 19, ENV: 20,
+      FIBER: 21, STRUCT: 22, ISTRUCT: 23, BREAK: 24
     }.freeze
 
     # 型ごとの欄 (枠の中のバイト位置)。ポインタは 4 バイト、値は VALUE
@@ -98,6 +99,28 @@ module FpgaV2
     E_CXT   = 12
     E_MID   = 16
     H_FLAGS_SHIFT = 12
+    # クラスの flags の下 5bit はインスタンスの tt (class.h の MRB_INSTANCE_TT_MASK)。見出しの語では H_FLAGS_SHIFT から
+    # C: include/mruby/class.h MRB_INSTANCE_TT_MASK
+    INSTANCE_TT_MASK = 0x1F
+
+    # RException (error.h): 見出し + mesg (RString か 0) + backtrace (0 か RArray)。iv の表は IV (D06)
+    # C: include/mruby/error.h RException (D04)
+    EX_MESG = 8
+    EX_BACKTRACE = 12
+    # RBreak (error.h): 見出し + ci_break_index (cibase からの ci の数) + val。tag は flags の 8〜10bit (vm.c の RBREAK_TAG_BIT_OFF)
+    # C: include/mruby/error.h RBreak (D04)
+    BRK_INDEX = 8
+    BRK_VAL = 16
+    # C: src/vm.c RBREAK_TAG_BIT_OFF
+    RBREAK_TAG_BIT_OFF = 8
+    RBREAK_TAG_BREAK = 0
+    RBREAK_TAG_JUMP = 1
+    RBREAK_TAG_STOP = 2
+    # catch handler の行 (irep.h の mrb_irep_catch_handler): type (1)、begin / end / target (big endian の 4 バイト)。type は 0 rescue、1 ensure
+    # C: include/mruby/irep.h mrb_irep_catch_handler
+    CATCH_ENTRY = 13
+    MRB_CATCH_RESCUE = 0
+    MRB_CATCH_ENSURE = 1
 
     # メソッド表 (ROM も実行時も同じ形): 見出し {数 (u32), 容量 (u32), 行の並びの番地 (u32)} と、行 {シンボル (u32), 値 (u32)} × 容量。
     # 開番地法 (位置 = シンボル & (容量 - 1) から1行ずつ)、空きはシンボル 0xFFFFFFFF。見出しと行を分けるのは、表を大きくしても
@@ -180,7 +203,7 @@ module FpgaV2
 
     # mrb_callinfo (mruby.h)。バイトの位置、番地は 32bit。n は下 4bit (15 は 15 以上、D12)、kw は bit 4
     # vis は mruby の bit (下 2bit が可視性、bit 3 が module_function、internal.h の MRB_CI_VISIBILITY / MRB_CI_MODFUNC_P)
-    # pc は iseq の中の絶対の番地、stack は窓の先頭の値の番地、u は target_class (env は V2d)
+    # pc は iseq の中の絶対の番地、stack は窓の先頭の値の番地、u は target_class か REnv (計画 S4-1)
     # C: include/mruby.h mrb_callinfo
     CI_N     = 0
     CI_CCI   = 1
