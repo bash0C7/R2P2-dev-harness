@@ -154,29 +154,70 @@ target の VM を spawn する。`Dir`、`File.open`、`posix-io` を使う)。�
   データの語) を足す。プレリュードの `caller` が `__frame_pc` で pc を集め、表を二分探索して文字列にする
 - 表の場所 (先頭と本数) は、main の最初にプレリュードの定数へ入れる (変換器が置く)
 
-- [ ] oracle: Runner と同じ形のスクリプト (my_test.rb、my_2_test.rb) を host の picoruby と参照・コアで走らせ、コンソールを比べる。
-  違うのは host のファイル名 (一時ファイルの path) だけのはずで、同じ名前で走らせて全行一致を確かめる
-- [ ] コーパス `fpga/corpus/picotest.rb` (成功・失敗・例外・skip の assert を全部) と `fpga/corpus/caller.rb` (メソッド、ブロック、main)
-- [ ] gap: `Picotest::Runner` を使うもの (runner.rb) は「host 側の係 (CRuby で走る)」として範囲の外。テストのファイルは、Runner と
-  同じ末尾を付けて走らせる
-- [ ] 確かめ方: gap で picotest の 3 本が match か範囲外 (理由あり)、fuzz seed 1–4 (FRAMEPC と ROMW の断片を足す)、check、tb
+P9 の中身は WIP commit (cace315) に入った。済んだもの: 上の表の全行 (GEMS、require_relative、byteslice / strip!、methods、
+alias_method、caller、`` ` ``、double.rb の C の所は NotImplementedError)、corpus の picotest.rb / caller.rb が host の picoruby と全行一致、
+test:fpga、check、emu:check、tb の mrb_core_tb (両シミュレーター)。
+
+### P9 の仕上げ (compact の後に計画し直し)
+
+| やること | 確かめる値 (先に決める) | 通らなければ |
+|---|---|---|
+| fuzz seed 1–4 を1本ずつ順に (`rake fpga:fuzz[300,N]`) | 4 本とも mismatch 0。要約の `frame_pc`・`rom_word`・`truncate` がどの seed でも 0 でない。`frame_pc` は断片の中のブロックと maker のメソッドから呼ぶので、深さ 1 以上の値 (0 と nil 以外) が出る | 断片 (fuzz.rb の pick 26) を直し、直した理由を「見つけたこと」に書いてからもう一度 |
+| gap | 範囲内 72 (71 + corpus の picotest.rb。注釈の語で範囲外にされていたもの)、変換 70、一致 70、止まる 2 (pio、pitchdetector)。範囲外の理由に "host side" が runner.rb の1本だけ | 数が違えば、どの program かを gap の出力で見て、判定の条件 (下の「gap の判定」) のどれに当たるかを書いてから直す |
+| `rake fpga:tb` の全部 | 全 tb が Verilator と Icarus の両方で PASS | 落ちた tb を1本だけ回して直す |
+| 記録と commit | 計画の P9 の行、記録に1行、WIP commit を `fpga: P9 picotest and caller` に直して push (自分のブランチなので force-with-lease) | — |
+
+**gap の判定 (P9 の時点):** 範囲外 = (1) 板に無いハード (`HARDWARE` の表)、(2) host 側の係 (`HOST_SIDE_CONSTS`: `Picotest::Runner`。
+注釈の行を除いてから探す)。範囲内で止まる = 変換器か GEMS が足りない。テストのファイル (`Picotest::Test` を継ぐクラスがある) は
+Runner と同じ末尾を付けて走らせる。
+
+## 全段で守ること (P9 で流してから直した反省)
+
+- **段の頭に表を書く:** 変える意味 → 直す test と表 → fuzz がどの場合まで届くか (要約の stat の名前と、0 でないこと) →
+  gap の数 (範囲内・変換・一致・止まる) の見込み。流してから表を直さない
+- **ファイルを書き換える道具:** Edit か、Ruby コードの script ファイル (`ruby -Eutf-8`)。置き換えは `sub(old) { new }` の形
+  (置き換えの文字列の `\0` `\1` を解かせない)。日本語を含むものを `ruby -e` に渡さない
+- **重い rake (fuzz / gap / check / tb) は同じ worktree で1つずつ。** 長いものは nohup でログを scratchpad に、止める時は PID で
 
 ## P9b 動的なメソッドの定義 (picotest の stub / mock)
 
-- `define_method`、特異メソッド、`remove_method` を RAM の上書きの表で扱う (メソッド表の引き方に RAM の表を先に見る段を足す)。
-  設計は P9 の後に、PicoRuby の picotest の double.c と mruby の `mrb_define_method_raw` を読んでから書く
+double.rb と double.c (src/mruby/picotest.c) を読んで分かったこと: stub / mock に要るのは次の4つ。
+
+1. `Picotest::Double < BasicObject` と、未定義のメソッドが `method_missing(:名前, *引数, &blk)` に回ること
+   (`stub(obj).foo { 1 }` の `foo` は Double の method_missing)
+2. `_alloc(obj)`: BasicObject の子を作る (initialize を呼ばない)
+3. `define_method(mid, obj)`: obj (または obj のクラス) にだけ効く `mid` を足し、中身は「`$picotest_doubles` を後ろから探し、
+   `doubled_obj_id` (obj の object_id か、any_instance_of ならクラス) と mid が合う行の `return_value` を返す。mock なら
+   `actual_count` を足す」。`define_method_any_instance_of(mid, klass)` はクラスに足す。`remove_singleton` で外す
+4. `doubled_obj.object_id`: ヒープのオブジェクトの object_id (今は NotImplementedError。コピー GC で番地が動くため)
+
+| 変える意味 | 直す test と表 |
+|---|---|
+| **BasicObject:** 組み込みのクラス BasicObject (番号を足す)。Object の親を BasicObject、BasicObject の親は無し。`==` `!` `!=` `equal?` `__send__` `instance_eval` `method_missing` だけ持つ (mruby と同じ)。プログラムのクラスが BasicObject を継げる | isa の CLASSES、rom.rb の表、ref、RTL (親の輪の終わり)、rom_test、corpus `basic_object.rb` (CRuby と host の picoruby で一致) |
+| **method_missing:** 探索が見つからない時、同じ受け手のクラスで `:method_missing` を引き、見つかれば引数の前に `:名前` を入れて呼ぶ (レジスタを1つずらす。splat の形も)。無ければ今と同じ NoMethodError | ref、RTL (S_LOOKUP の失敗の先)、tb `method_missing`、fuzz、corpus `method_missing.rb` |
+| **ヒープの object_id:** RAM の小さな表 (id の表、16 行) に {オブジェクトの番地} を置き、行の番号から id を作る。表は GC の根 (写すと番地を直す)。満ちたら RangeError (止める理由として文に書く) | ref、RTL (GC の根に足す)、tb、corpus `object_id.rb`、spec の §10 (1021 行の NotImplementedError を消す) |
+| **上書きの表 (実行時のメソッドの定義):** RAM の表 (8 行) に {鍵 = object_id か クラス, シンボル, 飛び先}。探索は ROM の表より先に上書きの表を見る。飛び先は「その gem の mruby ソースコードのメソッド」で、method_missing と同じく `:名前` を前に入れて呼ぶ (double.c の `ci->mid` の代わり)。primitive `__override_set(鍵, mid, 飛び先の mid)` と `__override_clear(行)` | isa の PRIMS、ref、RTL、tb `override`、fuzz |
+| **`fpga/gems/picotest.rb`:** `_alloc`、`define_method`、`define_method_any_instance_of`、`remove_singleton` と、中身の `__double_call(mid, *args)` (double.c の `mruby_method_missing_for_double` を mruby ソースコードに写したもの)。double.rb はそのまま GEMS に入れる | corpus.rb の GEMS、corpus `picotest_double.rb` (stub、mock、stub_any_instance_of、mock_any_instance_of、clear_doubles の後に元に戻る) |
+
+- [ ] oracle: corpus の basic_object.rb / method_missing.rb / object_id.rb は CRuby と host の picoruby、picotest_double.rb は host の picoruby と全行一致
+- [ ] fuzz の到達: 断片を足す (BasicObject の子への未定義の呼び出し → method_missing、`__override_set` した受け手への呼び出し、
+  GC を挟んだ後の object_id)。要約の stat `method_missing`、`override_hit`、`objid_heap` が seed 1–4 のどれでも 0 でない
+- [ ] gap の見込み: example に stub / mock を使うものは無い (grep で 0 本) ので数は P9 の仕上げと同じ。corpus が1本ずつ増える分だけ範囲内・一致が増える
+- [ ] tb: 新しい case (method_missing、override、objid の GC 越え) を両シミュレーターで
 
 ## P10 pitchdetector
 
 | 変える意味 | 直す test と表 |
 |---|---|
-| mrblib (`Note#freq_to_note` など) はそのまま。C の `detect_pitch` (pitchdetector.c: ADC の標本を溜めて自己相関) だけを `fpga/gems/` に mruby ソースコード (Float、P5b) で書く。標本は ADC (P5c) から。mruby ソースコード版で1回の検出の時間をコアで測り、`sleep_ms 10` の周期で用をなさなければ積和だけを回路 (デバイスのレジスタで起動・結果を読む) にし、mruby ソースコード版と一致させる | `FpgaCorpus::GEMS`、gap_test |
-| `Signal.trap(:INT)` の扱いを決める (コアに Signal は無い。何もしない gem か、止める理由のまま) | gap の表 |
+| mrblib (`Note#freq_to_note` など) はそのまま。C の `detect_pitch` (pitchdetector.c: ADC の標本を溜めて自己相関) だけを `fpga/gems/` に mruby ソースコード (Float、P5b) で書く。標本は ADC (P5c) から | `FpgaCorpus::GEMS`、gap_test |
+| 速さを測る: mruby ソースコード版で1回の検出の cycle をコア (tb) で数える。`sleep_ms 10` の周期 (125MHz で 1,250,000 cycle) に入らなければ、積和だけを回路 (デバイスのレジスタで起動・結果を読む) にし、mruby ソースコード版と一致させる。どちらにしたかと数えた cycle を spec に書く | 計画の記録、spec §10 |
+| `Signal.trap(:INT)`: コアに割り込みのシグナルは無い。何もしない (block を覚えるだけ) gem にする。理由を spec に | `fpga/gems/signal.rb`、gap_test |
 | ADC の刺激 (stim) に正弦波の標本を入れる。エミュレーターにも同じ波を入れられるように | compare.rb の stim、emu |
 
-- [ ] oracle: pitchdetector.c と、CRuby で走る Ruby コードに写した計算を同じ標本で比べる (周波数と音名)
-- [ ] コーパス `fpga/corpus/pitch.rb` (440 Hz、既知の音をいくつか)
-- [ ] 確かめ方: tuner.rb が match、check、fuzz、tb
+- [ ] oracle: pitchdetector.c を host で build したもの (host の picoruby に gem を入れる) と、FPGA 版を同じ標本 (440 Hz ほか 3 音) で比べる (周波数と音名)
+- [ ] fuzz の到達: 回路にした場合だけ、積和のレジスタを突く断片 (stat `pitch_mac`)。mruby ソースコードのままなら fuzz は変えない
+- [ ] gap の見込み: pitchdetector の example (tuner.rb) が一致に入り、止まる 2 → 1
+- [ ] コーパス `fpga/corpus/pitch.rb`、check、tb
 
 ## P11 pio
 
@@ -184,19 +225,25 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
 
 | 変える意味 | 直す test と表 |
 |---|---|
-| `PIO.asm` (アセンブラー) は mrblib の mruby ソースコードをそのまま (block の中の `out` `jmp` `label` `nop` `wrap` などは instance_eval) | P7 までで足りるか確かめる。足りなければ instance_eval を足す (ref、RTL、rom_test の許可表) |
+| `PIO.asm` (アセンブラー) は mrblib の mruby ソースコードをそのまま (block の中の `out` `jmp` `label` `nop` `wrap` などは instance_eval) | P7 までで足りるか gap の止まる理由で確かめる。足りなければ instance_eval を足す (ref、RTL、rom_test の許可表) |
 | `PIO::StateMachine` はデバイスのレジスタ (io_map.rb に PIO の区画: 命令メモリ 32 語、SM の設定、TX FIFO) | io_map、gen_pkg (mrb_pkg.sv)、devices.rb、mrb_dev.sv |
 | RTL の PIO: 状態機械 1 つから (sk6812 が使う out / jmp / nop / side-set / wrap / autopull / clkdiv)、その後に残りの命令 (in / push / pull / mov / irq / wait / set) | 新しい tb `mrb_pio_tb.sv`、ref の PIO モデル |
 | トレースに PIO のピンの変わり目を出し、エミュレーターは WS2812 の波形を LED の色にデコードする | displays.rb か新しいデコーダー、emu |
 
 - [ ] oracle: RP2040 の PIO の命令の意味 (データシート) を ref の PIO モデルに写し、RTL と cycle で比べる。sk6812.rb の色の列は CRuby で走る Ruby コードで計算した答えと比べる
-- [ ] 確かめ方: sk6812.rb が match、tb 両シミュレーター、check、fuzz (PIO のレジスタを突く断片を足す)
+- [ ] fuzz の到達: PIO のレジスタ (命令メモリ、TX FIFO、SM の起動) を突く断片。stat `pio_write`、`pio_pin` が 0 でない
+- [ ] gap の見込み: sk6812.rb が一致に入り、止まる 1 → 0
+- [ ] tb 両シミュレーター、check
 
 ## P12 host の picoruby との突き合わせを広げる
 
-- [ ] 今は tasks / sends / int64 だけ host の picoruby と比べている。コーパスの全部を host で走らせ、コンソールの出力が同じか見る道具
-  (`rake fpga:host` 相当。scratchpad の hostcmp.rb を tools/fpga に上げる)。違いは「表し方の違い」か「コアの違い」かを表にして、コアの違いは直す
-- [ ] example の範囲外 45 本の理由を見直し、FPGA で作れるデバイス (P11 と同じ考え) があれば段にする
+| 変える意味 | 直す test と表 |
+|---|---|
+| 今 host と比べているのは tasks / sends / int64 / picotest / caller だけ。corpus の全部を host の picoruby (tools の VM) で走らせ、コンソールの出力を比べる `rake fpga:host` (FpgaParallel.map) | tools/fpga/host.rb、host_test、rakefile |
+| 違いを表にする: 「host に無いデバイス」(GPIO など、host では走らない → 比べない、理由を表に)、「表し方の違い」(浮動小数の桁など)、「コアの違い」(直す) | spec §10 に表 |
+| example の範囲外の理由を見直す。FPGA で作れるデバイス (P11 と同じ考え) があれば段を足す | 計画に段を足す |
+
+- [ ] 確かめ方: `rake fpga:host` の「コアの違い」が 0。fuzz と gap は変えない (見込み: 数は P11 と同じ)
 
 ---
 
