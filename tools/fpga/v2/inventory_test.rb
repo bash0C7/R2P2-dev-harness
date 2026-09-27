@@ -1,6 +1,7 @@
 require "minitest/autorun"
 require "tmpdir"
 require_relative "inventory"
+require_relative "vm_table"
 
 # 棚卸し (計画 S2-1) の test: 走査の読み方と、commit した表が今の vendor と host から作り直したものと同じこと
 class FpgaV2InventoryTest < Minitest::Test
@@ -111,7 +112,23 @@ class FpgaV2InventoryTest < Minitest::Test
     pico = FpgaConverter.default_picoruby
     skip "host の picoruby が無い (rake fpga:picoruby)" unless File.executable?(pico)
     r = I.build(picoruby: pico)
+    ops, uncovered = FpgaV2::VmTable.build
     assert_equal File.read(I::OUT), I.tsv(r), "rake fpga:v2:inventory で作り直す"
-    assert_equal File.read(I::UNMATCHED), I.unmatched_tsv(r), "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(FpgaV2::VmTable::OUT), FpgaV2::VmTable.tsv(ops), "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(I::UNMATCHED), I.unmatched_tsv(r, arena_outside_ops: uncovered), "rake fpga:v2:inventory で作り直す"
+  end
+
+  # 命令の表 (計画 S2-2): ops.h の全命令に vm.c の CASE があり、arena の restore と goto の先を辿れている
+  def test_ops_table_follows_vm_c
+    ops, uncovered = FpgaV2::VmTable.build
+    assert_equal 119, ops.size
+    assert_equal [], ops.select { |o| o[:line] == "-" }.map { |o| o[:op] }
+    by = ops.to_h { |o| [o[:op], o] }
+    refute_equal "none", by["ARRAY"][:arena] # mrb_vm_exec の ARRAY は ary を作った後に restore する
+    refute_equal "none", by["STRING"][:arena]
+    assert_equal "none", by["MOVE"][:arena]
+    assert_includes by["SEND"][:via].split, "L_SENDB" # SEND は L_SENDB へ goto する
+    assert_includes by["ARRAY"][:calls].split, "mrb_ary_new_from_values"
+    assert uncovered.all? { |fn, _| fn.is_a?(String) }
   end
 end

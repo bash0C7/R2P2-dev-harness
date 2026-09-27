@@ -765,8 +765,13 @@ namespace :fpga do
       require_relative "../tools/fpga/v2/inventory"
       inv = FpgaV2::Inventory
       r = inv.build(picoruby: FpgaConverter.default_picoruby)
+      require_relative "../tools/fpga/v2/vm_table"
+      ops, uncovered = FpgaV2::VmTable.build
+      File.write(FpgaV2::VmTable::OUT, FpgaV2::VmTable.tsv(ops))
       File.write(inv::OUT, inv.tsv(r))
-      File.write(inv::UNMATCHED, inv.unmatched_tsv(r))
+      File.write(inv::UNMATCHED, inv.unmatched_tsv(r, arena_outside_ops: uncovered))
+      puts "v2 ops: #{ops.size} opcodes, #{ops.count { |o| o[:arena] != 'none' }} restore the arena, " \
+           "#{uncovered.size} restore site(s) outside any opcode"
       board = r.rows.count { |x| x[:board] == "yes" }
       found = r.rows.count { |x| x[:board] == "yes" && x[:src] != "-" }
       puts "v2 inventory: #{r.rows.size} entries on host (#{board} in board gems, #{found} of them with a source), " \
