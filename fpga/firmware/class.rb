@@ -257,20 +257,30 @@ class Object
   # C: src/vm.c OP_GETCONST
   def __fpga_op_GETCONST(a, b, c)
     sym = __fpga_irep_sym(__fpga_irep, b)
-    cref = __fpga_cref_class(__fpga_ci) # mrb_vm_const_get
+    row = __fpga_vm_const_get_noraise(__fpga_ci, sym) # mrb_vm_const_get
+    if row == 0
+      cref = __fpga_cref_class(__fpga_ci)
+      return __fpga_setreg(a, __fpga_const_hook(cref == 0 ? __fpga_image(5) : cref, sym)) # L:IMG_object_class
+    end
+    __fpga_setreg(a, __fpga_ldv(row + 4))
+  end
+
+  # ci の字句の scope で定数を引く (cref、upper の鎖の scope、cref の祖先)。定数の表の行か 0 (hook は呼ばない)
+  # C: src/variable.c mrb_vm_const_get_noraise
+  def __fpga_vm_const_get_noraise(ci, sym)
+    cref = __fpga_cref_class(ci)
     cref = __fpga_image(5) if cref == 0 # L:IMG_object_class
     row = __fpga_const_row(cref, sym)
     if row == 0
-      pr = __fpga_ld32(__fpga_proc + 12) # L:P_UPPER
-      while row == 0 && pr > 0 && __fpga_ld32(pr + 12) > 0
+      pr = __fpga_ld32(__fpga_ld32(ci + 8) + 12) # L:CI_PROC L:P_UPPER
+      while row == 0 && pr > 0 && __fpga_ld32(pr + 12) > 0 # L:P_UPPER
         tc = __fpga_ld32(pr + 20) # L:P_TCLASS
         row = __fpga_const_row(tc, sym) if tc > 0
-        pr = __fpga_ld32(pr + 12)
+        pr = __fpga_ld32(pr + 12) # L:P_UPPER
       end
     end
     row = __fpga_const_walk(cref, sym, true) if row == 0
-    return __fpga_setreg(a, __fpga_const_hook(cref, sym)) if row == 0
-    __fpga_setreg(a, __fpga_ldv(row + 4))
+    row
   end
 
   # 見つからない定数: const_missing が Module のもの (mrb_mod_const_missing) なら NameError、ほかは const_missing を送る
