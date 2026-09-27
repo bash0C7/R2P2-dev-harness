@@ -26,8 +26,8 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D | 違い | mruby の正本 | 理由 | 見える所 | 状態 |
 |---|---|---|---|---|---|
 | D10 | 罠: 回路が終えられない命令と、メソッドの探索の外れは、firmware (mruby ソースコード) のメソッドを呼ぶ | vm.c の遅い道、C の関数 | C の代わりに、コアで走る mruby ソースコードで写す | 無い | 今ある |
-| D11 | 罠の続きの情報 (今の ref の `Frame` の `kind` / `resume` / `dst`) | `mrb_callinfo` の `cci` | C に当たるもの無し (C は native のスタックで続きを持つ) | 無い | 計画 S2b で、`cci` への当て方と、ci の横の 1 対の語の符号化をここに書いてから作る |
-| D12 | 引数をまとめた印 (`n` = 15) の扱い | vm.c の OP_SEND、`mrb_callinfo.n` | — | 無い | 計画 S2b で決めてここに書く |
+| D11 | 罠の続きの情報を mrb_callinfo の後ろの延長の語に置く: 続きの種類 (0 普通の戻り、1 命令を進める、2 探索の罠の続きの SEND、3 結果を R[a] へ、4 起動、5 __fpga_run)、a、n、sym、ret_pc、dst+1、fcall。罠のフレームの cci は CINFO_DIRECT | `mrb_callinfo` の `cci` | C は native のスタックで続きを持つ。回路には C のスタックが無い | 無い | 今ある (計画 S2b) |
+| D12 | ci.n は 0〜14 はそのまま、15 以上は 15。回路は splat を窓に広げる (mruby は ENTER が広げる) ので、本当の引数の数は延長の語 argc に置く | vm.c の OP_SEND、`mrb_callinfo.n` | 窓に並べた方が回路が簡単 | 無い (ENTER の後の意味は同じ) | 今ある (計画 S2b) |
 | D13 | 特権の primitive (`__fpga_*`) は回路が symbol で引く表で実行する | C の関数の直接の呼び出し | 記憶の生の読み書きなど、C でしかできない所 | 名前 `__fpga_` は予約 | 今ある |
 | D14 | firmware だけの helper は名前を `__fpga_` にし、reflection (`methods`、`respond_to?`) から隠す。C で定義された `__x` (`__svalue` など) は普通のメソッド | C の static 関数 (見えない) | C の static 関数に当たる | 無い (隠せば) | 名前は S2-4 で `__fpga_` にそろえた。reflection (methods ほか) から隠すのは、それらを firmware に写す時 (計画 S5) |
 | D15 | attr_reader / attr_writer は Proc の種類 (IVGET / IVSET) | class.c の attr (cfunc + env) | 回路で速く読み書きする | `Method#source_location` など (範囲外なら scope に書く) | 今ある |

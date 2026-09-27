@@ -58,7 +58,7 @@ class Symbol
   # to_s / id2name (symbol.c): シンボル表の名前から新しい String
   # C: src/symbol.c sym_to_s
   def to_s
-    tab = __fpga_image(4) # L:IMG_sym_table
+    tab = __fpga_image(26) # L:IMG_symtbl
     i = __fpga_addr(self)
     __fpga_str_new(__fpga_ld32(tab + i * 8), __fpga_ld32(tab + i * 8 + 4))
   end
