@@ -13,6 +13,8 @@ FPGA は当面、実機を使わずシミュレーター (`rake fpga:test`、ボ
 
 ## 作業の規律
 
+- **mruby ソースコードと Ruby コードを呼び分ける。** mruby ソースコードは mruby の文法の `.rb` (mrbc で mruby bytecode にし、PicoRuby の VM か FPGA のコアで走る。host の picoruby で走る変換器も)。
+  Ruby コードは CRuby で走るもの (rake、`tools/` の道具、テスト)。文法がほぼ同じでも「Ruby で書く」とまとめて言わない
 - **完了の線引きは実機。** `rake test` (ホスト) が green でも、実機で走らせるまで「動いた」と書かない
 - **`vendor/picoruby` は生成物。** commit しない。変更は `firmware-patches/` (build 中だけ当てる) か build_config の overlay で行う
 - **Pico 2 W は Claude が触る。** `rake rp2040:build` / `flash` / `upload` / `run` / `reboot` は Bash から直接回せる
