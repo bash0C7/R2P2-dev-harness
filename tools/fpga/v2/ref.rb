@@ -201,6 +201,22 @@ module FpgaV2
     def irep_sym(ir, i) = r32(r32(ir + I_SYMS) + i * WORD)
     def irep_rep(ir, i) = r32(r32(ir + I_REPS) + i * WORD)
 
+    # クラス c の == が起動の後に定義されたものか (MRB_FL_CLASS_EQ_DEFINED の意味: 起動の後に祖先のどれかが == を定義した)。
+    # 回路は探索で答える: 見つかった Proc が bop_builtin の表 (mrb_builtin_op_init が起動の終わりに確保) より前なら起動の中のもの (D61)
+    def eq_defined?(c)
+      sym = sym_id("==")
+      until c.zero?
+        mt = r32(c + C_MT)
+        rom = r32(c + C_ROM)
+        e = mt.zero? ? nil : table_get(mt, sym)
+        e = table_get(rom, sym) if e.nil? && !rom.zero?
+        return (e & ~VIS_MASK) >= r32(IMG.fetch(:bop_builtin) * WORD) if e && !e.zero?
+        return true if e # undef
+        c = r32(c + C_SUPER)
+      end
+      true
+    end
+
     # 表 (メソッド表の形、layout.rb) を引く
     def table_get(head, sym)
       capa = r32(head + MT_CAPA)
@@ -423,6 +439,9 @@ module FpgaV2
         return setreg(a, TRUE_) if x == y
         return setreg(a, FALSE_) if x[0] == TAG_SYM
       end
+      if name == "EQ" && (bop & eq_mask).zero? && x[0] == TAG_OBJ && x == y && !eq_defined?(class_of(x))
+        return setreg(a, TRUE_) # 同じ物で、クラスが == を定義していない (MRB_FL_CLASS_EQ_DEFINED が無い)
+      end
       if x[0] == TAG_INT && y[0] == TAG_INT && bop_int?(name)
         return setreg(a, x[1].send(OPSYM[name].to_sym, y[1]) ? TRUE_ : FALSE_)
       end
@@ -638,10 +657,10 @@ module FpgaV2
         regs[m1 + o] = alloc_array([]) if r == 1
         @pc_next += (argc - m1 - m2) * 3 if o.positive? && argc > m1 + m2 # 渡された省略可能の数だけ初期値の JMP の表を飛ばす
       else
-        rnum = argc - m1 - o - m2
+        rnum = r == 1 ? argc - m1 - o - m2 : 0 # 残りが無ければ余りの引数は捨てる (strict でないブロック)
         args[0, m1 + o].each_with_index { |v, k| regs[k] = v }
         regs[m1 + o] = alloc_array(args[m1 + o, rnum]) if r == 1
-        args[m1 + o + rnum, m2].each_with_index { |v, k| regs[m1 + o + r + k] = v } if m2.positive?
+        args[m1 + o + rnum, m2].each_with_index { |v, k| regs[m1 + o + r + k] = v } if m2.positive? && argc - m2 > m1
         @pc_next += o * 3
       end
       regs.each_with_index { |v, k| setreg(k + 1, v) }

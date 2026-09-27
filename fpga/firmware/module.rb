@@ -260,14 +260,14 @@ class Module
       blk = pr
     end
     __fpga_raise(ArgumentError, "no block given") if __fpga_tag(blk) == 0 # L:TAG_NIL
-    b = __fpga_addr(blk)
-    p = __fpga_slot(__fpga_image(8), 16) # L:IMG_proc_class L:TT_PROC mrb_proc_copy
-    __fpga_st32(p + 24, __fpga_or(__fpga_ld32(b + 24), 256)) # L:P_FLAGS L:PROC_STRICT
-    __fpga_st32(p + 8, __fpga_ld32(b + 8)) # L:P_BODY
-    __fpga_st32(p + 12, __fpga_ld32(b + 12)) # L:P_UPPER
-    __fpga_st32(p + 16, __fpga_ld32(b + 16)) # L:P_ENV
-    __fpga_st32(p + 20, __fpga_ld32(b + 20)) # L:P_TCLASS
-    __fpga_define(c, mid, p, vis == 3 ? 1 : vis) # module_function の写し (define_modfunc_copy) は S5
+    p = __fpga_slot(__fpga_image(8), 16) # L:IMG_proc_class L:TT_PROC
+    __fpga_proc_copy(p, __fpga_addr(blk))
+    __fpga_st32(p + 24, __fpga_or(__fpga_ld32(p + 24), 256)) # L:P_FLAGS L:PROC_STRICT
+    __fpga_method_raw(c, mid, p + (vis == 3 ? 1 : vis)) # L:VIS_PRIVATE modfunc は private
+    __fpga_method_added(c, mid)
+    if vis == 3 # define_modfunc_copy: 今の名前の値を public で特異クラスへ
+      __fpga_method_raw(__fpga_singleton(self), mid, __fpga_and(__fpga_search(c, mid), -4)) # L:VIS_PUBLIC (0)
+    end
     __fpga_mkval(4, mid) # L:TAG_SYM
   end
 
