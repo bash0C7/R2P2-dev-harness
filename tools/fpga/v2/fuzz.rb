@@ -143,24 +143,15 @@ module FpgaV2
       end
     end
 
-    # 捕まらなかった例外の表示 (mrb_print_backtrace) の場所の所を消す。host は backtrace と "file:line: "、firmware は backtrace を
-    # 残さない (S5) ので "(unknown):0: "。message と class は比べる
-    def uncaught(out)
-      lines = out.lines
-      k = lines.index { |l| l.start_with?("trace (most recent call last)") }
-      lines = lines[0...k] + [lines.last] if k
-      lines[-1] = lines[-1].sub(/\A\S+:\d+(?::in (?:(?!: ).)*)?: /, "") if lines.any? && (k || lines[-1].start_with?("(unknown):0: "))
-      lines.join
-    end
-
     # 1本を host と参照で走らせて比べる
     def check(src, picoruby:)
       Dir.mktmpdir do |dir|
         rb = File.join(dir, "fuzz.rb")
         File.write(rb, src)
         host, = Open3.capture2e("timeout", "10", picoruby, rb)
-        ref, st = Build.run_source(src, max_steps: 20_000_000)
-        Result.new(ok: uncaught(host.b) == uncaught(ref.b), src: src, host: host, ref: ref, stats: st.stats)
+        st = Ref.new(Build.image([Build.compile([rb])]), max_steps: 20_000_000) # 同じ file の名前 (捕まらなかった例外の backtrace)
+        ref = st.run
+        Result.new(ok: host.b == ref.b, src: src, host: host, ref: ref, stats: st.stats)
       end
     end
   end

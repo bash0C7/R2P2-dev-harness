@@ -45,7 +45,7 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D | 違い | mruby の正本 | 理由 | 見える所 | 状態 |
 |---|---|---|---|---|---|
 | D40 | gem の mrblib (mruby ソースコード) のメソッドを firmware に仮に写す (Kernel#puts / print、picoruby-machine の IO を通す形でなくコンソールに直接) | picoruby-machine の mrblib と C | 計画 S7 で gem をそのまま像に入れるまで、programs と fuzz を走らせるため | 定義の場所 (`source_location` など)、`$stdout` を差し替えた時 | 今ある。mruby の mrblib の仮の写し (Numeric#-@) は S4-3 で消した。**S7 で消す** |
-| D41 | 例外に backtrace を残さない (`mrb_keep_backtrace` を呼ばない) | error.c の mrb_exc_set、backtrace.c | 残すには irep の debug 情報 (行の表) を読む。計画 S4-2 は巻き戻しまで | `Exception#backtrace` が nil、捕まらない例外の表示が backtrace の無い時の形 `(unknown):0: message (Class)` (fuzz は場所の所を消して比べる) | 今ある。**S5 で消す** |
+| D41 | backtrace を詰める時 (pack_backtrace)、firmware だけのフレーム (名前が `__fpga_` の helper と罠) を越え、像の中の Proc (firmware) のフレームを C の関数のフレーム (MRB_PROC_CFUNC_P) として扱う。行の表 (packed_map) は写さず .mrb の中を指す | backtrace.c の pack_backtrace、load.c の read_debug_record | firmware の helper と罠は C に ci が無い。C の関数を firmware のメソッドにしたので、そのフレームは ROM の Proc | attr の reader / writer は罠のフレームなので、frozen の writer の例外に `in x=` の行が出ない (C は cfunc のフレーム)。firmware に無い C のメソッド (method_missing になる) は行が出ない | 今ある |
 
 ## 記憶の管理 (計画 S6、設計 §6)
 

@@ -174,6 +174,8 @@ class Integer
   # step の数え手: 刻みが Float なら self を Float に (C は ci->mid を 0 にして backtrace から隠す。backtrace は D41)
   # C: src/numeric.c coerce_step_counter
   def __coerce_step_counter(step)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     return __fpga_float_value(__fpga_as_float(self)) if __fpga_tag(step) == 5 # L:TAG_FLOAT mrb_ensure_float_type
     self
   end

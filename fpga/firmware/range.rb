@@ -166,6 +166,8 @@ class Range
 
   # C: src/range.c range_num_to_a
   def __num_to_a
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     beg = __fpga_range_beg(self)
     en = __fpga_range_end(self)
     __fpga_st32(__fpga_ld32(__fpga_image(0) + 12) + 4, 0) # L:IMG_c L:CTX_CI L:CI_MID mrb->c->ci->mid = 0

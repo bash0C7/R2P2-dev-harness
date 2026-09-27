@@ -45,23 +45,14 @@ class Object
     __fpga_tbl_set(obj, __fpga_addr(:MRUBY_COPYRIGHT), "mruby - Copyright (c) 2010-2026 mruby developers")
   end
 
-  # 捕まらなかった例外を出して止まる (mrb_print_error)。backtrace を残すのは S5 なので、backtrace の無い時の形
-  # "(unknown):0: message (Class)" (backtrace.c の print_backtrace の n == 0)
-  # C: src/backtrace.c print_backtrace (D41)
-  def __fpga_print_error
-    exc = __fpga_obj(__fpga_ld32(3 * 4)) # L:IMG_exc L:WORD
-    __fpga_write_str("(unknown):0: ") # UNKNOWN_LOCATION
-    __fpga_write_str(__fpga_exc_get_output(exc))
-    __fpga_putc(10)
-    __fpga_halt
-  end
-
   # --- .mrb の読み込み (load.c の read_irep_record_1)。blob は RITE0400 の先頭の番地。一番外の irep の番地を返す
   # C: src/load.c read_irep
   def __fpga_load(blob)
     cur = __fpga_alloc(8)
     __fpga_st32(cur, blob + 32) # 見出し 20 + IREP の section の見出し 12
-    __fpga_read_irep(cur)
+    irep = __fpga_read_irep(cur)
+    __fpga_load_sections(blob, irep)
+    irep
   end
 
   # C: include/mruby/dump.h bin_to_uint16
@@ -130,7 +121,7 @@ class Object
       end
       k += 1
     end
-    ir = __fpga_alloc(44) # L:IREP
+    ir = __fpga_alloc(48) # L:IREP
     __fpga_st32(ir + 0, nlocals * 65536 + nregs) # L:I_NLOCALS (u16 nlocals、u16 nregs)
     __fpga_st32(ir + 4, ilen) # L:I_ILEN
     __fpga_st32(ir + 8, iseq) # L:I_ISEQ
@@ -143,6 +134,7 @@ class Object
     __fpga_st32(ir + 32, rlen) # L:I_RLEN
     __fpga_st32(ir + 36, catch) # L:I_CATCH
     __fpga_st32(ir + 40, clen) # L:I_CLEN
+    __fpga_st32(ir + 44, 0) # L:I_DEBUG
     __fpga_st32(cur, p)
     k = 0
     while k < rlen
