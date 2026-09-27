@@ -183,7 +183,7 @@ class Object
     obj = __fpga_addr(__fpga_core(13)) # L:CORE_OBJECT
     c = skip ? __fpga_ld32(base + 8) : base # L:C_SUPER
     while c > 0
-      row = __fpga_const_row(c, sym)
+      row = __fpga_and(__fpga_ld32(c + 4), 2147483648) > 0 ? 0 : __fpga_const_row(c, sym) # L:H_FLAGS L:CLASS_IS_PREPENDED
       return row if row > 0
       c = __fpga_ld32(c + 8)
       return 0 if c == obj && skip == false
@@ -259,28 +259,67 @@ class Object
     sym = __fpga_irep_sym(__fpga_irep, b)
     row = __fpga_vm_const_get_noraise(__fpga_ci, sym) # mrb_vm_const_get
     if row == 0
-      cref = __fpga_cref_class(__fpga_ci)
-      return __fpga_setreg(a, __fpga_const_hook(cref == 0 ? __fpga_image(5) : cref, sym)) # L:IMG_object_class
+      c = __fpga_vm_const_base(__fpga_ci)
+      c = __fpga_const_sclass_base(c) if __fpga_tt(c) == 11 # L:TT_SCLASS
+      return __fpga_setreg(a, __fpga_const_hook(c, sym)) # const_get の const_missing
     end
     __fpga_setreg(a, __fpga_ldv(row + 4))
   end
 
-  # ci の字句の scope で定数を引く (cref、upper の鎖の scope、cref の祖先)。定数の表の行か 0 (hook は呼ばない)
+  # ci の字句の scope で定数を引く (cref、upper の鎖の字句の scope、cref の祖先)。定数の表の行か 0 (hook は呼ばない)。
+  # base は hook を送る先 (特異クラスなら付いているクラス)
   # C: src/variable.c mrb_vm_const_get_noraise
   def __fpga_vm_const_get_noraise(ci, sym)
-    cref = __fpga_cref_class(ci)
-    cref = __fpga_image(5) if cref == 0 # L:IMG_object_class
-    row = __fpga_const_row(cref, sym)
-    if row == 0
-      pr = __fpga_ld32(__fpga_ld32(ci + 8) + 12) # L:CI_PROC L:P_UPPER
-      while row == 0 && pr > 0 && __fpga_ld32(pr + 12) > 0 # L:P_UPPER
-        tc = __fpga_ld32(pr + 20) # L:P_TCLASS
-        row = __fpga_const_row(tc, sym) if tc > 0
-        pr = __fpga_ld32(pr + 12) # L:P_UPPER
+    c = __fpga_vm_const_base(ci)
+    row = __fpga_const_row(c, sym)
+    return row if row > 0
+    pr = __fpga_ld32(__fpga_ld32(ci + 8) + 12) # L:CI_PROC L:P_UPPER
+    while pr > 0 && __fpga_ld32(pr + 12) > 0 # L:P_UPPER
+      if __fpga_lexical_scope_p(pr)
+        row = __fpga_const_row(__fpga_proc_class(pr), sym)
+        return row if row > 0
       end
+      pr = __fpga_ld32(pr + 12) # L:P_UPPER
     end
-    row = __fpga_const_walk(cref, sym, true) if row == 0
-    row
+    if __fpga_tt(c) == 11 # L:TT_SCLASS
+      row = __fpga_const_walk(c, sym, true)
+      return row if row > 0
+      c = __fpga_const_sclass_base(c)
+    end
+    __fpga_const_walk(c, sym, true) # const_get_nohook
+  end
+
+  # 引く所の cref (無ければ Object)
+  # C: src/variable.c mrb_vm_const_get
+  def __fpga_vm_const_base(ci)
+    c = __fpga_cref_class(ci)
+    c == 0 ? __fpga_image(5) : c # L:IMG_object_class
+  end
+
+  # 特異クラスは付いている物をたどり、class か module に着けばそれ
+  # C: src/variable.c mrb_vm_const_get
+  def __fpga_const_sclass_base(c)
+    c2 = c
+    while c2 > 0 && __fpga_tt(c2) == 11 # L:TT_SCLASS
+      c2 = __fpga_ld32(c2 + 28) # L:C_OUTER __attached__
+      c2 = 0 unless __fpga_tt(c2) == 9 || __fpga_tt(c2) == 10 || __fpga_tt(c2) == 11 # L:TT_CLASS L:TT_MODULE L:TT_SCLASS mrb_class_ptr
+    end
+    (c2 > 0 && (__fpga_tt(c2) == 9 || __fpga_tt(c2) == 10)) ? c2 : c # L:TT_CLASS L:TT_MODULE
+  end
+
+  # C: src/variable.c proc_class
+  def __fpga_proc_class(p)
+    c = __fpga_proc_target_class(p)
+    c == 0 ? __fpga_image(5) : c # L:IMG_object_class
+  end
+
+  # クラスや メソッドの本体 (MRB_PROC_SCOPE) は字句の scope、ブロックは入れ物が upper と違う時だけ。与えられた (GIVEN) Proc は違う
+  # C: src/variable.c lexical_scope_p
+  def __fpga_lexical_scope_p(p)
+    f = __fpga_ld32(p + 24) # L:P_FLAGS
+    return false if __fpga_and(f, 32768) > 0 && __fpga_and(f, 3) == 0 # MRB_PROC_GIVEN_P
+    return true if __fpga_and(f, 2048) > 0 # L:PROC_SCOPE
+    (__fpga_proc_class(p) == __fpga_proc_class(__fpga_ld32(p + 12))) == false # L:P_UPPER
   end
 
   # 見つからない定数: const_missing が Module のもの (mrb_mod_const_missing) なら NameError、ほかは const_missing を送る
