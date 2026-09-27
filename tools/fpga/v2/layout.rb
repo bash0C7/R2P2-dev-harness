@@ -72,6 +72,13 @@ module FpgaV2
     A_PTR  = 16
     # C: src/array.c ARY_DEFAULT_LEN
     ARY_DEFAULT_LEN = 4
+    # RRange (range.h、MRB_NO_BOXING なので MRB_RANGE_EMBED でない形): edges (beg と end の値 2 つの領域の番地)、excl。
+    # 初期化の印は flags の bit 0 (RANGE_INITIALIZED_FLAG)
+    # C: include/mruby/range.h RRange (D04)
+    RG_EDGES = 8
+    RG_EXCL = 12
+    # C: include/mruby/range.h RANGE_INITIALIZED_FLAG
+    RANGE_INITIALIZED_FLAG = 1
     # RProc (proc.h): irep の番地か primitive の番号、上の Proc、env、target_class、flags
     # C: include/mruby/proc.h RProc (D15)
     P_BODY   = 8

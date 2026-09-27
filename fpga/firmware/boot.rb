@@ -5,6 +5,7 @@ class Object
   # 起動 (mruby の mrb_open の後の mrb_load_irep): 像のプログラムを順に読み込み、main で実行する
   # C: src/load.c mrb_load_irep
   def __fpga_boot
+    __fpga_init_main # mrb_init_class の top_self の inspect / to_s
     __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
     lib = __fpga_image(42) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0

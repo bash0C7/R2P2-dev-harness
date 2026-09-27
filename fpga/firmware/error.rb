@@ -57,7 +57,6 @@ class Object
     __fpga_exc_raise(__fpga_exc_new_str(c, __fpga_format(fmt, args)))
   end
 
-  # vm.c の argnum_error (ENTER の引数の数の違い): 期待は 1 つの数
   # C: src/error.c mrb_name_error
   def __fpga_name_error(sym, fmt, args)
     exc = __fpga_exc_new_str(NameError, __fpga_format(fmt, args))
@@ -78,8 +77,11 @@ class Object
     __fpga_name_error(mid, "undefined method '%n' for class %C", [__fpga_mkval(4, mid), __fpga_obj(c)]) # L:TAG_SYM
   end
 
+  # vm.c の argnum_error (ENTER の引数の数の違い): 期待は 1 つの数。firmware の def (像の中の Proc) は C の関数の写しなので、
+  # mruby が C の関数の前にする check_argument_count の mrb_argnum_error の形 (min..max、min+)
   # C: src/vm.c argnum_error
   def __fpga_op_argc(given, min, max)
+    return __fpga_raise_argnum(given, min, max) if __fpga_proc < __fpga_image(35) # L:IMG_heap_start
     __fpga_raisef(ArgumentError, "wrong number of arguments (given %i, expected %i)", [given, min])
   end
 
