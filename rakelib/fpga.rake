@@ -277,6 +277,7 @@ end
 # .rb (mrbc で compile してから) か .mrb を、PicoRuby の変換器で build/fpga/rom/<name>.hex と .lst にする。
 # 返り値は hex の path。
 def fpga_rom(src)
+  Rake::Task["fpga:picoruby"].invoke # 変換器を走らせる VM
   name = File.basename(src, ".*")
   FileUtils.mkdir_p FPGA_ROM_DIR
   mrb = case File.extname(src)
@@ -580,15 +581,24 @@ namespace :fpga do
     puts "full report: #{fpga_rel(report)}"
   end
 
+  desc "Build the host picoruby that runs the converter (build_config/fpga-tools.rb, no PICORB_DEBUG) into build/picoruby-fpga"
+  task :picoruby do
+    # vendor の rake の `all`。build の dir と、bin の symlink を置く dir (INSTALL_DIR) を harness の build/ に向け、
+    # vendor/picoruby/bin (host のテストの VM) には触らない
+    dir = FpgaConverter::PICORUBY_DIR
+    vendor_rake({ "MRUBY_CONFIG" => File.join(HARNESS_ROOT, "build_config", "fpga-tools.rb"), "MRUBY_BUILD_DIR" => dir,
+                  "INSTALL_DIR" => File.join(dir, "bin"), "PICORB_DEBUG" => nil }, "all")
+  end
+
   desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
-  task :corpus do
+  task corpus: :picoruby do
     FpgaCorpus.write(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
     puts "wrote #{FpgaCorpus.names.size} program(s) and #{fpga_rel(FpgaCorpus::TABLE)}"
   end
 
   namespace :corpus do
     desc "Check that fpga/corpus/* and docs/fpga-opcodes.md match mrbc and the PicoRuby converter (needs vendor/picoruby)"
-    task :check do
+    task check: "fpga:picoruby" do
       stale = FpgaCorpus.stale(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
       raise "out of date (run `rake fpga:corpus`): #{stale.join(', ')}" unless stale.empty?
       puts "fpga corpus is up to date"
@@ -662,6 +672,8 @@ end
 namespace :test do
   desc "Run the FPGA Ruby tools' tests (tools/fpga, no simulator needed)"
   task :fpga do
+    # 変換器を走らせるテスト (rom_test、gen_pkg_test) の VM。vendor/picoruby が無ければ (CI の fpga job) そのテストは skip する
+    Rake::Task["fpga:picoruby"].invoke if vendor_ready?
     # テストのファイルごとに ruby を並べて回す (FPGA_JOBS)。出力はファイルの名前の順にまとめて出す
     tests = Dir[File.join(HARNESS_ROOT, "tools", "fpga", "*_test.rb")].sort
     runs = FpgaParallel.threads(tests) do |test_file|
