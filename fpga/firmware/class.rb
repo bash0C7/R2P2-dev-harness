@@ -551,8 +551,9 @@ class Object
 end
 
 class BasicObject
+  # 引数は取らない (MRB_ARGS_NONE。new に引数を渡して initialize を定義していなければ ArgumentError)
   # C: src/class.c mrb_do_nothing
-  def initialize(*args)
+  def initialize
   end
 
   # C: src/class.c mrb_f_send

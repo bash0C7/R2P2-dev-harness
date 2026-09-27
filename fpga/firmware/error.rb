@@ -449,6 +449,7 @@ class Exception
 
   # C: src/error.c exc_exception
   def exception(*args)
+    __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
     return self if __fpga_alen(args) == 0
     a = __fpga_aref(args, 0)
     return self if __fpga_tag(a) == __fpga_tag(self) && __fpga_int(a) == __fpga_int(self) # mrb_obj_equal
@@ -457,6 +458,7 @@ class Exception
 
   # C: src/error.c exc_initialize
   def initialize(*args)
+    __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
     __fpga_exc_mesg_set(self, __fpga_aref(args, 0)) if __fpga_alen(args) >= 1
     self
   end
@@ -504,6 +506,7 @@ module Kernel
   # raise (kernel.c の mrb_f_raise): 引数無しは $! を上げ直す (無ければ RuntimeError "")、文字列 1 つは RuntimeError
   # C: src/kernel.c mrb_f_raise
   def raise(*args)
+    __fpga_check_argc(args, 0, 2) # MRB_ARGS_OPT(2)
     argc = __fpga_alen(args)
     if argc == 0
       exc = $!

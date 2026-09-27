@@ -44,6 +44,12 @@ class FpgaV2FirmwareTest < Minitest::Test
     assert_equal [], FpgaV2::Annotations.check_sends
   end
 
+  # 引数の数 (計画 S5): C のメソッドの写しの def は C の aspec と同じ範囲を受ける (mruby は呼ぶ前に調べる)
+  def test_defs_take_the_c_aspec
+    require_relative "annotations"
+    assert_equal [], FpgaV2::Annotations.check_aspec
+  end
+
   # 参照 v2 の命令は、名前がそのまま vm.c の CASE (OP_<名前>) で、命令の表 (ops.tsv) にある
   def test_ref_opcodes_are_vm_c_cases
     ops = File.readlines(File.join(FpgaV2::Build::ROOT, "fpga", "v2", "inventory", "ops.tsv"), chomp: true)

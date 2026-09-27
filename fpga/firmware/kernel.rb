@@ -66,7 +66,10 @@ class BasicObject
   end
 
   # C: src/class.c mrb_obj_missing
-  def method_missing(name, *args)
-    __fpga_no_method_error(__fpga_addr(name), args, "undefined method '%n' for %T", [name, self]) # mrb_method_missing
+  def method_missing(*args)
+    __fpga_check_argc(args, 1, -1) # mrb_get_args の n*!
+    name = __fpga_aref(args, 0)
+    rest = __fpga_ary_subseq(args, 1, __fpga_alen(args) - 1)
+    __fpga_no_method_error(__fpga_obj_to_sym(name), rest, "undefined method '%n' for %T", [name, self]) # mrb_method_missing
   end
 end
