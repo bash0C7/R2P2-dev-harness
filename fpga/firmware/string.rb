@@ -8,6 +8,23 @@ class String
     __fpga_ld32(__fpga_addr(self) + 8) # L:S_LEN
   end
 
+  # size / length (string.c の mrb_str_size、MRB_UTF8_STRING): 文字の数 = 続きのバイト (10xxxxxx) でないバイトの数
+  def size
+    p = __fpga_ld32(__fpga_addr(self) + 16) # L:S_PTR
+    len = __fpga_ld32(__fpga_addr(self) + 8) # L:S_LEN
+    n = 0
+    k = 0
+    while k < len
+      n += 1 unless __fpga_and(__fpga_ld8(p + k), 192) == 128
+      k += 1
+    end
+    n
+  end
+
+  def length
+    size
+  end
+
   # + (string.c の mrb_str_plus)
   def +(other)
     __fpga_halt unless __fpga_tag(other) == 7 && __tt(__fpga_addr(other)) == 18 # TypeError (V2d) L:TT_STRING
