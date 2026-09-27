@@ -991,9 +991,27 @@ PicoRuby の mruby-task (`src/task.c`、`src/task_queue.c`、`mrblib/queue.rb`) 
 - **突き合わせ。** mruby-task の examples と picoruby-mruby の example は、参照インタプリタと RTL で一致し、host の picoruby
   (tick は 4ms、timeslice 3) とは tick の数・番地・UINT32_MAX の表し方の違いだけ (statistics.rb は `&:join` が要る)
 
+### 動的な呼び出し (P7)
+
+- **`__send(名前, 引数...)`** (回路の primitive、Object、引数の数は何でも)。R[a+1] の Symbol を名前にし、残りの引数とブロックの枠を
+  1つ下へずらして (トレースに出さない。RTL は S_SHIFT で1語ずつ)、引数を1つ減らして受け手のクラスから普通の呼び出しと同じく引く。
+  名前が Symbol でない、引数が無い、splat (argc 15) はエラー。無いメソッドは NoMethodError (コアのエラー)
+- **`send` / `__send__` / `public_send` はプレリュード。** 引数を配列で受けて、数 (6 まで) で `__send(name, a0, ...)` に分ける
+  (splat で渡すと引数が配列1つになり、primitive の受け手の検査が通らない)。名前が String なら、プログラムのシンボル表から探す
+  (無ければどのメソッドの名前でもないので NoMethodError)。ほかは TypeError
+- **`Integer#__sym_at`** (回路の primitive): シンボル表 (TABLE の c から、メソッド表の前まで) の i 番目の Symbol、表の外は nil。
+  `String#to_sym` / `intern` はこれで同じ名前を探す。回路は新しいシンボルを作れないので、無い名前は ArgumentError (PicoRuby は作る)
+- **`&:sym`。** mruby の OP_SENDB はブロックの枠が Proc でなければ `to_proc` を送る。回路では呼び出しの途中にもう1つ呼べないので、
+  変換器が「ブロックの枠を LOADSYM で埋めた直後の SENDB / SSENDB」(`&:sym` の形) に `SEND 枠 :to_proc` を足す。
+  `Symbol#to_proc` はプレリュードの lambda (`|o, *a|`、引数の配列を展開しない)。LOADSYM 以外の値を `&obj` で渡すものは
+  変換で止めず、Proc でなければ呼んだ所でエラー
+- **決めごと。** String の名前で呼ぶメソッドは、その名前がプログラムの中で Symbol か呼び出しとして出てこないと、使わない
+  メソッドとして ROM から落ちることがある (変換器は文字列の中身から呼ばれるメソッドを知らない)
+
 ### プレリュード
 
-primitive を組み合わせるメソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
+primitive を組み合わせる
+メソッドは、mruby の mrblib と同じく Ruby で書いて (`fpga/prelude/*.rb`)、**プログラムの前に置いて
 一緒に compile する** (`mrbc -o out.mrb fpga/prelude/core.rb prog.rb` で1つの irep になる)。コアはそれを普通のメソッドとして走らせる。
 回路を増やさずに組み込みメソッドを足すため。今あるもの: `Integer#times` `upto` `downto`、`Array#each` `each_with_index` `map`
 `==` `include?` `join` `inspect`、`Object#loop` `proc` `!=` `initialize` `nil?` `instance_of?` `===` `puts` `print` `p` `format`、

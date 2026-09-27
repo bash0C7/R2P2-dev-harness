@@ -98,7 +98,8 @@ module mrb_core
     S_LF1, S_LF2, S_LF3,  // LOADF: ROM のデータの2語を読む
     S_FP,                 // Float の primitive の結果で分かれる (値、Float の箱、String、エラー)
     S_FBOX,               // Float の箱を書く
-    S_FSTR                // Float の primitive が作った文字列を String に写す
+    S_FSTR,               // Float の primitive が作った文字列を String に写す
+    S_SHIFT               // __send: 引数を1つ下へずらす (名前の Symbol を外す)
   } state_t;
   state_t state;
 
@@ -698,6 +699,7 @@ module mrb_core
   logic                go_loadf;
   logic                go_mend;  // 一番外の終わり (STOP、スタックが空の戻り) でタスクがある: __task_main_end を引く
   logic                go_task;  // タスクの primitive (__task_init / __task_switch / __task_on / __task_lock) の状態の更新
+  logic                go_dsend; // __send: 名前を外して引数をずらし (S_SHIFT)、その名前を引く
   // Ruby の例外にできるエラー (isa.rb の CERR_*): 例外の表があれば S_CERR で Integer#__core_error を呼ぶ
   logic                cerr;
   logic [2:0]          cerr_kind;
@@ -736,6 +738,10 @@ module mrb_core
   assign tt       = ra1[TB-1:0];
   assign t_in     = val_of(ra1) < 32'(NTASKS);
   assign ra2_proc = tag_of(ra2) == TAG_OBJ && heap[ha(val_of(ra2))][31:16] == CLS_PROC;
+
+  // __sym_at: R[a] がシンボル表 (TABLE の c から、メソッド表の前まで) の中か (Icarus のために wire に)
+  logic symat_in;
+  assign symat_in = ra[INT_BITS-1:0] < 32'(tbase) - 32'(symtab);
 
   logic io_prim;
   // __io_read / __io_write の番地と値の検査 (Icarus は always_comb の if の条件に関数の呼び出しがあると止まるので wire に)
@@ -777,6 +783,7 @@ module mrb_core
     go_loadf  = 1'b0;
     go_mend   = 1'b0;
     go_task   = 1'b0;
+    go_dsend  = 1'b0;
     cerr      = 1'b0;
     cerr_kind = '0;
     cerr_a1   = V_NIL;
@@ -907,6 +914,8 @@ module mrb_core
           err      = prim_argc_bad || !ra_str || !ra1_int || !ra2_int || !s_slice_ok;
         end
         PR_SYMSTR: begin wr = 1'b0; go_sym = 1'b1; err = prim_argc_bad || tag_of(ra) != TAG_SYM; end
+        // シンボル表 (TABLE の c から、メソッド表の前まで) の R[a] 番目 (表の外は nil)
+        PR_SYMAT: begin err = prim_argc_bad || !ra_int; wval = symat_in ? {TAG_SYM, ra[INT_BITS-1:0]} : V_NIL; end
         PR_NAMESYM: begin
           wr        = 1'b0;
           go_lookup = 1'b1;
@@ -1007,6 +1016,12 @@ module mrb_core
           go_sleep = 1'b1;
         end
         PR_HALT: begin wr = 1'b0; halt = 1'b1; end // __halt: 止まる
+        PR_DSEND: begin
+          // __send(名前, 引数...) (P7): 名前は Symbol、引数は1つ以上で splat (15) でない
+          wr       = 1'b0;
+          go_dsend = 1'b1;
+          err      = prim_argc_bad || lk_argc == 7'd0 || lk_argc == 7'd15 || tag_of(ra1) != TAG_SYM;
+        end
         default: err = 1'b1;
       endcase
       // 引数の数が違う (回路の primitive)。ほかのどのエラーより先
@@ -1282,7 +1297,7 @@ module mrb_core
       wr = 1'b0; iow = 1'b0; halt = 1'b0; do_call = 1'b0; do_ret = 1'b0; set_const = 1'b0; set_up = 1'b0;
       pop_len = 1'b0; go_block = 1'b0; go_array = 1'b0; go_string = 1'b0; go_slice = 1'b0; go_sym = 1'b0; go_set = 1'b0; set_lam = 1'b0; do_frame = 1'b0;
       do_enter = 1'b0; go_enter = 1'b0; set_table = 1'b0; go_sleep = 1'b0;
-      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0; go_mend = 1'b0; go_task = 1'b0;
+      go_x = 1'b0; set_exc = 1'b0; clr_exc = 1'b0; set_htable = 1'b0; go_fp = 1'b0; go_loadf = 1'b0; go_mend = 1'b0; go_task = 1'b0; go_dsend = 1'b0;
       go_walk = 1'b0; go_lwalk = 1'b0; go_lookup = 1'b0;
     end
   end
@@ -1645,6 +1660,18 @@ module mrb_core
               lk_depth <= '0;
               lk_hitr  <= 1'b0;
               state    <= t_on ? S_LOOKUP : S_LKDONE; // 表が無ければ見つからなかったことにする
+            end else if (go_dsend) begin
+              // __send: 名前 (R[a+1]) で、引数を1つ減らして引く。先に R[a+1..] を1つ下へずらす (トレースに出さない)
+              lk_cls   <= recv_cls;
+              lk_sym   <= ra1[15:0];
+              lk_argc  <= lk_argc - 7'd1;
+              lk_mode  <= LM_CALL;
+              lk_super <= 1'b0;
+              lk_depth <= '0;
+              lk_hitr  <= 1'b0;
+              m_k      <= (HB+1)'(1);
+              m_n      <= 16'(lk_argc) - 16'd1 + 16'(lk_blk);
+              state    <= (16'(lk_argc) - 16'd1 + 16'(lk_blk)) == 16'd0 ? S_LOOKUP : S_SHIFT;
             end else if (do_call) begin
               // ブロックの呼び出し: R0 は Proc を作った時の self
               ret_pc[spi]  <= pc + PC_BITS'(1);
@@ -2570,6 +2597,13 @@ module mrb_core
             if (m_i >= m_len) heap[s_p + HB'(1)] <= mk_int(32'(m_i) + 32'd1);
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
+          end
+
+          // ---- __send の引数をずらす: R[a+k] = R[a+k+1] (k = 1..m_n)。終わったら引く
+          S_SHIFT: begin
+            regs[RB'(ia + 17'(m_k))] <= regs[RB'(ia + 17'(m_k) + 17'd1)];
+            m_k <= m_k + (HB+1)'(1);
+            if (17'(m_k) >= 17'(m_n)) state <= S_LOOKUP;
           end
 
           // ---- コアのエラーを例外にする (ref_vm.rb の core_error): 例外の表があれば、フレームの上に

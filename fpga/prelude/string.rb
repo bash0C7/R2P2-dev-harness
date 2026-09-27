@@ -8,6 +8,27 @@ class String
     self
   end
 
+  # プログラムのシンボル表から同じ名前の Symbol を探す (回路は新しいシンボルを作れないので、無ければ nil)
+  def __find_sym
+    i = 0
+    while (s = i.__sym_at)
+      return s if s.to_s == self
+      i += 1
+    end
+    nil
+  end
+
+  # 無い名前は ArgumentError (PicoRuby は新しいシンボルを作る)
+  def to_sym
+    s = __find_sym
+    raise ArgumentError, "#{inspect} is not a symbol of this program (the FPGA core cannot make new symbols)" unless s
+    s
+  end
+
+  def intern
+    to_sym
+  end
+
   def to_str
     self
   end
@@ -578,6 +599,18 @@ end
 class Symbol
   def to_sym
     self
+  end
+
+  # &:sym (変換器が SENDB の前に送る)。mruby と同じく lambda (引数の配列を展開しない)
+  def to_proc
+    s = self
+    lambda do |o, *a|
+      case a.size
+      when 0 then o.__send(s)
+      when 1 then o.__send(s, a[0])
+      else o.send(s, *a)
+      end
+    end
   end
 
   def id2name

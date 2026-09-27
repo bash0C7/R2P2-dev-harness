@@ -166,7 +166,11 @@ module FpgaIsa
     # タスク (プレリュードの Task のスケジューラーが使う。ref_vm.rb の task_prim)
     ["Object", "__task_init", 2, "TINIT"], ["Object", "__task_switch", 1, "TSWITCH"], ["Object", "__task_slot", 0, "TSLOT"],
     ["Object", "__task_lock", 1, "TLOCK"], ["Object", "__task_on", 1, "TON"], ["Object", "__hw_sleep_us", 1, "HWSLEEPUS"],
-    ["Object", "__halt", 0, "HALT"]
+    ["Object", "__halt", 0, "HALT"],
+    # 動的な呼び出し (P7): __send(名前, 引数...) は名前の Symbol を外して、残りの引数でそのメソッドを呼ぶ
+    ["Object", "__send", -1, "DSEND"],
+    # シンボル表の i 番目の Symbol (表の外は nil)。String#to_sym がプログラムのシンボルを探すのに使う
+    ["Integer", "__sym_at", 0, "SYMAT"]
   ].freeze
 
   def self.prim(const_name)

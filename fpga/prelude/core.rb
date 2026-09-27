@@ -71,6 +71,36 @@ class Object
   def proc(&block)
     block
   end
+
+  # 動的な呼び出し (P7)。回路の __send (名前の Symbol を外して残りの引数で呼ぶ) に引数の数で分けて渡す
+  # (splat で渡すと引数が配列1つになり、primitive の受け手の検査が通らないため)。名前は Symbol か String
+  # (String はプログラムのシンボル表から探し、無ければどのメソッドの名前でもないので NoMethodError)
+  def send(name, *args, &blk)
+    if name.is_a?(String)
+      s = name.__find_sym
+      raise NoMethodError, "undefined method '#{name}' for #{self.class}" unless s
+      name = s
+    end
+    raise TypeError, "#{name.inspect} is not a symbol nor a string" unless name.is_a?(Symbol)
+    case args.size
+    when 0 then __send(name, &blk)
+    when 1 then __send(name, args[0], &blk)
+    when 2 then __send(name, args[0], args[1], &blk)
+    when 3 then __send(name, args[0], args[1], args[2], &blk)
+    when 4 then __send(name, args[0], args[1], args[2], args[3], &blk)
+    when 5 then __send(name, args[0], args[1], args[2], args[3], args[4], &blk)
+    when 6 then __send(name, args[0], args[1], args[2], args[3], args[4], args[5], &blk)
+    else raise ArgumentError, "send passes up to 6 arguments on the FPGA core"
+    end
+  end
+
+  def __send__(name, *args, &blk)
+    send(name, *args, &blk)
+  end
+
+  def public_send(name, *args, &blk)
+    send(name, *args, &blk)
+  end
 end
 
 class Object

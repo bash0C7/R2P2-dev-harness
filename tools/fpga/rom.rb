@@ -611,11 +611,12 @@ module FpgaRom
       live[i] = true
       ir = ireps[i]
       use.call("__core_error") unless ir.catches.empty? # 例外の表があればコアのエラーを例外にする
-      decoded[i].each do |insn|
+      decoded[i].each_with_index do |insn, k|
         ops = insn.operands
         case insn.name
         when "SEND", "SEND0", "SENDB", "SSEND", "SSEND0", "SSENDB", "LOADSYM"
           use.call(ir.syms[ops[1]])
+          use.call("to_proc") if sym_block_slot(insn, ir, k, ctx)
           nk = insn.name == "LOADSYM" || insn.name.end_with?("0") ? 0 : ops[2] >> 4
           use.call(nk == 15 ? "empty?" : "__to_hash") if nk > 0
         when "SUPER"
@@ -992,6 +993,15 @@ module FpgaRom
     false
   end
 
+  # &:sym の形 (キーワード引数の無い SENDB / SSENDB で、直前の LOADSYM がブロックの枠を埋めた) ならブロックの枠、ほかは nil
+  def self.sym_block_slot(insn, ir, k, ctx)
+    return nil unless (insn.name == "SENDB" || insn.name == "SSENDB") && (insn.operands[2] >> 4).zero? && k > 0
+    n = insn.operands[2] & 0xF
+    slot = insn.operands[0] + (n == 15 ? 1 : n) + 1
+    prev = ctx.decoded[ir.index][k - 1]
+    prev.name == "LOADSYM" && prev.operands[0] == slot ? slot : nil
+  end
+
   # ほかの命令の列に下げる命令なら [[名前, a, b, c], ...] を返す。そのまま1語にするなら nil
   def self.lowered(insn, ir, k, pc, ctx)
     if (insn.name == "SSEND0" || insn.name == "SSEND") && ir.syms[insn.operands[1]] == "block_given?" &&
@@ -1005,6 +1015,14 @@ module FpgaRom
     end
     kw = kw_lowered(insn, ir, pc, ctx)
     return kw if kw
+    # &:sym (P7): ブロックの枠を LOADSYM で埋めた直後の SENDB は、先に枠へ to_proc を送る (mruby の OP_SENDB が
+    # Proc でないブロックに to_proc を送るのと同じ。回路は呼び出しの途中でもう1つ呼べないので変換器が足す)
+    slot = sym_block_slot(insn, ir, k, ctx)
+    if slot
+      op = insn.name == "SSENDB" ? "SSEND" : "SEND"
+      return [["SEND", slot, ctx.sym_id("to_proc"), 0],
+              [op, insn.operands[0], ctx.sym_id(ir.syms[insn.operands[1]]), (insn.operands[2] & 0xF) | 0x80]]
+    end
     # 式展開: R[a] << R[a+1].to_s (to_s は R[a+1] に、<< の結果 (self) は R[a] に)
     if insn.name == "STRCAT"
       a = insn.operands[0]

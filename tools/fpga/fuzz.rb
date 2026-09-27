@@ -199,6 +199,8 @@ module FpgaFuzz
   # タスクの断片 (pick 23) の primitive (受け手は Integer) とシンボル
   TASK_PRIM = { tinit: "TINIT", tswitch: "TSWITCH", tslot: "TSLOT", ton: "TON", tlock: "TLOCK", hwsleep: "HWSLEEPUS" }.freeze
   TASK_SYMS = TASK_PRIM.keys.each_with_index.to_h { |k, i| [k, STOD_SYM + 5 + i] }.freeze
+  # 動的な呼び出しの断片 (pick 24) の primitive のシンボル
+  DSEND_SYMS = { dsend: TASK_SYMS.values.max + 1, symat: TASK_SYMS.values.max + 2 }.freeze
   # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
   FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0].freeze
   FLOAT_LITS = %w[1.5e3 -0.001 123456789012345678901234567890 1e400 1e-400 2.4703282292062328e-324 0.1 12 1. abc -].freeze
@@ -234,7 +236,7 @@ module FpgaFuzz
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     inited = [] # タスクの断片 (pick 23) が __task_init した区画 (切り替えはたいていここへ)
     body.times do
-      pick = rng.rand(24)
+      pick = rng.rand(25)
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -496,6 +498,26 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("LOADI16"), 13, rng.rand(3000), 0)
           tsend.(:hwsleep, 1)
         end
+      when 24 # 動的な呼び出し (P7): __send(名前, 引数...) で vargs / odd / maker、たまに無い名前・数の違う呼び出し・名前でない値。
+        # __sym_at でシンボル表の i 番目 (表の外は nil)
+        if rng.rand(3).zero?
+          words << encode(FpgaIsa.op("LOADI8"), 12, rng.rand(80), 0)
+          words << encode(FpgaIsa.op("SEND0"), 12, DSEND_SYMS[:symat], 0)
+        else
+          # 名前と引数の数 (名前の分を含む) を合わせる: odd と maker は 0 個、vargs は 2 個。たまに無い名前か数の違う呼び出し
+          name, n = case rng.rand(10)
+                    when 0 then [S[:nosuch], 1 + rng.rand(3)]
+                    when 1, 2, 3 then [S[:odd], 1]
+                    when 4, 5 then [S[:maker], 1]
+                    else [S[:vargs], 3]
+                    end
+          n = 1 + rng.rand(3) if rng.rand(12).zero?
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << (rng.rand(30).zero? ? encode(FpgaIsa.op("LOADI8"), 13, rng.rand(9), 0) : encode(FpgaIsa.op("LOADSYM"), 13, name, 0))
+          (n - 1).times { |k| words << encode(FpgaIsa.op("MOVE"), 14 + k, (ints + arrs).sample(random: rng), 0) if 14 + k < 16 }
+          words << encode(FpgaIsa.op("SEND"), 12, DSEND_SYMS[:dsend], [n, 3].min)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
       when 10 # 多重代入 (AREF)
         words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
       when 11 # 演算の落ち先: 配列 + 整数 は Array#+ (この表ではメソッド) を送る
@@ -649,6 +671,7 @@ module FpgaFuzz
       [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"), cerr_at],
       [FpgaIsa::CLS_INT, S[:ior], prim.("IOREAD")], [FpgaIsa::CLS_INT, S[:iow], prim.("IOWRITE")],
       *TASK_SYMS.map { |k, sym| [FpgaIsa::CLS_INT, sym, prim.(TASK_PRIM[k])] },
+      [FpgaIsa::CLS_INT, DSEND_SYMS[:dsend], prim.("DSEND")], [FpgaIsa::CLS_INT, DSEND_SYMS[:symat], prim.("SYMAT")],
       [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__task_tick"), tick_at],
       [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
       [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
