@@ -134,6 +134,19 @@ class Object
     __fpga_xor(__fpga_addr(obj), __fpga_tt(__fpga_addr(obj)))
   end
 
+  # 即値はそのまま。特異クラスがあればそれも凍らせる
+  # C: src/kernel.c mrb_obj_freeze
+  def __fpga_obj_freeze(obj)
+    return obj unless __fpga_tag(obj) == 7 # L:TAG_OBJ mrb_immediate_p
+    b = __fpga_addr(obj)
+    unless __fpga_frozen_p(b)
+      __fpga_st32(b + 4, __fpga_or(__fpga_ld32(b + 4), 2048)) # L:H_FLAGS L:H_FROZEN
+      c = __fpga_ld32(b + 0) # L:H_CLASS
+      __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 2048)) if __fpga_tt(c) == 11 # L:H_FLAGS L:H_FROZEN L:TT_SCLASS
+    end
+    obj
+  end
+
   # C: include/mruby/object.h mrb_frozen_p
   def __fpga_frozen_p(o)
     __fpga_and(__fpga_ld32(o + 4), 2048) > 0 # L:H_FLAGS L:H_FROZEN
@@ -301,17 +314,9 @@ module Kernel
     __fpga_tag(self) == __fpga_tag(obj) && __fpga_int(self) == __fpga_int(obj) # mrb_obj_equal
   end
 
-  # 即値はそのまま。特異クラスがあればそれも凍らせる
   # C: src/kernel.c mrb_obj_freeze
   def freeze
-    return self unless __fpga_tag(self) == 7 # L:TAG_OBJ mrb_immediate_p
-    b = __fpga_addr(self)
-    unless __fpga_frozen_p(b)
-      __fpga_st32(b + 4, __fpga_or(__fpga_ld32(b + 4), 2048)) # L:H_FLAGS L:H_FROZEN
-      c = __fpga_ld32(b + 0) # L:H_CLASS
-      __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 2048)) if __fpga_tt(c) == 11 # L:H_FLAGS L:H_FROZEN L:TT_SCLASS
-    end
-    self
+    __fpga_obj_freeze(self)
   end
 
   # C: src/kernel.c mrb_obj_frozen
