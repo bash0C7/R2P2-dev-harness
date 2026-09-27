@@ -198,7 +198,7 @@ class Array
     __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
     sep = __fpga_alen(args) > 0 ? __fpga_aref(args, 0) : nil
     sep = __fpga_ensure_string_type(sep) unless __fpga_tag(sep) == 0 # L:TAG_NIL mrb_get_args の S!
-    __fpga_join_ary(self, sep, "", [])
+    __fpga_join_ary(self, sep)
   end
 
   # C: mrbgems/mruby-array-ext/src/array.c ary_include
@@ -355,28 +355,42 @@ class Object
 
   # 入れ子の配列は中へ入って続ける (再帰した配列は ArgumentError)
   # C: src/array.c join_ary
-  def __fpga_join_ary(ary, sep, result, stack)
-    k = 0
-    while k < __fpga_alen(ary)
-      val = __fpga_aref(ary, k)
-      __fpga_str_cat_str(result, sep) if k > 0 && __fpga_tag(sep) > 0 # L:TAG_NIL
-      if __fpga_tag(val) == 7 && __fpga_tt(__fpga_addr(val)) == 17 # L:TAG_OBJ L:TT_ARRAY
-        __fpga_raise(ArgumentError, "recursive array join") if __fpga_addr(val) == __fpga_addr(ary)
-        j = 0
-        while j < __fpga_alen(stack) # 今の道の祖先
-          __fpga_raise(ArgumentError, "recursive array join") if __fpga_addr(__fpga_aref(stack, j)) == __fpga_addr(val)
-          j += 1
+  def __fpga_join_ary(ary, sep)
+    result = "" # mrb_str_new_capa(mrb, 64)
+    stack = [] # {配列, 添字} の組を積む (C の再帰の代わり)
+    idx = 0
+    while true
+      while idx < __fpga_alen(ary)
+        val = __fpga_aref(ary, idx)
+        __fpga_str_cat_str(result, sep) if idx > 0 && __fpga_tag(sep) > 0 # L:TAG_NIL
+        idx += 1
+        as_array = false
+        if __fpga_tag(val) == 7 && __fpga_tt(__fpga_addr(val)) == 17 # L:TAG_OBJ L:TT_ARRAY
+          as_array = true
+        elsif (__fpga_tag(val) == 7 && __fpga_tt(__fpga_addr(val)) == 18) == false # L:TAG_OBJ L:TT_STRING
+          val = __fpga_obj_as_string(val) # mrb_check_string_type / mrb_check_array_type は型を見るだけ
         end
-        stack.__fpga_push1(ary)
-        __fpga_join_ary(val, sep, result, stack)
-        __fpga_st32(__fpga_addr(stack) + 8, __fpga_alen(stack) - 1) # L:A_LEN mrb_ary_pop
-      else
-        unless __fpga_tag(val) == 7 && __fpga_tt(__fpga_addr(val)) == 18 # L:TAG_OBJ L:TT_STRING
-          val = __fpga_obj_as_string(val) # mrb_check_string_type と mrb_check_array_type (to_str / to_ary) は S5
+        if as_array
+          v = __fpga_addr(val)
+          __fpga_raise(ArgumentError, "recursive array join") if v == __fpga_addr(ary)
+          sp = __fpga_ld32(__fpga_addr(stack) + 16) # L:A_PTR
+          se = sp + __fpga_alen(stack) * 16 # L:VALUE
+          while sp < se # 今の道の祖先 (組の配列の方)
+            __fpga_raise(ArgumentError, "recursive array join") if __fpga_ld32(sp + 12) == v # 値の下位 32bit (番地)
+            sp += 16 * 2 # L:VALUE 2 つ
+          end
+          stack.__fpga_push1(ary)
+          stack.__fpga_push1(idx)
+          ary = val
+          idx = 0
+        else
+          __fpga_str_cat_str(result, val)
         end
-        __fpga_str_cat_str(result, val)
       end
-      k += 1
+      break if __fpga_alen(stack) == 0
+      idx = __fpga_aref(stack, __fpga_alen(stack) - 1)
+      ary = __fpga_aref(stack, __fpga_alen(stack) - 2)
+      __fpga_st32(__fpga_addr(stack) + 8, __fpga_alen(stack) - 2) # L:A_LEN mrb_ary_pop 2 回
     end
     result
   end

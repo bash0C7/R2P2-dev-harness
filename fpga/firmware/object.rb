@@ -56,13 +56,18 @@ class Object
 
   # iv の表を行の順に辿る (mruby は symbol の番号の順に並べた表。順は D06 / D07)
   # C: src/kernel.c inspect_i (D06)
-  def __fpga_inspect_ivs(obj)
+  def __fpga_inspect_ivs(ci, obj)
     t = __fpga_ld32(__fpga_addr(obj) + 60) # L:IV
     return nil if t == 0 || __fpga_ld32(t + 0) == 0 # L:MT_COUNT
-    str = "#<"
+    str = "#<" # C は "-<" で始めて最初の iv で '#' に書き換える
     __fpga_str_cat_str(str, __fpga_mod_to_s(__fpga_obj_class(obj)))
     __fpga_str_cat_str(str, ":")
     __fpga_str_cat_str(str, __fpga_ptr_to_str(__fpga_addr(obj)))
+    if __fpga_recursive_method_p(ci, __fpga_addr(:inspect), obj, nil) # MRB_RECURSIVE_UNARY_P
+      __fpga_st8(__fpga_ld32(__fpga_addr(str) + 16), 45) # L:S_PTR '-' のまま
+      __fpga_str_cat_str(str, " ...>")
+      return str
+    end
     capa = __fpga_ld32(t + 4) # L:MT_CAPA
     rows = __fpga_ld32(t + 8) # L:MT_ROWS
     first = true
@@ -236,7 +241,7 @@ module Kernel
   # C: src/kernel.c mrb_obj_inspect
   def inspect
     if __fpga_tag(self) == 7 && __fpga_tt(__fpga_addr(self)) == 8 && __fpga_func_basic_p(self, __fpga_addr(:to_s), Kernel) # L:TAG_OBJ L:TT_OBJECT
-      s = __fpga_inspect_ivs(self)
+      s = __fpga_inspect_ivs(__fpga_ld32(__fpga_image(0) + 12), self) # L:IMG_c L:CTX_CI mrb->c->ci
       return s unless __fpga_tag(s) == 0 # L:TAG_NIL
     end
     __fpga_any_to_s(self)
