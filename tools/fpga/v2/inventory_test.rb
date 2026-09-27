@@ -116,6 +116,9 @@ class FpgaV2InventoryTest < Minitest::Test
     assert_equal File.read(I::OUT), I.tsv(r), "rake fpga:v2:inventory で作り直す"
     assert_equal File.read(FpgaV2::VmTable::OUT), FpgaV2::VmTable.tsv(ops), "rake fpga:v2:inventory で作り直す"
     assert_equal File.read(I::UNMATCHED), I.unmatched_tsv(r, arena_outside_ops: uncovered), "rake fpga:v2:inventory で作り直す"
+    require_relative "needs"
+    assert_equal File.read(FpgaV2::Needs::ASSERT_NEEDS), FpgaV2::Needs.assert_needs, "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(FpgaV2::Needs::GEMS), FpgaV2::Needs.assert_gems, "rake fpga:v2:inventory で作り直す"
   end
 
   # C の動的な呼び出し (計画 S2-3): 局所変数に入れたシンボルも、辿った先の mrb_funcall も拾う。例外の道と VM の中は辿らない

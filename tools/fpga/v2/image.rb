@@ -363,14 +363,32 @@ end
       end
     end
 
+    INVENTORY = File.expand_path("../../../fpga/v2/inventory.tsv", __dir__)
+
+    # ROM の表の可視性は、mruby の C の定義と同じにする (MRB_MT_PRIVATE、mrb_define_private_method、module_function)。
+    # 正本は棚卸しの表 (host の reflection)。表に無い名前 (firmware の helper) は public
+    def self.visibility
+      @visibility ||= File.readlines(INVENTORY, chomp: true).reject { |l| l.start_with?("#") }.to_h do |l|
+        kind, owner, name = l.split("\t")
+        sing = %w[sing spriv].include?(kind)
+        [[owner, sing, name], { "priv" => VIS_PRIVATE, "spriv" => VIS_PRIVATE, "prot" => VIS_PROTECTED }.fetch(kind, VIS_PUBLIC)]
+      end
+    end
+
+    def rom_vis(c, sym, sing)
+      Image.visibility.fetch([@classes.key(c), sing, sym_name(sym)], VIS_PUBLIC)
+    end
+
     def class_body(c, ir)
       each_insn(ir) do |i|
         case i.name
         when "TDEF"
-          mt_set(r32(c + C_ROM), irep_sym(ir, i.b), new_proc(irep_rep(ir, i.c), c))
+          sym = irep_sym(ir, i.b)
+          mt_set(r32(c + C_ROM), sym, new_proc(irep_rep(ir, i.c), c) | rom_vis(c, sym, false))
         when "SDEF" # def self.x (R[a] は LOADSELF)
           meta = singleton(c)
-          mt_set(r32(meta + C_ROM), irep_sym(ir, i.b), new_proc(irep_rep(ir, i.c), meta))
+          sym = irep_sym(ir, i.b)
+          mt_set(r32(meta + C_ROM), sym, new_proc(irep_rep(ir, i.c), meta) | rom_vis(c, sym, true))
         when "ALIAS"
           old = mt_get(r32(c + C_ROM), irep_sym(ir, i.b)) or raise Error, "firmware alias: #{sym_name(irep_sym(ir, i.b))} is not defined yet"
           mt_set(r32(c + C_ROM), irep_sym(ir, i.a), old)
@@ -403,8 +421,8 @@ end
       core = alloc(CORE_TABLE.size * WORD, 4)
       CORE_TABLE.each_with_index { |n, k| w32(core + k * WORD, @classes.fetch(n)) }
       main = obj(@classes["Object"], :OBJECT)
-      boot = mt_get(r32(@classes["Object"] + C_ROM), @syms.fetch("__boot") { raise Error, "firmware must define Object#__boot" }) or
-             raise Error, "firmware must define Object#__boot"
+      boot = mt_get(r32(@classes["Object"] + C_ROM), @syms.fetch("__fpga_boot") { raise Error, "firmware must define Object#__fpga_boot" }) or
+             raise Error, "firmware must define Object#__fpga_boot"
       progs = alloc([@programs.size, 1].max * 8, 4)
       @programs.each_with_index do |bin, k|
         a = bytes(bin)

@@ -1,7 +1,7 @@
 require "minitest/autorun"
 require_relative "build"
 
-# 起動の像の道具 (image.rb) が作る irep と、firmware の loader (fpga/firmware/boot.rb の __load、mruby の load.c) が
+# 起動の像の道具 (image.rb) が作る irep と、firmware の loader (fpga/firmware/boot.rb の __fpga_load、mruby の load.c) が
 # 実行時に同じ .mrb から作る irep が同じか (firmware は build の時の表、プログラムは実行時に読む。両方が同じ形であること)
 class FpgaV2ImageTest < Minitest::Test
   L = FpgaV2::Layout
@@ -10,7 +10,7 @@ class FpgaV2ImageTest < Minitest::Test
     skip "host の mrbc が無い (rake fpga:picoruby)" unless File.executable?(FpgaV2::Build.mrbc)
   end
 
-  # firmware の __load が返した irep を、__fpga_run の所で取り出す
+  # firmware の __fpga_load が返した irep を、__fpga_run の所で取り出す
   class Capture < FpgaV2::Ref
     attr_reader :loaded
 

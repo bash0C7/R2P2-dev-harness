@@ -770,6 +770,9 @@ namespace :fpga do
       File.write(FpgaV2::VmTable::OUT, FpgaV2::VmTable.tsv(ops))
       File.write(inv::OUT, inv.tsv(r))
       File.write(inv::UNMATCHED, inv.unmatched_tsv(r, arena_outside_ops: uncovered))
+      require_relative "../tools/fpga/v2/needs"
+      File.write(FpgaV2::Needs::ASSERT_NEEDS, FpgaV2::Needs.assert_needs)
+      File.write(FpgaV2::Needs::GEMS, FpgaV2::Needs.assert_gems)
       puts "v2 ops: #{ops.size} opcodes, #{ops.count { |o| o[:arena] != 'none' }} restore the arena, " \
            "#{uncovered.size} restore site(s) outside any opcode"
       board = r.rows.count { |x| x[:board] == "yes" }

@@ -29,9 +29,17 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D11 | 罠の続きの情報 (今の ref の `Frame` の `kind` / `resume` / `dst`) | `mrb_callinfo` の `cci` | C に当たるもの無し (C は native のスタックで続きを持つ) | 無い | 計画 S2b で、`cci` への当て方と、ci の横の 1 対の語の符号化をここに書いてから作る |
 | D12 | 引数をまとめた印 (`n` = 15) の扱い | vm.c の OP_SEND、`mrb_callinfo.n` | — | 無い | 計画 S2b で決めてここに書く |
 | D13 | 特権の primitive (`__fpga_*`) は回路が symbol で引く表で実行する | C の関数の直接の呼び出し | 記憶の生の読み書きなど、C でしかできない所 | 名前 `__fpga_` は予約 | 今ある |
-| D14 | firmware だけの helper は名前を `__fpga_` にし、reflection (`methods`、`respond_to?`) から隠す。C で定義された `__x` (`__svalue` など) は普通のメソッド | C の static 関数 (見えない) | C の static 関数に当たる | 無い (隠せば) | 今は `__` の helper が見える。計画 S2 で直す |
+| D14 | firmware だけの helper は名前を `__fpga_` にし、reflection (`methods`、`respond_to?`) から隠す。C で定義された `__x` (`__svalue` など) は普通のメソッド | C の static 関数 (見えない) | C の static 関数に当たる | 無い (隠せば) | 名前は S2-4 で `__fpga_` にそろえた。reflection (methods ほか) から隠すのは、それらを firmware に写す時 (計画 S5) |
 | D15 | attr_reader / attr_writer は Proc の種類 (IVGET / IVSET) | class.c の attr (cfunc + env) | 回路で速く読み書きする | `Method#source_location` など (範囲外なら scope に書く) | 今ある |
+| D18 | 起動の像の見出し (IMG) と組み込みのクラスの表 (CORE) は、番地の並べ方が自前 | `mrb_state` (include/mruby.h) | 起動の像の道具が作る | 無い | 今ある。**計画 S2b で `mrb_state` の形に置き直す** |
+| D17 | libc の関数 (memcmp など) を firmware の helper で書く | libc | firmware に libc が無い | 無い | 今ある |
 | D16 | メソッドの cache を回路に持つ (組み込みの profile は `MRB_NO_METHOD_CACHE`) | class.c の method cache | 呼び出しの速さ | 無い (cache の消去が正しければ) | 今ある |
+
+## 立ち上げの間だけの違い
+
+| D | 違い | mruby の正本 | 理由 | 見える所 | 状態 |
+|---|---|---|---|---|---|
+| D40 | mrblib (mruby ソースコード) のメソッドを firmware に仮に写す (Kernel#puts / print、Numeric#-@) | mruby と gem の mrblib | 計画 S4 で mrblib をそのまま像に入れるまで、programs と fuzz を走らせるため | 定義の場所 (`source_location` など) | 今ある。**S4 で消す** |
 
 ## 記憶の管理 (計画 S6、設計 §6)
 

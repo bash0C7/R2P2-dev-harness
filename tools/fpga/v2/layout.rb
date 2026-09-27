@@ -4,9 +4,11 @@
 # 記憶はバイト単位の番地 (32bit)。語は 4 バイト big endian (.mrb と同じ向き)。
 module FpgaV2
   module Layout
+    # C: none (D02)
     WORD = 4
 
     # 値 (レジスタ 1 本、mruby の MRB_NO_BOXING の mrb_value) の tag。レジスタは {tag 4bit, 値 64bit}
+    # C: include/mruby/boxing_no.h mrb_value (D01)
     TAG_NIL   = 0
     TAG_FALSE = 1
     TAG_TRUE  = 2
@@ -17,19 +19,24 @@ module FpgaV2
     TAG_OBJ   = 7 # ヒープのオブジェクトの番地
     TAG_NAMES = %w[nil false true int sym float undef obj].freeze
     # 名前の無いシンボル (mruby の 0、.mrb の MRB_DUMP_NULL_SYM_LEN)
+    # C: src/load.c MRB_DUMP_NULL_SYM_LEN
     NULL_SYM = 0xFFFF_FFFF
 
     # 記憶の中の値: 16 バイト = {tag (u32), 0 (u32), 上位 32bit, 下位 32bit}
+    # C: include/mruby/boxing_no.h mrb_value (D01)
     VALUE = 16
 
     # オブジェクトの見出し (mruby の MRB_OBJECT_HEADER、object.h): +0 クラスの番地、+4 {flags 20bit << 12 | frozen << 11 | gc の色 3bit << 8 | tt}
+    # C: include/mruby/object.h MRB_OBJECT_HEADER
     H_CLASS = 0
     H_FLAGS = 4
     HEADER = 8
     # 固定長の枠 (mruby の RVALUE に当たる)。見出し + 56 バイト
+    # C: src/gc.c RVALUE (D03)
     SLOT = 64
 
     # tt (mruby の enum mrb_vtype と同じ番号、value.h の MRB_VTYPE_FOREACH の並び)
+    # C: include/mruby/value.h MRB_VTYPE_FOREACH
     TT = {
       FALSE: 0, TRUE: 1, SYMBOL: 2, UNDEF: 3, FREE: 4, FLOAT: 5, INTEGER: 6, CPTR: 7, OBJECT: 8, CLASS: 9, MODULE: 10,
       SCLASS: 11, HASH: 12, CDATA: 13, EXCEPTION: 14, ICLASS: 15, PROC: 16, ARRAY: 17, STRING: 18, RANGE: 19, ENV: 20
@@ -37,6 +44,7 @@ module FpgaV2
 
     # 型ごとの欄 (枠の中のバイト位置)。ポインタは 4 バイト、値は VALUE
     # RClass (class.h): 親、実行時のメソッド表、ROM のメソッド表 (build の時)、定数と iv の表、名前 (シンボル)、入れ物 (outer)
+    # C: include/mruby/class.h RClass (D04)
     C_SUPER = 8
     C_MT    = 12
     C_ROM   = 16
@@ -44,20 +52,25 @@ module FpgaV2
     C_NAME  = 24
     C_OUTER = 28 # 入れ物のクラス。特異クラスでは付いているオブジェクト (mruby の __attached__)
     # RObject: iv の表
+    # C: include/mruby/object.h RObject (D06)
     O_IV = 60
     # iv の表 (インスタンス変数と定数) は、iv を持てる型 (mruby の obj_iv_p: OBJECT CLASS MODULE SCLASS HASH CDATA EXCEPTION) の枠の
     # この位置 (最後の語)。表: 見出し {数, 容量, 行の並び} と、行 {シンボル (u32), 値 (VALUE)} (20 バイト)。空きはシンボル MT_EMPTY
+    # C: src/variable.c iv_tbl (D06)
     IV = 60
     IV_ENTRY = 20
     # RString: 長さ (バイト)、容量、中身の番地
+    # C: include/mruby/string.h RString (D04)
     S_LEN  = 8
     S_CAPA = 12
     S_PTR  = 16
     # RArray: 長さ、容量、中身 (VALUE の並び) の番地
+    # C: include/mruby/array.h RArray (D04)
     A_LEN  = 8
     A_CAPA = 12
     A_PTR  = 16
     # RProc (proc.h): irep の番地か primitive の番号、上の Proc、env、target_class、flags
+    # C: include/mruby/proc.h RProc (D15)
     P_BODY   = 8
     P_UPPER  = 12
     P_ENV    = 16
@@ -73,6 +86,7 @@ module FpgaV2
     # 開番地法 (位置 = シンボル & (容量 - 1) から1行ずつ)、空きはシンボル 0xFFFFFFFF。見出しと行を分けるのは、表を大きくしても
     # 見出しの番地が変わらないため (module の iclass が同じ見出しを指す。mruby の iclass->mt = m->mt と同じ)。
     # 値はメソッド表では Proc の番地、特権の primitive の表では primitive の番号
+    # C: src/class.c mrb_mt_tbl (D05)
     MT_COUNT = 0
     MT_CAPA  = 4
     MT_ROWS  = 8
@@ -80,12 +94,14 @@ module FpgaV2
     MT_ENTRY = 8
     MT_EMPTY = 0xFFFF_FFFF
     # メソッド表の値の下位 2bit は可視性 (Proc の番地は 8 の倍数)。mruby の MRB_METHOD_VISIBILITY
+    # C: src/class.c MRB_METHOD_PRIVATE_FL (D05)
     VIS_PUBLIC = 0
     VIS_PRIVATE = 1
     VIS_PROTECTED = 2
     VIS_MASK = 3
 
     # irep (mruby の mrb_irep、irep.h)。記憶の中の構造体 (オブジェクトではない)
+    # C: include/mruby/irep.h mrb_irep
     I_NLOCALS = 0  # u16 nlocals, u16 nregs
     I_NREGS   = 2
     I_ILEN    = 4  # iseq のバイト数
@@ -102,6 +118,7 @@ module FpgaV2
     # pool の文字列: tag = TAG_UNDEF、上位 = 長さ、下位 = バイト列の番地 (STRING 命令が RString を作る)
 
     # 組み込みのクラスの表 (像の core_classes): 0〜7 は即値の tag のクラス、その後は回路が作るオブジェクトのクラス
+    # C: include/mruby.h mrb_state (D18)
     CORE_ARRAY  = 8
     CORE_STRING = 9
     CORE_PROC   = 10
@@ -113,6 +130,7 @@ module FpgaV2
     CORE_COUNT  = 16
 
     # 起動の像の見出し (番地 0)
+    # C: none (D18)
     IMG_MAGIC = "FPV2"
     IMG_VERSION = 1
     # 見出しの語 (番地 = 4 × 番号)
