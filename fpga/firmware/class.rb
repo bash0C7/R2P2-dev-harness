@@ -510,10 +510,7 @@ class Object
   def __fpga_op_SDEF(a, b, c)
     ir = __fpga_irep
     sym = __fpga_irep_sym(ir, b)
-    sc = __fpga_singleton(__fpga_reg(a))
-    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), sc, 18688) # L:I_REPS L:PROC_METHOD_FLAGS
-    __fpga_st32(pr + 12, __fpga_proc)
-    __fpga_define(sc, sym, pr, 0)
+    __fpga_vm_define_method(__fpga_singleton(__fpga_reg(a)), ir, b, c, 0) # MRB_METHOD_PUBLIC_FL
     __fpga_setreg(a, __fpga_mkval(4, sym))
   end
 
@@ -538,6 +535,28 @@ class Object
     __fpga_st32(c + 12, __fpga_mt_new) if __fpga_ld32(c + 12) == 0 # L:C_MT mt_writable の mt_new
     __fpga_mt_set(__fpga_ld32(c + 12), sym, val) # L:C_MT
     __fpga_mcache_clear
+  end
+
+  # TDEF / SDEF: Irep[c] のメソッドの Proc を作って tc に Syms[b] で置き、method_added を呼ぶ
+  # C: src/vm.c vm_define_method
+  def __fpga_vm_define_method(tc, ir, b, c, vis)
+    p = __fpga_method_proc_new(__fpga_ci, __fpga_ld32(__fpga_ld32(ir + 28) + c * 4)) # L:I_REPS
+    __fpga_st32(p + 24, __fpga_or(__fpga_ld32(p + 24), 256)) # L:P_FLAGS L:PROC_STRICT
+    mid = __fpga_irep_sym(ir, b)
+    __fpga_define(tc, mid, p, vis)
+    __fpga_method_added(tc, mid)
+    mid
+  end
+
+  # C: src/class.c mrb_method_added
+  def __fpga_method_added(c, mid)
+    if __fpga_tt(c) == 11 # L:TT_SCLASS
+      recv = __fpga_obj(__fpga_ld32(c + 28)) # L:C_OUTER __attached__
+      __fpga_sendv(recv, :singleton_method_added, [__fpga_mkval(4, mid)], nil, true) unless __fpga_func_basic_p(recv, __fpga_addr(:singleton_method_added), BasicObject) # L:TAG_SYM mrb_do_nothing
+    else
+      recv = __fpga_obj(c)
+      __fpga_sendv(recv, :method_added, [__fpga_mkval(4, mid)], nil, true) unless __fpga_func_basic_p(recv, __fpga_addr(:method_added), Module) # L:TAG_SYM mrb_do_nothing
+    end
   end
 
   # 探索 (罠と同じ順、mrb_method_search_vm)。メソッド表の値か 0
@@ -657,6 +676,10 @@ class Object
 end
 
 class BasicObject
+  # C: src/class.c mrb_do_nothing
+  def singleton_method_added(m)
+  end
+
   # 引数は取らない (MRB_ARGS_NONE。new に引数を渡して initialize を定義していなければ ArgumentError)
   # C: src/class.c mrb_do_nothing
   def initialize
@@ -757,6 +780,10 @@ class Module
 
   # C: src/class.c mrb_do_nothing
   def included(m)
+  end
+
+  # C: src/class.c mrb_do_nothing
+  def method_added(m)
   end
 
   # C: src/class.c mrb_do_nothing
