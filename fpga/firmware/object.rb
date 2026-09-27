@@ -125,7 +125,7 @@ class Object
     return __fpga_xor(2, 1) if t == 2 # L:TAG_TRUE MakeID(2, MRB_TT_TRUE)
     return __fpga_xor(__fpga_addr(obj), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
     return __fpga_xor(obj, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
-    __fpga_halt if t == 5 # L:TAG_FLOAT mrb_float_id は S5f
+    return __fpga_xor(__fpga_float_id(__fpga_int(obj)), 5) if t == 5 # L:TAG_FLOAT MakeID(mrb_float_id(f), MRB_TT_FLOAT)
     __fpga_xor(__fpga_addr(obj), __fpga_tt(__fpga_addr(obj)))
   end
 
@@ -216,7 +216,8 @@ class Object
     t1 = __fpga_tag(obj1)
     t2 = __fpga_tag(obj2)
     return 0 if t1 == 3 && t2 == 3 # L:TAG_INT
-    __fpga_halt if (t1 == 3 && t2 == 5) || (t1 == 5 && t2 == 3) # L:TAG_INT L:TAG_FLOAT mrb_int_float_cmp は S5f
+    return __fpga_int_float_cmp(obj1, __fpga_int(obj2)) == 0 ? 1 : 0 if t1 == 3 && t2 == 5 # L:TAG_INT L:TAG_FLOAT
+    return __fpga_int_float_cmp(obj2, __fpga_int(obj1)) == 0 ? 1 : 0 if t1 == 5 && t2 == 3 # L:TAG_FLOAT L:TAG_INT
     return 0 if t1 == 4 && t2 == 4 # L:TAG_SYM
     m = __fpga_and(__fpga_search(__fpga_addr(__fpga_class_of(obj1)), __fpga_addr(:==)), -4) # L:VIS_MASK (~3)
     return -1 if m == 0 || m >= __fpga_image(35) # L:IMG_heap_start 像の外の Proc は Ruby のメソッド (MRB_METHOD_CFUNC_P でない)
