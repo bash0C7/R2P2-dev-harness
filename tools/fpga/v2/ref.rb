@@ -14,6 +14,15 @@ module FpgaV2
     include Layout
     class Error < StandardError; end
     class Halt < StandardError; end
+    # 回路の確保が塊 [hp, hlim) に収まらない: 罠 __trap_heap(要るバイト数) で firmware に次の塊をもらい、同じ命令をやり直す
+    class HeapFull < StandardError
+      attr_reader :need
+
+      def initialize(need)
+        @need = need
+        super("heap chunk full (#{need})")
+      end
+    end
 
     INT_MIN = -(1 << 63)
     INT_MAX = (1 << 63) - 1
@@ -28,7 +37,8 @@ module FpgaV2
     ].freeze
 
     # tclass: 定義の入れ物 (mruby の ci->u.target_class)。メソッドは Proc の target_class、EXEC はそのクラス、一番外は Object
-    Frame = Struct.new(:irep, :pc, :bp, :proc, :mid, :kind, :resume, :dst, :tclass, :vis, keyword_init: true)
+    # argc は呼ばれた時の引数の数 (mruby の ci->n。ENTER が読む。罠をはさんでも変わらない)
+    Frame = Struct.new(:irep, :pc, :bp, :proc, :mid, :kind, :resume, :dst, :tclass, :vis, :argc, keyword_init: true)
 
     attr_reader :console, :stats, :steps
 
@@ -40,8 +50,9 @@ module FpgaV2
       @stats = Hash.new(0)
       @cache = {}
       h = ->(k) { r32(IMG.fetch(k) * WORD) }
-      @heap = h.(:heap_start)
-      @heap_end = h.(:heap_end)
+      @hp = h.(:heap_start) # 確保の塊 [hp, hlim) (回路のレジスタ)
+      @hlim = h.(:heap_end)
+      @arena = [] # 最近確保したブロックの中身の番地 (ARENA 個まで)
       @stack = h.(:stack)
       @stack_end = h.(:stack_end)
       @core = h.(:core_classes)
@@ -172,10 +183,19 @@ module FpgaV2
       i = fetch
       @pc_next = i.next_pc
       @stats[:insn] += 1
-      if HW_OPS.include?(i.name)
-        exec(i)
-      else
-        trap_op(i)
+      f0 = @f
+      begin
+        if HW_OPS.include?(i.name)
+          exec(i)
+        else
+          trap_op(i)
+        end
+      rescue HeapFull => e
+        raise Error, "allocation after the frame changed" unless @f.equal?(f0)
+        @stats[:heap_trap] += 1
+        @pc_next = i.pc # 罠から戻ったら同じ命令をやり直す (確保は命令のどのレジスタも書く前にある)
+        @jumped = false
+        trap_call("__trap_heap", [int(e.need)])
       end
       @f.pc = @pc_next if @f && !@jumped
       @jumped = false
@@ -406,7 +426,7 @@ module FpgaV2
       tc = r32(pr + P_TCLASS)
       @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: @f.bp + a, proc: pr, mid: mid, kind: kind, resume: resume, dst: dst,
                      tclass: tc, vis: kind == :run ? VIS_PRIVATE : VIS_PUBLIC)
-      @argc = n
+      @f.argc = n
       @jumped = true
       @stats[:call] += 1
     end
@@ -416,7 +436,7 @@ module FpgaV2
       @f = Frame.new(irep: r32(pr + P_BODY), pc: 0, bp: 0, proc: pr, mid: mid, kind: kind, tclass: r32(pr + P_TCLASS), vis: VIS_PUBLIC)
       setreg(0, recv)
       setreg(1, NIL)
-      @argc = 0
+      @f.argc = 0
     end
 
     # ENTER (mruby の vm_op_enter、aspec: m1 5bit, o 5bit, r 1bit, m2 5bit, k 5bit, kd 1bit, b 1bit)。
@@ -428,8 +448,8 @@ module FpgaV2
       m2 = (aspec >> 7) & 0x1F
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
-      return trap_call("__op_enter_kw", [int(aspec), int(@argc)]) unless (kw | kd).zero?
-      argc = @argc
+      return trap_call("__op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd).zero?
+      argc = @f.argc
       if argc < m1 + m2 || (r.zero? && argc > m1 + o + m2)
         return trap_call("__op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
       end
@@ -551,6 +571,12 @@ module FpgaV2
           when "__fpga_shr" then int(args[0][1] >> args[1][1])
           when "__fpga_copy" then (@m[args[0][1], args[2][1]] = @m.byteslice(args[1][1], args[2][1]); NIL) # 記憶の写し (dst, src, n)
           when "__fpga_core" then obj(r32(@core + args[0][1] * WORD)) # 組み込みのクラスの表
+          when "__fpga_hp" then int(@hp) # 確保の塊 (GC は塊の残りを空きのブロックにしてから sweep する)
+          when "__fpga_hlim" then int(@hlim)
+          when "__fpga_set_heap" then (@hp = args[0][1]; @hlim = args[1][1]; NIL)
+          when "__fpga_stack_top" then int(@stack + (@f.bp + r16(@f.irep + I_NREGS)) * VALUE) # 使っている VM のスタックの終わり
+          when "__fpga_frame_proc" then (fr = (@frames + [@f]).reverse[args[0][1]]) ? int(fr.proc) : NIL # 上から k 番目のフレームの Proc
+          when "__fpga_arena" then int(@arena.reverse[args[0][1]] || 0) # 最近確保した k 番目のブロック (無ければ 0)
           when "__fpga_rem" then int(args[0][1].remainder(args[1][1])) # 0 に向けて切った剰余 (C の %、除算器の余り)。0 で割るのは呼ぶ側が調べる
           when "__fpga_halt" then raise Halt
           when "__fpga_run" then return run_irep(args[0][1], args[1], a)
@@ -567,11 +593,18 @@ module FpgaV2
       [stack[k - 1], stack[k]]
     end
 
+    # ブロックを1つ確保して中身の番地を返す (見出し {大きさ, flags 0} を書く。中身は初期化しない)
     def alloc(n)
-      a = (@heap + 7) & -8
-      raise Error, "heap exhausted (GC is V2c)" if a + n > @heap_end
-      @heap = a + n
-      a
+      need = ((n + 7) & -8) + BLOCK
+      raise HeapFull, need if @hp + need > @hlim
+      b = @hp
+      @hp += need
+      w32(b + B_SIZE, need)
+      w32(b + B_FLAGS, 0)
+      @stats[:alloc] += 1
+      @arena.push(b + BLOCK)
+      @arena.shift if @arena.size > ARENA
+      b + BLOCK
     end
 
     # __fpga_run(irep, self): プログラムの一番外の irep を、firmware のフレームの上で実行する。戻り値は R[a] へ
