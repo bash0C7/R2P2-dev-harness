@@ -7,6 +7,7 @@ class Object
   def __fpga_boot
     __fpga_init_exception # mrb_init_exception の stack_err と nomem_err
     __fpga_init_main # mrb_init_class の top_self の inspect / to_s
+    __fpga_init_numeric # mrb_init_core の mrb_init_numeric
     __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
     lib = __fpga_image(42) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0
