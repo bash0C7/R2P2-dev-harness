@@ -5,7 +5,7 @@
 
 
 > **止めた (2026-09-27)。** P9a から先 (P9a、P9b、P10〜P12) は、作りが目標から外れていると分かったので止めた。
-> 乖離は [fpga-divergence.md](../../fpga-divergence.md)。計画はその表を正本に立て直す。
+> 乖離は [fpga-divergence.md](../../fpga-divergence.md)。立て直した計画は [2026-09-27-fpga-v2.md](2026-09-27-fpga-v2.md)。
 **目標:** `rake fpga:test` と `rake fpga:gap` を CPU の数だけ並列に回して待ち時間を縮め、gap で止まっている 5 本
 (picotest 3 本、pio 1 本、pitchdetector 1 本) をシミュレーターで動かすか、動かさない理由を gap に書く。
 

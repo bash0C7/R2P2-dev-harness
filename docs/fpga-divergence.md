@@ -130,4 +130,4 @@ P0〜P9 で作ったコアを、issue #4 の目標と mruby の仕様と PERIDOT
 3. **資源の予算を一度も見なかった。** 値 64bit、8 タスク、ヒープ 64K 語、Float、PSG、IRQ を全部内蔵の記憶と組み合わせの論理で作り、合成できない所も残した
 4. **gem の規則を作った後も、前に書き直した gem を直さなかった** (spec の古い方針が残った)
 
-この表を正本に、目標3つを満たす作りを計画し直す (docs/superpowers/plans/)。
+この表を正本に、目標3つを満たす作りを計画し直した: [plans/2026-09-27-fpga-v2.md](superpowers/plans/2026-09-27-fpga-v2.md) (100 MHz をねらう、64bit の Integer を 32bit の回路で)。
