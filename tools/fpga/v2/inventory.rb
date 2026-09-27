@@ -598,6 +598,18 @@ module FpgaV2
         { kind: h.kind, owner: h.owner, name: h.name, src: srcs.empty? ? "-" : srcs.join(" "),
           gem: gems.empty? ? "-" : gems.join(" "), board: gems.empty? ? "?" : (gems.any? { |g| g == "mruby-core" || board.include?(g) } ? "yes" : "no") }
       end
+      # C の関数から辿れる動的な呼び出し (計画 S2-3)。c: の写し元の和。mrblib の写し元は空、関数が分からなければ ?
+      require_relative "c_calls" # c_calls は vm_table 経由でこの file を読むので、ここで
+      calls = CCalls.build(rows.flat_map { |r| r[:src].split(" ") }.select { |s| s.start_with?("c:") })
+      rows.each do |r|
+        cs = r[:src].split(" ").select { |s| s =~ /\Ac:[^:]+:(\w+|-)\z/ && !s.end_with?(":undef") } # - は C の関数でない (class.c の Class#new は C の中の irep)
+        found = cs.map { |s| calls.by_src[s] }
+        r[:dyn] = if cs.empty? then ""
+                  elsif found.include?(nil) then "?"
+                  else (x = found.flatten.uniq.sort).empty? ? "-" : x.join(" ")
+                  end
+      end
+      problems += calls.problems
       host_only = rows.select { |r| r[:src] == "-" }
       source_only = sources.reject { |k, _| host_keys[k] }.values.map(&:first)
       Result.new(rows: rows.sort_by { |r| [r[:owner], r[:kind], r[:name]] }, host_only: host_only, source_only: source_only,
@@ -625,8 +637,8 @@ module FpgaV2
 
     def tsv(result)
       head = "# 棚卸し (計画 S2-1、rake fpga:v2:inventory が作る。手で書かない)\n" \
-             "# kind<TAB>owner<TAB>name<TAB>src (c:file:関数 / mrblib:file / - は見つからない)<TAB>gem<TAB>board (板の gem の集合に入るか)\n"
-      head + result.rows.map { |r| [r[:kind], r[:owner], r[:name], r[:src], r[:gem], r[:board]].join("\t") }.join("\n") + "\n"
+             "# kind<TAB>owner<TAB>name<TAB>src (c:file:関数 / mrblib:file / - は見つからない)<TAB>gem<TAB>board (板の gem の集合に入るか)<TAB>dyn (C の関数から辿れる動的な呼び出し、計画 S2-3。- は無し、? は関数が分からない)\n"
+      head + result.rows.map { |r| [r[:kind], r[:owner], r[:name], r[:src], r[:gem], r[:board], r[:dyn]].join("\t") }.join("\n") + "\n"
     end
   end
 end

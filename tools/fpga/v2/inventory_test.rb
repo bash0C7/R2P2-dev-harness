@@ -118,6 +118,17 @@ class FpgaV2InventoryTest < Minitest::Test
     assert_equal File.read(I::UNMATCHED), I.unmatched_tsv(r, arena_outside_ops: uncovered), "rake fpga:v2:inventory で作り直す"
   end
 
+  # C の動的な呼び出し (計画 S2-3): 局所変数に入れたシンボルも、辿った先の mrb_funcall も拾う。例外の道と VM の中は辿らない
+  def test_dynamic_calls_of_c_methods
+    rows = File.readlines(I::OUT, chomp: true).reject { |l| l.start_with?("#") }.map { |l| l.split("\t", -1) }
+    dyn = ->(owner, name) { rows.find { |r| r[1] == owner && r[2] == name && r[0] == "pub" }&.at(6).to_s.split }
+    assert_includes dyn.("Module", "include"), "included" # mrb_mod_include: mrb_sym included = MRB_SYM(included)
+    assert_equal ["?"], dyn.("Class", "new") # Class#new は class.c の中の irep (C の関数でない)
+    assert_includes dyn.("String", "+"), "to_s"
+    refute_includes dyn.("String", "+"), "const_added" # mrb_funcall の先 (VM) は辿らない
+    assert_includes dyn.("Array", "=="), "=="
+  end
+
   # 命令の表 (計画 S2-2): ops.h の全命令に vm.c の CASE があり、arena の restore と goto の先を辿れている
   def test_ops_table_follows_vm_c
     ops, uncovered = FpgaV2::VmTable.build
