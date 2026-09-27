@@ -797,6 +797,23 @@ class Module
 end
 
 class Object
+  # mrb_check_type(x, MRB_TT_SYMBOL)。シンボルの番号を返す
+  # C: src/object.c mrb_check_type
+  def __fpga_check_type_symbol(x)
+    return __fpga_addr(x) if __fpga_tag(x) == 4 # L:TAG_SYM
+    t = __fpga_tag(x)
+    if t == 0 # L:TAG_NIL
+      ename = "nil"
+    elsif t == 3 # L:TAG_INT
+      ename = "Integer"
+    elsif t < 7 # L:TAG_OBJ mrb_immediate_p
+      ename = __fpga_obj_as_string(x)
+    else
+      ename = __fpga_mod_to_s(__fpga_obj_class(x)) # mrb_obj_classname
+    end
+    __fpga_raisef(TypeError, "wrong argument type %S (expected Symbol)", [ename])
+  end
+
   # mrb_check_type(x, MRB_TT_MODULE)
   # C: src/object.c mrb_check_type
   def __fpga_check_type_module(x)
@@ -908,51 +925,63 @@ end
 class Module
 
   # 可視性 (class.c の mrb_mod_public / private / protected / module_function)。引数が無ければ、呼んだフレームの既定を変える
+  # (ブロックの env に書く find_visibility_scope と vis_scope_persist は D19)。
   # 引数が無い時の __fpga_set_caller_vis は、このメソッドを呼んだフレーム (クラスの本体) に効くので、ここで直接呼ぶ
   # C: src/class.c mrb_mod_public
   def public(*names)
-    return __fpga_set_caller_vis(0) if __fpga_alen(names) == 0
-    __fpga_visibility(names, 0)
+    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(0) : __fpga_mod_visibility(names, 0) # L:VIS_PUBLIC
+    self
   end
 
   # C: src/class.c mrb_mod_private
   def private(*names)
-    return __fpga_set_caller_vis(1) if __fpga_alen(names) == 0
-    __fpga_visibility(names, 1)
+    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(1) : __fpga_mod_visibility(names, 1) # L:VIS_PRIVATE
+    self
   end
 
   # C: src/class.c mrb_mod_protected
   def protected(*names)
-    return __fpga_set_caller_vis(2) if __fpga_alen(names) == 0
-    __fpga_visibility(names, 2)
+    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(2) : __fpga_mod_visibility(names, 2) # L:VIS_PROTECTED
+    self
   end
 
+  # 引数が無ければ、後の def を private のインスタンスメソッドと public の特異メソッドにする (MRB_CI_SET_MODFUNC)
   # C: src/class.c mrb_mod_module_function
   def module_function(*names)
-    return __fpga_set_caller_vis(3) if __fpga_alen(names) == 0
+    __fpga_check_type_module(self)
+    if __fpga_alen(names) == 0
+      __fpga_set_caller_vis(3) # MRB_CI_SET_VISIBILITY(private) と MRB_CI_SET_MODFUNC
+      return self
+    end
     k = 0
     while k < __fpga_alen(names)
-      e = __fpga_search(__fpga_addr(self), __fpga_addr(__fpga_aref(names, k)))
-      __fpga_method_raw(__fpga_addr(self), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + 1)
-      __fpga_method_raw(__fpga_singleton(self), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4))
+      mid = __fpga_check_type_symbol(__fpga_aref(names, k))
+      e = __fpga_search(__fpga_addr(self), mid)
+      __fpga_method_search_error(__fpga_addr(self), mid) if e == 0 # mrb_method_search
+      __fpga_method_raw(__fpga_singleton(self), mid, __fpga_and(e, -4)) # VIS_PUBLIC (0)
+      __fpga_method_raw(__fpga_addr(self), mid, __fpga_and(e, -4) + 1) # L:VIS_PRIVATE
       k += 1
     end
-    __fpga_mcache_clear
-    nil
+    self
   end
 
+  # 名前ごとに、探したメソッドを可視性を変えて自分 (prepend されていれば origin) の表に写す。1 つの配列は名前の並び
   # C: src/class.c mrb_mod_visibility
-  def __fpga_visibility(names, vis)
+  def __fpga_mod_visibility(names, vis)
     c = __fpga_addr(self)
+    __fpga_check_frozen(c) # mt_writable
+    t = __fpga_class_origin(c)
+    __fpga_st32(t + 12, __fpga_mt_new) if __fpga_ld32(t + 12) == 0 # L:C_MT mt_writable
+    names = __fpga_aref(names, 0) if __fpga_alen(names) == 1 && __fpga_tag(__fpga_aref(names, 0)) == 7 && __fpga_tt(__fpga_addr(__fpga_aref(names, 0))) == 17 # L:TAG_OBJ L:TT_ARRAY
     k = 0
     while k < __fpga_alen(names)
-      e = __fpga_search(c, __fpga_addr(__fpga_aref(names, k)))
-      __fpga_method_search_error(c, __fpga_addr(__fpga_aref(names, k))) if e == 0
-      __fpga_method_raw(c, __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + vis)
+      mid = __fpga_check_type_symbol(__fpga_aref(names, k))
+      e = __fpga_search(c, mid)
+      __fpga_method_search_error(c, mid) if e == 0 # mrb_method_search
+      __fpga_mt_set(__fpga_ld32(t + 12), mid, __fpga_and(e, -4) + vis) # L:C_MT mt_put
       k += 1
     end
     __fpga_mcache_clear
-    __fpga_alen(names) == 1 ? __fpga_aref(names, 0) : nil
   end
 
   # C: src/class.c mrb_mod_attr_reader
