@@ -35,6 +35,8 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D19 | Proc の入れ物のクラスは ci の target class だけで決める (mrb_vm_cref_class の cref の鎖と、class_eval などで与えられたクラス (MRB_PROC_GIVEN、MRB_ENV_SET_GIVEN_CLASS) は未写し) | proc.c の mrb_proc_new / mrb_method_proc_new / mrb_env_new | 計画 S4-1 ではブロックとメソッドの定義だけ | class_eval / instance_eval の中の def と定数 | 今ある。**S5 (class_eval、module_eval を写す時) に消す** |
 | D17 | libc の関数 (memcmp など) を firmware の helper で書く | libc | firmware に libc が無い | 無い | 今ある |
 | D16 | メソッドの cache を回路に持つ (組み込みの profile は `MRB_NO_METHOD_CACHE`) | class.c の method cache | 呼び出しの速さ | 無い (cache の消去が正しければ) | 今ある |
+| D50 | double の演算 (+ - * /、比べる、mrb_int との変換) を firmware の整数の演算の helper (`__fpga_f64_*`、fpga/firmware/float.rb) で行う (soft-float)。結果は IEEE 754 binary64 と同じ (最近接の偶数への丸め、非正規化数、無限大、NaN、符号付きの 0)。NaN の中身は x86 の SSE の決まり (左の NaN を quiet に、無効な演算は既定の NaN) | C の double の演算子 (numeric.c の flo_* ほか) | コアに浮動小数点の演算器が無い (資源) | 無い (NaN の中身は mruby が通し番号で上書きする。`tools/fpga/v2/softfloat_test.rb` が CRuby の double と libm とビットで比べる)。libm の pow (D17) は指数が整数の時だけ写し、最近接の偶数へ正しく丸める。glibc の pow はちょうど半分の所で違い得る (`10.0 ** 23` を host は 1.0000000000000001e+23、firmware は 1.0e+23)。整数でない指数は止まる | 今ある (S5f)。pow は glibc の e_pow.c を写す時に直す |
+| D51 | fp_uscale.c の uint64_t の演算と 64bit × 64bit の積 (mul64) を helper (`__fpga_u64_*`、`__fpga_mul64`) で。pow10_tab (static const の表) は firmware の `__fpga_pow10_tab` の文字列の literal で、mrbc が行ごとに置く irep の pool を番地で読む | fp_uscale.c の `uint64_t`、`mul64`、`pow10_tab` | firmware の Integer は符号付きの 64bit で、+ - * の桁あふれは罠。C の表 (rodata) を置く所が無い | 無い | 今ある (S5f) |
 
 ## 立ち上げの間だけの違い
 

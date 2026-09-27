@@ -188,7 +188,9 @@ module FpgaV2
       arena_err: 32,
       # 像だけの欄 (D18): 印、ヒープの範囲、組み込みのクラスの表、firmware の入口、programs、primitive の表、mrblib の .mrb (0 は無し)
       magic: 33, version: 34, heap_start: 35, heap_end: 36, core_classes: 37, fw_entry: 38, programs: 39, nprograms: 40,
-      prims: 41, mrblib: 42
+      prims: 41, mrblib: 42,
+      # mrb_state.nan_serial (NaN の通し番号、uint64_t を上と下の 2 語で。C の並びでは gc の後、D18)
+      nan_serial: 43, nan_serial_lo: 44
     }.freeze
     IMG_WORDS = 48
     # C: none (D18)

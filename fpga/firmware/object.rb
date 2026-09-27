@@ -152,7 +152,7 @@ class BasicObject
     return __fpga_xor(2, 1) if t == 2 # L:TAG_TRUE MakeID(2, MRB_TT_TRUE)
     return __fpga_xor(__fpga_addr(self), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
     return __fpga_xor(self, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
-    __fpga_halt if t == 5 # L:TAG_FLOAT mrb_float_id は S5f
+    return __fpga_xor(__fpga_float_id(__fpga_int(self)), 5) if t == 5 # L:TAG_FLOAT MakeID(mrb_float_id(f), MRB_TT_FLOAT)
     __fpga_xor(__fpga_addr(self), __fpga_tt(__fpga_addr(self)))
   end
 end
