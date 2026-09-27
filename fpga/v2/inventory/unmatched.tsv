@@ -1,0 +1,73 @@
+# 棚卸しの突き合わせで合わなかったもの (rake fpga:v2:inventory が作る)
+# host_only: host にあるが C と mrblib に見つからない / source_only: C か mrblib にあるが host に無い (#ifdef、条件付きの定義)
+# unresolved: C の定義の呼び出しでクラスか名前が決まらない (定義の API の中身、実行時に名前が決まるクラス)
+# board_gem_not_on_host: 板 (R2P2) の gem で host の build に無い (計画 V4 で host の build に足す)
+board_gem_not_on_host	picoruby-ble
+board_gem_not_on_host	picoruby-ble-uart
+board_gem_not_on_host	picoruby-cyw43
+board_gem_not_on_host	picoruby-drb
+board_gem_not_on_host	picoruby-editor
+board_gem_not_on_host	picoruby-i2c
+board_gem_not_on_host	picoruby-keyboard
+board_gem_not_on_host	picoruby-keyboard_matrix
+board_gem_not_on_host	picoruby-littlefs
+board_gem_not_on_host	picoruby-mbedtls
+board_gem_not_on_host	picoruby-midibase-looper
+board_gem_not_on_host	picoruby-net-http
+board_gem_not_on_host	picoruby-net-mqtt
+board_gem_not_on_host	picoruby-net-ntp
+board_gem_not_on_host	picoruby-net-websocket
+board_gem_not_on_host	picoruby-network
+board_gem_not_on_host	picoruby-picoline
+board_gem_not_on_host	picoruby-picomodem
+board_gem_not_on_host	picoruby-rapicco
+board_gem_not_on_host	picoruby-shell
+board_gem_not_on_host	picoruby-shinonome
+board_gem_not_on_host	picoruby-socket
+board_gem_not_on_host	picoruby-spi
+board_gem_not_on_host	picoruby-usb-cdc-midi
+board_gem_not_on_host	picoruby-usb-hid
+board_gem_not_on_host	picoruby-vfs
+board_gem_not_on_host	picoruby-vim
+board_gem_not_on_host	picoruby-watchdog
+host_only	const Object ARGV
+host_only	sing Machine usb_boot
+source_only	const Picotest BasicObject mrblib:vendor/picoruby/mrbgems/picoruby-picotest/mrblib/picotest/double.rb
+source_only	pub Class module_function c:vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c:undef
+source_only	pub UART irq mrblib:vendor/picoruby/mrbgems/picoruby-uart/mrblib/uart.rb
+source_only	sing GC reset_stat c:vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/gc.c:gc_reset_stat
+source_only	sing Machine debug_puts c:vendor/picoruby/mrbgems/picoruby-machine/src/mruby/machine.c:mrb_s_debug_puts
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(cls, MRB_SYM(inspect)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(cls, MRB_SYM(members)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(cls, MRB_SYM(method_missing)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(cls, MRB_SYM(to_h)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(cls, MRB_SYM_Q(is_a)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(singleton, MRB_SYM(members)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-data/src/mruby/data.c: mrb_define_method_id(singleton, MRB_SYM(new)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_class_method_id(c, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_id(c, mrb_intern_cstr(mrb, name)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_id(o->c, mrb_intern_cstr(mrb, name)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_id(o->c, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c, a) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c, a) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(c->c, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(rclass, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_method_raw(rclass->c, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_module_function_id(c, mrb_intern_cstr(mrb, name)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_private_method_id(c, mrb_intern_cstr(mrb, name)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_private_method_id(c, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_singleton_method((struct RObject*)c, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_define_singleton_method_id((struct RObject*)c, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_undef_method(mrb_class_ptr(mrb_singleton_class(mrb, mrb_obj_value(c))), name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_undef_method_id(c, to_sym(mrb, *argv)) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/class.c: mrb_undef_method_id(mrb_class_ptr(mrb_singleton_class(mrb, mrb_obj_value(c))), name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/variable.c: const (mrb->object_class, name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/vm.c: mrb_define_method_raw(target, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/vm.c: mrb_define_method_raw(tc, mid) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/src/vm.c: mrb_undef_method_id(target, irep->syms[a]) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-picotest/src/mruby/picotest.c: mrb_define_method_id(klass, method_name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-picotest/src/mruby/picotest.c: mrb_define_method_id(singleton_class, method_name) not resolved
+unresolved	vendor/picoruby/mrbgems/picoruby-picotest/src/mruby/picotest.c: mrb_define_method_id(singleton_class, method_name) not resolved

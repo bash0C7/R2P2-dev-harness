@@ -760,6 +760,21 @@ namespace :fpga do
       raise "#{bad.size} program(s) differ (kept in #{fpga_rel(dir)})" unless bad.empty?
     end
 
+    desc "Inventory: host reflection vs C and mrblib sources, written to fpga/v2/inventory.tsv (plan S2)"
+    task inventory: "fpga:picoruby" do
+      require_relative "../tools/fpga/v2/inventory"
+      inv = FpgaV2::Inventory
+      r = inv.build(picoruby: FpgaConverter.default_picoruby)
+      File.write(inv::OUT, inv.tsv(r))
+      File.write(inv::UNMATCHED, inv.unmatched_tsv(r))
+      board = r.rows.count { |x| x[:board] == "yes" }
+      found = r.rows.count { |x| x[:board] == "yes" && x[:src] != "-" }
+      puts "v2 inventory: #{r.rows.size} entries on host (#{board} in board gems, #{found} of them with a source), " \
+           "#{r.host_only.size} host only, #{r.source_only.size} source only, #{r.problems.size} unresolved, " \
+           "#{(r.board - r.host).size} board gem(s) not on host"
+      puts "  wrote #{fpga_rel(inv::OUT)} and #{fpga_rel(inv::UNMATCHED)}"
+    end
+
     desc "Acceptance: mruby test/t per assert on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:accept or rake fpga:v2:accept[string])"
     task :accept, [:names] => "fpga:picoruby" do |_, args|
       require_relative "../tools/fpga/v2/accept"
