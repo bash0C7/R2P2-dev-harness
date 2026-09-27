@@ -27,6 +27,7 @@ class Object
 
   # C: src/array.c mrb_ary_set
   def __fpga_ary_set(ary, n, val)
+    __fpga_check_frozen(__fpga_addr(ary)) # ary_modify
     len = __fpga_alen(ary)
     if n < 0
       n += len
