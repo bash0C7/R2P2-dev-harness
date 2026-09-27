@@ -123,6 +123,15 @@ module Kernel
     __fpga_f_raise(args)
   end
 
+  # C: src/kernel.c mrb_obj_remove_instance_variable
+  def remove_instance_variable(name)
+    sym = __fpga_obj_to_sym(name) # mrb_get_args の n
+    __fpga_iv_name_sym_check(sym)
+    val = __fpga_iv_remove(self, sym)
+    __fpga_name_error(sym, "instance variable %n not defined", [__fpga_mkval(4, sym)]) if __fpga_tag(val) == 6 # L:TAG_SYM L:TAG_UNDEF
+    val
+  end
+
   # C: src/class.c mrb_obj_clone
   def clone
     __fpga_obj_clone(self)
@@ -215,6 +224,43 @@ class Object
     bidx = __fpga_and(__fpga_shr(f, 8), 63) # MRB_ENV_BIDX
     return -1 if bidx >= __fpga_and(f, 255) # MRB_ENV_LEN
     bidx
+  end
+
+  # 見つかって、呼べる (priv なら private / protected も)。無いか届かなければ respond_to_missing? に聞く (undef は聞かない)。
+  # MRB_METHOD_NOTIMPL_P (この機械に無い C の関数) は firmware に無い
+  # C: src/kernel.c obj_respond_to_p
+  def __fpga_obj_respond_to_p(obj, id, priv)
+    c = __fpga_addr(__fpga_class_of(obj))
+    e = __fpga_search(c, id)
+    return true if e > 0 && (priv || __fpga_and(e, 3) == 0) # L:VIS_MASK MRB_METHOD_PRIVATE_FL|MRB_METHOD_PROTECTED_FL
+    rtm = __fpga_addr(:respond_to_missing?)
+    if __fpga_func_basic_p(obj, rtm, Kernel) == false && __fpga_search(c, rtm) > 0 # mrb_false、mrb_respond_to
+      return __fpga_sendv(obj, :respond_to_missing?, [__fpga_mkval(4, id), priv], nil, true) ? true : false # L:TAG_SYM mrb_funcall_argv2
+    end
+    false
+  end
+
+  # '@' と、数字でない 1 文字目と、英数字と _ (と 0x80 以上) だけ
+  # C: src/variable.c mrb_iv_name_sym_p
+  def __fpga_iv_name_sym_p(id)
+    tab = __fpga_image(26) # L:IMG_symtbl
+    p = __fpga_ld32(tab + id * 8)
+    len = __fpga_ld32(tab + id * 8 + 4)
+    return false if len < 2
+    return false unless __fpga_ld8(p) == 64 # '@'
+    return false if __fpga_ld8(p + 1) >= 48 && __fpga_ld8(p + 1) <= 57 # ISDIGIT
+    k = 1
+    while k < len # mrb_ident_p
+      ch = __fpga_ld8(p + k)
+      return false unless (ch >= 48 && ch <= 57) || (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95 || ch >= 128 # identchar
+      k += 1
+    end
+    true
+  end
+
+  # C: src/variable.c mrb_iv_name_sym_check
+  def __fpga_iv_name_sym_check(id)
+    __fpga_name_error(id, "'%n' is not allowed as an instance variable name", [__fpga_mkval(4, id)]) unless __fpga_iv_name_sym_p(id) # L:TAG_SYM
   end
 
   # C: src/class.c mrb_obj_clone

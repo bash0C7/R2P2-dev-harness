@@ -115,6 +115,34 @@ class Array
     true
   end
 
+  # C: src/array.c mrb_ary_init
+  def initialize(*args, &blk)
+    __fpga_check_argc(args, 0, 2) # mrb_get_args の |oo&
+    ss = __fpga_alen(args) > 0 ? __fpga_aref(args, 0) : 0
+    obj = __fpga_alen(args) > 1 ? __fpga_aref(args, 1) : nil
+    if __fpga_tag(ss) == 7 && __fpga_tt(__fpga_addr(ss)) == 17 && __fpga_tag(obj) == 0 && __fpga_tag(blk) == 0 # L:TAG_OBJ L:TT_ARRAY L:TAG_NIL
+      __fpga_ary_replace(self, ss)
+      return self
+    end
+    size = __fpga_as_int(ss)
+    __fpga_check_frozen(__fpga_addr(self)) # ary_modify_check
+    i = 0
+    while i < size
+      __fpga_ary_set(self, i, __fpga_tag(blk) == 0 ? obj : yield(i)) # L:TAG_NIL mrb_yield
+      i += 1
+    end
+    self
+  end
+
+  # C: src/array.c mrb_ary_replace_m
+  def replace(other)
+    __fpga_ensure_array_type(other) # mrb_get_args の A
+    __fpga_ary_replace(self, other) unless __fpga_addr(self) == __fpga_addr(other) # mrb_ary_replace
+    self
+  end
+
+  alias initialize_copy replace # array.c は replace と initialize_copy に同じ関数 mrb_ary_replace_m を置く
+
   # C: src/array.c mrb_ary_s_create
   def self.[](*vals)
     ary = __fpga_ary_subseq(vals, 0, __fpga_alen(vals))
@@ -262,6 +290,34 @@ end
 
 class Object
   # 容量を足りるまで広げる (4 より小さければ 4、足りるまで倍)
+  # 先頭に 1 つ入れる
+  # C: src/array.c mrb_ary_unshift
+  def __fpga_ary_unshift1(ary, item)
+    len = __fpga_alen(ary)
+    ary.__fpga_push1(nil)
+    k = len
+    while k > 0
+      __fpga_ary_set(ary, k, __fpga_aref(ary, k - 1))
+      k -= 1
+    end
+    __fpga_ary_set(ary, 0, item)
+    ary
+  end
+
+  # a の中身を b の中身の写しにする
+  # C: src/array.c ary_replace
+  def __fpga_ary_replace(a, b)
+    __fpga_check_frozen(__fpga_addr(a)) # ary_modify_check
+    return if __fpga_addr(a) == __fpga_addr(b)
+    len = __fpga_alen(b)
+    __fpga_st32(__fpga_addr(a) + 8, 0) # L:A_LEN
+    k = 0
+    while k < len
+      __fpga_ary_set(a, k, __fpga_aref(b, k))
+      k += 1
+    end
+  end
+
   # C: src/array.c ary_expand_capa
   def __fpga_ary_expand_capa(a, len)
     capa = __fpga_ld32(a + 12) # L:A_CAPA
