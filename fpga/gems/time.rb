@@ -1,15 +1,12 @@
 # FPGA 版の Time。API は PicoRuby の picoruby-time (src/mruby/time.c) のうち、時刻を読んで比べる所。
 # Time.now は仮想の時計 (tools/fpga/devices.rb の TIME_US、電源を入れてからの µs) を 1970-01-01 00:00:00 UTC からの時刻とみなす。
-# 値は秒と µs に分けて持つ (Integer は 32bit なので)。時差は 0
+# 値は秒と µs に分けて持つ (picoruby-time と同じ)。時差は 0
 class Time
   include Comparable
 
   def self.now
-    lo = __io_read(0x110)
-    hi = __io_read(0x111)
-    total = hi * 4294967296.0 + (lo < 0 ? lo + 4294967296.0 : lo)
-    sec = (total / 1000000).floor
-    new_at(sec, (total - sec * 1000000.0).to_i)
+    us = __io_read(0x110)
+    new_at(us / 1000000, us % 1000000)
   end
 
   def self.at(t)

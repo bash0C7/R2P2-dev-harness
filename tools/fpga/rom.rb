@@ -219,7 +219,8 @@ module FpgaRom
     handlers = false
     ireps.each_with_index { |ir, i| handlers = true if ctx.live[i] && !ir.catches.empty? }
 
-    # pool: 文字列は ROM のデータ領域に置く (同じ中身は1つ)。整数は 32bit に収まること。Float と大きい整数は止める
+    # pool: 文字列は ROM のデータ領域に置く (同じ中身は1つ)。Float と 32bit に入らない整数はデータの2語 (上位、下位)。
+    # bigint (64bit にも入らない) は止める
     ireps.each_with_index do |ir, i|
       next unless ctx.live[i]
       decoded[i].each do |insn|
@@ -234,7 +235,7 @@ module FpgaRom
         elsif e[0] != :int
           raise Error, "#{source}: LOADL at #{where(ir, insn)} loads a #{e[0] == :bigint ? 'big integer' : 'non-integer'} (not supported)"
         elsif e[1] < -0x8000_0000 || e[1] > 0x7FFF_FFFF
-          raise Error, "#{source}: LOADL at #{where(ir, insn)} loads #{e[1]}, which does not fit in 32 bits"
+          ctx.add_float((e[1] >> 32) & 0xFFFF_FFFF, e[1] & 0xFFFF_FFFF)
         end
       end
     end
@@ -1404,7 +1405,7 @@ module FpgaRom
       end
     end
 
-    # STRING: b = データの語アドレス、c = 長さ。LOADL: pool の整数を LOADI32 に
+    # STRING: b = データの語アドレス、c = 長さ。LOADL: pool の整数を LOADI32 (32bit に入らなければ LOADI64) に
     if name == "STRING"
       str = irep.pool[b][1]
       return Word.new(pc, insn, insn.op.num, a, ctx.string_at.fetch(str), str.bytesize, irep)
@@ -1414,7 +1415,11 @@ module FpgaRom
       return Word.new(pc, insn, FpgaIsa.op("LOADF").num, a, ctx.float_at.fetch([e[1], e[2]]), 0, irep)
     end
     if name == "LOADL"
-      v = irep.pool[b][1] & 0xFFFF_FFFF
+      v = irep.pool[b][1]
+      if v < -0x8000_0000 || v > 0x7FFF_FFFF
+        return Word.new(pc, insn, FpgaIsa.op("LOADI64").num, a, ctx.float_at.fetch([(v >> 32) & 0xFFFF_FFFF, v & 0xFFFF_FFFF]), 0, irep)
+      end
+      v &= 0xFFFF_FFFF
       return Word.new(pc, insn, FpgaIsa.op("LOADI32").num, a, v >> 16, v & 0xFFFF, irep)
     end
 

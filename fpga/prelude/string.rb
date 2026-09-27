@@ -259,18 +259,23 @@ class String
       neg = getbyte(i) == 45
       i += 1
     end
+    # 負の側で数える (最小の数も読める)。64bit に入らなければ PicoRuby と同じ RangeError
     n = 0
-    while i < len
-      c = getbyte(i)
-      d = c >= 48 && c <= 57 ? c - 48 : (c >= 97 && c <= 122 ? c - 87 : (c >= 65 && c <= 90 ? c - 55 : 99))
-      if d < base
-        n = n * base + d
-      elsif !(c == 95 && i + 1 < len && getbyte(i + 1) != 95)
-        break
+    begin
+      while i < len
+        c = getbyte(i)
+        d = c >= 48 && c <= 57 ? c - 48 : (c >= 97 && c <= 122 ? c - 87 : (c >= 65 && c <= 90 ? c - 55 : 99))
+        if d < base
+          n = n * base - d
+        elsif !(c == 95 && i + 1 < len && getbyte(i + 1) != 95)
+          break
+        end
+        i += 1
       end
-      i += 1
+      neg ? n : -n
+    rescue RangeError
+      __raise(RangeError.new("string (#{self}) too big for integer"))
     end
-    neg ? -n : n
   end
 
   def __space?(c)
@@ -553,14 +558,20 @@ class Integer
     d < 10 ? 48 + d : 87 + d
   end
 
+  # 負の数は負のまま割っていく (-self は最小の数で桁があふれるため)
   def to_s(base = 10)
-    return "-2147483648" if self == -2147483648 && base == 10
     return "0" if self == 0
-    n = self < 0 ? -self : self
+    n = self
     r = ""
-    while n > 0
-      r.__push(__digit(n % base))
-      n /= base
+    while n != 0
+      m = n % base
+      if n < 0 && m != 0
+        r.__push(__digit(base - m))
+        n = n / base + 1
+      else
+        r.__push(__digit(m))
+        n /= base
+      end
     end
     r.__push(45) if self < 0
     r.reverse

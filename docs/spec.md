@@ -655,9 +655,9 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
 多重代入 (`a, b = ary`) の `AREF` は、配列なら R[b][c]、配列でなければ c = 0 の時だけ R[b] 自身、ほかは nil。
 一覧と出現回数は [fpga-opcodes.md](fpga-opcodes.md) (`rake fpga:corpus` が生成)。
 
-- **整数は 32bit で折り返す。** R2P2 は `MRB_INT64` だが、6k LE では 32bit にする。範囲外は仕様外
-  (mruby なら 64bit / Bignum になる所で、コアは黙って折り返す)
-- **値 = 4bit のタグ + 32bit。** タグは nil=0 / false=1 / true=2 / Integer=3 / Symbol=4 (番号) / Class=5 (クラスの番号) /
+- **整数は 64bit (P8)。** R2P2 の PicoRuby と同じ `MRB_INT64` (bigint なし)。64bit に入らない結果は RangeError
+  (下の「64bit の Integer (P8)」)
+- **値 = 4bit のタグ + 64bit。** タグは nil=0 / false=1 / true=2 / Integer=3 / Symbol=4 (番号) / Class=5 (クラスの番号) /
   Object=6 (ヒープの語アドレス) (7 と 8 はヒープの中だけ: GC の転送先と、オブジェクトの見出し。9〜15 は空き)。
   偽は nil と false だけ (0 は真)。Array と Proc は Object で、クラスは見出しの上位 16bit (下の「配列とヒープ」)。
   シンボルの番号は変換器がプログラム全体で振り (`LOADSYM`)、名前の表は ROM の一覧 (`.lst`) の最後に出る
@@ -668,7 +668,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   nil / true / false は型)。`ADDILV` / `SUBILV` の落ち先は mruby では C からの呼び出しなので、コアはエラーにする
 - **`STOP` と、一番外側の `RETURN` / `RETNIL` で止まる。** 未対応の opcode、レジスタ番号の範囲外、ROM の外へ出た時もエラーで止まる
 - **`*` `/` `%` は Ruby と同じく floor 側に丸める** (`-7 / 2 = -4`、`-7 % 3 = 2`)。0 で割るとエラー。
-  `INT_MIN / -1` は折り返して `INT_MIN`。シフトは 32 以上ずらすと 0 (右は符号)、負の量は逆向き
+  `INT_MIN / -1` は桁あふれ (RangeError)。右シフトは 64 以上ずらすと 0 か -1、左シフトはあふれると RangeError、負の量は逆向き
 - **定数 (`GETCONST` `SETCONST`) は 256 個まで (一般のグローバル変数、クラス変数、クラスのインスタンス変数も同じ表)。** 名前は変換時に字句の入れ子
   (Ruby の cref: `module A; class B` の中なら `A::B::X`、`A::X`、`X`。`class A::B` の中なら `A::B::X`、`X`) の順に探して番号にする。
   クラスの名前なら `CLASS` (クラスの即値) にする。代入前に読むとエラー。親クラスの定数は探さない
@@ -679,7 +679,7 @@ Verilator の `$fatal` は abort() なので、rake には exit code ではな�
   など) は `[]` を送る。文字列は下の「文字列と出力 (P2)」、Hash・Range は「Hash と Range (P3)」
 - **引数は必須・省略可能・残り (`*r`)・後ろの必須・`&blk`・キーワード (`k:`、`**opts`)、呼び出しの splat (`f(*a)`、`f(**h)`)。**
   下の「引数 (P1d)」
-- **pool の Float と 32bit に収まらない整数は変換時に止める**
+- **pool の 32bit に収まらない整数は `LOADI64`** (ROM のデータの2語)。64bit にも入らない整数 (bigint) は変換時に止める
 - **compiler の版は `SUBMODULE_PINS` の mruby-compiler に固定。** 版が変わると命令が変わる (`ADDI`→`ADDILV` のように)。
   `rake fpga:corpus:check` (`test:fpga` の中) が、コーパスの生成物と今の mrbc の出力が一致するかを見る
 
@@ -768,7 +768,7 @@ mruby 3.3 の `OP_ENTER` と同じ並べ方を、参照インタプリタ (`ente
 - **`STRING a b c`** は R[a] = ROM のデータ (b から、長さ c) の新しい String。コアは確保してから ROM を読んで写す
   (1バイト 2 cycle、S_SROM / S_SBYTE)。同じ中身の pool の文字列はデータを1つにする
 - **`STRCAT a`** は変換器が `SEND a+1 :to_s` と `SEND a :<< 1` に下げる (式展開は必ず新しい `STRING` から始まる)。
-  **`LOADL`** は 32bit に収まる整数なら `LOADI32`。**`JMPUW`** (while の中の break) は catch handler が無い irep では `JMP`
+  **`LOADL`** は 32bit に収まる整数なら `LOADI32` (符号拡張)、収まらなければ `LOADI64`。**`JMPUW`** (while の中の break) は catch handler が無い irep では `JMP`
 - **String の primitive** (受け手が String でなければエラー、範囲の外もエラー): `bytesize`、`getbyte` (Array#[] と同じ意味)、
   `__aset(i, b)` (0 <= i < 長さ、b は 0..255)、`__push(b)` (伸ばす)、`__slice(i, n)` (新しい String)。
   `Symbol#to_s` (SYMSTR) はシンボル表を読んで作る。`Module#__name_sym` は変換器がメソッド表に置いた
@@ -864,7 +864,8 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
 - **レジスタ。** GPIO (32 本): 0x100 DIR (1 = 出力)、0x101 OUT、0x102 PULLUP、0x103 PULLDOWN、0x104 OPEN_DRAIN、
   0x105 LEVEL (読むだけ。出力で駆動しているピン (open drain は 0 の時だけ) は OUT、離しているピンは 外から L > 外から H >
   pull up (pull down と両方なら down) > 0)、0x106 / 0x107 外から L / H にしているピン (刺激)。
-  時計: 0x110 / 0x111 仮想の時計 (µs) の下位 / 上位 32bit、0x112 その / 1000 (ms)。UART: 0x120 TX (書くと1バイト送る)、
+  レジスタは 32bit で、読むと符号付きに広げた Integer (-1 は -1)、書くのは下の 32bit。
+  時計: 0x110 仮想の時計 (µs、64bit のまま)、0x111 その上位 32bit、0x112 その / 1000 (ms、64bit のまま)。UART: 0x120 TX (書くと1バイト送る)、
   0x121 RX (読むと受けた1バイト、無ければ -1)、0x122 受けて読んでいない数、0x123 baudrate (書くだけ)。
   0x130 RNG (読むたびに xorshift32 の次、種は 2463534242)。
   PWM: 0x140 設定するピン、0x141 周波数 (mHz、0 は止める)、0x142 duty (1/1000 %)、0x143 動いているピンの bit。
@@ -929,7 +930,7 @@ PicoRuby の vm.c (mruby 3.x) の `L_RAISE` / `catch_handler_find` / `UNWIND_ENS
   それより多ければ) か -3..0 なら固定、ほかは `d.ddde+XX`。`format` は C の printf と同じく正確に丸める
   (CRuby の `format` はまれに違う: `format("%.5g", 3348.05)` は CRuby で `3348.0`、C と PicoRuby で `3348.1`)。
   `x % 0.0` は ZeroDivisionError、負の数の分数乗は NaN、`Integer ** 負か Float` は Float
-- **CRuby と違う所 (決めごと)。** `to_i` は 32bit に入らなければ RangeError (CRuby は Bignum)。`format` の精度は 20 まで
+- **CRuby と違う所 (決めごと)。** `to_i` は 64bit に入らなければ RangeError (CRuby は Bignum。メッセージは PicoRuby と同じ)。`format` の精度は 20 まで
   (越えると NoMethodError で止める)。`String#__strtod` に渡せるのは 64 バイトまで (越えるとエラーで止まる)
 - **合成はできない。** 変換の関数は値でループの回数が決まり、`real` も合成できない。実機に載せるなら FP の IP と
   ファームウェアに置き換える (今はシミュレーターで完全に動かすのが目標)
@@ -986,10 +987,10 @@ PicoRuby の mruby-task (`src/task.c`、`src/task_queue.c`、`mrblib/queue.rb`) 
   1回の切り替え (Ruby で 800 命令ほど) が 3µs ほどになる。ほかの命令と同じに数えると、同じ tick に起きるタスクの順や timeslice の
   切れ目が PicoRuby と変わり、0 にすると `Task.pass` だけで回るタスクが時計を進めない (step ばかり食う)
 - **PicoRuby と違う所 (決めごと)。** `inspect` の番地は区画の番号 (`#<Task:1 name:READY>`)、待っているタスクが無い時の
-  `Task.stat` の wakeup_tick は -1 (32bit の Integer に UINT32_MAX は入らない)、タスクは main を含めて 8 まで (区画が尽きたら
+  タスクは main を含めて 8 まで (区画が尽きたら
   `Task.new` は RuntimeError)。main が `terminate` された後にほかのタスクが全部終わったら `__halt` で止まる
 - **突き合わせ。** mruby-task の examples と picoruby-mruby の example は、参照インタプリタと RTL で一致し、host の picoruby
-  (tick は 4ms、timeslice 3) とは tick の数・番地・UINT32_MAX の表し方の違いだけ (statistics.rb は `&:join` が要る)
+  (tick は 4ms、timeslice 3) とは tick の数・番地の違いだけ (statistics.rb は `&:join` が要る)
 
 ### PSG と MIDI (P5e)
 
@@ -1016,8 +1017,28 @@ PicoRuby の picoruby-psg (C の ports/common/psg.c と src/mruby/psg.c)、midib
 - **変換器が足したもの。** `class << self` (本体の def は特異メソッド)、クラスのインスタンス変数 (本体と特異メソッドの @x は
   クラスごとの定数、始めは nil)、`::X` (OCLASS)。ROM を 32768 語 (PC 15bit) にし、メソッド表の飛び先の種類を上位の bit で
   分けた (0xxx pc、10xx primitive、110x インスタンス変数、111x attr_writer)。定数は 256 まで
-- **決めごと。** MML の Player は `delta_ticks * 60_000_000` を計算するので、32bit の Integer では桁があふれて待ち時間が違う
-  (R2P2 の PicoRuby は 64bit。P8 で直す)
+- **MML の待ち時間。** Player は `delta_ticks * 60_000_000 / (ppqn * tempo)` を計算する。32bit の Integer では桁があふれて
+  待ち時間が負になった。P8 (64bit) で PicoRuby と同じ間隔 (fpga/corpus/mml.rb、T120 の四分音符は 500ms) になった
+
+### 64bit の Integer (P8)
+
+- **値は {タグ 4bit, 64bit}** (`VAL_BITS` 68)。レジスタ・ヒープ・定数・ポートの語も 68bit。ヒープの番地・長さ・見出しは下の bit。
+  Float の箱は今までどおり2語 (上位 32bit、下位 32bit)
+- **桁あふれは RangeError。** PicoRuby の mruby (bigint なし) と同じメッセージ: 命令 (`ADD` `SUB` `MUL` `ADDI` `SUBI`
+  `ADDILV` `SUBILV`)・`-@`・`abs` は `integer overflow`、メソッドとして呼んだ `+` `-` `*` は `integer overflow in addition` /
+  `subtraction` / `multiplication`、`/` は命令でも `in division`、`<<` `>>` は `in bit shift` (0 はいくつずらしても 0)。
+  回路はコアのエラー `CERR_OVERFLOW` (詳細1 は場所 `OVF_*`) にし、プレリュードの `__core_error` がメッセージを作る。
+  `**` は `in power`、`String#to_i` は `string (...) too big for integer`、`Float#to_i` は `in to_f`、`floor` `ceil` `truncate` は
+  `in rounding` (プレリュード)。`Float#round` は 64bit に入らなければ Float のまま (PicoRuby と同じ)
+- **リテラル。** `LOADI32` は符号拡張、pool の 32bit に入らない整数は `LOADI64` (ROM のデータの2語、`LOADF` と同じ形)
+- **Float との変換は bit で。** Integer → double は C の `(double)` と同じ最も近い値 (偶数へ)、double → Integer は 0 へ切り捨て。
+  `$itor` / `$rtoi` は 32bit なので回路の関数 (`f_int` `f_toi`) で組む
+- **デバイス。** レジスタは 32bit のまま、読むと符号拡張、書くのは下の 32bit。時計 (TIME_US、TIME_MS) だけ 64bit で読める
+  (Time.now と Machine の時間は1回で読む)。Task の「待っているタスクが無い」は PicoRuby と同じ UINT32_MAX
+- **トレース** の W / O 行の値は 16 桁の16進 (Verilog の `%h`)。P 行はパケットの 32bit のまま
+- **突き合わせ。** fpga/corpus/int64.rb (境目の値、全部の桁あふれのメッセージ、`to_s` / `to_i` の最小の数) は picoruby host と
+  全行一致し、参照と RTL は同じトレース。CRuby は Bignum に上がるので比べない。ファズは LOADI64 の境目の値と
+  桁あふれする命令・primitive の断片 (pick 25) を足した
 
 ### 動的な呼び出し (P7)
 
@@ -1121,7 +1142,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 
 ### 配列とヒープ
 
-- **ヒープは 65536 語 (1語 = タグ + 32bit) を半分ずつ使う。** 語数はコアの parameter `HEAP_WORDS` (既定は `mrb_pkg` の
+- **ヒープは 65536 語 (1語 = タグ + 64bit) を半分ずつ使う。** 語数はコアの parameter `HEAP_WORDS` (既定は `mrb_pkg` の
   `HEAP_SIZE`) と参照インタプリタの `heap_size:` で、`mrb_core_tb` とファズのヒープを突く形は 2048 語で回して GC を何度も起こす。 確保は先頭から詰めるだけ (bump)。半分が足りなくなると
   **Cheney のコピー GC** でもう半分へ写し、それでも足りなければエラーで止まる
 - **オブジェクト。** 見出し (タグ 8、値 = クラスの番号 << 16 | 語数) の後ろに中身。クラスの番号は
@@ -1151,7 +1172,7 @@ PicoRuby の host VM (`vendor/picoruby/bin/picoruby`) で実測した、使え�
 `fpga/rtl/mrb_core.sv`。**多サイクル、1命令 2 cycle** (FETCH で ROM を引き、EXEC で実行と書き戻し)。
 パイプラインは後回し。`en` (クロックイネーブル) が 0 の cycle は何も進まない。
 
-- **レジスタ窓。** レジスタファイルは 128本 × 36bit を全フレームで共有し、R[i] は bp + i。呼び出しは呼び出し先の bp を
+- **レジスタ窓。** レジスタファイルは 128本 × 68bit を全フレームで共有し、R[i] は bp + i。呼び出しは呼び出し先の bp を
   呼び出し元の bp + a にし (呼び出し先の R0 = 呼び出し元の R[a] = 受け手)、呼び出し先の `ENTER` が残りのレジスタを
   1 cycle 1本ずつ nil で埋める (S_CLEAR)。`RETURN` は R0 (= 呼び出し元の R[a]) に値を置いて戻る。
   bp + nregs が 128 を超える、またはコールスタック (16段) が溢れるとエラー

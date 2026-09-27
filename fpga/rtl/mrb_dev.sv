@@ -162,47 +162,56 @@ module mrb_dev
     for (int i = 0; i < 5; i++) if (addr == ADC_BASE + 16'(i)) adc_r = {20'd0, adc_val[i]};
   end
 
+  // 読む値: レジスタは 32bit で、符号付きに広げて返す (-1 は -1。コアの Integer は 64bit)。
+  // TIME_US と TIME_MS は 64bit の時計そのもの (devices.rb の read と同じ)
+  logic [31:0] rd32;
+  logic        rd_ok;
   always_comb begin
+    rd_ok = 1'b1;
+    rd32  = 32'd0;
     case (addr)
-      GPIO_DIR:      rdata = {TAG_INT, gpio_dir};
-      GPIO_OUT:      rdata = {TAG_INT, gpio_out};
-      GPIO_PULLUP:   rdata = {TAG_INT, pull_up};
-      GPIO_PULLDOWN: rdata = {TAG_INT, pull_down};
-      GPIO_OD:       rdata = {TAG_INT, od};
-      GPIO_LEVEL:    rdata = {TAG_INT, gpio_level};
-      GPIO_EXT_LOW:  rdata = {TAG_INT, ext_low};
-      GPIO_EXT_HIGH: rdata = {TAG_INT, ext_high};
-      TIME_US:       rdata = {TAG_INT, vtime[31:0]};
-      TIME_US_HI:    rdata = {TAG_INT, vtime[63:32]};
-      TIME_MS:       rdata = {TAG_INT, ms[31:0]};
-      UART_RX:       rdata = {TAG_INT, avail == 16'd0 ? 32'hFFFF_FFFF : {24'd0, rx_bytes[rp[7:0]]}};
-      UART_AVAIL:    rdata = {TAG_INT, 16'd0, avail};
-      RNG:           rdata = {TAG_INT, rng_next};
-      PWM_SEL:       rdata = {TAG_INT, pwm_sel};
-      PWM_FREQ:      rdata = {TAG_INT, sel_ok ? pwm_freq[32*pwm_sel[4:0] +: 32] : 32'd0};
-      PWM_DUTY:      rdata = {TAG_INT, sel_ok ? pwm_duty[32*pwm_sel[4:0] +: 32] : 32'd0};
-      PWM_RUNNING:   rdata = {TAG_INT, pwm_running};
-      ADC_BASE, ADC_BASE + 16'd1, ADC_BASE + 16'd2, ADC_BASE + 16'd3, ADC_BASE + 16'd4: rdata = {TAG_INT, adc_r};
-      IRQ_PIN:       rdata = {TAG_INT, irq_pin};
-      IRQ_MASK:      rdata = {TAG_INT, irq_mask};
-      IRQ_DEBOUNCE:  rdata = {TAG_INT, irq_deb};
-      IRQ_ID:        rdata = {TAG_INT, irq_id};
-      IRQ_REGISTER:  rdata = {TAG_INT, free_i == 5'd16 ? 32'hFFFF_FFFF : 32'(free_i) + 32'd1};
-      IRQ_UNREG:     rdata = {TAG_INT, 31'd0, unreg};
-      IRQ_EVENT:     rdata = {TAG_INT, q_empty ? 32'hFFFF_FFFF : {19'd0, q[9*qh +: 5], 4'd0, q[9*qh + 5 +: 4]}}; // id << 8 | 事象
-      WDT_CAUSED:    rdata = {TAG_INT, 31'd0, caused};
-      WDT_REMAIN:    rdata = {TAG_INT, wdt_en && wdt_dead > vtime ? 32'(wdt_dead - vtime) : 32'd0};
-      I2C_ADDR:      rdata = {TAG_INT, i2c_addr};
-      I2C_ACK:       rdata = {TAG_INT, 31'd0, i2c_ack};
-      I2C_RX:        rdata = {TAG_INT, i2c_rx_count == i2c_rp ? 32'd255 : {24'd0, i2c_rx_bytes[i2c_rp[7:0]]}};
+      GPIO_DIR:      rd32 = gpio_dir;
+      GPIO_OUT:      rd32 = gpio_out;
+      GPIO_PULLUP:   rd32 = pull_up;
+      GPIO_PULLDOWN: rd32 = pull_down;
+      GPIO_OD:       rd32 = od;
+      GPIO_LEVEL:    rd32 = gpio_level;
+      GPIO_EXT_LOW:  rd32 = ext_low;
+      GPIO_EXT_HIGH: rd32 = ext_high;
+      TIME_US:       rd32 = vtime[31:0];
+      TIME_US_HI:    rd32 = vtime[63:32];
+      TIME_MS:       rd32 = ms[31:0];
+      UART_RX:       rd32 = avail == 16'd0 ? 32'hFFFF_FFFF : {24'd0, rx_bytes[rp[7:0]]};
+      UART_AVAIL:    rd32 = {16'd0, avail};
+      RNG:           rd32 = rng_next;
+      PWM_SEL:       rd32 = pwm_sel;
+      PWM_FREQ:      rd32 = sel_ok ? pwm_freq[32*pwm_sel[4:0] +: 32] : 32'd0;
+      PWM_DUTY:      rd32 = sel_ok ? pwm_duty[32*pwm_sel[4:0] +: 32] : 32'd0;
+      PWM_RUNNING:   rd32 = pwm_running;
+      ADC_BASE, ADC_BASE + 16'd1, ADC_BASE + 16'd2, ADC_BASE + 16'd3, ADC_BASE + 16'd4: rd32 = adc_r;
+      IRQ_PIN:       rd32 = irq_pin;
+      IRQ_MASK:      rd32 = irq_mask;
+      IRQ_DEBOUNCE:  rd32 = irq_deb;
+      IRQ_ID:        rd32 = irq_id;
+      IRQ_REGISTER:  rd32 = free_i == 5'd16 ? 32'hFFFF_FFFF : 32'(free_i) + 32'd1;
+      IRQ_UNREG:     rd32 = {31'd0, unreg};
+      IRQ_EVENT:     rd32 = q_empty ? 32'hFFFF_FFFF : {19'd0, q[9*qh +: 5], 4'd0, q[9*qh + 5 +: 4]}; // id << 8 | 事象
+      WDT_CAUSED:    rd32 = {31'd0, caused};
+      WDT_REMAIN:    rd32 = wdt_en && wdt_dead > vtime ? 32'(wdt_dead - vtime) : 32'd0;
+      I2C_ADDR:      rd32 = i2c_addr;
+      I2C_ACK:       rd32 = {31'd0, i2c_ack};
+      I2C_RX:        rd32 = i2c_rx_count == i2c_rp ? 32'd255 : {24'd0, i2c_rx_bytes[i2c_rp[7:0]]};
       I2C_PRESENT, I2C_PRESENT + 16'd1, I2C_PRESENT + 16'd2, I2C_PRESENT + 16'd3:
-                     rdata = {TAG_INT, i2c_present[addr[1:0] - 2'd1]};
-      SPI_RX:        rdata = {TAG_INT, spi_rx_count == spi_rp ? 32'd255 : {24'd0, spi_rx_bytes[spi_rp[7:0]]}};
-      PSG_FREE:      rdata = {TAG_INT, psg_sel == 32'd0 ? 32'd0 : 32'd255 - 32'(psg_n)};
-      PSG_EMPTY:     rdata = {TAG_INT, 31'd0, psg_n == 8'd0};
-      PSG_SELECT:    rdata = {TAG_INT, psg_sel};
-      default:       rdata = V_NIL;
+                     rd32 = i2c_present[addr[1:0] - 2'd1];
+      SPI_RX:        rd32 = spi_rx_count == spi_rp ? 32'd255 : {24'd0, spi_rx_bytes[spi_rp[7:0]]};
+      PSG_FREE:      rd32 = psg_sel == 32'd0 ? 32'd0 : 32'd255 - 32'(psg_n);
+      PSG_EMPTY:     rd32 = {31'd0, psg_n == 8'd0};
+      PSG_SELECT:    rd32 = psg_sel;
+      default:       rd_ok = 1'b0;
     endcase
+    if (addr == TIME_US) rdata = {TAG_INT, vtime};
+    else if (addr == TIME_MS) rdata = {TAG_INT, ms};
+    else rdata = rd_ok ? {TAG_INT, {(INT_BITS-32){rd32[31]}}, rd32} : V_NIL;
   end
 
   assign tx_valid = we && addr == UART_TX;

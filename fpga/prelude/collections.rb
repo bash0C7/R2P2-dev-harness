@@ -470,14 +470,19 @@ class Integer
   end
 
   # 負の指数と Float の指数は Float (PicoRuby と同じ。CRuby の Rational は無い)
+  # 64bit に入らなければ PicoRuby と同じく "integer overflow in power"。最後の桁の後は b を2乗しない (要らない桁あふれ)
   def **(n)
     return to_f**n if n.is_a?(Float) || n < 0
     r = 1
     b = self
-    while n > 0
-      r *= b if n.odd?
-      b *= b
-      n >>= 1
+    begin
+      while n > 0
+        r *= b if n.odd?
+        n >>= 1
+        b *= b if n > 0
+      end
+    rescue RangeError
+      __raise(RangeError.new("integer overflow in power"))
     end
     r
   end

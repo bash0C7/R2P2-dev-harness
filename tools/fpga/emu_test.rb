@@ -22,14 +22,14 @@ class FpgaEmuTest < Minitest::Test
 
   def test_ref_pin_sequence_dedups_and_uses_ruby_truthiness_for_leds
     int = FpgaIsa::TAG_INT
-    trace = ["O 0 0 #{int} 00000000", "O 1 0 #{int} 00000001", "O 2 0 #{int} 00000005",
-             "O 3 0 #{FpgaIsa::TAG_NIL} 00000000", "O 4 1 #{FpgaIsa::TAG_TRUE} 00000000"]
+    trace = ["O 0 0 #{int} 0000000000000000", "O 1 0 #{int} 0000000000000001", "O 2 0 #{int} 0000000000000005",
+             "O 3 0 #{FpgaIsa::TAG_NIL} 0000000000000000", "O 4 1 #{FpgaIsa::TAG_TRUE} 0000000000000000"]
     assert_equal [false, true, false], FpgaEmu.ref_pin_sequence(trace, 0)
     assert_equal [false, true], FpgaEmu.ref_pin_sequence(trace, 1)
   end
 
   def test_check_against_ref_accepts_a_prefix_and_rejects_a_mismatch
-    trace = ["O 0 0 3 00000001", "O 9 0 3 00000000", "O 18 0 3 00000001"]
+    trace = ["O 0 0 3 0000000000000001", "O 9 0 3 0000000000000000", "O 18 0 3 0000000000000001"]
     events = [E.new(0, "LED", 0), E.new(0, "LED2", 0), E.new(10, "LED", 1), E.new(20, "LED", 0)]
     assert FpgaEmu.check_against_ref(events, trace, 12).all?(&:first)
     # 窓の中にもう1回あるはずの変化が無い (LED が点きっぱなし) のは不一致
@@ -52,7 +52,7 @@ class FpgaEmuTest < Minitest::Test
   end
 
   def test_ref_pin_sequence_turns_off_at_a_watchdog_reboot
-    trace = ["O 1 0 3 00000001", "B 5", "O 9 0 3 00000002"]
+    trace = ["O 1 0 3 0000000000000001", "B 5", "O 9 0 3 0000000000000002"]
     assert_equal [false, true, false, true], FpgaEmu.ref_pin_sequence(trace, 0)
   end
 end

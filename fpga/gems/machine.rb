@@ -1,5 +1,5 @@
 # FPGA 版の machine gem。API は PicoRuby の picoruby-machine (sig/machine.rbs) のうち FPGA で意味のあるもの。
-# 時間は仮想の時計 (始めた命令の数 × 1µs + sleep した時間、tools/fpga/devices.rb の TIME_*) で、32bit で折り返す。
+# 時間は仮想の時計 (始めた命令の数 × 1µs + sleep した時間、tools/fpga/devices.rb の TIME_*、64bit)。
 module Machine
   def self.uptime_us
     __io_read(0x110)

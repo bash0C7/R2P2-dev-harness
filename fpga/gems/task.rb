@@ -29,7 +29,7 @@ class Task
   MAIN = 7
   SWITCHING = 8 # switching_
   WAKEUP = 9    # wakeup_tick_ (待っているタスクの一番早い起きる tick の目安。Task.stat に出る)
-  NEVER = 0x7FFFFFFF # UINT32_MAX の代わり (Task.stat では -1)
+  NEVER = 0xFFFFFFFF # UINT32_MAX (task.c と同じ)
 
   # main (区画 0)。PicoRuby では一番外のプログラムも優先度 128 のタスク
   def self.__boot
@@ -451,8 +451,8 @@ class Task
   def self.stat
     prev = Task.__enter
     sub = ->(q) { { count: q.size, tasks: q.dup } }
-    # wakeup_tick: 待っているタスクが無ければ PicoRuby は UINT32_MAX (32bit の Integer では -1)
-    st = { tick: S[TICK], wakeup_tick: S[WAKEUP] == NEVER ? -1 : S[WAKEUP], dormant: sub.call(S[DORMANT_Q]),
+    # wakeup_tick: 待っているタスクが無ければ PicoRuby と同じく UINT32_MAX
+    st = { tick: S[TICK], wakeup_tick: S[WAKEUP], dormant: sub.call(S[DORMANT_Q]),
            ready: sub.call(S[READY_Q]), waiting: sub.call(S[WAITING_Q]), suspended: sub.call(S[SUSPENDED_Q]) }
     Task.__leave(prev)
     st

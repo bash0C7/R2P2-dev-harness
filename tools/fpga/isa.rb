@@ -49,7 +49,8 @@ module FpgaIsa
   # FPGA だけの命令 (mruby の番号の外)。TABLE は ROM の先頭の語: a = メソッド表の大きさの log2、b = 表の先頭の語アドレス
   # HTABLE は例外の表 (catch handler) の位置と数 (b = 先頭の語アドレス、c = 数)。表がある時だけ pc 1 に置く
   # LOADF は R[a] = Float (b = ROM のデータの語アドレス、上位 32bit と下位 32bit の2語)
-  EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"], ["LOADF", 0xF2, "BS"]].freeze
+  # LOADI64 は R[a] = 32bit に入らない整数 (LOADF と同じくデータの2語、上位 32bit と下位 32bit)
+  EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"], ["LOADF", 0xF2, "BS"], ["LOADI64", 0xF3, "BS"]].freeze
   EXTRA.each { |name, num, fmt| OPS[num] = Op.new(name, num, fmt) }
   OPS.freeze
 
@@ -70,7 +71,7 @@ module FpgaIsa
     ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
     CLASS EXEC SDEF TABLE GETIV SETIV SUPER
     ARYCAT ARYPUSH APOST ARGARY STRING
-    HTABLE EXCEPT RESCUE RAISEIF JMPUW LOADF
+    HTABLE EXCEPT RESCUE RAISEIF JMPUW LOADF LOADI64
   ].freeze
 
   # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
@@ -83,7 +84,7 @@ module FpgaIsa
   #   GETCV / SETCV クラス変数は定数と同じ番号 (GETCONST / SETCONST)
   #   GETMCNST / SETMCNST  A::X は変換時に解いて CLASS / GETCONST / SETCONST
   #   STRCAT        SEND a+1 :to_s と SEND a :<< (式展開は新しい STRING から始まるので R[a] を伸ばしてよい)
-  #   LOADL         32bit に収まる整数は LOADI32
+  #   LOADL         32bit に収まる整数は LOADI32 (符号拡張)、収まらない整数は LOADI64
   #   HASH HASHADD HASHCAT RANGE_INC RANGE_EXC  プレリュードの Hash / Range を作るメソッドの呼び出し (ARRAY と SEND)
   #   KARG KEY_P KEYEND  キーワード引数の Hash (R[len+1]) のメソッドの呼び出し。キーワード付きの SEND も下げる (rom.rb の kw_lowered)
   #   ALIAS         クラスの本体の alias は表の行 (静的に足す)。命令は NOP
@@ -139,7 +140,16 @@ module FpgaIsa
   CERR_TYPE     = 4 # Integer / Float の演算の引数が数でない (詳細: 引数、受け手)
   CERR_COMPARE  = 5 # Integer / Float の比較の引数が数でない (詳細: 引数、受け手)
   CERR_FLOATDOMAIN = 6 # NaN や Infinity を Integer にした (詳細: その Float)
-  CERR_RANGE    = 7 # Float が 32bit の Integer に入らない (詳細: その Float)
+  CERR_RANGE    = 7 # Float が 64bit の Integer に入らない (詳細: その Float)
+  CERR_OVERFLOW = 8 # Integer の演算の桁あふれ (詳細: どこで。下の OVF_*)
+  # 桁あふれのメッセージ ("integer overflow" の後ろ)。PicoRuby の mruby と同じく VM の命令 (+ - * と ADDI / SUBI)、
+  # -@ と abs は何も付けず、メソッドとして呼んだ +、-、*、/ と <<、>> は " in addition" など
+  OVF_PLAIN = 0
+  OVF_ADD   = 1
+  OVF_SUB   = 2
+  OVF_MUL   = 3
+  OVF_DIV   = 4
+  OVF_SHIFT = 5
   # Float#__math の番号 (Math のメソッド。hypot は __atan2 と同じく引数を2つ取るので別)
   FMATH = %w[sqrt sin cos tan asin acos atan exp log log2 log10 sinh cosh tanh].freeze
 
@@ -269,7 +279,8 @@ module FpgaIsa
   # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
   HEAP_SIZE = 65536
 
-  INT_BITS = 32
+  # Integer の bit 数 (PicoRuby の MRB_INT64)。値は {タグ 4bit, 64bit}
+  INT_BITS = 64
 
   # 仮想の時計の速さ: 始めた命令 16 個で 1µs (125MHz のコアの速さの見当)。タスクの割り込みを止めている間 (Task の
   # スケジューラー。PicoRuby では C) の命令は 256 個で 1µs。どちらも 2 の冪 (docs/spec.md §10「仮想の時計」)

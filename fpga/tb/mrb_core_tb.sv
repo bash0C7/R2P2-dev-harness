@@ -122,13 +122,17 @@ module mrb_core_tb;
     #1;
   endtask
 
-  function automatic logic [VAL_BITS-1:0] vint(input int v);
-    return {TAG_INT, 32'(v)};
+  function automatic logic [VAL_BITS-1:0] vint(input longint v);
+    return {TAG_INT, INT_BITS'(v)};
   endfunction
 
-  localparam logic [VAL_BITS-1:0] VNIL   = {TAG_NIL, 32'd0};
-  localparam logic [VAL_BITS-1:0] VTRUE  = {TAG_TRUE, 32'd0};
-  localparam logic [VAL_BITS-1:0] VFALSE = {TAG_FALSE, 32'd0};
+  function automatic logic [VAL_BITS-1:0] vsym(input int s);
+    return {TAG_SYM, INT_BITS'(s)};
+  endfunction
+
+  localparam logic [VAL_BITS-1:0] VNIL   = {TAG_NIL, {INT_BITS{1'b0}}};
+  localparam logic [VAL_BITS-1:0] VTRUE  = {TAG_TRUE, {INT_BITS{1'b0}}};
+  localparam logic [VAL_BITS-1:0] VFALSE = {TAG_FALSE, {INT_BITS{1'b0}}};
 
   task automatic expect_val(input string what, input logic [VAL_BITS-1:0] got, input logic [VAL_BITS-1:0] v);
     if (got !== v)
@@ -196,7 +200,7 @@ module mrb_core_tb;
     expect_reg(15, vint(5));
     expect_reg(0, vint(6));
 
-    // ---- 算術 (32bit で折り返す)
+    // ---- 算術 (LOADI32 は符号拡張。64bit なので 2**31 はあふれない)
     begin_test("arith");
     prog.push_back(w(OP_LOADI16, 1, 300));
     prog.push_back(w(OP_LOADINEG, 2, 7));
@@ -213,7 +217,7 @@ module mrb_core_tb;
     prog.push_back(w(OP_LOADI_0, 8));
     prog.push_back(w(OP_SUBILV, 8, 9, 1));               // -1
     prog.push_back(w(OP_LOADI32, 9, 16'h7FFF, 16'hFFFF));
-    prog.push_back(w(OP_ADDI, 9, 1));                    // 0x7fffffff + 1 -> -2**31
+    prog.push_back(w(OP_ADDI, 9, 1));                    // 0x7fffffff + 1 -> 2**31
     prog.push_back(w(OP_RETNIL));
     run();
     expect_halt();
@@ -449,14 +453,14 @@ module mrb_core_tb;
     run();
     expect_error(4);
     expect_reg(2, vint(6));
-    expect_reg(3, {TAG_SYM, 32'd5});
+    expect_reg(3, vsym(5));
 
     // ---- 掛け算・割り算 (floor 側)
     begin_test("mul div");
     prog.push_back(w(OP_LOADI_7, 1)); prog.push_back(w(OP_LOADINEG, 2, 6)); prog.push_back(w(OP_MUL, 1));      // -42
     prog.push_back(w(OP_LOADINEG, 3, 7)); prog.push_back(w(OP_LOADI_2, 4)); prog.push_back(w(OP_DIV, 3));      // -4
     prog.push_back(w(OP_LOADI_7, 5)); prog.push_back(w(OP_LOADINEG, 6, 2)); prog.push_back(w(OP_DIV, 5));      // -4
-    prog.push_back(w(OP_LOADI32, 7, 16'h8000, 16'h0000)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_DIV, 7)); // INT_MIN
+    prog.push_back(w(OP_LOADI32, 7, 16'h8000, 16'h0000)); prog.push_back(w(OP_LOADI__1, 8)); prog.push_back(w(OP_DIV, 7)); // -2**31 / -1 = 2**31
     prog.push_back(w(OP_LOADI_1, 9)); prog.push_back(w(OP_LOADI_0, 10)); prog.push_back(w(OP_DIV, 9));       // 0 で割る
     run();
     expect_error(14);
@@ -464,6 +468,51 @@ module mrb_core_tb;
     expect_reg(3, vint(-4));
     expect_reg(5, vint(-4));
     expect_reg(7, vint(32'h8000_0000));
+
+    // ---- 64bit の桁あふれ (例外の表が無いのでエラーで止まる) と LOADI64 (ROM のデータの2語)
+    begin_test("overflow add");
+    prog.push_back(w(OP_LOADI32, 1, 16'h4000, 16'h0000)); // 0: 2**30
+    prog.push_back(w(OP_MOVE, 2, 1));                     // 1
+    prog.push_back(w(OP_MUL, 1));                         // 2: 2**60
+    prog.push_back(w(OP_LOADI_7, 2));                     // 3
+    prog.push_back(w(OP_MUL, 1));                         // 4: 7 * 2**60
+    prog.push_back(w(OP_MOVE, 3, 1));                     // 5
+    prog.push_back(w(OP_MOVE, 4, 1));                     // 6
+    prog.push_back(w(OP_ADD, 3));                         // 7: 14 * 2**60 はあふれる
+    run();
+    expect_error(7);
+    expect_reg(1, vint(64'sd8070450532247928832));
+    expect_reg(3, vint(64'sd8070450532247928832));
+
+    begin_test("overflow addi and loadi64");
+    prog.push_back(w(OP_LOADI64, 1, 20));                 // 0: 2**63 - 1
+    prog.push_back(w(OP_LOADI64, 2, 22));                 // 1: -2**63
+    prog.push_back(w(OP_MOVE, 3, 2));                     // 2
+    prog.push_back(w(OP_SUBI, 3, 0));                     // 3: -2**63 - 0 はあふれない
+    prog.push_back(w(OP_MOVE, 4, 1));                     // 4
+    prog.push_back(w(OP_ADDI, 4, 1));                     // 5: 2**63 - 1 + 1 はあふれる
+    while (prog.size() < 20) prog.push_back(w(OP_NOP));
+    prog.push_back(48'h0000_7FFF_FFFF);                  // 20: 上位
+    prog.push_back(48'h0000_FFFF_FFFF);                  // 21: 下位
+    prog.push_back(48'h0000_8000_0000);                  // 22
+    prog.push_back(48'h0000_0000_0000);                  // 23
+    run();
+    expect_error(5);
+    expect_reg(1, vint(64'sh7FFF_FFFF_FFFF_FFFF));
+    expect_reg(2, vint(64'sh8000_0000_0000_0000));
+    expect_reg(3, vint(64'sh8000_0000_0000_0000));
+    expect_reg(4, vint(64'sh7FFF_FFFF_FFFF_FFFF));
+
+    begin_test("overflow div");
+    prog.push_back(w(OP_LOADI64, 1, 20));                 // 0: -2**63
+    prog.push_back(w(OP_LOADI__1, 2));                    // 1
+    prog.push_back(w(OP_DIV, 1));                         // 2: -2**63 / -1 はあふれる
+    while (prog.size() < 20) prog.push_back(w(OP_NOP));
+    prog.push_back(48'h0000_8000_0000);                  // 20
+    prog.push_back(48'h0000_0000_0000);                  // 21
+    run();
+    expect_error(2);
+    expect_reg(1, vint(64'sh8000_0000_0000_0000));
 
     // ---- primitive (メソッド表の飛び先が回路のメソッド)
     begin_test("builtins");
@@ -861,7 +910,7 @@ module mrb_core_tb;
     expect_halt();
     expect_reg(1, VTRUE);
     expect_reg(3, VFALSE);
-    expect_reg(5, {TAG_SYM, 32'd7});
+    expect_reg(5, vsym(7));
 
     // ---- 多重代入 (AREF)
     begin_test("aref");
@@ -1156,7 +1205,7 @@ module mrb_core_tb;
     expect_reg(7, vint(3));
     expect_reg(8, vint(33));
     expect_reg(10, vint(98));
-    expect_reg(11, {TAG_SYM, 32'd3});
+    expect_reg(11, vsym(3));
     expect_reg(12, VNIL);
     expect_reg(13, vint(6));
 
@@ -1198,7 +1247,7 @@ module mrb_core_tb;
     expect_halt();
     expect_reg(1, vint(42));
     expect_reg(4, vint(43));
-    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][15:0]] !== {TAG_HDR, CLS_HASH, 16'd4})
+    if (dut.core.regs[3][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ || dut.core.heap[dut.core.regs[3][15:0]] !== {TAG_HDR, {(INT_BITS-32){1'b0}}, CLS_HASH, 16'd4})
       $fatal(1, "%s: R3 is not an empty Hash", name);
     if (dut.core.regs[6] !== dut.core.regs[8] || dut.core.regs[6][VAL_BITS-1 -: TAG_BITS] != TAG_OBJ) $fatal(1, "%s: the block did not reach h", name);
 
@@ -1364,7 +1413,7 @@ module mrb_core_tb;
       logic [15:0] d;
       d = dut.core.heap[dut.core.regs[3][15:0] + 2][15:0];
       expect_val("kind", dut.core.heap[d + 1], vint(CERR_NOMETHOD));
-      expect_val("name", dut.core.heap[d + 2], {TAG_SYM, 32'd30});
+      expect_val("name", dut.core.heap[d + 2], vsym(30));
       expect_val("recv", dut.core.heap[d + 3], VNIL);
     end
 
@@ -1635,7 +1684,7 @@ module mrb_core_tb;
     run();
     expect_error(10);
     expect_reg(1, vint(7));
-    expect_reg(5, {TAG_SYM, 32'd2});
+    expect_reg(5, vsym(2));
     expect_reg(6, VNIL);
 
     $display("%0d cases ok", npass);

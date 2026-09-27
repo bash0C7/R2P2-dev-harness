@@ -364,6 +364,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P6 Task | 66 | 50 (example は 19 / 32) | 50 | tasks.rb を追加 (host の picoruby とも比べる)。区画 8 つ、スケジューラーは task.c を写した Ruby。仮想の時計を 16 命令で 1µs に。mruby-task の examples 9 本は参照と RTL が一致、host とは表し方の違いだけ。止める理由は psg (P5e)、picotest、pio、pitchdetector |
 | 2026-09-27 | P7 動的な send と &:sym | 67 | 51 (example は 19 / 32) | 51 | sends.rb を追加 (CRuby と host の picoruby とも比べる)。mruby-task の statistics.rb も通った (host とは tick の単位だけ)。止める理由は psg / midibase-mml / uart-midi (P5e)、picotest、pio、pitchdetector |
 | 2026-09-27 | P5e PSG・MML・MIDI | 69 | 64 (example は 27 / 32) | 64 | psg.rb、singletons.rb を追加。PSG の列 (256 枠) と P 行、psg / midibase / midibase-mml / uart-midi は PicoRuby の mrblib をそのまま使う。`class << self`、クラスのインスタンス変数、`::X`、`defined?(X)`。ROM 32768 語、定数 256。止める理由は picotest、pio、pitchdetector、File (dirname / expand_path) |
+| 2026-09-27 | P8 64bit の Integer | 71 | 66 (example は 27 / 32) | 66 | int64.rb、mml.rb を追加 (int64 は host の picoruby と全行一致)。値は {tag 4bit, 64bit}、桁あふれは RangeError (CERR_OVERFLOW)、LOADI64。fuzz seed 1–4 一致。止める理由は picotest、pio、pitchdetector、File (dirname / expand_path) |
 
 ## 見つけたこと
 
@@ -523,3 +524,16 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
   (Session の player の `next_event`)、使う側が定義する前提の hook (ADC#init_additional_params) を「無いメソッド」と数えていた
 - P5e: MML の Player は `delta_ticks * 60_000_000 / (ppqn * tempo)` を計算する。32bit の Integer では桁があふれ、待ち時間が
   負になって全部の音が数 ms に詰まった。R2P2 の PicoRuby は `MRB_INT64`。黙って違う所なので P8 (64bit の Integer) を計画に入れた
+- P8: host の picoruby で調べると、桁あふれのメッセージは呼び方で違う (VM の命令は `integer overflow`、メソッドとして呼ぶと
+  `in addition` など、`/` は命令でも `in division`)。`0 << 64` は 0、`Float#round` は 64bit に入らなければ Float のまま、
+  `Float#to_i` は `in to_f`、`floor` / `truncate` は `in rounding`。全部 host に合わせ、int64.rb で全行を突き合わせた
+- P8: 変換器 (PicoRuby の上で走る) の rite.rb が INT64 の pool を `u32 << 32` で組んでいて、64bit の PicoRuby では桁あふれで
+  止まった (今まで INT64 の pool は変換で止めていたので通らなかった道)。上位を符号付きにしてから掛ける
+- P8: RTL の `LOADI16` (`{{16{b[15]}}, b}`) と `LOADINEG` (`-{24'd0, b}`) は 32bit の式で、64bit に広げると符号が付かない
+  (0 で埋まる)。`{TAG_INT, 32'd8}` のような幅の決まった連結は 68bit の値の上に 0 が付いてタグがずれる (object_id)。
+  どちらも Verilator の幅の警告 (95 件、警告は止める設定) から全部見つけて直した
+- P8: `$itor` / `$rtoi` は 32bit。Integer ⇔ double の変換は bit で組んだ (`f_int` は最も近い値へ偶数丸め、`f_toi` は 0 へ切り捨て)
+- P8: `Task.stat` の wakeup_tick を PicoRuby と同じ UINT32_MAX にできた (32bit では -1 と書いていた)
+- P8: rom_test の `test_later_definition_wins` は P3a (使わないメソッドを ROM から落とす) から `nil == nil` を比べていて、何も確かめていなかった
+  (Minitest の deprecation の警告で気づいた)。f を呼んで ROM に残し、`refute_nil` を足した
+- P8: 重みを上げた後の fuzz seed 2 の abort は、同じ worktree で fuzz と gap を同時に走らせた時だけ出た。順に走らせると seed 1–4 とも一致

@@ -14,7 +14,7 @@ module FpgaDisplays
   def self.from_trace(trace)
     trace.grep(/\AO /).filter_map do |l|
       _, _, port, _, v = l.split
-      value = v.to_i(16)
+      value = v.to_i(16) & 0xFFFF_FFFF # デバイスのレジスタは 32bit
       case port.to_i
       when 0x180 then [:i2c_addr, value & 0x7F]
       when 0x181 then [:i2c, value & 0xFF]
