@@ -71,6 +71,7 @@ class Object
     while c > 0
       row = __fpga_const_row(c, sym)
       if row > 0
+        __fpga_check_frozen(c)
         __fpga_stv(row + 4, v)
         return
       end
@@ -86,6 +87,7 @@ class Object
     else
       c = cls
     end
+    __fpga_check_frozen(c)
     __fpga_tbl_set(__fpga_iv_tbl(c), sym, v)
   end
 
@@ -208,7 +210,7 @@ class Module
   def const_set(name, value)
     id = __fpga_obj_to_sym(name)
     __fpga_check_const_name_sym(id)
-    __fpga_tbl_set(__fpga_iv_tbl(__fpga_addr(self)), id, value) # mrb_const_set
+    __fpga_const_set(__fpga_addr(self), id, value)
     value
   end
 

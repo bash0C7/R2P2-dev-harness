@@ -316,8 +316,7 @@ class Object
     sym = __fpga_irep_sym(__fpga_irep, b)
     target = __fpga_cref_class(__fpga_ci)
     target = __fpga_image(5) if target == 0 # L:IMG_object_class
-    __fpga_tbl_set(__fpga_iv_tbl(target), sym, v) # mrb_const_set (表が無ければ作る)
-    __fpga_name_class(v, sym, target)
+    __fpga_const_set(target, sym, v)
   end
 
   # OP_GETMCNST: R[a] = R[a]::Syms[b]
@@ -336,19 +335,26 @@ class Object
     v = __fpga_reg(a)
     base = __fpga_addr(__fpga_reg(a + 1))
     sym = __fpga_irep_sym(__fpga_irep, b)
-    __fpga_tbl_set(__fpga_iv_tbl(base), sym, v)
-    __fpga_name_class(v, sym, base)
+    __fpga_const_set(base, sym, v)
   end
 
-  # 名前の無いクラスを定数に入れたら名前を付ける (variable.c の mrb_const_set の中の名前付け)
-  # C: src/class.c mrb_class_name_class
+  # C: src/variable.c mrb_const_set
+  def __fpga_const_set(mod, sym, v)
+    __fpga_name_class(v, sym, mod) # mrb_type(v) が CLASS か MODULE
+    __fpga_check_frozen(mod) # mrb_obj_iv_set
+    __fpga_tbl_set(__fpga_iv_tbl(mod), sym, v)
+    __fpga_sendv(__fpga_obj(mod), :const_added, [__fpga_mkval(4, sym)], nil, true) # L:TAG_SYM mrb_funcall_argv
+  end
+
+  # 名前の無いクラス / モジュールを定数に置いた時に名前を付ける (C_NAME と C_OUTER、D04)。名前の無い outer の中では
+  # outer も覚え (mruby の __outer__)、道は outer の名前 (無名なら "#<Module:0x..>") から作る
+  # C: src/class.c mrb_class_name_class (D04)
   def __fpga_name_class(v, sym, outer)
-    return unless __fpga_tag(v) == 7 && __fpga_class_p(__fpga_addr(v))
+    return unless __fpga_tag(v) == 7 && (__fpga_tt(__fpga_addr(v)) == 9 || __fpga_tt(__fpga_addr(v)) == 10) # L:TAG_OBJ L:TT_CLASS L:TT_MODULE
     c = __fpga_addr(v)
-    if __fpga_ld32(c + 24) == 4294967295 # L:C_NAME (名前の無い印)
-      __fpga_st32(c + 24, sym)
-      __fpga_st32(c + 28, outer) # L:C_OUTER
-    end
+    return unless __fpga_ld32(c + 24) == 0 # L:C_NAME __classname__ がある
+    __fpga_st32(c + 24, sym) # L:C_NAME
+    __fpga_st32(c + 28, outer == __fpga_image(5) ? 0 : outer) # L:C_OUTER L:IMG_object_class
   end
 
   # C: src/vm.c OP_OCLASS
@@ -440,10 +446,18 @@ class Object
     base = __fpga_reg(a)
     sup = __fpga_reg(a + 1)
     id = __fpga_irep_sym(__fpga_irep, b)
-    outer = __fpga_tag(base) == 0 ? __fpga_cref_class(__fpga_ci) : __fpga_addr(base) # L:TAG_NIL
-    outer = __fpga_image(5) if outer == 0 # L:IMG_object_class
+    if __fpga_tag(base) == 0 # L:TAG_NIL
+      base = __fpga_cref_class(__fpga_ci)
+      base = __fpga_obj(base == 0 ? __fpga_image(5) : base) # L:IMG_object_class
+    end
+    # mrb_vm_define_class
+    unless __fpga_tag(sup) == 0 # L:TAG_NIL
+      __fpga_raisef(TypeError, "superclass must be a Class (%!v given)", [sup]) unless __fpga_tag(sup) == 7 && __fpga_tt(__fpga_addr(sup)) == 9 # L:TAG_OBJ L:TT_CLASS mrb_class_p
+    end
+    __fpga_check_if_class_or_module(base)
+    outer = __fpga_addr(base)
     row = __fpga_const_row(outer, id)
-    if row > 0 # 再オープン
+    if row > 0 # mrb_obj_iv_defined: 再オープン
       v = __fpga_ldv(row + 4)
       __fpga_raisef(TypeError, "%!v is not a class", [v]) unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 9 # L:TAG_OBJ L:TT_CLASS
       if __fpga_tag(sup) == 7 && (__fpga_real(__fpga_ld32(__fpga_addr(v) + 8)) == __fpga_addr(sup)) == false # L:TAG_OBJ L:C_SUPER
@@ -463,10 +477,18 @@ class Object
   def __fpga_op_MODULE(a, b, c)
     base = __fpga_reg(a)
     id = __fpga_irep_sym(__fpga_irep, b)
-    outer = __fpga_tag(base) == 0 ? __fpga_cref_class(__fpga_ci) : __fpga_addr(base) # L:TAG_NIL
-    outer = __fpga_image(5) if outer == 0 # L:IMG_object_class
+    if __fpga_tag(base) == 0 # L:TAG_NIL
+      base = __fpga_cref_class(__fpga_ci)
+      base = __fpga_obj(base == 0 ? __fpga_image(5) : base) # L:IMG_object_class
+    end
+    __fpga_check_if_class_or_module(base) # mrb_vm_define_module
+    outer = __fpga_addr(base)
     row = __fpga_const_row(outer, id)
-    return __fpga_setreg(a, __fpga_ldv(row + 4)) if row > 0
+    if row > 0
+      old = __fpga_ldv(row + 4)
+      __fpga_raisef(TypeError, "%!v is not a module", [old]) unless __fpga_tag(old) == 7 && __fpga_tt(__fpga_addr(old)) == 10 # L:TAG_OBJ L:TT_MODULE mrb_module_p
+      return __fpga_setreg(a, old)
+    end
     m = __fpga_obj(__fpga_module_new(id, outer))
     __fpga_tbl_set(__fpga_iv_tbl(outer), id, m)
     __fpga_setreg(a, m)
@@ -484,7 +506,11 @@ class Object
   # 特異クラス (class.c の mrb_singleton_class): オブジェクトとその class の間に SCLASS を挟む
   # C: src/class.c prepare_singleton_class
   def __fpga_singleton(obj)
-    __fpga_raise(TypeError, "can't define singleton") unless __fpga_tag(obj) == 7 # 即値 (nil / true / false の特異クラスは S5)
+    t = __fpga_tag(obj) # mrb_singleton_class_ptr の即値
+    return __fpga_image(17) if t == 0 # L:TAG_NIL L:IMG_nil_class
+    return __fpga_image(16) if t == 1 # L:TAG_FALSE L:IMG_false_class
+    return __fpga_image(15) if t == 2 # L:TAG_TRUE L:IMG_true_class
+    __fpga_raise(TypeError, "can't define singleton") unless t == 7 # L:TAG_OBJ mrb_singleton_class
     o = __fpga_addr(obj)
     k = __fpga_ld32(o + 0)
     return k if __fpga_tt(k) == 11 && __fpga_ld32(k + 28) == o # L:TT_SCLASS L:C_OUTER
@@ -787,6 +813,10 @@ class Module
   end
 
   # C: src/class.c mrb_do_nothing
+  def const_added(m)
+  end
+
+  # C: src/class.c mrb_do_nothing
   def prepended(m)
   end
 
@@ -797,6 +827,12 @@ class Module
 end
 
 class Object
+  # C: src/class.c check_if_class_or_module
+  def __fpga_check_if_class_or_module(obj)
+    t = __fpga_tag(obj) == 7 ? __fpga_tt(__fpga_addr(obj)) : 0 # L:TAG_OBJ
+    __fpga_raisef(TypeError, "%!v is not a class/module", [obj]) unless t == 9 || t == 10 || t == 11 # L:TT_CLASS L:TT_MODULE L:TT_SCLASS class_ptr_p
+  end
+
   # mrb_check_type(x, MRB_TT_SYMBOL)。シンボルの番号を返す
   # C: src/object.c mrb_check_type
   def __fpga_check_type_symbol(x)

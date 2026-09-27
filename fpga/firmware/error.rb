@@ -212,7 +212,7 @@ class Object
     outer = __fpga_ld32(c + 28) # L:C_OUTER
     return name if outer == 0 || outer == __fpga_image(5) # L:IMG_object_class
     op = __fpga_class_path(outer)
-    return nil if __fpga_tag(op) == 0
+    op = __fpga_class_name_str(outer) if __fpga_tag(op) == 0 # L:TAG_NIL mrb_class_find_path の mrb_class_name ("#<Module:0x..>")
     __fpga_str_cat_str(op, "::")
     __fpga_str_cat_str(op, name)
   end
