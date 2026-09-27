@@ -879,6 +879,18 @@ class FpgaRefVm
     dispatch(step, pc, a, argc, (c & 0x80) != 0, r[0], r[1])
   end
 
+  # __send(名前, 引数...) (P7): R[a+1] の Symbol を名前にし、残りの引数 (とブロックの枠) を1つ下へずらして、受け手のクラスから
+  # 普通の呼び出しと同じく引く。ずらす書き込みはトレースに出さない。名前が Symbol でない、引数が無い、splat (15) はエラー
+  def dsend(step, pc, a, argc, blk)
+    name = reg(a + 1)
+    fault! if argc.zero? || argc == 15 || name[0] != FpgaIsa::TAG_SYM
+    (1..(argc - 1 + (blk ? 1 : 0))).each { |i| @regs[@bp + a + i] = @regs[@bp + a + i + 1] }
+    @stats[:dsend] += 1
+    r = lookup(class_of(reg(a)), name[1])
+    core_error!(FpgaIsa::CERR_NOMETHOD, name, reg(a)) unless r
+    dispatch(step, pc, a, argc - 1, blk, r[0], r[1])
+  end
+
   # 見つかった飛び先へ: メソッド (フレームを作る)、primitive、インスタンス変数の読み書き (attr_*)
   def dispatch(step, pc, a, argc, blk, t, found)
     @stats[:found] += 1
@@ -1204,6 +1216,7 @@ class FpgaRefVm
     return io_prim(step, pc, name, a) if name == "IOREAD" || name == "IOWRITE"
     return task_prim(step, pc, name, a) if TASK_PRIMS.include?(name)
     return :halt if name == "HALT" # __halt: 止まる (main が terminate された後、ほかのタスクが全部終わった時)
+    return dsend(step, pc, a, argc, blk) if name == "DSEND"
     return float_prim(step, pc, name, a) if FLOAT_PRIMS.include?(name)
     if name == "RAISE"
       @exc = reg(a + 1)
@@ -1211,6 +1224,11 @@ class FpgaRefVm
     end
     x = reg(a)
     case name
+    when "SYMAT"
+      # シンボル表 (TABLE の c から、メソッド表の前まで) の x 番目
+      fault! unless int?(x)
+      set(step, a, x[1] < @tbase - (@symtab || 0) ? [FpgaIsa::TAG_SYM, x[1]] : NIL)
+      return pc + 1
     when "ISA", "KINDOF"
       # (ISA_BIT | 受け手のクラス, 引数のクラス) があるか (親はたどらない)
       y = reg(a + 1)

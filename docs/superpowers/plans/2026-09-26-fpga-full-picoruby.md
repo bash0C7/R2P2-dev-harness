@@ -280,6 +280,18 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
   - **ヒープを 16384 語に。** SSD1306 の画面 (1024 バイト、1語 1バイト) が 2048 語のヒープに入らないため。GC を突く
     ファズは大きい添字で配列を伸ばす断片で補う
 - **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
+- **P5e の設計。** PicoRuby の picoruby-psg (C の ports/common/psg.c と src/mruby/psg.c)、midibase・midibase-mml・uart-midi (Ruby)。
+  - **PSG の音は FPGA の外 (DAC / PWM の先) とみなし、回路はパケットの列 (ring buffer) だけを持つ。** mrb_dev に 256 枠の列
+    (C と同じく 255 まで入る)。番地 0x1A0.. に遅延 (ms)、パケット (op / reg / val / arg / aux) を書いて積み、空きの数と
+    空か (`buffer_empty?`) を読み、flush と deinit (列を捨てて止める) を書く。取り出しは C の psg_process_packets と同じく
+    仮想の時計の 1ms ごと (g_tick_ms を進め、先頭の遅延が来たら引いて取り出す、空になったら 0)。取り出したパケットは
+    トレースに `P <step> <パケット>` を出し (参照と RTL で同じ)、音の組み立て (レジスタ → 音程・音量) はトレースを読む
+    Ruby のデコーダー (表示器と同じ作り) がする。エミュレーターは音の出来事を時刻つきで出す
+  - **gem。** fpga/gems/psg.rb に C の部分 (`PSG.note_to_period` `set_tuning`、Driver の `send_reg` `voice_write` `mute`
+    `set_pan` `set_timbre` `set_legato` `set_lfo` `buffer_empty?` `buffer_flush` `deinit` `select_pwm` `select_mcp4922` ...) を
+    Ruby で書き、PicoRuby の mrblib (driver.rb、synth.rb、sound.rb、midi_controller.rb) と midibase 系の mrblib はそのまま使う
+  - **突き合わせ。** 参照と RTL はトレース (P 行を含む)。MML の example は host の picoruby の PSG (posix port) の出力と
+    比べられるなら比べる
 ### P6 Task
 
 - `Task.new { }`、`Task.pass`、`sleep` で切り替わる協調マルチタスク。タスクごとにレジスタ窓とコールスタックを持つ
@@ -303,7 +315,8 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
     (R[a+1..] = R[a+2..]、ブロックとキーワードの Hash の枠も)、引数の数を1つ減らして普通の呼び出しと同じく受け手のクラスから引く。
     ずらす書き込みはトレースに出さない。名前が Symbol でなければ TypeError (コアのエラー)、引数 0 個はエラー
   - **`send` / `__send__` / `public_send` はプレリュード** (`def send(name, *args, &blk)`)。引数の数で `__send(name, a0, ...)` に
-    分ける (配列の splat で呼ぶと argc 15 になり、primitive の受け手の検査が通らないため)。キーワード引数は最後の Hash として渡す
+    分ける (配列の splat で呼ぶと argc 15 になり、primitive の受け手の検査が通らないため)。キーワード引数は最後の Hash として渡す。
+    String の名前は `Integer#__sym_at` (シンボル表の i 番目) でプログラムのシンボルから探す (`String#to_sym` も)
   - **`&:sym`。** mruby の OP_SENDB は、ブロックの枠が nil でも Proc でもなければ `to_proc` を送る。回路でこれをすると呼び出しの
     途中にもう1つ呼び出しが要るので、変換器が「ブロックの枠を LOADSYM で埋めた直後の SENDB」(`&:sym` の形) に
     `SEND 枠 :to_proc` を足す。`Symbol#to_proc` はプレリュード (`proc { |o, *a| o.__send(sym, *a) }` を引数の数で分けたもの)。
@@ -331,6 +344,7 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
 | 2026-09-26 | P5c IRQ・PWM・ADC・watchdog・io/console | 63 | 38 (example は 9 / 32) | 38 | peripherals.rb (刺激)、irq_loopback.rb、watchdog.rb を追加。example の irq_gpio_picoruby など IRQ.start を使う3本は、参照と RTL は一致するが NotImplementedError で終わる (P6 で Task ができてから)。止める理由は i2c / spi / psg / Task |
 | 2026-09-26 | P5d I2C・SPI・表示器・Time・hcsr04・rotary_encoder | 65 | 47 (example は 17 / 32) | 47 | buses.rb (刺激)、display.rb を追加。ヒープ 65536 語 (parameter)。表示器はトレースのデコーダーでエミュレーターが描く。止める理由は Task (P6)、psg (P5e)、picotest、pio、pitchdetector |
 | 2026-09-26 | P6 Task | 66 | 50 (example は 19 / 32) | 50 | tasks.rb を追加 (host の picoruby とも比べる)。区画 8 つ、スケジューラーは task.c を写した Ruby。仮想の時計を 16 命令で 1µs に。mruby-task の examples 9 本は参照と RTL が一致、host とは表し方の違いだけ。止める理由は psg (P5e)、picotest、pio、pitchdetector |
+| 2026-09-27 | P7 動的な send と &:sym | 67 | 51 (example は 19 / 32) | 51 | sends.rb を追加 (CRuby と host の picoruby とも比べる)。mruby-task の statistics.rb も通った (host とは tick の単位だけ)。止める理由は psg / midibase-mml / uart-midi (P5e)、picotest、pio、pitchdetector |
 
 ## 見つけたこと
 
@@ -477,3 +491,6 @@ PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrb
   区画でも読んでいた (リセットしない配列なので X、Verilator は 0)。sv_valid で囲んだ
 - P6: 区画を 8 にしてレジスタファイルが 1024 語になり、リセットの S_INIT (1語 1 cycle) と GC の根 (全区画のレジスタと
   スタック) が長くなった。peridot_air_top_tb の待ちと mrb_core_tb の cycle の上限を伸ばした
+- P7: host の picoruby は `send("hello")` (String の名前) も受けた。最初は TypeError にしていたので、シンボル表を引く
+  `Integer#__sym_at` を足して String#to_sym をプレリュードで書いた。回路は新しいシンボルを作れないので無い名前は ArgumentError
+- P7: Icarus だけ tb が止まらなかった (always_comb の式の条件に関数の呼び出し `val_of(ra) < ...` を置いた。P2 で見つけた Icarus の癖と同じ)。wire に出した

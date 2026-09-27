@@ -1608,6 +1608,36 @@ module mrb_core_tb;
     expect_reg(6 + 2, vint(6));
     if (int'(dut.core.pc) != 4) $fatal(1, "%s: halted at %0d", name, dut.core.pc);
 
+    // ---- 動的な呼び出し (P7): __send(:add, 3, 4) は名前を外し、引数をずらして add(3, 4) を呼ぶ。__sym_at はシンボル表の i 番目
+    begin_test("dynamic send");
+    method_entry(CLS_OBJECT, 50, tgt_prim(PR_DSEND));
+    method_entry(CLS_OBJECT, 51, 16'd12);
+    method_entry(CLS_INT, 52, tgt_prim(PR_SYMAT));
+    method_entry(CLS_NIL, SUPER_SYM, CLS_OBJECT);
+    method_entry(CLS_INT, SUPER_SYM, CLS_OBJECT);
+    prog.push_back(w_table());                               // 0
+    prog.push_back(w(OP_LOADSYM, 2, 51));                    // 1: R2 = :add
+    prog.push_back(w(OP_LOADI_3, 3));                        // 2
+    prog.push_back(w(OP_LOADI_4, 4));                        // 3
+    prog.push_back(w(OP_SSEND, 1, 50, 3));                   // 4: R1 = __send(:add, 3, 4) = 7
+    prog.push_back(w(OP_LOADI_2, 5));                        // 5
+    prog.push_back(w(OP_SEND0, 5, 52));                      // 6: R5 = 2.__sym_at = シンボル 2
+    prog.push_back(w(OP_LOADI32, 6, 16'h0001, 16'h0000));    // 7
+    prog.push_back(w(OP_SEND0, 6, 52));                      // 8: R6 = 65536.__sym_at = nil (表の外)
+    prog.push_back(w(OP_LOADI_5, 8));                        // 9
+    prog.push_back(w(OP_SSEND, 7, 50, 1));                   // 10: __send(5) は名前が Symbol でないのでエラー
+    prog.push_back(w(OP_NOP));                               // 11
+    prog.push_back(w(OP_ENTER, 2, 5));                       // 12: add(x, y)
+    prog.push_back(w(OP_MOVE, 3, 1));                        // 13
+    prog.push_back(w(OP_MOVE, 4, 2));                        // 14
+    prog.push_back(w(OP_ADD, 3));                            // 15
+    prog.push_back(w(OP_RETURN, 3));                         // 16
+    run();
+    expect_error(10);
+    expect_reg(1, vint(7));
+    expect_reg(5, {TAG_SYM, 32'd2});
+    expect_reg(6, VNIL);
+
     $display("%0d cases ok", npass);
     $display("PASS mrb_core_tb");
     $finish;

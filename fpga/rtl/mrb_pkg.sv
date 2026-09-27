@@ -169,7 +169,9 @@ package mrb_pkg;
   localparam logic [13:0] PR_TON      = 14'd84; // Object#__task_on (1 arg)
   localparam logic [13:0] PR_HWSLEEPUS = 14'd85; // Object#__hw_sleep_us (1 arg)
   localparam logic [13:0] PR_HALT     = 14'd86; // Object#__halt (0 arg)
-  localparam int NPRIMS = 87;
+  localparam logic [13:0] PR_DSEND    = 14'd87; // Object#__send (any)
+  localparam logic [13:0] PR_SYMAT    = 14'd88; // Integer#__sym_at (0 arg)
+  localparam int NPRIMS = 89;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
   localparam logic [2:0] CERR_ZERODIV     = 3'd1;
   localparam logic [2:0] CERR_NOMETHOD    = 3'd2;
@@ -268,6 +270,8 @@ package mrb_pkg;
       PR_TON     : return 8'h01;
       PR_HWSLEEPUS: return 8'h01;
       PR_HALT    : return 8'h00;
+      PR_DSEND   : return 8'hff;
+      PR_SYMAT   : return 8'h00;
       default: return 8'h00;
     endcase
   endfunction
