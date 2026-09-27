@@ -86,9 +86,16 @@ class Object
     p
   end
 
-  # C: src/proc.c mrb_method_proc_new (D19)
+  # メソッドの本体の Proc: 入れ物は cref (mrb_proc_new)。クラスを与えられた scope なら、そのクラスと MRB_PROC_GIVEN
+  # C: src/proc.c mrb_method_proc_new
   def __fpga_method_proc_new(ci, irep)
-    __fpga_ci_proc_new(ci, irep, 18432) # MRB_PROC_SCOPE | MRB_PROC_CREF
+    p = __fpga_ci_proc_new(ci, irep, 18432) # MRB_PROC_SCOPE | MRB_PROC_CREF
+    given = __fpga_definee_class(ci)
+    if given > 0 && (given == __fpga_ld32(p + 20)) == false # L:P_TCLASS
+      __fpga_st32(p + 20, given) # L:P_TCLASS
+      __fpga_st32(p + 24, __fpga_or(__fpga_ld32(p + 24), 32768)) # L:P_FLAGS MRB_PROC_GIVEN
+    end
+    p
   end
 
   # ci に env が無ければ作って ci->u.env に置き、Proc に付ける

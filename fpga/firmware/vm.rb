@@ -99,11 +99,11 @@ class Object
   end
 
   # OP_DEF: R[a] (クラス) に Syms[b] を R[a+1] (Proc) で定義し、R[a] = :名前。可視性はフレームの既定 (MRB_METHOD_VDEFAULT_FL)。
-  # method_added の hook は S5
   # C: src/vm.c OP_DEF
   def __fpga_op_DEF(a, b, c)
     sym = __fpga_irep_sym(__fpga_irep, b)
     __fpga_define(__fpga_addr(__fpga_reg(a)), sym, __fpga_addr(__fpga_reg(a + 1)), __fpga_frame_vis)
+    __fpga_method_added(__fpga_addr(__fpga_reg(a)), sym)
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end
 

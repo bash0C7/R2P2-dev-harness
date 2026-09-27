@@ -352,10 +352,7 @@ end
   def __fpga_op_TDEF(a, b, c)
     ir = __fpga_irep
     sym = __fpga_irep_sym(ir, b)
-    target = __fpga_check_target_class
-    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), target, 18688) # L:I_REPS L:PROC_METHOD_FLAGS (vm_define_method)
-    __fpga_st32(pr + 12, __fpga_proc) # L:P_UPPER
-    __fpga_define(target, sym, pr, __fpga_frame_vis)
+    __fpga_vm_define_method(__fpga_check_target_class, ir, b, c, __fpga_frame_vis) # MRB_METHOD_VDEFAULT_FL
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end
 
