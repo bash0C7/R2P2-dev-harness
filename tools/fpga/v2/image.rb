@@ -49,7 +49,8 @@ module FpgaV2
       __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
       __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc __fpga_frame_vis __fpga_set_caller_vis
-      __fpga_class_of __fpga_sendv
+      __fpga_class_of __fpga_sendv __fpga_hp __fpga_hlim __fpga_set_heap __fpga_stack_top __fpga_frame_proc
+      __fpga_arena
     ].freeze
 
     # 回路が名前で送るシンボル (演算の落ち先と method_missing。mruby の MRB_OPSYM と同じく presym)
@@ -57,9 +58,14 @@ module FpgaV2
 
     attr_reader :mem, :syms, :classes, :top
 
-    def initialize(firmware:, programs: [])
+    MARK_STACK = 256 * 1024 # GC の mark の明示のスタック (語の数)
+
+    # heap_size はヒープのバイト数 (nil は記憶の残り全部)。小さくすると GC が何度も走る (テスト)
+    def initialize(firmware:, programs: [], heap_size: nil)
       @fw_bin = firmware
       @programs = programs
+      @heap_size = heap_size
+      @objs = [] # 像の中のオブジェクト (GC の根)
       @mem = "\0".b * MEM_SIZE
       @brk = IMG_WORDS * WORD
       @syms = {} # 名前 → 番号
@@ -113,6 +119,7 @@ module FpgaV2
     # --- オブジェクト
     def obj(klass, tt)
       a = alloc(SLOT)
+      @objs << a
       w32(a + H_CLASS, klass || 0)
       w32(a + H_FLAGS, TT.fetch(tt))
       a
@@ -413,8 +420,14 @@ end
       end
       stack = alloc(STACK_VALUES * VALUE, 16)
       ci = alloc(CI_FRAMES * CI_SIZE, 16)
+      mark = alloc(MARK_STACK * WORD, 16)
+      roots = alloc([@objs.size, 1].max * WORD, 4)
+      @objs.each_with_index { |o, k| w32(roots + k * WORD, o) }
       heap = (@brk + 63) & -64
-      { heap_start: heap, heap_end: MEM_SIZE, sym_table: @sym_table, sym_capa: SYM_CAPA, sym_count: @syms.size,
+      heap_end = @heap_size ? [heap + @heap_size, MEM_SIZE].min & -8 : MEM_SIZE
+      # ヒープは最初は1つの塊 (回路の hp..hlim)。ブロックの見出しは確保の時に回路が書く
+      { free_list: 0, gc_color: 0, roots: roots, nroots: @objs.size, mark_stack: mark, mark_stack_end: mark + MARK_STACK * WORD,
+        heap_start: heap, heap_end: heap_end, sym_table: @sym_table, sym_capa: SYM_CAPA, sym_count: @syms.size,
         core_classes: core, main_obj: main, fw_entry: boot, programs: progs, nprograms: @programs.size,
         stack: stack, stack_end: stack + STACK_VALUES * VALUE, prims: prims, ci: ci }.each { |k, v| w32(IMG.fetch(k) * WORD, v) }
       w32(IMG[:sym_count] * WORD, @syms.size)

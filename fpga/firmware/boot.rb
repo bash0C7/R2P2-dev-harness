@@ -43,7 +43,7 @@ class Object
     p = catch + 13 * clen
     plen = __u16(p)
     p += 2
-    pool = __fpga_alloc((plen > 0 ? plen : 1) * 16) # L:VALUE
+    pool = __alloc_perm((plen > 0 ? plen : 1) * 16) # L:VALUE (読み込んだ irep は解放しない)
     k = 0
     while k < plen
       tt = __fpga_ld8(p)
@@ -72,7 +72,7 @@ class Object
     end
     slen = __u16(p)
     p += 2
-    syms = __fpga_alloc((slen > 0 ? slen : 1) * 4)
+    syms = __alloc_perm((slen > 0 ? slen : 1) * 4)
     k = 0
     while k < slen
       len = __u16(p)
@@ -85,7 +85,7 @@ class Object
       end
       k += 1
     end
-    ir = __fpga_alloc(44) # L:IREP
+    ir = __alloc_perm(44) # L:IREP
     __fpga_st32(ir + 0, nlocals * 65536 + nregs) # L:I_NLOCALS (u16 nlocals、u16 nregs)
     __fpga_st32(ir + 4, ilen) # L:I_ILEN
     __fpga_st32(ir + 8, iseq) # L:I_ISEQ
@@ -93,7 +93,7 @@ class Object
     __fpga_st32(ir + 16, plen) # L:I_PLEN
     __fpga_st32(ir + 20, syms) # L:I_SYMS
     __fpga_st32(ir + 24, slen) # L:I_SLEN
-    reps = __fpga_alloc((rlen > 0 ? rlen : 1) * 4)
+    reps = __alloc_perm((rlen > 0 ? rlen : 1) * 4)
     __fpga_st32(ir + 28, reps) # L:I_REPS
     __fpga_st32(ir + 32, rlen) # L:I_RLEN
     __fpga_st32(ir + 36, catch) # L:I_CATCH
@@ -135,14 +135,14 @@ class Object
     end
   end
 
-# String を intern (名前のバイトを写して持つ。mruby の mrb_intern、static でない方)
-def __intern_str(s)
-  a = __fpga_addr(s)
-  len = __fpga_ld32(a + 8) # L:S_LEN
-  buf = __fpga_alloc(len + 1)
-  __fpga_copy(buf, __fpga_ld32(a + 16), len) # L:S_PTR
-  __intern(buf, len)
-end
+  # String を intern (名前のバイトを写して持つ。mruby の mrb_intern、static でない方)
+  def __intern_str(s)
+    a = __fpga_addr(s)
+    len = __fpga_ld32(a + 8) # L:S_LEN
+    buf = __alloc_perm(len + 1) # 名前は解放しない
+    __fpga_copy(buf, __fpga_ld32(a + 16), len) # L:S_PTR
+    __intern(buf, len)
+  end
 
   def __memeq(a, b, n)
     k = 0
