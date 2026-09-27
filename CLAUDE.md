@@ -13,6 +13,7 @@ FPGA は当面、実機を使わずシミュレーター (`rake fpga:test`、ボ
 
 ## 作業の規律
 
+- **置き換えたら古い版をソースに残さない。** 新旧を並べる、環境変数で切り替える、は作らない。戻すのは git (置き換えを1 commit にして `git revert`)
 - **mruby ソースコードと Ruby コードを呼び分ける。** mruby ソースコードは mruby の文法の `.rb` (mrbc で mruby bytecode にし、PicoRuby の VM か FPGA のコアで走る。host の picoruby で走る変換器も)。
   Ruby コードは CRuby で走るもの (rake、`tools/` の道具、テスト)。文法がほぼ同じでも「Ruby で書く」とまとめて言わない
 - **完了の線引きは実機。** `rake test` (ホスト) が green でも、実機で走らせるまで「動いた」と書かない
