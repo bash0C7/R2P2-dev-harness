@@ -282,3 +282,5 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
   GEMS の3つ目 (数えない require) で扱う
 - P9: Ruby の `String#sub` の置き換えの文字列の `\0` は一致した全体になる (rite.rb の注釈の `"END\0"` を壊した)。
   ファイルを書き換える道具は `sub(old) { new }` の形を使う
+- P9 の仕上げ: gap の見込み (変換 70) に対して 69。corpus の picotest.rb の `nil.no_such_method` が gap の「未定義のメソッド」に当たった。
+  corpus でわざと未定義にする名前は `__` で始める決まり (errors.rb の `__no_such_method`、gap は `__` を数えない) に合わせた

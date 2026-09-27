@@ -12488,5 +12488,5 @@ irep
 irep
 44 000 ENTER		0:0:0:0:0:0:0:0 (0x0)
 45 004 LOADNIL	R2	(nil)
-45 006 SEND0		R2	:no_such_method
+45 006 SEND0		R2	:__no_such_method
 45 009 RETURN	R2
