@@ -134,6 +134,17 @@ class Array
     self
   end
 
+  # C: src/array.c mrb_ary_unshift_m
+  def unshift(*items)
+    __fpga_check_frozen(__fpga_addr(self)) # mrb_ary_unshift_values の ary_modify
+    k = __fpga_alen(items)
+    while k > 0
+      k -= 1
+      __fpga_ary_unshift1(self, __fpga_aref(items, k))
+    end
+    self
+  end
+
   # C: src/array.c mrb_ary_replace_m
   def replace(other)
     __fpga_ensure_array_type(other) # mrb_get_args の A

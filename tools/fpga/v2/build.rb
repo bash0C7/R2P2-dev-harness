@@ -30,7 +30,14 @@ module FpgaV2
 
     # mruby の mrblib (mruby ソースコード、そのまま)。mruby の tasks/mrblib.rake と同じく名前の順に 1 つの .mrb に
     MRBLIB_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems", "picoruby-mruby", "lib", "mruby", "mrblib")
-    def mrblib_sources = Dir[File.join(MRBLIB_DIR, "*.rb")].sort
+    # mruby の core の gem の mrblib (mrb_init_mrbgems の順、host の build の gem_init.c と同じ)。gem の C は firmware に写す。
+    # IO と Dir と Task と Method の gem は、それぞれの C (と板のデバイス) を写す時に足す (計画 S5-7、S7)
+    MRBLIB_GEMS_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems", "picoruby-mruby", "lib", "mruby", "mrbgems")
+    MRBLIB_GEMS = %w[mruby-proc-ext mruby-toplevel-ext mruby-object-ext mruby-numeric-ext mruby-string-ext mruby-array-ext
+                     mruby-hash-ext mruby-sprintf].freeze
+    def mrblib_sources
+      Dir[File.join(MRBLIB_DIR, "*.rb")].sort + MRBLIB_GEMS.flat_map { |g| Dir[File.join(MRBLIB_GEMS_DIR, g, "mrblib", "*.rb")].sort }
+    end
     def mrblib = compile(mrblib_sources)
 
     def image(programs)
