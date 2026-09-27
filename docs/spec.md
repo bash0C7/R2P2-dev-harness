@@ -573,7 +573,9 @@ mruby のバイトコード (`.mrb`、RITE0400) を、ソフト VM ではなく�
 **この節の作りは、目標 (mruby の意味で `.mrb` を実行する、PicoRuby のプログラムが動く、PERIDOT-Air に載る) から大きく外れている。**
 乖離は [fpga-divergence.md](fpga-divergence.md) にまとめた (正しさの基準、命令、実行時のモデル、gem とプレリュード、資源)。
 作りはその表を正本に計画し直した: [v2 の計画](superpowers/plans/2026-09-27-fpga-v2.md)、[v2 の設計](superpowers/specs/2026-09-27-fpga-v2-core-design.md)
-(速い道は回路、残りは mruby ソースコードの firmware、mrblib はそのまま、100 MHz をねらう)。以下は v1 の記述で、v1 のコードを消す時に消す。
+(速い道は回路、残りは mruby ソースコードの firmware、mrblib はそのまま、100 MHz をねらう)。
+**完成形** (mruby ネイティブのマイコンボード: R2P2 と同じ使い方、代表の動作の Lチカ、完成の条件 M1〜M5) は [v2 の計画の §1〜§5](superpowers/plans/2026-09-27-fpga-v2.md)、
+mruby との違いの一覧は [乖離表](fpga-v2-deviations.md)。以下は v1 の記述で、v1 のコードを消す時に消す。
 
 ```
 fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $readmemh)

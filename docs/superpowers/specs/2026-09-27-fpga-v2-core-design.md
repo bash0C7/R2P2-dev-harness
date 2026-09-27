@@ -3,8 +3,13 @@
 計画: [plans/2026-09-27-fpga-v2.md](../plans/2026-09-27-fpga-v2.md)。乖離の表: [fpga-divergence.md](../../fpga-divergence.md)。
 mruby の出どころは `vendor/picoruby/mrbgems/picoruby-mruby/lib/mruby/` (以下 `mruby/`)。
 
-**目標 (3つを同時に):** mruby の意味で `.mrb` を実行する / PicoRuby (R2P2) のプログラムが host の PicoRuby と同じ出力で動く /
+**何を作るか:** FPGA (PERIDOT-Air) の上に、mruby のバイトコード (`.mrb`) を機械語として直接実行する CPU を作り、
+それを核にした mruby ネイティブのマイコンボードとして実機で動かす。使い方は R2P2 と同じ (電源投入 → shell、app の自動実行、ピンを mruby ソースコードで)。
+完成形 (板の振る舞い、代表の動作の Lチカ、中身、意味の契約、完成の条件 M1〜M5) は [計画の §1〜§5](../plans/2026-09-27-fpga-v2.md) が正本。この文書はその中身の作り。
+
+**制約:** mruby の意味で `.mrb` を実行する / PicoRuby (R2P2) のプログラムが host の PicoRuby と同じ出力で動く /
 PERIDOT-Air (EP4CE6、6,272 LE、M9K 30、乗算器 15、SDRAM 32 MB) に載り、100 MHz をねらう (50 MHz は最初の足場)。
+mruby と違えるのは資源と回路の都合だけで、全部 [乖離表](../../fpga-v2-deviations.md) に載せる。
 
 ---
 
@@ -48,6 +53,10 @@ firmware は特権の primitive (記憶の生の読み書き、オブジェク�
 - **起動の像を作る道具は `.mrb` を変えない。** 並べて見出し (各 `.mrb` の番地、presym の表の番地、ROM のメソッド表の番地) を付けるだけ。
   presym と ROM のメソッド表は firmware のソースから作る (mruby の presym の scan と同じ役)
 - 板の上では、起動時に EPCQ (設定用の flash) から SDRAM へ像を写す (V5)。シミュレーションでは tb が SDRAM のモデルに読み込む
+- **機械の状態は mruby の struct の形でメモリ (SDRAM) に置く:** `mrb_state` (exc、globals、object_class、top_self、シンボル表、`mrb_gc`)、
+  `mrb_context`、`mrb_callinfo` (`include/mruby.h`)。layout.rb の field ごとに `# C: struct <名>.<field>` を書く。
+  M9K のレジスタの窓とコールスタックの先頭は、そのメモリの cache (写し書き)。参照 v2 も同じで、CRuby 側に持てるのは回路のレジスタと cache に当たるものだけ。
+  firmware (gc.c の `mark_context` の写しなど) がメモリから状態を読めるようにするため (86921ce はこれが無く、保守的な根にして壊れた)
 
 ## 4. 起動 (mruby の mrb_open と mrb_load_irep に当たる)
 
@@ -78,12 +87,17 @@ firmware は特権の primitive (記憶の生の読み書き、オブジェク�
 
 | 項目 | 決めたこと | mruby |
 |---|---|---|
-| オブジェクト | 固定長の枠 (RVALUE に当たる) と可変長の領域 (文字列・配列の中身) | gc.c の heap page、mrb_malloc |
-| 見出し | {クラス, tt, gc の色, frozen, flags} (MRB_OBJECT_HEADER と同じ中身) | object.h:10 |
-| 確保 | 枠は free list から回路で1つ取る (速い道)。空なら罠で firmware。可変長は firmware | mrb_obj_alloc |
-| GC | **動かない mark & sweep** (firmware)。object_id はオブジェクトの番地から作れる (mruby と同じく動かない) | gc.c (incremental。v2 は最初 stop-the-world、incremental は後で) |
-| 根 | VM のスタック (窓を含む)、コールスタックの Proc と env、グローバル変数、定数、シンボル表、タスク | gc.c の root_scan_phase |
+| オブジェクト | 固定長の枠 (RVALUE) を heap page に並べる。page の大きさは組み込みの profile の 128 (`MRB_CONSTRAINED_BASELINE_PROFILE`、`picoruby-mruby/mrbgem.rake`) | gc.c の `mrb_heap_page`、`add_heap` |
+| 可変長の領域 | 文字列・配列の中身、heap page そのもの。estalloc (TLSF) を firmware に写す | `mrb_malloc` / `mrb_realloc` (`malloc_increase` の勘定も)、`picoruby-machine/lib/estalloc/estalloc.c` |
+| 見出し | {クラス, tt, gc の色, frozen, flags} (MRB_OBJECT_HEADER と同じ中身) | object.h |
+| 確保 | 回路の速い道: freelist の先頭を外す、0 で埋める、arena に積む、live と負債 (`gc_debt`) を数える。負債が閾値を超えた時、freelist が空の時、可変長が要る時 (ARRAY 系の buffer を含む) は罠で firmware | `mrb_obj_alloc_core` (負債の勘定まで写す) |
+| arena | `mrb_gc.arena` はメモリにある。save は `mrb_vm_exec` の入口、restore は vm.c の命令ごと (棚卸しの arena の列、`cc -E` した vm.c から生成)。溢れたら広げる | vm.c、`gc_arena_keep` |
+| GC | gc.c を写す: `root_scan_phase`、`mark_context` / `mark_context_stack` (使っていないスタックを nil で消す)、`gc_mark_children`、gray list、sweep と `obj_free`。object_id は番地から (動かない) | gc.c |
+| GC の乖離 (乖離表の行) | 1 step で 1 周を終える (V2 の立ち上げ。V3e で incremental を写して消す)、minor GC 無し (host は generational が既定)、write barrier は呼ぶが空、step_limit を無視、scheduler の auto_step | gc.c の `incremental_gc`、`mrb_gc_init` |
+| collecting の間 | 確保してはいけない。参照 v2 は例外にする | gc.c の `collecting` の検査 |
 | 尽きた時 | NoMemoryError (mruby と同じ) | |
+
+- 86921ce の自前の GC (可変長のブロックの独自ヒープ、保守的なスタックの根、輪の arena) は、この表の何とも合わず、2 回目の sweep で止まった。revert する (計画 S3)
 
 ## 7. 例外・ブロック・タスク
 
@@ -120,6 +134,7 @@ firmware は特権の primitive (記憶の生の読み書き、オブジェク�
 | **合計** | **22 / 30** | **4,550 / 6,272** | | |
 
 数は見込み。各段で `rake fpga:synth` の実測に置き換える。
+確保の速い道 (freelist、0 で埋める、arena、負債の勘定) の LE とサイクルは、計画 S6 で ref の形が決まった時に見積もってこの表に足す。
 
 ## 10. 100 MHz の段の切り方
 
@@ -142,7 +157,7 @@ firmware は特権の primitive (記憶の生の読み書き、オブジェク�
 |---|---|
 | tag の全部の割り当て、ヒープの枠の大きさ | V2 (参照を書く時) |
 | 罠の一覧と、回路の primitive の一覧 (どの C のメソッドを回路にするか。速さを測って決める) | V2 で firmware を書きながら、V3 で測って |
-| GC を incremental にするか | V3e で止まる時間を測って |
+| GC の incremental を写す時期 (完成形は incremental。止まる GC は確定した短い遅延と両立しない) | V3e (V2 は 1 step で 1 周の乖離) |
 | PIO 相当の回路 | V4 (予算の余り) |
 | 板の上の起動 (EPCQ → SDRAM) | V5 |
 
