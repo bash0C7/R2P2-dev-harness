@@ -129,17 +129,42 @@
 target の VM を spawn する。`Dir`、`File.open`、`posix-io` を使う)。板の上で走るのは `picotest/test.rb` と `double.rb` と、
 テストのファイル (my_test.rb、my_2_test.rb) の方。
 
-| 変える意味 | 直す test と表 |
-|---|---|
-| PicoRuby の `picotest/test.rb` と `double.rb` をそのまま使う。足りない C の所 (metaprog など) があれば、その所だけ `fpga/gems/` に mruby ソースコードで書く | `FpgaCorpus::GEMS` に picotest、gap_test |
-| テストのファイルは Test の子クラスを定義するだけ。gap で走らせる時は、定義された子クラスを全部走らせる末尾 (Runner が target に渡すのと同じ呼び方) を付ける | gap.rb、gap_test |
-| `runner.rb` は gap で「host 側の係 (CRuby で走る)」として範囲の外にする。理由を gap の表に出す | gap.rb の out_of_scope、gap_test |
-| `File.dirname` / `File.expand_path` は作らない (runner の外で使う所が無い) | なし |
-| `assert_raise` は例外 (P4) の上で動く。`instance_variable_get` などの metaprog が要れば P7 の send の上に足す | ref_vm_test、rom_test の許可表 (足す命令があれば) |
+板の上で走るのは、Runner が作るスクリプト (`require 'picotest'`、テストのファイル、`my_test.test_x` の呼び出しを並べたもの、
+最後に `puts "----"` と `JSON.generate(my_test.result)`)。picotest・json・env を GEMS に足して、この形のスクリプトを gap にかけると、
+止める理由は次のとおり (scratchpad の probe で実測)。
 
-- [ ] oracle: host の picoruby で my_test.rb、my_2_test.rb を picotest の Runner から走らせた出力と、コアのコンソールを比べる
-- [ ] コーパス `fpga/corpus/picotest.rb` (成功・失敗・例外の assert を全部)
-- [ ] 確かめ方: gap で 3 本が match か範囲外 (理由あり)、fuzz seed 1–4、check、tb
+| 止める理由 | 出どころ | 変える意味 | 直す test と表 |
+|---|---|---|---|
+| GEMS に無い | picotest、json、env | picotest (`picotest.rb`、`picotest/test.rb`、`picotest/double.rb`)、json (`json.rb`) は PicoRuby の mrblib をそのまま。env は mrblib の `env.rb` と、C の `_hash` だけ `fpga/gems/env.rb` (板に環境変数は無いので空の Hash) | corpus.rb の GEMS、gap_test |
+| `require_relative` | picotest.rb の CRuby 側の枝 | `require` と同じく compile の時に解く (FPGA 版の gem が無いものは止める理由) | gap.rb、rom.rb の require の扱い、gap_test |
+| `byteslice`、`strip!` | json.rb | プレリュードの String に足す (CRuby と host の picoruby の両方と比べる) | corpus の strings.rb、ref_vm_test |
+| `methods` | double.rb の mruby/c の枝 | プレリュードの `Object#methods`: シンボル表を順に見て、受け手が応えるものを返す (`__sym_at`、`respond_to?`) | corpus の objects.rb、ref_vm_test |
+| `alias_method` | test.rb (`alias_method :mruby?, :picoruby?`)、double.rb の mruby/c の枝 | 引数がシンボルのリテラルなら変換器が `alias` と同じく静的に解く。そうでなければ実行時に NotImplementedError (メソッド表は ROM) | rom.rb、rom_test、gap.rb の ALIAS の扱い |
+| `caller` | test.rb の `report` (`caller(2, 1)`)、double.rb | 下の「caller の設計」 | isa、ref、RTL、rom、tb、fuzz |
+| `` ` `` | test.rb の `run_script` | 板にプロセスは無いので NotImplementedError (`fpga/gems/` の picotest の C の所) | gap_test |
+| `_alloc`、`define_method`、`define_method_any_instance_of`、`remove_singleton` | double.rb の C の所 (stub / mock) | メソッド表は ROM にあり、実行時にメソッドを足せない。この段では NotImplementedError にし、動的なメソッドの定義は別の段 (P9b) にする | gap_test |
+
+**caller の設計** (mruby の `mrb_f_caller` / backtrace.c と同じ意味):
+- 各フレームについて「そのフレームで今実行している命令の行」と「そのフレームのメソッド名」を `"<file>:<line>:in <method>"` にする。
+  一番外 (main) は `"<file>:<line>"`。`caller(start = 1, length = nil)`、`caller(0)` は caller を呼んだメソッドのフレームから
+- 行とファイル: corpus と gap は `mrbc -g` で compile し (命令の列は変わらない。DBG の section が付く)、rite.rb が DBG の section
+  (packed_map) を読む。変換器は `caller` が生きている時だけ、呼び出しの命令 (SEND 系) の ROM の pc ごとに {pc, 行, ファイルのシンボル,
+  メソッドのシンボル} の表を ROM のデータに置く (pc の順)。ファイル名はシンボルにする (Symbol#to_s で文字列に)
+- コア: 命令 `FRAMEPC` (`__frame_pc(k)`: k 番目のフレームの呼び出しの pc。無ければ nil) と `ROMW` (`Integer#__rom_word`: ROM の
+  データの語) を足す。プレリュードの `caller` が `__frame_pc` で pc を集め、表を二分探索して文字列にする
+- 表の場所 (先頭と本数) は、main の最初にプレリュードの定数へ入れる (変換器が置く)
+
+- [ ] oracle: Runner と同じ形のスクリプト (my_test.rb、my_2_test.rb) を host の picoruby と参照・コアで走らせ、コンソールを比べる。
+  違うのは host のファイル名 (一時ファイルの path) だけのはずで、同じ名前で走らせて全行一致を確かめる
+- [ ] コーパス `fpga/corpus/picotest.rb` (成功・失敗・例外・skip の assert を全部) と `fpga/corpus/caller.rb` (メソッド、ブロック、main)
+- [ ] gap: `Picotest::Runner` を使うもの (runner.rb) は「host 側の係 (CRuby で走る)」として範囲の外。テストのファイルは、Runner と
+  同じ末尾を付けて走らせる
+- [ ] 確かめ方: gap で picotest の 3 本が match か範囲外 (理由あり)、fuzz seed 1–4 (FRAMEPC と ROMW の断片を足す)、check、tb
+
+## P9b 動的なメソッドの定義 (picotest の stub / mock)
+
+- `define_method`、特異メソッド、`remove_method` を RAM の上書きの表で扱う (メソッド表の引き方に RAM の表を先に見る段を足す)。
+  設計は P9 の後に、PicoRuby の picotest の double.c と mruby の `mrb_define_method_raw` を読んでから書く
 
 ## P10 pitchdetector
 
