@@ -69,6 +69,8 @@ module FpgaV2
     A_LEN  = 8
     A_CAPA = 12
     A_PTR  = 16
+    # C: src/array.c ARY_DEFAULT_LEN
+    ARY_DEFAULT_LEN = 4
     # RProc (proc.h): irep の番地か primitive の番号、上の Proc、env、target_class、flags
     # C: include/mruby/proc.h RProc (D15)
     P_BODY   = 8

@@ -307,10 +307,10 @@ module FpgaV2
       # ARRAY: R[a] = [R[a] .. R[a+b-1]]、ARRAY2: R[a] = [R[b] .. R[b+c-1]] (配列は回路が作る、vm.c の OP_ARRAY)
       when "ARRAY" then setreg(a, alloc_array((0...b).map { |k| reg(a + k) }))
       when "ARRAY2" then setreg(a, alloc_array((0...c).map { |k| reg(b + k) }))
-      # ARYCAT: R[a] = R[a] + splat(R[a+1])、ARYPUSH: R[a] に R[a+1..a+b] を足す。新しい配列を作る (R[a] はこの命令の作業の配列なので見える違いは無い)。
-      # splat は Array ならその中身、nil なら空 (Array でも nil でもないものの to_a は V2e)
-      when "ARYCAT" then setreg(a, alloc_array((reg(a)[0] == TAG_NIL ? [] : ary_values(reg(a)[1])) + splat(reg(a + 1)))) # R[a] が nil なら splat だけ (vm.c)
-      when "ARYPUSH" then setreg(a, alloc_array(ary_values(reg(a)[1]) + (1..b).map { |k| reg(a + k) }))
+      # ARYCAT (vm.c): R[a] が nil なら splat(R[a+1])、そうでなければ R[a] にその場で足す。ARYPUSH: R[a] にその場で R[a+1..a+b] を足す。
+      # 回路は Array 同士だけ。splat が to_a を送る時 (mrb_ary_splat) と R[a] が Array でない時 (mrb_ensure_array_type) は罠
+      when "ARYCAT" then arycat(i, a)
+      when "ARYPUSH" then arypush(i, a, b)
       when "GETIDX" then send_op(a, sym_id("[]"), 1, false)
       when "GETIDX0" then (setreg(a, reg(b)); setreg(a + 1, int(0)); send_op(a, sym_id("[]"), 1, false))
       when "SETIDX" then send_op(a, sym_id("[]="), 2, false)
@@ -328,8 +328,7 @@ module FpgaV2
 
     def pool(i)
       v = rv(r32(@f.irep + I_POOL) + i * VALUE)
-      raise Error, "LOADL of a string pool entry" if v[0] == TAG_UNDEF
-      v
+      v[0] == TAG_UNDEF ? NIL : v # 数でない pool (文字列) は nil (vm.c の OP_LOADL の default)
     end
 
     OPSYM = { "ADD" => "+", "SUB" => "-", "MUL" => "*", "DIV" => "/", "EQ" => "==", "LT" => "<", "LE" => "<=", "GT" => ">", "GE" => ">=" }.freeze
@@ -526,7 +525,8 @@ module FpgaV2
       m2 = (aspec >> 7) & 0x1F
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
-      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd).zero?
+      noblock = (aspec >> 23) & 1 # `&nil` (MRB_ASPEC_NOBLOCK): ブロックを渡されたら ArgumentError
+      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd | noblock).zero?
       argc = @f.argc
       if argc < m1 + m2 || (r.zero? && argc > m1 + o + m2)
         return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
@@ -542,8 +542,10 @@ module FpgaV2
       regs.concat(post)
       regs.each_with_index { |v, k| setreg(k + 1, v) }
       setreg(regs.size + 1, blk)
-      nregs = r16(@f.irep + I_NREGS)
-      ((regs.size + 2)...nregs).each { |k| setreg(k, NIL) }
+      # blk の後ろを nlocals まで nil (vm_op_enter の stack_clear)。ci->n は引数の枠の数 (len、15 で飽和)
+      nlocals = r16(@f.irep + I_NLOCALS)
+      ((regs.size + 2)...nlocals).each { |k| setreg(k, NIL) }
+      @f.argc = regs.size
       # 渡された省略可能の数だけ初期値の JMP の表を飛ばす (vm.c: pc += (argc - m1 - m2) * 3、全部なら o * 3)
       @pc_next += opt.size * 3
     end
@@ -713,10 +715,39 @@ module FpgaV2
       list.size
     end
 
-    def splat(v)
-      return [] if v[0] == TAG_NIL
-      return ary_values(v[1]) if v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:ARRAY]
-      raise Error, "splat of a non-Array (to_a) is V2e"
+    def array?(v) = v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:ARRAY]
+
+    def arycat(i, a)
+      x = reg(a)
+      v = reg(a + 1)
+      return trap_op(i) unless array?(v) && (x[0] == TAG_NIL || array?(x))
+
+      x[0] == TAG_NIL ? setreg(a, alloc_array(ary_values(v[1]))) : ary_append(x[1], ary_values(v[1])) # mrb_ary_splat は複製
+    end
+
+    def arypush(i, a, b)
+      x = reg(a)
+      return trap_op(i) unless array?(x)
+
+      ary_append(x[1], (1..b).map { |k| reg(a + k) })
+    end
+
+    # 配列の後ろに足す (array.c の mrb_ary_push / mrb_ary_concat)。容量は ary_expand_capa と同じ (4 から倍にする)
+    def ary_append(ary, values)
+      len = r32(ary + A_LEN)
+      need = len + values.size
+      capa = r32(ary + A_CAPA)
+      if need > capa
+        capa = [capa, 4].max
+        capa *= 2 while capa < need
+        buf = alloc(capa * VALUE)
+        @m[buf, len * VALUE] = @m.byteslice(r32(ary + A_PTR), len * VALUE)
+        w32(ary + A_PTR, buf)
+        w32(ary + A_CAPA, capa)
+      end
+      ptr = r32(ary + A_PTR)
+      values.each_with_index { |v, k| wv(ptr + (len + k) * VALUE, v) }
+      w32(ary + A_LEN, need)
     end
 
     def ary_values(ary)
