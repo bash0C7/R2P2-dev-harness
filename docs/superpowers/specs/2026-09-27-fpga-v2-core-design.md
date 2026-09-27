@@ -153,3 +153,16 @@ firmware は特権の primitive (記憶の生の読み書き、オブジェク�
 - **速さ:** 罠と firmware の多い道 (文字列の操作、ハッシュ、GC) は遅い。制御の用途 (LED、ボタン、UART、音) で足りるかを V3 で測り、
   足りない所だけ primitive にする (予算の余りから)
 - **SDRAM の待ち:** cache が外れると数十 cycle。命令の cache の大きさは測って決める
+
+## 14. V2a で決めたこと (参照 v2 の骨)
+
+- **記憶の配置** は `tools/fpga/v2/layout.rb` (値 16 バイト、見出し 8 バイト、枠 64 バイト、tt は mruby の `enum mrb_vtype` と同じ番号、
+  RClass・RString・RArray・RProc の欄、メソッド表、irep の構造体、起動の像の見出し)
+- **特権の primitive (`__fpga_*`)** は、回路が symbol だけで引く表 (起動の像が持つ) で実行する。クラスを引かない (mruby の C の関数の直接の呼び出しに当たる)。
+  メソッドの探索の外れの罠 (firmware) は、中で `__fpga_*` と命令だけを使う (自分がまた外れて罠に入らないため。firmware_test が確かめる)。
+  プログラムの `__fpga_` で始まる名前は使えない (予約)
+- **コアのクラス** (BasicObject Object Module Class Kernel と組み込みの型、それぞれのメタクラス) は起動の像の道具が作る (mruby の mrb_init_class と同じ形と親)。
+  firmware の `class X ... def ... end end` を道具が読み (CLASS / MODULE / EXEC / TDEF / SDEF / ALIAS だけを許す)、X の ROM のメソッド表にする。
+  実行時の定義 (プログラムと mrblib) は X の実行時のメソッド表に入り、ROM の表より先に引かれる (mruby の ROM の層と同じ)
+- **シンボル表** は開番地法 (FNV-1a 32bit、65536 行)。番号 = 行の位置。presym (firmware の名前と、コアのクラスの名前) は道具が入れ、
+  実行時の intern は firmware が同じハッシュ関数で入れる (両方が同じ表になることを firmware_test が確かめる)
