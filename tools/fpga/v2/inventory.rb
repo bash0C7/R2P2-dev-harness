@@ -30,13 +30,38 @@ module FpgaV2
       "top_self" => "#<main>" # 一番外の self (main) の特異メソッドの持ち主は main
     }.freeze
 
-    Entry = Struct.new(:kind, :owner, :name, :src, :gem, keyword_init: true) do
+    Entry = Struct.new(:kind, :owner, :name, :src, :gem, :aspec, keyword_init: true) do
       def key = [owner, %w[sing spriv].include?(kind) ? "sing" : "inst", name]
     end
 
     module_function
 
     def rel(path) = path.delete_prefix("#{ROOT}/")
+
+    # C の関数の引数の数 (MRB_MT_ENTRY と mrb_define_method の aspec、mruby.h の MRB_ARGS_*)。vm.c の check_argument_count が
+    # 呼ぶ前に調べる範囲: "min"、"min..max"、"min+" (上限無し)。キーワードを取るものは後ろに k。読めなければ ?
+    def aspec_of(flags)
+      req = opt = post = 0
+      rest = key = false
+      flags.to_s.split("|").map(&:strip).each do |f|
+        case f
+        when /\AMRB_ARGS_REQ\((\d+)\)\z/ then req += Regexp.last_match(1).to_i
+        when /\AMRB_ARGS_OPT\((\d+)\)\z/ then opt += Regexp.last_match(1).to_i
+        when /\AMRB_ARGS_ARG\((\d+),\s*(\d+)\)\z/ then req += Regexp.last_match(1).to_i; opt += Regexp.last_match(2).to_i
+        when /\AMRB_ARGS_POST\((\d+)\)\z/ then post += Regexp.last_match(1).to_i
+        when "MRB_ARGS_REST()", "MRB_ARGS_ANY()" then rest = true
+        when /\AMRB_ARGS_KEY\(/ then key = true
+        when "MRB_ARGS_NONE()", "MRB_ARGS_BLOCK()", "MRB_ARGS_NOBLOCK()", "MRB_MT_PRIVATE", "MRB_MT_NOARG", "0" then nil
+        else return "?"
+        end
+      end
+      min = req + post
+      s = if rest then "#{min}+"
+          elsif opt.zero? then min.to_s
+          else "#{min}..#{min + opt}"
+          end
+      key ? "#{s}k" : s
+    end
 
     # --- presym: MRB_SYM(x) などの名前 (build の id.h と table.h から)
     def presym
@@ -177,7 +202,7 @@ module FpgaV2
       tables = {}
       src.scan(/mrb_mt_entry\s+(\w+)\[\]\s*=\s*\{(.*?)\};/m) do |tname, body|
         tables[tname] = body.scan(/MRB_MT_ENTRY\(\s*(\w+)\s*,\s*(MRB_\w*SYM\w*\(\w+\))\s*,([^\n]*?)\)\s*,?\s*$/).map do |fn, sym, flags|
-          [fn, sym_name(sym), flags.include?("MRB_MT_PRIVATE")]
+          [fn, sym_name(sym), flags.include?("MRB_MT_PRIVATE"), aspec_of(flags)]
         end
       end
       # クラスの変数は、書いた順に束ねる。ただし helper の関数が、定義より前の行で引数として受けて使うことがある (irq.c など)。
@@ -244,10 +269,10 @@ module FpgaV2
 
           sing = owner.start_with?("#<")
           o = sing ? owner[2..-2] : owner
-          t.each do |f, name, priv|
+          t.each do |f, name, priv, asp|
             next problems << "#{rel(path)}: #{f} has an unknown symbol" unless name
 
-            entries << Entry.new(kind: sing ? "sing" : (priv ? "priv" : "pub"), owner: o, name: name, src: src_fn.(f), gem: gem)
+            entries << Entry.new(kind: sing ? "sing" : (priv ? "priv" : "pub"), owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
           end
         when /\Amrb_define_(method|private_method|class_method|singleton_method|module_function)(_id|_raw)?\z/
           kind = Regexp.last_match(1)
@@ -255,15 +280,16 @@ module FpgaV2
           next problems << "#{rel(path)}: #{fn}(#{args[0]}, #{args[1]}) not resolved" unless owner && name
 
           f = fn.end_with?("_raw") ? "-" : args[2].to_s[/\w+/]
+          asp = fn.end_with?("_raw") ? nil : aspec_of(args[3])
           sing = owner.start_with?("#<")
           o = sing ? owner[2..-2] : owner
           case kind
-          when "method" then entries << Entry.new(kind: sing ? "sing" : "pub", owner: o, name: name, src: src_fn.(f), gem: gem)
-          when "private_method" then entries << Entry.new(kind: sing ? "spriv" : "priv", owner: o, name: name, src: src_fn.(f), gem: gem)
-          when "class_method", "singleton_method" then entries << Entry.new(kind: "sing", owner: o, name: name, src: src_fn.(f), gem: gem)
+          when "method" then entries << Entry.new(kind: sing ? "sing" : "pub", owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
+          when "private_method" then entries << Entry.new(kind: sing ? "spriv" : "priv", owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
+          when "class_method", "singleton_method" then entries << Entry.new(kind: "sing", owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
           when "module_function"
-            entries << Entry.new(kind: "sing", owner: o, name: name, src: src_fn.(f), gem: gem)
-            entries << Entry.new(kind: "priv", owner: o, name: name, src: src_fn.(f), gem: gem)
+            entries << Entry.new(kind: "sing", owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
+            entries << Entry.new(kind: "priv", owner: o, name: name, src: src_fn.(f), gem: gem, aspec: asp)
           end
         when /\Amrb_undef_(class_)?method(_id)?\z/
           # 取り消しの印も表に入る (host の reflection は取り消した new を特異メソッドとして出す)
@@ -595,8 +621,9 @@ module FpgaV2
         s = sources[h.key]
         srcs = s ? s.map(&:src).uniq : []
         gems = s ? s.map(&:gem).compact.uniq : []
+        asps = s ? s.map(&:aspec).compact.uniq : []
         { kind: h.kind, owner: h.owner, name: h.name, src: srcs.empty? ? "-" : srcs.join(" "),
-          gem: gems.empty? ? "-" : gems.join(" "), board: gems.empty? ? "?" : (gems.any? { |g| g == "mruby-core" || board.include?(g) } ? "yes" : "no") }
+          aspec: asps.empty? ? "-" : asps.join(" "), gem: gems.empty? ? "-" : gems.join(" "), board: gems.empty? ? "?" : (gems.any? { |g| g == "mruby-core" || board.include?(g) } ? "yes" : "no") }
       end
       # C の関数から辿れる動的な呼び出し (計画 S2-3)。c: の写し元の和。mrblib の写し元は空、関数が分からなければ ?
       require_relative "c_calls" # c_calls は vm_table 経由でこの file を読むので、ここで
@@ -637,8 +664,8 @@ module FpgaV2
 
     def tsv(result)
       head = "# 棚卸し (計画 S2-1、rake fpga:v2:inventory が作る。手で書かない)\n" \
-             "# kind<TAB>owner<TAB>name<TAB>src (c:file:関数 / mrblib:file / - は見つからない)<TAB>gem<TAB>board (板の gem の集合に入るか)<TAB>dyn (C の関数から辿れる動的な呼び出し、計画 S2-3。- は無し、? は関数が分からない)\n"
-      head + result.rows.map { |r| [r[:kind], r[:owner], r[:name], r[:src], r[:gem], r[:board], r[:dyn]].join("\t") }.join("\n") + "\n"
+             "# kind<TAB>owner<TAB>name<TAB>src (c:file:関数 / mrblib:file / - は見つからない)<TAB>gem<TAB>board (板の gem の集合に入るか)<TAB>dyn (C の関数から辿れる動的な呼び出し、計画 S2-3。- は無し、? は関数が分からない)<TAB>aspec (C の関数の引数の数、MRB_ARGS_*: min、min..max、min+。k はキーワード。- は C の表に無い)\n"
+      head + result.rows.map { |r| [r[:kind], r[:owner], r[:name], r[:src], r[:gem], r[:board], r[:dyn], r[:aspec]].join("\t") }.join("\n") + "\n"
     end
   end
 end

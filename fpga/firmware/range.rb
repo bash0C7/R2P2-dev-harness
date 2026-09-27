@@ -149,8 +149,10 @@ class Range
   end
 
   # C: src/range.c range_initialize
-  def initialize(beg, en, exclusive = false)
-    __fpga_range_ptr_init(__fpga_addr(self), beg, en, exclusive ? true : false) # frozen の印は S5
+  def initialize(*args)
+    __fpga_check_argc(args, 2, 3) # MRB_ARGS_ANY の後の mrb_get_args の oo|b
+    ex = __fpga_alen(args) == 3 ? __fpga_aref(args, 2) : false
+    __fpga_range_ptr_init(__fpga_addr(self), __fpga_aref(args, 0), __fpga_aref(args, 1), ex ? true : false) # frozen の印は S5
     self
   end
 

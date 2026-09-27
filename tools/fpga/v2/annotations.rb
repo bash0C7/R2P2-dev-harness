@@ -4,6 +4,8 @@
 #     <名前> はその file の中にある識別子 (関数、CASE の OP_…、label、struct)。(Dnn) は乖離表 (docs/fpga-v2-deviations.md) の行
 #   - def の中の SEND (GETIDX / SETIDX の [] / []= も) の先は、写し元の C の関数が動的に呼ぶもの (計画 S2-3) か、
 #     firmware の helper と回路の primitive (__fpga_…) だけ。写し元が C の関数でない (none、irep、label) def は検査しない
+#   - C のメソッドの写しの def は、引数の数の範囲が C の aspec (棚卸しの aspec の列) と同じ。mruby は C の関数を呼ぶ前に
+#     aspec で数を調べる (vm.c の check_argument_count)。*args で受けるなら、本文で __fpga_check_argc(args, min, max) を呼ぶ
 require "prism"
 require_relative "build"
 require_relative "inventory"
@@ -13,7 +15,7 @@ module FpgaV2
     DEVIATIONS = File.join(Inventory::ROOT, "docs", "fpga-v2-deviations.md")
     ANN = /\A\s*#\s*C:\s*(.+?)\s*\z/
 
-    Def = Struct.new(:file, :line, :owner, :sing, :name, :ann, keyword_init: true)
+    Def = Struct.new(:file, :line, :owner, :sing, :name, :ann, :min, :max, :rest, :body, keyword_init: true)
 
     class Visitor < Prism::Visitor
       attr_reader :defs
@@ -31,8 +33,13 @@ module FpgaV2
 
       def visit_def_node(node)
         prev = @lines[node.location.start_line - 2].to_s
+        pr = node.parameters
+        req = pr ? pr.requireds.size + pr.posts.size : 0
+        opt = pr ? pr.optionals.size : 0
+        rest = pr&.rest.is_a?(Prism::RestParameterNode) ? pr.rest.name.to_s : nil
         @defs << Def.new(file: File.basename(@path), line: node.location.start_line, owner: @owner.last, sing: !node.receiver.nil?,
-                         name: node.name.to_s, ann: prev[ANN, 1])
+                         name: node.name.to_s, ann: prev[ANN, 1], min: req, max: rest ? -1 : req + opt, rest: rest,
+                         body: node.body&.slice.to_s)
       end
     end
 
@@ -128,6 +135,36 @@ module FpgaV2
         end
       end
       out
+    end
+
+    # 棚卸しの aspec ("1"、"0..1"、"1+"、k 付き) → [min, max] (max -1 は上限無し)
+    def aspec_range(s)
+      m = s.delete_suffix("k").match(/\A(\d+)(?:\.\.(\d+)|(\+))?\z/) or return nil
+      min = m[1].to_i
+      [min, m[3] ? -1 : (m[2] ? m[2].to_i : min)]
+    end
+
+    # 引数の数の間違い: C のメソッドの写しの def が、C の aspec と違う数を受ける
+    def check_aspec
+      rows = File.readlines(Inventory::OUT, chomp: true).reject { |l| l.start_with?("#") }.map { |l| l.split("\t") }
+      by_src = Hash.new { |h, k| h[k] = [] }
+      rows.each { |r| r[3].to_s.split(" ").each { |s| by_src[[s, r[2]]] << r[7].to_s } }
+      defs.filter_map do |d|
+        next unless d.ann
+
+        path, fn, = parse(d.ann)
+        next unless fn && File.file?(path.to_s) && path.end_with?(".c")
+
+        asps = by_src[["c:#{Inventory.rel(path)}:#{fn}", d.name]].flat_map { |a| a.split(" ") }.uniq
+        ranges = asps.filter_map { |a| aspec_range(a) }
+        next if ranges.empty?
+        next if ranges.any? { |mn, mx| d.min == mn && d.max == mx }
+        next if d.rest && d.min.zero? && ranges.any? { |mn, mx| d.body.include?("__fpga_check_argc(#{d.rest}, #{mn}, #{mx})") }
+
+        want = ranges.map { |mn, mx| mx.negative? ? "#{mn}+" : (mn == mx ? mn.to_s : "#{mn}..#{mx}") }.join(" or ")
+        got = d.max.negative? ? "#{d.min}+" : (d.min == d.max ? d.min.to_s : "#{d.min}..#{d.max}")
+        "#{d.file}:#{d.line} #{d.owner}#{d.sing ? '.' : '#'}#{d.name} takes #{got} (#{d.ann} takes #{want})"
+      end
     end
 
     # SEND 先の間違い: 写し元の C の関数が動的に呼ばない先
