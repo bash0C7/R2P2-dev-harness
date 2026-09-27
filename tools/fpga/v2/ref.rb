@@ -63,12 +63,7 @@ module FpgaV2
 
       def kw? = (@r.r8(@addr + CI_N) & CI_KW_BIT) != 0
 
-      # 可視性 0 public、1 private、2 protected、3 module_function (記憶の中は mruby の bit: private | MRB_CI_MODFUNC)
-      def vis
-        v = @r.r8(@addr + CI_VIS)
-        (v & CI_MODFUNC_BIT).zero? ? v & 3 : 3
-      end
-
+      # フレームの既定の可視性を置く (0 public、1 private。記憶の中は mruby の bit)。読むのは firmware (find_visibility_scope)
       def vis=(v)
         keep = @r.r8(@addr + CI_VIS) & ~(3 | CI_MODFUNC_BIT) # VISIBILITY_BREAK と GIVEN_CLASS の印は残す
         @r.w8(@addr + CI_VIS, keep | (v == 3 ? VIS_PRIVATE | CI_MODFUNC_BIT : v))
@@ -788,8 +783,6 @@ module FpgaV2
           when "__fpga_mcache_clear" then (@cache.clear; NIL)
           when "__fpga_mid" then [TAG_SYM, trapped[0].mid] # 罠を起こしたフレームのメソッドの名前 (mruby の ci->mid)
           when "__fpga_proc" then int(trapped[0].proc) # 罠を起こしたフレームの Proc (定数の字句の鎖、super、def の upper)
-          when "__fpga_frame_vis" then int(trapped[0].vis) # 罠を起こしたフレームの def の既定の可視性
-          when "__fpga_set_caller_vis" then (Ci.new(self, @f.addr - CI_SIZE).vis = args[0][1]; NIL) # 今のメソッドを呼んだフレームの既定の可視性 (private / module_function)
           when "__fpga_class_of" then obj(class_of(args[0])) # 回路の class_of (特異クラスと iclass も含む)
           when "__fpga_sendv" then return sendv(args[0], args[1][1], args[2], args[3], args[4], a, args[5]) # 名前で送る (send / __send__ / public_send)。6 つ目はキーワードの Hash
           when "__fpga_image" then int(r32(args[0][1] * WORD)) # 起動の像の見出しの語

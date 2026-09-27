@@ -353,7 +353,8 @@ end
   def __fpga_op_TDEF(a, b, c)
     ir = __fpga_irep
     sym = __fpga_irep_sym(ir, b)
-    __fpga_vm_define_method(__fpga_check_target_class, ir, b, c, __fpga_frame_vis) # MRB_METHOD_VDEFAULT_FL
+    tc = __fpga_check_target_class
+    __fpga_vm_define_method(tc, ir, b, c, __fpga_scope_vis(tc, __fpga_ci)) # MRB_METHOD_VDEFAULT_FL (find_visibility_scope)
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end
 

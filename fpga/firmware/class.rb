@@ -699,6 +699,9 @@ class Object
   # C: src/class.c mrb_define_method_raw
   def __fpga_method_raw(c, sym, val)
     named = c
+    if val > 0 && (sym == __fpga_addr(:initialize) || sym == __fpga_addr(:initialize_copy) || sym == __fpga_addr(:respond_to_missing?))
+      val = __fpga_and(val, -4) + 1 # L:VIS_PRIVATE いつも private (~3 で可視性の bit を消す)
+    end
     c = __fpga_class_origin(c)
     __fpga_check_frozen(named) # mt_writable
     __fpga_st32(c + 12, __fpga_mt_new) if __fpga_ld32(c + 12) == 0 # L:C_MT mt_writable の mt_new
@@ -1110,22 +1113,22 @@ class Module
 
   # 可視性 (class.c の mrb_mod_public / private / protected / module_function)。引数が無ければ、呼んだフレームの既定を変える
   # (ブロックの env に書く find_visibility_scope と vis_scope_persist は D19)。
-  # 引数が無い時の __fpga_set_caller_vis は、このメソッドを呼んだフレーム (クラスの本体) に効くので、ここで直接呼ぶ
+  # 引数が無い時は、このメソッドを呼んだフレーム (ec->ci - 1) の scope に書く (find_visibility_scope、vis_scope_persist)
   # C: src/class.c mrb_mod_public
   def public(*names)
-    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(0) : __fpga_mod_visibility(names, 0) # L:VIS_PUBLIC
+    __fpga_alen(names) == 0 ? __fpga_set_scope_vis(__fpga_ld32(__fpga_image(0) + 12) - 64, 0) : __fpga_mod_visibility(names, 0) # L:VIS_PUBLIC
     self
   end
 
   # C: src/class.c mrb_mod_private
   def private(*names)
-    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(1) : __fpga_mod_visibility(names, 1) # L:VIS_PRIVATE
+    __fpga_alen(names) == 0 ? __fpga_set_scope_vis(__fpga_ld32(__fpga_image(0) + 12) - 64, 1) : __fpga_mod_visibility(names, 1) # L:VIS_PRIVATE
     self
   end
 
   # C: src/class.c mrb_mod_protected
   def protected(*names)
-    __fpga_alen(names) == 0 ? __fpga_set_caller_vis(2) : __fpga_mod_visibility(names, 2) # L:VIS_PROTECTED
+    __fpga_alen(names) == 0 ? __fpga_set_scope_vis(__fpga_ld32(__fpga_image(0) + 12) - 64, 2) : __fpga_mod_visibility(names, 2) # L:VIS_PROTECTED
     self
   end
 
@@ -1134,7 +1137,7 @@ class Module
   def module_function(*names)
     __fpga_check_type_module(self)
     if __fpga_alen(names) == 0
-      __fpga_set_caller_vis(3) # MRB_CI_SET_VISIBILITY(private) と MRB_CI_SET_MODFUNC
+      __fpga_set_scope_vis(__fpga_ld32(__fpga_image(0) + 12) - 64, 3) # L:IMG_c L:CTX_CI L:CI_SIZE 呼んだ側 (ec->ci - 1) を private と MODFUNC に
       return self
     end
     k = 0

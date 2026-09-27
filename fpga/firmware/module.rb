@@ -11,8 +11,76 @@ class Object
     return 0 unless __fpga_ci_tclass(ci) == c
     s = __fpga_ldv(__fpga_ld32(ci + 16)) # L:CI_STACK
     return 0 unless __fpga_tag(s) == 7 && __fpga_addr(s) == c # L:TAG_OBJ
-    v = __fpga_ld8(ci + 2) # L:CI_VIS
-    __fpga_and(v, 8) > 0 ? 3 : __fpga_and(v, 3) # L:CI_MODFUNC_BIT module_function は 3
+    __fpga_scope_vis(c, ci)
+  end
+
+  # C: src/class.c check_visibility_break
+  def __fpga_check_visibility_break(p, c, ci, env)
+    return true if p == 0 || __fpga_ld32(p + 12) == 0 || __fpga_and(__fpga_ld32(p + 24), 2048) > 0 || __fpga_proc_env(p) == 0 # L:P_UPPER L:P_FLAGS L:PROC_SCOPE MRB_PROC_ENV_P
+    if env > 0
+      return (__fpga_ld32(__fpga_proc_env(p) + 0) == c) == false || __fpga_and(__fpga_ld32(env + 4), 1073741824) > 0 # L:H_CLASS L:H_FLAGS MRB_ENV_VISIBILITY_BREAK_P (flags の bit 18)
+    end
+    (__fpga_ci_tclass(ci) == c) == false || __fpga_and(__fpga_ld8(ci + 2), 4) > 0 # L:CI_VIS L:CI_VISIBILITY_BREAK_BIT
+  end
+
+  # C: src/class.c find_visibility_env
+  def __fpga_find_visibility_env(p, c)
+    while true
+      env = __fpga_proc_env(p)
+      p = __fpga_ld32(p + 12) # L:P_UPPER
+      return env if __fpga_check_visibility_break(p, c, 0, env)
+    end
+  end
+
+  # 可視性を書く所: [ci, 0] か [ci, ci の env] か [0, env] (c が 0 なら ci の target class)
+  # C: src/class.c find_visibility_scope
+  def __fpga_find_visibility_scope(c, ci)
+    p = __fpga_ld32(ci + 8) # L:CI_PROC
+    c = __fpga_ci_tclass(ci) if c == 0
+    return [ci, __fpga_ci_env(ci)] if __fpga_check_visibility_break(p, c, ci, 0)
+    [0, __fpga_find_visibility_env(p, c)]
+  end
+
+  # scope の既定の可視性: 0 public、1 private、2 protected、3 module_function (private と MODFUNC)
+  # C: src/class.c mrb_define_method_raw
+  def __fpga_scope_vis(c, ci)
+    s = __fpga_find_visibility_scope(c, ci)
+    e = __fpga_aref(s, 1)
+    if e > 0
+      f = __fpga_ld32(e + 4) # L:H_FLAGS MRB_ENV_VISIBILITY (flags の bit 16〜17) と MRB_ENV_MODFUNC_P (bit 19)
+      return __fpga_and(f, 2147483648) > 0 ? 3 : __fpga_and(__fpga_shr(f, 28), 3)
+    end
+    v = __fpga_ld8(__fpga_aref(s, 0) + 2) # L:CI_VIS
+    __fpga_and(v, 8) > 0 ? 3 : __fpga_and(v, 3) # L:CI_MODFUNC_BIT
+  end
+
+  # 引数の無い public / private / protected / module_function: 呼んだ側の scope (ci か env) に書く。public でない時は env を作って残す
+  # C: src/class.c vis_scope_persist
+  def __fpga_set_scope_vis(ci, vis)
+    s = __fpga_find_visibility_scope(0, ci)
+    sci = __fpga_aref(s, 0)
+    e = __fpga_aref(s, 1)
+    if e == 0 && vis > 0
+      e = __fpga_ci_env(sci) # mrb_vm_ci_env_reify
+      if e == 0
+        pr = __fpga_ld32(sci + 8) # L:CI_PROC
+        e = __fpga_env_new(sci, __fpga_u16(__fpga_ld32(pr + 8) + 0), __fpga_ld32(sci + 16), __fpga_ci_tclass(sci)) # L:P_BODY L:I_NLOCALS L:CI_STACK
+        __fpga_st32(sci + 24, e) # L:CI_U
+        if __fpga_proc_env(pr) == 0
+          __fpga_st32(pr + 16, e) # L:P_ENV
+          __fpga_st32(pr + 24, __fpga_or(__fpga_ld32(pr + 24), 1024)) # L:P_FLAGS L:PROC_ENVSET
+        end
+      end
+    end
+    v = vis == 3 ? 1 : vis
+    m = vis == 3
+    if e > 0 # MRB_ENV_SET_VISIBILITY と MRB_ENV_SET_MODFUNC / CLEAR_MODFUNC
+      f = __fpga_and(__fpga_ld32(e + 4), 4294967295 - 805306368 - 2147483648) # L:H_FLAGS 可視性の 2 bit と MODFUNC を消す
+      __fpga_st32(e + 4, f + __fpga_shl(v, 28) + (m ? 2147483648 : 0)) # L:H_FLAGS
+    else # MRB_CI_SET_VISIBILITY と MRB_CI_SET_MODFUNC / CLEAR_MODFUNC
+      b = __fpga_and(__fpga_ld8(sci + 2), 255 - 3 - 8) # L:CI_VIS L:CI_MODFUNC_BIT
+      __fpga_st8(sci + 2, b + v + (m ? 8 : 0)) # L:CI_VIS L:CI_MODFUNC_BIT
+    end
   end
 
   # C: include/mruby/proc.h MRB_PROC_TARGET_CLASS

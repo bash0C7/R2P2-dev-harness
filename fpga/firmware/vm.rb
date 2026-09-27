@@ -102,7 +102,7 @@ class Object
   # C: src/vm.c OP_DEF
   def __fpga_op_DEF(a, b, c)
     sym = __fpga_irep_sym(__fpga_irep, b)
-    __fpga_define(__fpga_addr(__fpga_reg(a)), sym, __fpga_addr(__fpga_reg(a + 1)), __fpga_frame_vis)
+    __fpga_define(__fpga_addr(__fpga_reg(a)), sym, __fpga_addr(__fpga_reg(a + 1)), __fpga_scope_vis(__fpga_addr(__fpga_reg(a)), __fpga_ci)) # MRB_METHOD_VDEFAULT_FL
     __fpga_method_added(__fpga_addr(__fpga_reg(a)), sym)
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end

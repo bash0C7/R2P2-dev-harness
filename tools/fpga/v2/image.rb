@@ -55,7 +55,7 @@ module FpgaV2
       __fpga_ld8 __fpga_st8 __fpga_ld32 __fpga_st32 __fpga_ldv __fpga_stv __fpga_addr __fpga_obj __fpga_tag __fpga_mkval
       __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
-      __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc __fpga_frame_vis __fpga_set_caller_vis
+      __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc
       __fpga_class_of __fpga_sendv __fpga_ci __fpga_unwind __fpga_unwind_ret
     ].freeze
 
