@@ -928,48 +928,58 @@ class Module
     __fpga_alen(names) == 1 ? __fpga_aref(names, 0) : nil
   end
 
-  # attr_reader / attr_writer / attr_accessor (class.c の mrb_mod_attr_reader ...): iv を読み書きする Proc (種類 2 / 3)
   # C: src/class.c mrb_mod_attr_reader
   def attr_reader(*names)
-    k = 0
-    while k < __fpga_alen(names)
-      __fpga_attr(__fpga_aref(names, k), 2, false) # L:PROC_IVGET
-      k += 1
-    end
-    nil
+    __fpga_attr_define(names, true, false, __fpga_caller_scope_vis(__fpga_addr(self)))
   end
 
   alias attr attr_reader # class.c の mrb_define_alias_id (attr は attr_reader)
 
   # C: src/class.c mrb_mod_attr_writer
   def attr_writer(*names)
-    k = 0
-    while k < __fpga_alen(names)
-      __fpga_attr(__fpga_aref(names, k), 3, true) # L:PROC_IVSET
-      k += 1
-    end
-    nil
+    __fpga_attr_define(names, false, true, __fpga_caller_scope_vis(__fpga_addr(self)))
   end
 
   # C: src/class.c mrb_mod_attr_accessor
   def attr_accessor(*names)
-    k = 0
-    while k < __fpga_alen(names)
-      __fpga_attr(__fpga_aref(names, k), 2, false) # L:PROC_IVGET
-      __fpga_attr(__fpga_aref(names, k), 3, true) # L:PROC_IVSET
-      k += 1
-    end
-    nil
+    __fpga_attr_define(names, true, true, __fpga_caller_scope_vis(__fpga_addr(self)))
   end
 
+  # 名前ごとに reader (と writer) を定義し、その名前の配列を返す。Proc は iv を読み書きする種類 2 / 3 (D15)。
+  # module_function の scope では private で、特異クラスの写しは作らない
   # C: src/class.c mod_attr_define (D15)
-  def __fpga_attr(name, kind, writer)
-    s = name.to_s
-    iv = __fpga_intern_str("@" + s)
-    pr = __fpga_proc_new(iv, __fpga_addr(self), 0)
-    __fpga_st32(pr + 24, kind) # L:P_FLAGS
-    sym = writer ? __fpga_intern_str(s + "=") : __fpga_addr(name)
-    __fpga_define(__fpga_addr(self), sym, pr, 0)
+  def __fpga_attr_define(names, reader, writer, vis)
+    c = __fpga_addr(self)
+    vis = 1 if vis == 3 # L:VIS_PRIVATE modfunc
+    result = []
+    i = 0
+    while i < __fpga_alen(names)
+      sym = __fpga_obj_to_sym(__fpga_aref(names, i)) # to_sym
+      ivar = __fpga_prepare_name(sym, "@", "") # prepare_ivar_name
+      __fpga_iv_name_sym_check(ivar)
+      w = 0
+      while w < 2
+        if w == 1 ? writer : reader
+          mid = w == 1 ? __fpga_prepare_name(sym, "", "=") : sym # prepare_writer_name
+          pr = __fpga_proc_new(ivar, c, w == 1 ? 3 : 2) # L:PROC_IVSET L:PROC_IVGET mrb_proc_new_cfunc_with_env
+          __fpga_method_raw(c, mid, pr + vis)
+          result.__fpga_push1(__fpga_mkval(4, mid)) # L:TAG_SYM
+        end
+        w += 1
+      end
+      i += 1
+    end
+    result
+  end
+
+  # prefix と名前と suffix をつないだシンボル
+  # C: src/class.c prepare_name_common
+  def __fpga_prepare_name(sym, prefix, suffix)
+    s = __fpga_str_new(0, 0)
+    __fpga_str_cat_str(s, prefix)
+    __fpga_str_cat_str(s, __fpga_sym_str(sym))
+    __fpga_str_cat_str(s, suffix)
+    __fpga_intern_str(s)
   end
 end
 

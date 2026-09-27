@@ -88,15 +88,18 @@ module FpgaV2
         d.zero? ? nil : d - 1
       end
 
+      # 延長の語の fcall: 0 SEND 系、1 SSEND 系と super、2 演算の命令の送り (受け手が self なら private も)
+      def fcall_of(w) = [false, true, :op][w]
+
       def resume
         case @r.r8(@addr + CI_CONT)
         when CONT_SEND
           [:send, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), dst,
-           @r.r32(@addr + CI_CFCALL) == 1]
+           fcall_of(@r.r32(@addr + CI_CFCALL))]
         when CONT_VALUE then [:value, @r.r32(@addr + CI_CA)]
         when CONT_KWSEND
           [:kwsend, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), nil,
-           @r.r32(@addr + CI_CFCALL) == 1]
+           fcall_of(@r.r32(@addr + CI_CFCALL))]
         else [:advance]
         end
       end
@@ -325,9 +328,9 @@ module FpgaV2
       # 回路は Array 同士だけ。splat が to_a を送る時 (mrb_ary_splat) と R[a] が Array でない時 (mrb_ensure_array_type) は罠
       when "ARYCAT" then arycat(i, a)
       when "ARYPUSH" then arypush(i, a, b)
-      when "GETIDX" then send_op(a, sym_id("[]"), 1, false)
-      when "GETIDX0" then (setreg(a, reg(b)); setreg(a + 1, int(0)); send_op(a, sym_id("[]"), 1, false))
-      when "SETIDX" then send_op(a, sym_id("[]="), 2, false)
+      when "GETIDX" then send_op(a, sym_id("[]"), 1, false, fcall: :op)
+      when "GETIDX0" then (setreg(a, reg(b)); setreg(a + 1, int(0)); send_op(a, sym_id("[]"), 1, false, fcall: :op))
+      when "SETIDX" then send_op(a, sym_id("[]="), 2, false, fcall: :op)
       when "ADDI" then addi(a, b, :+)
       when "SUBI" then addi(a, b, :-)
       when "ADDILV" then addilv(a, b, c, :+)
@@ -361,14 +364,14 @@ module FpgaV2
         return overflow(name, a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
       end
-      send_op(a, sym_id(OPSYM[name]), 1, false)
+      send_op(a, sym_id(OPSYM[name]), 1, false, fcall: :op)
     end
 
     # DIV: 整数同士は floor の商 (mruby の OP_DIV、int_div)。0 で割ると罠 __fpga_op_zerodiv、INT_MIN / -1 は桁あふれ
     def div(a)
       x = reg(a)
       y = reg(a + 1)
-      return send_op(a, sym_id("/"), 1, false) unless x[0] == TAG_INT && y[0] == TAG_INT
+      return send_op(a, sym_id("/"), 1, false, fcall: :op) unless x[0] == TAG_INT && y[0] == TAG_INT
       return trap_call("__fpga_op_zerodiv", [int(a)]) if y[1].zero?
       r = x[1].div(y[1])
       return overflow("DIV", a) if r > INT_MAX
@@ -384,7 +387,7 @@ module FpgaV2
         return setreg(a, int(r))
       end
       setreg(a + 1, int(imm))
-      send_op(a, sym_id(op.to_s), 1, false)
+      send_op(a, sym_id(op.to_s), 1, false, fcall: :op)
     end
 
     # ADDILV / SUBILV (mruby の OP_MATHILV): R[a] = R[a] ± c (a は局所変数の枠)。整数でなければ作業の枠 R[b] から送り、結果を R[a] へ
@@ -398,7 +401,7 @@ module FpgaV2
       setreg(b, x)
       setreg(b + 1, int(imm))
       setreg(b + 2, NIL)
-      dispatch(b, sym_id(op.to_s), 1, @pc_next, dst: a)
+      dispatch(b, sym_id(op.to_s), 1, @pc_next, dst: a, fcall: :op)
     end
 
     def compare(name, a)
@@ -410,7 +413,7 @@ module FpgaV2
       if name == "EQ" && x[0] != TAG_OBJ && x[0] != TAG_FLOAT && y[0] != TAG_OBJ && y[0] != TAG_FLOAT
         return setreg(a, x == y ? TRUE_ : FALSE_) # 即値同士は値で (mruby の OP_EQ の mrb_obj_eq)
       end
-      send_op(a, sym_id(OPSYM[name]), 1, false)
+      send_op(a, sym_id(OPSYM[name]), 1, false, fcall: :op)
     end
 
     # 桁あふれ: 罠 __fpga_op_overflow(a, 演算) (firmware が RangeError を上げる)
@@ -469,13 +472,29 @@ module FpgaV2
 
     # メソッド表の値 (Proc の番地 | 可視性) を呼ぶ。private は fcall でなければ見つからないのと同じ (mruby の vm.c: NoMethodError)
     # found は見つかったクラス (呼ばれるフレームの ci->u.target_class、vm.c の L_SENDB_SYM)
+    # vm.c の L_SENDB_SYM の可視性: SEND 系は見る、SSEND 系と super は見ない、演算の命令の送りは受け手が呼んだ側の self なら見ない。
+    # private は vis_error、protected は呼んだ側の self が見つかったクラスの子でなければ vis_error (罠 __fpga_vis_error)
     def call_entry(e, a, n, sym, ret_pc, dst, fcall, found = nil)
       vis = e & VIS_MASK
-      if vis == VIS_PRIVATE && !fcall
-        @stats[:private_denied] += 1
-        return missing(a, n, sym, ret_pc, dst)
+      if (vis == VIS_PRIVATE || vis == VIS_PROTECTED) && fcall != true && !(fcall == :op && reg(a) == reg(0))
+        if vis == VIS_PRIVATE || !kind_of?(reg(0), found || class_of(reg(a)))
+          @stats[:vis_error] += 1
+          @pc_next = ret_pc
+          return trap_call("__fpga_vis_error", [int(a), int(n & CALL_ARGS), [TAG_SYM, sym], vis == VIS_PRIVATE ? TRUE_ : FALSE_], above: a + wlen(n) + 2)
+        end
       end
       call_proc(e & ~VIS_MASK, a, n, sym, ret_pc, dst, found)
+    end
+
+    # object.c の mrb_obj_is_kind_of (c は見つかったクラス。表を共有する iclass も同じと見る)
+    def kind_of?(v, c)
+      k = class_of(v)
+      mt = r32(c + C_MT)
+      until k.zero?
+        return true if k == c || (!mt.zero? && r32(k + C_MT) == mt)
+        k = r32(k + C_SUPER)
+      end
+      false
     end
 
     # 罠: firmware のメソッドを、今の命令のレジスタの窓の上で呼ぶ。self は main。戻ったら resume。
@@ -545,7 +564,7 @@ module FpgaV2
         w32(ci + CI_CN, cn || 0)
         w32(ci + CI_CSYM, csym || 0)
         w32(ci + CI_CRET, cret || 0)
-        w32(ci + CI_CFCALL, fcall ? 1 : 0)
+        w32(ci + CI_CFCALL, { false => 0, nil => 0, true => 1, op: 2 }.fetch(fcall))
         w32(ci + CI_CDST, resume[5] ? resume[5] + 1 : 0) if resume[0] == :send
       end
       w32(@ctx + CTX_CI, ci)

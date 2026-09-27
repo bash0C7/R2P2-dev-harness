@@ -1,11 +1,12 @@
 # firmware: Module と Class のメソッドの残り (mruby の src/class.c の ROM の表、src/vm.c の module_eval / instance_eval、
 # src/kernel.c の __case_eqq)。計画 S5-1
 class Object
-  # 呼んだ側の scope の可視性 (class.c の caller_scope_visibility)。呼んだフレームの target class と self が c の時だけ
+  # 呼んだ側の scope の可視性 (class.c の caller_scope_visibility)。呼んだフレームの target class と self が c の時だけ。
+  # C の関数 (firmware の def) から直接呼ぶ: この helper のフレーム、def のフレーム、その呼んだ側 (ec->ci - 1) の順に積まれている
   # その ci の可視性 (ブロックの env の可視性を辿る find_visibility_scope は D19)
   # C: src/class.c caller_scope_visibility (D19)
   def __fpga_caller_scope_vis(c)
-    ci = __fpga_ld32(__fpga_image(0) + 12) - 64 # L:IMG_c L:CTX_CI L:CI_SIZE ec->ci - 1
+    ci = __fpga_ld32(__fpga_image(0) + 12) - 64 * 2 # L:IMG_c L:CTX_CI L:CI_SIZE ec->ci - 1 (helper の分を 1 つ足す)
     return 0 if ci < __fpga_cibase # L:VIS_PUBLIC
     return 0 unless __fpga_ci_tclass(ci) == c
     s = __fpga_ldv(__fpga_ld32(ci + 16)) # L:CI_STACK
