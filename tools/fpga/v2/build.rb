@@ -16,17 +16,18 @@ module FpgaV2
 
     def firmware_sources = Dir[File.join(FIRMWARE_DIR, "*.rb")].sort
 
-    # .rb (1つか複数) を mrbc で1つの .mrb に
-    def compile(sources)
+    # .rb (1つか複数) を mrbc で1つの .mrb に。debug は -g (irep の debug 情報、backtrace の file と line。
+    # host の picoruby が .rb を読む時と同じ。mruby の mrblib と firmware は debug 情報無しで build する)
+    def compile(sources, debug: true)
       Dir.mktmpdir do |dir|
         out = File.join(dir, "out.mrb")
-        o, st = Open3.capture2e(mrbc, "-o", out, *sources)
+        o, st = Open3.capture2e(mrbc, *(debug ? ["-g"] : []), "-o", out, *sources)
         raise Image::Error, "mrbc failed:\n#{o}" unless st.success?
         File.binread(out)
       end
     end
 
-    def firmware = compile(firmware_sources)
+    def firmware = compile(firmware_sources, debug: false)
 
     # mruby の mrblib (mruby ソースコード、そのまま)。mruby の tasks/mrblib.rake と同じく名前の順に 1 つの .mrb に
     MRBLIB_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems", "picoruby-mruby", "lib", "mruby", "mrblib")
@@ -38,7 +39,7 @@ module FpgaV2
     def mrblib_sources
       Dir[File.join(MRBLIB_DIR, "*.rb")].sort + MRBLIB_GEMS.flat_map { |g| Dir[File.join(MRBLIB_GEMS_DIR, g, "mrblib", "*.rb")].sort }
     end
-    def mrblib = compile(mrblib_sources)
+    def mrblib = compile(mrblib_sources, debug: false)
 
     def image(programs)
       Image.new(firmware: firmware, mrblib: mrblib, programs: programs).build

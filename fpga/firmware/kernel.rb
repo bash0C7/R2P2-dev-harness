@@ -67,6 +67,8 @@ class BasicObject
 
   # C: src/class.c mrb_obj_missing
   def method_missing(*args)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     __fpga_check_argc(args, 1, -1) # mrb_get_args の n*!
     name = __fpga_aref(args, 0)
     rest = __fpga_ary_subseq(args, 1, __fpga_alen(args) - 1)
@@ -230,6 +232,8 @@ module Kernel
 
   # C: src/kernel.c mrb_f_raise
   def self.raise(*args)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     __fpga_check_argc(args, 0, 2) # MRB_ARGS_OPT(2)
     __fpga_f_raise(args)
   end

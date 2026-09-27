@@ -284,6 +284,8 @@ class Module
 
   # C: src/class.c mrb_mod_const_missing
   def const_missing(name)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     __fpga_const_missing(__fpga_addr(self), __fpga_obj_to_sym(name))
   end
 

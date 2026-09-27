@@ -40,7 +40,7 @@ module FpgaV2
     TT = {
       FALSE: 0, TRUE: 1, SYMBOL: 2, UNDEF: 3, FREE: 4, FLOAT: 5, INTEGER: 6, CPTR: 7, OBJECT: 8, CLASS: 9, MODULE: 10,
       SCLASS: 11, HASH: 12, CDATA: 13, EXCEPTION: 14, ICLASS: 15, PROC: 16, ARRAY: 17, STRING: 18, RANGE: 19, ENV: 20,
-      FIBER: 21, STRUCT: 22, ISTRUCT: 23, BREAK: 24
+      FIBER: 21, STRUCT: 22, ISTRUCT: 23, BREAK: 24, COMPLEX: 25, RATIONAL: 26, BIGINT: 27, BACKTRACE: 28
     }.freeze
 
     # 型ごとの欄 (枠の中のバイト位置)。ポインタは 4 バイト、値は VALUE
@@ -193,6 +193,16 @@ module FpgaV2
     # C: include/mruby/error.h RException (D04)
     EX_MESG = 8
     EX_BACKTRACE = 12
+    # RBacktrace (internal.h): 見出し + len + locations (mrb_backtrace_location の並びの番地)
+    # C: include/mruby/internal.h RBacktrace
+    BT_LEN = 8
+    BT_LOCATIONS = 12
+    # mrb_backtrace_location (internal.h): method_id、idx、irep
+    # C: include/mruby/internal.h mrb_backtrace_location
+    LOC_MID = 0
+    LOC_IDX = 4
+    LOC_IREP = 8
+    LOC_SIZE = 12
     # RBreak (error.h): 見出し + ci_break_index (cibase からの ci の数) + val。tag は flags の 8〜10bit (vm.c の RBREAK_TAG_BIT_OFF)
     # C: include/mruby/error.h RBreak (D04)
     BRK_INDEX = 8
@@ -240,7 +250,22 @@ module FpgaV2
     I_RLEN    = 32
     I_CATCH   = 36 # catch handler の並び (.mrb の中を指す、13 バイトずつ)
     I_CLEN    = 40
-    IREP = 44
+    I_DEBUG   = 44 # debug 情報 (mrb_irep_debug_info の番地、0 は無し)
+    IREP = 48
+    # mrb_irep_debug_info (debug.h): pc_count、flen、files (mrb_irep_debug_info_file の番地の並び)
+    # C: include/mruby/debug.h mrb_irep_debug_info
+    DI_PC_COUNT = 0
+    DI_FLEN = 4
+    DI_FILES = 8
+    DI_SIZE = 12
+    # mrb_irep_debug_info_file (debug.h): start_pos、filename_sym、line_entry_count、line_type、lines
+    # C: include/mruby/debug.h mrb_irep_debug_info_file
+    DF_START_POS = 0
+    DF_FILENAME = 4
+    DF_COUNT = 8
+    DF_TYPE = 12
+    DF_LINES = 16
+    DF_SIZE = 20
     # pool の文字列: tag = TAG_UNDEF、上位 = 長さ、下位 = バイト列の番地 (STRING 命令が RString を作る)
 
     # 組み込みのクラスの表 (像の core_classes): 0〜7 は即値の tag のクラス、その後は回路が作るオブジェクトのクラス

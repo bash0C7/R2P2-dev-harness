@@ -6,7 +6,12 @@ class Object
   # --- mrb->exc (mrb_state の exc の語)
   # C: src/error.c mrb_exc_set
   def __fpga_exc_set(v)
-    __fpga_st32(3 * 4, __fpga_tag(v) == 0 ? 0 : __fpga_addr(v)) # L:IMG_exc L:WORD
+    if __fpga_tag(v) == 0 # L:TAG_NIL
+      __fpga_st32(3 * 4, 0) # L:IMG_exc L:WORD
+    else
+      __fpga_st32(3 * 4, __fpga_addr(v)) # L:IMG_exc L:WORD
+      __fpga_keep_backtrace(v) unless __fpga_addr(v) == __fpga_image(30) || __fpga_and(__fpga_ld32(__fpga_addr(v) + 4), 2048) > 0 # L:IMG_nomem_err L:H_FLAGS L:H_FROZEN
+    end
   end
 
   # C: src/error.c mrb_exc_new_str
@@ -552,11 +557,14 @@ class Exception
     __fpga_format("#<%v: %v>", [cname, mesg])
   end
 
-  # 残した backtrace (mrb_keep_backtrace は irep の debug 情報が要るので S5。それまで nil か set_backtrace の配列)
-  # C: src/backtrace.c mrb_exc_backtrace (D41)
+  # C: src/backtrace.c mrb_exc_backtrace
   def backtrace
     bt = __fpga_ld32(__fpga_addr(self) + 12) # L:EX_BACKTRACE
-    bt == 0 ? nil : __fpga_obj(bt)
+    return nil if bt == 0
+    return __fpga_obj(bt) if __fpga_tt(bt) == 17 # L:TT_ARRAY
+    ary = __fpga_unpack_backtrace(bt)
+    __fpga_st32(__fpga_addr(self) + 12, __fpga_addr(ary)) # L:EX_BACKTRACE store_backtrace
+    ary
   end
 
   # C: src/error.c exc_set_backtrace
@@ -578,6 +586,8 @@ module Kernel
   # raise (kernel.c の mrb_f_raise): 引数無しは $! を上げ直す (無ければ RuntimeError "")、文字列 1 つは RuntimeError
   # C: src/kernel.c mrb_f_raise
   def raise(*args)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
+    __fpga_st32(ci + 4, 0) # L:CI_MID mrb->c->ci->mid = 0
     __fpga_check_argc(args, 0, 2) # MRB_ARGS_OPT(2)
     __fpga_f_raise(args)
   end
