@@ -45,7 +45,15 @@ module FpgaCorpus
                     "midibase_fpga.rb"], %w[MIDIBASE]],
     "signal" => ["signal.rb", %w[Signal]], "picorubyvm" => ["picorubyvm.rb", %w[PicoRubyVM ObjectSpace]], "file" => ["file.rb", %w[File]],
     "midibase-mml" => [%w[clock parser sequence player].map { |f| format(PICORUBY_MRBLIB, "midibase-mml", f) }, []],
-    "uart-midi" => [[format(PICORUBY_MRBLIB, "uart-midi", "uart-midi")], []]
+    "uart-midi" => [[format(PICORUBY_MRBLIB, "uart-midi", "uart-midi")], []],
+    # picotest (P9)。板の上で走る側 (picotest.rb と test.rb) は PicoRuby の mrblib をそのまま。3つ目は、FPGA が通らない枝
+    # (RUBY_ENGINE == "mruby/c") の中の require (数えない)。stub / mock の double.rb は C の所 (BasicObject、動的なメソッドの定義)
+    # が要るので P9b まで入れない (stub / mock を使うプログラムは Picotest::Double が無いので変換で止まる)
+    "picotest" => [[*%w[picotest picotest/test].map { |f| format(PICORUBY_MRBLIB, "picotest", f) }, "picotest.rb"], %w[Picotest],
+                   %w[posix-io metaprog dir]],
+    "json" => [[format(PICORUBY_MRBLIB, "json", "json")], %w[JSON]],
+    # env の C の所は fpga/gems/env.rb、Ruby の所は PicoRuby の mrblib
+    "env" => [["env.rb", format(PICORUBY_MRBLIB, "env", "env")], %w[ENV]]
   }.freeze
   REQUIRE = /^\s*require\s*\(?\s*["']([^"']+)["']/
 
@@ -69,8 +77,8 @@ module FpgaCorpus
   def gem_files(src, strict: true)
     files = []
     seen = []
-    visit = lambda do |text|
-      gem_names(text).each do |name|
+    visit = lambda do |text, not_taken = []|
+      (gem_names(text) - not_taken).each do |name|
         unless GEMS[name]
           raise UnknownGem, "require '#{name}' is not supported on the FPGA core (#{src})" if strict
           next
@@ -78,7 +86,7 @@ module FpgaCorpus
         paths = Array(GEMS[name][0]).map { |f| File.expand_path(f, GEMS_DIR) }
         next if seen.include?(paths[0])
         seen << paths[0]
-        visit.call(paths.map { |p| File.read(p) }.join("\n"))
+        visit.call(paths.map { |p| File.read(p) }.join("\n"), GEMS[name][2] || [])
         files.concat(paths) # 使う gem を先に (後置の順)
       end
     end
@@ -99,7 +107,7 @@ module FpgaCorpus
     raise Error, "mrbc not found at #{mrbc}. Run `rake setup` and `rake test:host`, or set MRBC=" unless File.executable?(mrbc)
     Dir.mktmpdir do |dir|
       out = File.join(dir, "out.mrb")
-      stdout, stderr, st = Open3.capture3(mrbc, "-v", "-o", out, *PRELUDE, *gem_files(src, strict: strict), src)
+      stdout, stderr, st = Open3.capture3(mrbc, "-g", "-v", "-o", out, *PRELUDE, *gem_files(src, strict: strict), src)
       raise Error, "mrbc failed on #{src}: #{stderr}" unless st.success?
       # 命令の行と、irep の区切り ("irep"。mrbc のアドレスは毎回違うので捨てる)
       dump = stdout.scrub.lines.filter_map { |l| l.start_with?("irep ") ? "irep\n" : (l =~ DUMP_LINE ? l.strip + "\n" : nil) }

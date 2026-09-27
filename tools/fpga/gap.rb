@@ -23,6 +23,8 @@ module FpgaGap
 
   # 範囲外の gem の中のクラス (require を書かずに使う example もある)
   OUT_OF_SCOPE_CONSTS = %w[TCPSocket TCPServer UDPSocket SSLSocket SSLContext BLE CYW43 DRb MbedTLS Prism Keyboard].freeze
+  # host (CRuby) で走る係。板の上では走らない (Picotest::Runner はテストのファイルを探し、一時スクリプトを作って VM を起こす)
+  HOST_SIDE_CONSTS = %w[Picotest::Runner].freeze
 
   # クラスの本体で変換器が読んで、実行時は何もしない呼び出し (rom.rb の noops)。attr_* は名前を定義する
   ATTRS = %w[attr_reader attr_writer attr_accessor].freeze
@@ -59,8 +61,45 @@ module FpgaGap
   def out_of_scope(src)
     r = requires(src).find { |name| OUT_OF_SCOPE.include?(name) }
     return "require #{r}" if r
-    c = OUT_OF_SCOPE_CONSTS.find { |k| src =~ /\b#{k}\b/ }
-    c && "uses #{c}"
+    code = src.gsub(/^\s*#.*$/, "") # 行全体の注釈の中の名前は数えない
+    c = OUT_OF_SCOPE_CONSTS.find { |k| code =~ /\b#{k}\b/ }
+    return "uses #{c}" if c
+    h = HOST_SIDE_CONSTS.find { |k| code.include?(k) }
+    h && "host side: #{h}"
+  end
+
+  # picotest のテストのファイル (Picotest::Test の子クラスを定義するだけ) に、Picotest::Runner が板の VM に渡すスクリプトと同じ
+  # 末尾を付ける (test_* を1つずつ呼び、最後に "----" と結果の JSON)。テストのファイルでなければ nil
+  def picotest_tail(src)
+    classes = []
+    src.each_line do |l|
+      if (m = l.match(/^\s*class\s+(\w+)\s*<\s*Picotest::Test\b/))
+        classes << [m[1], []]
+      elsif (m = l.match(/^\s*def\s+(test_\w+)/)) && !classes.empty?
+        classes.last[1] << m[1]
+      end
+    end
+    return nil if classes.empty?
+    classes.map do |klass, tests|
+      body = tests.map do |t|
+        <<~T
+          puts
+          print '  #{klass}##{t} '
+          begin
+            my_test.setup
+            my_test.#{t}
+          rescue Picotest::Skip => e
+            my_test.report_skip({method: '#{t}', reason: e.message})
+          rescue => e
+            my_test.report_exception({method: '#{t}', raise_message: e.message})
+          ensure
+            my_test.teardown
+            my_test.clear_doubles
+          end
+        T
+      end.join
+      "\nmy_test = #{klass}.new\nputs\nprint 'From #{klass}:'\n#{body}puts\nputs \"----\"\nputs JSON.generate(my_test.result)\n"
+    end.join
   end
 
   # 変換を止める理由を全部 (重複なし)。["op STRING", "method puts", "pool", ...]
@@ -75,6 +114,10 @@ module FpgaGap
         defined[ir.syms[insn.operands[1]]] = true if %w[TDEF DEF SDEF].include?(insn.name)
         defined[ir.syms[insn.operands[0]]] = true if insn.name == "ALIAS" # alias 新 旧
         loaded[insn.operands[0]] = ir.syms[insn.operands[1]] if insn.name == "LOADSYM"
+        if insn.name == "SSEND" && ir.syms[insn.operands[1]] == "alias_method" # alias_method :新, :旧
+          name = loaded[insn.operands[0] + 1]
+          defined[name] = true if name
+        end
         next unless insn.name == "SSEND" && ATTRS.include?(ir.syms[insn.operands[1]])
         (insn.operands[2] & 0xF).times do |j|
           name = loaded[insn.operands[0] + 1 + j]
@@ -112,8 +155,17 @@ module FpgaGap
     oos = out_of_scope(src)
     return { path: path, status: :out_of_scope, reasons: [oos] } if oos
 
+    tail = picotest_tail(src)
+    if tail
+      # Runner と同じ末尾を付けた写しを compile する (require 'picotest' も付ける)
+      copy = File.join(dir, rel(path).tr("/", "_"))
+      File.write(copy, "require 'picotest'\n" + src + tail)
+      path_for_compile = copy
+    else
+      path_for_compile = path
+    end
     bin = begin
-      FpgaCorpus.compile(path, mrbc, strict: false).first
+      FpgaCorpus.compile(path_for_compile, mrbc, strict: false).first
     rescue FpgaCorpus::Error => e
       return { path: path, status: :blocked, reasons: ["mrbc: #{e.message.lines[1].to_s.strip}"] }
     end

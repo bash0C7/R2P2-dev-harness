@@ -353,6 +353,60 @@ class String
     lstrip.rstrip
   end
 
+  # 変わらなければ nil、変われば self の中身を置き換えて self
+  def lstrip!
+    __replace_shorter(lstrip)
+  end
+
+  def rstrip!
+    __replace_shorter(rstrip)
+  end
+
+  def strip!
+    __replace_shorter(strip)
+  end
+
+  # s (self 以下の長さ) と同じでなければ、self の先頭から s のバイトを書いて長さを切る
+  def __replace_shorter(s)
+    n = s.bytesize
+    return nil if n == bytesize
+    i = 0
+    while i < n
+      __aset(i, s.getbyte(i))
+      i += 1
+    end
+    __truncate(n)
+  end
+
+  # mruby の String#byteslice: (位置)、(位置, 長さ)、(Range)。バイトで数える。外なら nil
+  def byteslice(start, len = nil)
+    size = bytesize
+    if start.is_a?(Range)
+      raise TypeError, "wrong number of arguments (given 2, expected 1)" if len
+      b = start.begin || 0
+      e = start.end
+      b += size if b < 0
+      return nil if b < 0 || b > size
+      e = size if e.nil?
+      e += size if e < 0
+      e += 1 unless start.exclude_end?
+      e = size if e > size
+      n = e - b
+      n = 0 if n < 0
+      return __slice(b, n)
+    end
+    raise TypeError, "no implicit conversion of #{start.class} into Integer" unless start.is_a?(Integer)
+    start += size if start < 0
+    if len.nil?
+      return nil if start < 0 || start >= size
+      return __slice(start, 1)
+    end
+    raise TypeError, "no implicit conversion of #{len.class} into Integer" unless len.is_a?(Integer)
+    return nil if len < 0 || start < 0 || start > size
+    len = size - start if start + len > size
+    __slice(start, len)
+  end
+
   def chomp
     len = bytesize
     if len > 0 && getbyte(len - 1) == 10

@@ -226,3 +226,12 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
   debug の VM は est_free の検査が黙って飛ばすので見えず、debug 無しの VM で SEGV になって分かった。変換器は1つの .rb につないで渡す
 - Q6: vendor の `rake all` は `vendor/picoruby/bin/` の symlink を最後に build したものへ向け替える。別の build_config を build する時は
   `INSTALL_DIR` を別の所にする (`rake fpga:picoruby`)
+- P9: host の PicoRuby の `caller` は、debug 情報の無い irep (mrblib の gem) のフレームを飛ばして数える (backtrace.c の pack_backtrace)。
+  picotest の `report` の `caller(2, 1)` は、Runner の形 (test_* を直接呼ぶ) では空で、JSON の `method` は null になる。
+  コアもプログラムの .rb のフレームだけを数えるので同じ値になる
+- P9: mrbc に複数の file を渡すと、一番外の irep は file ごとの区間を持つ (DBG の files の start_pos)。行の表は packed_map だけ
+  (この mruby の debug.c は ary と flat_map を読まず -1 を返す)
+- P9: `picotest.rb` は RUBY_ENGINE で枝分かれし、FPGA が通らない枝 (mruby/c) で posix-io・metaprog・dir を require する。
+  GEMS の3つ目 (数えない require) で扱う
+- P9: Ruby の `String#sub` の置き換えの文字列の `\0` は一致した全体になる (rite.rb の注釈の `"END\0"` を壊した)。
+  ファイルを書き換える道具は `sub(old) { new }` の形を使う

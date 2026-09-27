@@ -201,7 +201,12 @@ module FpgaIsa
     ["Integer", "__sym_at", 0, "SYMAT"],
     # object_id の数 (P5e)。即値だけ (Integer 2n+1、nil 8、true 20、false 0、Symbol s<<8|12、クラス c<<8|28)、
     # ヒープのオブジェクトは nil (コピー GC で動くので決まった数を持てない)
-    ["Object", "__object_id", 0, "OBJID"]
+    ["Object", "__object_id", 0, "OBJID"],
+    # caller (P9): k 番目のフレームの呼び出しの命令の ROM の pc (0 は __frame_pc を呼んだメソッドを呼んだ所。段が無ければ nil)、
+    # ROM のその番地の語のデータの値 {b, c}。プレリュードの caller が、変換器の置いた表 ($__caller_table) を引く
+    ["Object", "__frame_pc", 1, "FRAMEPC"], ["Integer", "__rom_word", 0, "ROMW"],
+    # String#__truncate(n): 長さを n (0..bytesize) にして self (strip! など)
+    ["String", "__truncate", 1, "STRUNC"]
   ].freeze
 
   def self.prim(const_name)

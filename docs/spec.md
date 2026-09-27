@@ -1063,6 +1063,32 @@ PicoRuby の picoruby-psg (C の ports/common/psg.c と src/mruby/psg.c)、midib
 - **決めごと。** String の名前で呼ぶメソッドは、その名前がプログラムの中で Symbol か呼び出しとして出てこないと、使わない
   メソッドとして ROM から落ちることがある (変換器は文字列の中身から呼ばれるメソッドを知らない)
 
+### picotest と caller (P9)
+
+**picotest。** 板の上で走る側 (`picotest.rb`、`picotest/test.rb`) と json は PicoRuby の mrblib をそのまま使う。C の所は
+`fpga/gems/picotest.rb` (Double#remove_singleton) と `fpga/gems/env.rb` (ENV は空の Hash から)。stub / mock
+(`double.rb`、BasicObject と実行時のメソッドの定義) は P9b まで無く、使うプログラムは変換で止まる。`Picotest::Runner`
+(テストのファイルを探し、一時スクリプトを作って VM を起こす) は CRuby で走る host 側の係で、gap の範囲の外。
+プレリュードに `RUBY_ENGINE` などの定数 (host の PicoRuby と同じ値、`RUBY_PLATFORM` は `"fpga-mrb_core"`)、`methods`
+(シンボル表の順)、`require_relative` と `` ` `` (NotImplementedError)、実行時の `alias_method` (NotImplementedError。
+クラスの本体でシンボルのリテラルを渡すものは変換器が `alias` と同じく静的に解き、値は self)。
+
+**caller** (mruby の `mrb_f_caller`、backtrace.c と同じ意味)。フレームごとに「今実行している命令の行」と「そのフレームの
+メソッド名」を `"<file>:<line>:in <method>"` (main は `"<file>:<line>"`、ブロックは外のメソッドの名前) にする。
+host の PicoRuby は mrblib (gem) を debug 情報無しで compile するので、gem の中のフレームは数えない。コアも同じく、
+プログラムの .rb のフレームだけを数え、プレリュードと gem (`fpga/prelude/`、`fpga/gems/`、`mrbgems/*/mrblib/`) のフレームは飛ばす。
+PicoRuby で C のメソッド (`send` など) は、host では前のフレームの行でそのメソッドの名前の行を足すが、コアではプレリュードの
+メソッドなので足さない (表し方の違い)。
+
+- corpus と gap は `mrbc -g` で compile する (命令の列は変わらず、DBG の section が付く)。rite.rb が DBG の section を読む
+- 変換器は `caller` が生きている時だけ、プログラムの .rb の、フレームを積む命令 (SEND 系、SUPER、BLKCALL) の ROM の pc ごとに
+  3語 {pc、行、ファイルのシンボル << 16 | メソッドのシンボル (無ければ 0xFFFF)} をデータに pc の順に置き、main の最初で
+  `$__caller_table` に「先頭 << 16 | 本数」を入れる
+- primitive: `Object#__frame_pc(k)` (k 番目のフレームの呼び出しの命令の ROM の pc。0 は __frame_pc を呼んだメソッドを呼んだ所、
+  段が無ければ nil)、`Integer#__rom_word` (ROM のその番地の語のデータの値 {b, c})。プレリュードの `caller` が pc を集め、
+  表を二分探索する
+- `String#__truncate(n)` (0 ≤ n ≤ bytesize で長さを n に。`strip!` などが使う)
+
 ### プレリュード
 
 primitive を組み合わせる
