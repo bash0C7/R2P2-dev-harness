@@ -179,6 +179,15 @@ module FpgaV2
     CLASS_IS_ORIGIN = 1 << 30
     # C: include/mruby/class.h MRB_FL_CLASS_IS_PREPENDED
     CLASS_IS_PREPENDED = 1 << 31
+    # C: include/mruby/class.h MRB_FL_CLASS_EQ_DEFINED
+    CLASS_EQ_DEFINED = 1 << 28
+    # bop の bit (mruby.h の MRB_BOP_*): Integer の + - * / == < <= > >= が 0〜8、Float が 9〜17、Symbol#== が 18、nil / true / false の == が 19
+    # C: include/mruby.h MRB_BOP_COUNT
+    BOP_COUNT = 9
+    # C: include/mruby.h MRB_BOP_SYMBOL_EQ_SLOT
+    BOP_SYMBOL_EQ_SLOT = 18
+    # C: include/mruby.h MRB_BOP_NIL_TRUE_FALSE_EQ
+    BOP_NIL_TRUE_FALSE_EQ = 1 << 19
 
     # RException (error.h): 見出し + mesg (RString か 0) + backtrace (0 か RArray)。iv の表は IV (D06)
     # C: include/mruby/error.h RException (D04)
@@ -260,7 +269,9 @@ module FpgaV2
       magic: 33, version: 34, heap_start: 35, heap_end: 36, core_classes: 37, fw_entry: 38, programs: 39, nprograms: 40,
       prims: 41, mrblib: 42,
       # mrb_state.nan_serial (NaN の通し番号、uint64_t を上と下の 2 語で。C の並びでは gc の後、D18)
-      nan_serial: 43, nan_serial_lo: 44
+      nan_serial: 43, nan_serial_lo: 44,
+      # mrb_state.bop_redefined (演算子の再定義の印の bit) と bop_builtin (起動の時のメソッド表の値の並び、19 語の番地。0 は起動の途中)
+      bop_redefined: 45, bop_builtin: 46
     }.freeze
     IMG_WORDS = 48
     # C: none (D18)

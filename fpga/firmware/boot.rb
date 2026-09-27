@@ -14,6 +14,7 @@ class Object
       __fpga_run(__fpga_load(lib), self)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD
     end
+    __fpga_builtin_op_init # mrb_open_core の bootstrapping の後
     progs = __fpga_image(39) # L:IMG_programs
     n = __fpga_image(40) # L:IMG_nprograms
     i = 0

@@ -227,20 +227,20 @@ class Object
     __fpga_and(x, 9223372036854775807) == 0 && __fpga_and(y, 9223372036854775807) == 0
   end
 
-  # C の中で == が決まるか: 1 真、0 偽、-1 は == が Ruby (VM で送る)。bop_redefined は見ない (D43)
+  # C の中で == が決まるか: 1 真、0 偽、-1 は == が Ruby (VM で送る)
   # C: src/object.c mrb_equal_in_c
   def __fpga_equal_in_c(obj1, obj2)
     return 1 if __fpga_tag(obj1) == __fpga_tag(obj2) && __fpga_int(obj1) == __fpga_int(obj2) # mrb_obj_eq
     t1 = __fpga_tag(obj1)
     t2 = __fpga_tag(obj2)
-    return 0 if t1 == 3 && t2 == 3 # L:TAG_INT
+    return 0 if t1 == 3 && t2 == 3 && __fpga_and(__fpga_image(45), 16) == 0 # L:TAG_INT L:IMG_bop_redefined MRB_BOP_INTEGER(MRB_BOP_EQ)
     return __fpga_int_float_cmp(obj1, __fpga_int(obj2)) == 0 ? 1 : 0 if t1 == 3 && t2 == 5 # L:TAG_INT L:TAG_FLOAT
     return __fpga_int_float_cmp(obj2, __fpga_int(obj1)) == 0 ? 1 : 0 if t1 == 5 && t2 == 3 # L:TAG_FLOAT L:TAG_INT
-    return 0 if t1 == 4 && t2 == 4 # L:TAG_SYM
+    return 0 if t1 == 4 && t2 == 4 && __fpga_and(__fpga_image(45), 262144) == 0 # L:TAG_SYM L:IMG_bop_redefined MRB_BOP_SYMBOL_EQ
     m = __fpga_and(__fpga_search(__fpga_addr(__fpga_class_of(obj1)), __fpga_addr(:==)), -4) # L:VIS_MASK (~3)
     return -1 if m == 0 || m >= __fpga_image(35) # L:IMG_heap_start 像の外の Proc は Ruby のメソッド (MRB_METHOD_CFUNC_P でない)
     return 0 if m == __fpga_and(__fpga_search(__fpga_addr(BasicObject), __fpga_addr(:==)), -4) # L:VIS_MASK (~3) mrb_obj_equal_m
-    obj1 == obj2 ? 1 : 0
+    __fpga_sendv(obj1, :==, [obj2], nil, true) ? 1 : 0 # mrb_funcall_argv
   end
 end
 
