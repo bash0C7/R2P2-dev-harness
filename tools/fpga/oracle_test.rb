@@ -13,6 +13,7 @@ class FpgaOracleTest < Minitest::Test
     assert_equal :differs, FpgaOracle.judge(done, "a\n", fpga_cut: false)
     assert_equal :prefix, FpgaOracle.judge(H.new(status: :timeout, out: "a\n"), "a\nb\n", fpga_cut: false)
     assert_equal :differs, FpgaOracle.judge(H.new(status: :timeout, out: "x\n"), "a\nb\n", fpga_cut: true)
+    assert_equal :host_error, FpgaOracle.judge(H.new(status: :error, out: ""), "", fpga_cut: false) # host は基準にならない
   end
 
   # gem の test は Runner と同じ頭と末尾で走らせる

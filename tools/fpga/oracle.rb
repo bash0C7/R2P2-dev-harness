@@ -145,8 +145,10 @@ module FpgaOracle
   end
 
   # host の出力と FPGA の出力 (コンソールのバイト列) を比べる。どちらかが途中で切られた (host の :timeout、FPGA の命令数の上限)
-  # なら、短い方が長い方の頭と同じなら :prefix。両方が終わっていれば同じ時だけ :same
+  # なら、短い方が長い方の頭と同じなら :prefix。両方が終わっていれば同じ時だけ :same。
+  # host で走らなかった (gem が無い、posix の port が無い機能で raise) ものは基準にならないので :host_error
   def judge(host, fpga_out, fpga_cut:)
+    return :host_error if host.status == :error
     return :same if host.out == fpga_out && host.status != :timeout && !fpga_cut
     cut = host.status == :timeout || fpga_cut
     short, long = [host.out, fpga_out].sort_by(&:bytesize)
