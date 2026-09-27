@@ -493,6 +493,7 @@ class Object
     __fpga_st32(sc + 12, __fpga_mt_new)
     __fpga_st32(sc + 60, __fpga_tbl_new(8))
     __fpga_st32(sc + 28, o)
+    __fpga_st32(sc + 4, __fpga_or(__fpga_ld32(sc + 4), __fpga_and(__fpga_ld32(o + 4), 2048))) # L:H_FLAGS L:H_FROZEN prepare_singleton_class の sc->frozen = o->frozen
     __fpga_st32(o + 0, sc)
     __fpga_mcache_clear
     sc
@@ -640,8 +641,15 @@ class Object
     end
     found = __fpga_search_class(__fpga_ld32(target + 8), __fpga_addr(mid)) # L:C_SUPER CI_TARGET_CLASS(ci - 1)->super から
     e = found == 0 ? 0 : __fpga_search(found, __fpga_addr(mid))
-    if e == 0 # vm.c の prepare_missing (method_missing の再定義は S5)
-      __fpga_no_method_error(__fpga_addr(mid), args, "no superclass method '%n' for %T", [mid, recv])
+    if e == 0 # vm.c の prepare_missing (super): method_missing が BasicObject のもの (mrb_obj_missing) なら NoMethodError
+      args = __fpga_ary_subseq(args, 0, __fpga_alen(args)) # mrb_args_pack_positional
+      if __fpga_func_basic_p(recv, __fpga_addr(:method_missing), BasicObject)
+        __fpga_no_method_error(__fpga_addr(mid), args, "no superclass method '%n' for %T", [mid, recv])
+      end
+      found = __fpga_search_class(__fpga_addr(__fpga_class_of(recv)), __fpga_addr(:method_missing)) # ci->u.target_class = mrb_class(recv)
+      e = __fpga_search(found, __fpga_addr(:method_missing))
+      __fpga_ary_unshift1(args, mid)
+      mid = :method_missing # ci->mid = missing
     end
     __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid, __fpga_obj(found), kdict)) # 呼ばれるフレームの target_class は見つかったクラス
   end
@@ -682,13 +690,15 @@ module Kernel
     __fpga_sendv(self, name, args, blk, false)
   end
 
-  # respond_to? (kernel.c の obj_respond_to): 見つかって、private でない (include_all なら private も)
   # C: src/kernel.c obj_respond_to
   def respond_to?(name, include_all = false)
-    e = __fpga_search(__fpga_addr(__fpga_class_of(self)), __fpga_addr(name))
-    return false if e == 0
-    return true if include_all
-    __fpga_and(e, 3) == 1 ? false : true # L:VIS_MASK L:VIS_PRIVATE
+    __fpga_obj_respond_to_p(self, __fpga_obj_to_sym(name), include_all ? true : false) # mrb_get_args の n|b
+  end
+
+  # C: src/kernel.c mrb_false
+  def respond_to_missing?(*args)
+    __fpga_check_argc(args, 1, 2) # MRB_ARGS_ARG(1,1)
+    false
   end
 
   # C: mrbgems/mruby-metaprog/src/metaprog.c mrb_singleton_class

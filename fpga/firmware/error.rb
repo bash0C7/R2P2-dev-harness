@@ -465,10 +465,12 @@ class Object
   # C: src/object.c mrb_obj_is_kind_of
   def __fpga_kind_of(obj, c)
     k = __fpga_addr(__fpga_class_of(obj))
-    t = __fpga_addr(c)
+    tt = __fpga_tag(c) == 7 ? __fpga_tt(__fpga_addr(c)) : 0 # L:TAG_OBJ
+    __fpga_raise(TypeError, "class or module required") unless tt == 9 || tt == 10 || tt == 11 || tt == 15 # L:TT_CLASS L:TT_MODULE L:TT_SCLASS L:TT_ICLASS
+    t = __fpga_class_origin(__fpga_addr(c))
     tm = __fpga_ld32(t + 12) # L:C_MT
     while k > 0
-      return true if k == t || (__fpga_tt(k) == 15 && __fpga_ld32(k + 12) == tm) # L:TT_ICLASS L:C_MT iclass は module の表を共有する
+      return true if k == t || __fpga_ld32(k + 12) == tm # L:C_MT cl->mt == c->mt
       k = __fpga_ld32(k + 8) # L:C_SUPER
     end
     false

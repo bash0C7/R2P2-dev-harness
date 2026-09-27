@@ -572,14 +572,16 @@ module FpgaV2
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
       noblock = (aspec >> 23) & 1 # `&nil` (MRB_ASPEC_NOBLOCK): ブロックを渡されたら ArgumentError
-      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd | noblock).zero? && !@f.kw?
+      # 罠の窓は、渡された引数 (nregs より多いことがある) とキーワードの Hash とブロックの後ろから
+      above = @f.argc + (@f.kw? ? 1 : 0) + 2
+      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)], above: above) unless (kw | kd | noblock).zero? && !@f.kw?
       argc = @f.argc
       len = m1 + o + r + m2
       args = (1..argc).map { |k| reg(k) }
       blk = reg(argc + 1)
       if (r32(@f.proc + P_FLAGS) & PROC_STRICT) != 0
         if argc < m1 + m2 || (r.zero? && argc > len)
-          return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
+          return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)], above: above)
         end
       elsif len > 1 && argc == 1 && array?(args[0]) # strict でない Proc (ブロック) は 1 つの配列を広げる
         args = ary_values(args[0][1])
