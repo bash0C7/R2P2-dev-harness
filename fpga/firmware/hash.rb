@@ -904,6 +904,16 @@ class Object
     __fpga_h_set_flags(h, __fpga_or(__fpga_h_flags(h), 3072)) # MRB_HASH_PROC_DEFAULT | MRB_HASH_DEFAULT
   end
 
+  # C: src/hash.c mrb_hash_first_key
+  def __fpga_hash_first_key(hash)
+    h = __fpga_addr(hash)
+    return nil if __fpga_h_size(h) == 0
+    e = __fpga_h_ea(h)
+    en = e + __fpga_h_ea_capa(h) * 32 # L:HASH_ENTRY H_EACH
+    e = __fpga_entry_skip_deleted_bounded(e, en)
+    e < en ? __fpga_ldv(e + 0) : nil # L:HE_KEY
+  end
+
   # C: src/hash.c mrb_hash_delete_key
   def __fpga_hash_delete_key(hash, key)
     __fpga_hash_modify(hash)

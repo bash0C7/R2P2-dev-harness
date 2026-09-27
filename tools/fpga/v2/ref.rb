@@ -56,9 +56,12 @@ module FpgaV2
       def argc = @r.r32(@addr + CI_ARGC)
 
       def argc=(n)
-        @r.w8(@addr + CI_N, [n, 15].min)
-        @r.w32(@addr + CI_ARGC, n)
+        c = n & CALL_ARGS
+        @r.w8(@addr + CI_N, [c, 15].min | ((n & CALL_KW).zero? ? 0 : CI_KW_BIT))
+        @r.w32(@addr + CI_ARGC, c)
       end
+
+      def kw? = (@r.r8(@addr + CI_N) & CI_KW_BIT) != 0
 
       # 可視性 0 public、1 private、2 protected、3 module_function (記憶の中は mruby の bit: private | MRB_CI_MODFUNC)
       def vis
@@ -72,7 +75,7 @@ module FpgaV2
 
       def kind
         case @r.r8(@addr + CI_CONT)
-        when CONT_ADVANCE, CONT_SEND, CONT_VALUE then :trap
+        when CONT_ADVANCE, CONT_SEND, CONT_VALUE, CONT_KWSEND then :trap
         when CONT_BOOT then :boot
         when CONT_RUN then :run
         else :call
@@ -90,12 +93,18 @@ module FpgaV2
           [:send, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), dst,
            @r.r32(@addr + CI_CFCALL) == 1]
         when CONT_VALUE then [:value, @r.r32(@addr + CI_CA)]
+        when CONT_KWSEND
+          [:kwsend, @r.r32(@addr + CI_CA), @r.r32(@addr + CI_CN), @r.r32(@addr + CI_CSYM), @r.r32(@addr + CI_CRET), nil,
+           @r.r32(@addr + CI_CFCALL) == 1]
         else [:advance]
         end
       end
     end
 
-    CONT_OF = { advance: CONT_ADVANCE, send: CONT_SEND, value: CONT_VALUE }.freeze
+    CONT_OF = { advance: CONT_ADVANCE, send: CONT_SEND, value: CONT_VALUE, kwsend: CONT_KWSEND }.freeze
+    # 呼び出しの引数の数 n の中の印: CALL_KW はキーワードの Hash が引数の後ろにある (ci->kw)。窓は受け手、引数、kdict、ブロック
+    CALL_ARGS = 0xFF
+    CALL_KW = 0x100
 
     attr_reader :console, :stats, :steps, :stbase
 
@@ -413,25 +422,40 @@ module FpgaV2
     # SEND 系: c = 引数の数 n | キーワードの数 << 4。n = 15 は R[a+1] の配列を引数に広げる (splat)。fcall は SSEND 系 (self に送る、private も呼べる)
     def send_op(a, sym, c, blk, fcall: false)
       n = c & 0x0F
-      raise Error, "keyword arguments (c = #{c}) are not supported yet" unless (c >> 4).zero?
-      setreg(a + (n == 15 ? 2 : n + 1), NIL) unless blk
-      if n == 15 # 配列を窓に広げる (mruby は ENTER が広げる。見える意味は同じ)
+      nk = (c >> 4) & 0x0F
+      if nk.positive? && nk < 15 # キーワードを Hash にまとめる (vm.c の hash_new_from_regs、確保があるので罠)
+        return trap_call("__fpga_op_kwpack", [int(a), int(n), int(nk), blk ? TRUE_ : FALSE_],
+                         resume: [:kwsend, a, n, sym, @pc_next, nil, fcall], above: a + (n == 15 ? 1 : n) + nk * 2 + 2)
+      end
+      send_kw(a, sym, n, nk == 15, blk, fcall, @pc_next)
+    end
+
+    # SEND の本体 (kw ならキーワードの Hash は引数の後ろ)。n = 15 は配列を窓に広げる (mruby は ENTER が広げる、D12)
+    def send_kw(a, sym, n, kw, blk, fcall, ret_pc)
+      kn = kw ? 1 : 0
+      setreg(a + (n == 15 ? 1 : n) + kn + 1, NIL) unless blk
+      if n == 15
         list = ary_values(reg(a + 1)[1])
-        b = reg(a + 2)
+        kd = reg(a + 2)
+        b = reg(a + 2 + kn)
         list.each_with_index { |v, k| setreg(a + 1 + k, v) }
-        setreg(a + list.size + 1, b)
+        setreg(a + list.size + 1, kd) if kw
+        setreg(a + list.size + kn + 1, b)
         n = list.size
         @stats[:splat] += 1
       end
-      dispatch(a, sym, n, @pc_next, fcall: fcall)
+      dispatch(a, sym, n | (kw ? CALL_KW : 0), ret_pc, fcall: fcall)
     end
+
+    # 窓の中の引数の枠の数 (キーワードの Hash も数える)
+    def wlen(n) = (n & CALL_ARGS) + ((n & CALL_KW).zero? ? 0 : 1)
 
     # 引いて呼ぶ。ret_pc は呼び出しの後に続ける pc (罠から戻った時も同じ所へ)。dst は結果を置く呼んだ側のレジスタ
     def dispatch(a, sym, n, ret_pc, dst: nil, fcall: false)
       if (prim = table_get(@prims, sym))
         @stats[:prim] += 1
         raise Error, "primitive with dst" if dst
-        return prim_call(prim, a, n)
+        return prim_call(prim, a, n & CALL_ARGS)
       end
       cls = class_of(reg(a))
       if (e = @cache[[cls, sym]])
@@ -439,7 +463,7 @@ module FpgaV2
         return call_entry(e, a, n, sym, ret_pc, dst, fcall)
       end
       @stats[:mcache_miss] += 1
-      trap_call("__fpga_trap_lookup", [obj(cls), [TAG_SYM, sym]], resume: [:send, a, n, sym, ret_pc, dst, fcall], above: a + n + 2)
+      trap_call("__fpga_trap_lookup", [obj(cls), [TAG_SYM, sym]], resume: [:send, a, n, sym, ret_pc, dst, fcall], above: a + wlen(n) + 2)
     end
 
     # メソッド表の値 (Proc の番地 | 可視性) を呼ぶ。private は fcall でなければ見つからないのと同じ (mruby の vm.c: NoMethodError)
@@ -468,17 +492,17 @@ module FpgaV2
       case r32(pr + P_FLAGS) & 3
       when PROC_PRIM
         raise Error, "primitive procs with dst" if dst
-        prim_call(r32(pr + P_BODY), a, n)
+        prim_call(r32(pr + P_BODY), a, n & CALL_ARGS)
       when PROC_IVGET, PROC_IVSET # attr_reader / attr_writer (class.c の attr の C の closure): 罠で iv を読み書きする
         @pc_next = ret_pc
         want = (r32(pr + P_FLAGS) & 3) == PROC_IVGET ? 0 : 1 # reader は MRB_PROC_NOARG、writer は mrb_get_arg1
-        return trap_call("__fpga_raise_argnum", [int(n), int(want), int(want)], above: a + n + 2) unless n == want
+        return trap_call("__fpga_raise_argnum", [int(wlen(n)), int(want), int(want)], above: a + wlen(n) + 2) unless wlen(n) == want
         @stats[:attr] += 1
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
         push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst)
-        b = rv(@stbase + (@f.bp + n + 1) * VALUE)
+        b = rv(@stbase + (@f.bp + wlen(n) + 1) * VALUE)
         w32(@f.addr + CI_BLK, b[1]) if b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC]
       end
     end
@@ -491,7 +515,7 @@ module FpgaV2
       # firmware (像の中の Proc) のフレームからの呼び出しは数えない (上げる途中の firmware が同じ罠に入らないため)
       if kind != :trap && (ci - r32(@ctx + CTX_CIBASE)) / CI_SIZE >= MRB_CALL_LEVEL_MAX && @f.proc >= r32(IMG.fetch(:heap_start) * WORD)
         @pc_next = ret_pc
-        return trap_call("__fpga_op_stack_err", [], above: a + n + 2)
+        return trap_call("__fpga_op_stack_err", [], above: a + wlen(n) + 2)
       end
       raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND)
       @f.pc = ret_pc
@@ -544,7 +568,7 @@ module FpgaV2
       kw = (aspec >> 2) & 0x1F
       kd = (aspec >> 1) & 1
       noblock = (aspec >> 23) & 1 # `&nil` (MRB_ASPEC_NOBLOCK): ブロックを渡されたら ArgumentError
-      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd | noblock).zero?
+      return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd | noblock).zero? && !@f.kw?
       argc = @f.argc
       len = m1 + o + r + m2
       args = (1..argc).map { |k| reg(k) }
@@ -639,6 +663,9 @@ module FpgaV2
       case what
       when :value # 罠の結果を R[a] へ (attr)
         setreg(a, v)
+      when :kwsend # キーワードを Hash にまとめた後の SEND (ブロックは firmware が kdict の後ろに置いた)
+        @pc_next = ret_pc
+        return send_kw(a, sym, n, true, true, fcall, ret_pc)
       when :send # 探索の罠の結果: メソッド表の値 (Integer) か nil
         @pc_next = ret_pc
         return call_entry(v[1], a, n, sym, ret_pc, dst, fcall) if v[0] == TAG_INT
@@ -649,7 +676,7 @@ module FpgaV2
     # 見つからない: method_missing(:名前, 引数...)。引数とブロックの枠を1つずらして前に :名前 (mruby の vm.c と同じ)
     def missing(a, n, sym, ret_pc, dst)
       raise Error, "method_missing is not found either (#{sym_name(sym)})" if sym == sym_id("method_missing")
-      (n + 1).downto(1) { |k| setreg(a + k + 1, reg(a + k)) }
+      (wlen(n) + 1).downto(1) { |k| setreg(a + k + 1, reg(a + k)) }
       setreg(a + 1, [TAG_SYM, sym])
       @stats[:method_missing] += 1
       dispatch(a, sym_id("method_missing"), n + 1, ret_pc, dst: dst, fcall: true)
@@ -694,7 +721,7 @@ module FpgaV2
           when "__fpga_frame_vis" then int(trapped[0].vis) # 罠を起こしたフレームの def の既定の可視性
           when "__fpga_set_caller_vis" then (Ci.new(self, @f.addr - CI_SIZE).vis = args[0][1]; NIL) # 今のメソッドを呼んだフレームの既定の可視性 (private / module_function)
           when "__fpga_class_of" then obj(class_of(args[0])) # 回路の class_of (特異クラスと iclass も含む)
-          when "__fpga_sendv" then return sendv(args[0], args[1][1], args[2], args[3], args[4], a) # 名前で送る (send / __send__ / public_send)
+          when "__fpga_sendv" then return sendv(args[0], args[1][1], args[2], args[3], args[4], a, args[5]) # 名前で送る (send / __send__ / public_send)。6 つ目はキーワードの Hash
           when "__fpga_image" then int(r32(args[0][1] * WORD)) # 起動の像の見出しの語
           when "__fpga_reg" then rv(@stbase + (trapped[0].bp + args[0][1]) * VALUE) # 罠を起こしたフレームのレジスタ
           when "__fpga_setreg" then (wv(@stbase + (trapped[0].bp + args[0][1]) * VALUE, args[1]); NIL)
@@ -786,19 +813,22 @@ module FpgaV2
     end
 
     # __fpga_sendv(recv, sym, args の配列, blk, fcall): 名前で引いて呼ぶ (探索は回路と同じ、fcall なら private も)。戻り値は R[a] へ
-    def sendv(recv, sym, args, blk, fcall, a)
+    def sendv(recv, sym, args, blk, fcall, a, kdict = nil)
       base = r16(@f.irep + I_NREGS)
-      n = window(base, recv, args, blk)
+      n = window(base, recv, args, blk, kdict)
       dispatch(base, sym, n, @pc_next, dst: a, fcall: truthy?(fcall || NIL))
     end
 
     # 今のフレームの窓の上に {recv, 引数..., blk} を並べ、引数の数を返す
-    def window(base, recv, args, blk)
+    # kdict (Hash) があれば引数の後ろに置き、数に CALL_KW を付ける (ci->kw)
+    def window(base, recv, args, blk, kdict = nil)
       list = args[0] == TAG_OBJ ? ary_values(args[1]) : []
       setreg(base, recv)
       list.each_with_index { |v, k| setreg(base + 1 + k, v) }
-      setreg(base + list.size + 1, blk)
-      list.size
+      kw = kdict && kdict[0] == TAG_OBJ
+      setreg(base + list.size + 1, kdict) if kw
+      setreg(base + list.size + (kw ? 2 : 1), blk)
+      list.size | (kw ? CALL_KW : 0)
     end
 
     # --- ブロックと env (計画 S4-1)

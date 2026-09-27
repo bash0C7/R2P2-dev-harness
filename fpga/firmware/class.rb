@@ -609,11 +609,6 @@ class Object
     __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid))
   end
 
-  # キーワード引数と &nil (vm_op_enter の kdict と MRB_ASPEC_NOBLOCK) は S5
-  # C: src/vm.c OP_ENTER
-  def __fpga_op_enter_kw(aspec, argc)
-    __fpga_halt
-  end
 end
 
 class BasicObject
@@ -818,9 +813,9 @@ end
 class Class
   # new (class.c の mrb_instance_new): allocate して initialize を送る (private でも呼べる)
   # C: src/class.c new_iseq
-  def new(*args, &blk)
+  def new(*args, **kw, &blk)
     o = allocate
-    __fpga_sendv(o, :initialize, args, blk, true) # SSENDB :initialize (新しい物が self、private も)
+    __fpga_sendv(o, :initialize, args, blk, true, kw) # SSENDB :initialize n=*|nk=* (新しい物が self、private も)
     o
   end
 
