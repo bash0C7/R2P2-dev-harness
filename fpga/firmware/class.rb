@@ -342,7 +342,7 @@ class Object
   # C: src/vm.c OP_EXEC
   def __fpga_op_EXEC(a, b, c)
     cls = __fpga_reg(a)
-    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(__fpga_irep + 28) + b * 4), __fpga_addr(cls)) # L:I_REPS
+    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(__fpga_irep + 28) + b * 4), __fpga_addr(cls), 18432) # L:I_REPS (OP_EXEC: MRB_PROC_SCOPE | MRB_PROC_CREF)
     __fpga_st32(pr + 12, __fpga_proc) # L:P_UPPER
     __fpga_setreg(a, __fpga_invoke(cls, pr, nil, nil, nil))
   end
@@ -376,7 +376,7 @@ class Object
     ir = __fpga_irep
     sym = __fpga_irep_sym(ir, b)
     sc = __fpga_singleton(__fpga_reg(a))
-    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), sc) # L:I_REPS
+    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), sc, 18688) # L:I_REPS L:PROC_METHOD_FLAGS
     __fpga_st32(pr + 12, __fpga_proc)
     __fpga_define(sc, sym, pr, 0)
     __fpga_setreg(a, __fpga_mkval(4, sym))
@@ -671,7 +671,7 @@ class Module
   def __fpga_attr(name, kind, writer)
     s = name.to_s
     iv = __fpga_intern_str("@" + s)
-    pr = __fpga_proc_new(iv, __fpga_addr(self))
+    pr = __fpga_proc_new(iv, __fpga_addr(self), 0)
     __fpga_st32(pr + 24, kind) # L:P_FLAGS
     sym = writer ? __fpga_intern_str(s + "=") : __fpga_addr(name)
     __fpga_define(__fpga_addr(self), sym, pr, 0)

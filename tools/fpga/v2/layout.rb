@@ -82,7 +82,22 @@ module FpgaV2
     PROC_PRIM = 1
     PROC_IVGET = 2 # attr_reader (本体はシンボル @x)
     PROC_IVSET = 3 # attr_writer
-    PROC_LAMBDA = 1 << 2 # mruby の MRB_PROC_STRICT
+    # mruby の proc.h の flags を同じ値で (下位 2bit の種類 (D15) と重ならない)
+    # C: include/mruby/proc.h MRB_PROC_STRICT
+    PROC_STRICT = 256
+    PROC_ORPHAN = 512
+    PROC_ENVSET = 1024
+    PROC_SCOPE  = 2048
+    PROC_CREF   = 16_384
+    PROC_METHOD_FLAGS = PROC_STRICT | PROC_SCOPE | PROC_CREF # vm.c の vm_define_method と mrb_method_proc_new
+
+    # REnv (proc.h): 見出し + stack (値の並びの番地) + cxt (mrb_context、0 は閉じた env) + mid。
+    # 長さ (下 8bit) と blk の位置 (8〜13bit) は見出しの flags (H_FLAGS の 12bit から、MRB_ENV_LEN / MRB_ENV_BIDX)
+    # C: include/mruby/proc.h REnv
+    E_STACK = 8
+    E_CXT   = 12
+    E_MID   = 16
+    H_FLAGS_SHIFT = 12
 
     # メソッド表 (ROM も実行時も同じ形): 見出し {数 (u32), 容量 (u32), 行の並びの番地 (u32)} と、行 {シンボル (u32), 値 (u32)} × 容量。
     # 開番地法 (位置 = シンボル & (容量 - 1) から1行ずつ)、空きはシンボル 0xFFFFFFFF。見出しと行を分けるのは、表を大きくしても
