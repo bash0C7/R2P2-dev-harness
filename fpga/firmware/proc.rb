@@ -82,6 +82,25 @@ class Object
     e
   end
 
+  # C: include/mruby/proc.h MRB_PROC_ENV
+  def __fpga_proc_env(p)
+    __fpga_and(__fpga_ld32(p + 24), 1024) > 0 ? __fpga_ld32(p + 16) : 0 # L:P_FLAGS L:PROC_ENVSET L:P_ENV
+  end
+
+  # C: src/proc.c mrb_proc_eql
+  def __fpga_proc_eql(a, b)
+    return false unless __fpga_tag(a) == 7 && __fpga_tt(__fpga_addr(a)) == 16 # L:TAG_OBJ L:TT_PROC
+    return false unless __fpga_tag(b) == 7 && __fpga_tt(__fpga_addr(b)) == 16 # L:TAG_OBJ L:TT_PROC
+    p1 = __fpga_addr(a)
+    p2 = __fpga_addr(b)
+    c1 = __fpga_and(__fpga_ld32(p1 + 24), 3) > 0 # L:P_FLAGS MRB_PROC_CFUNC_P (primitive と attr)
+    c2 = __fpga_and(__fpga_ld32(p2 + 24), 3) > 0 # L:P_FLAGS
+    return false unless c1 == c2
+    return false unless __fpga_ld32(p1 + 8) == __fpga_ld32(p2 + 8) # L:P_BODY
+    return true if c1
+    __fpga_proc_env(p1) == __fpga_proc_env(p2)
+  end
+
   # ci->u が REnv なら それ、でなければ 0
   # C: src/vm.c mrb_vm_ci_env
   def __fpga_ci_env(ci)
@@ -95,5 +114,32 @@ class Object
   def __fpga_ci_tclass(ci)
     e = __fpga_ci_env(ci)
     e == 0 ? __fpga_ld32(ci + 24) : __fpga_ld32(e) # L:CI_U L:H_CLASS
+  end
+end
+
+class Proc
+  # C: src/proc.c proc_eql
+  def ==(other)
+    __fpga_proc_eql(self, other)
+  end
+
+  # Proc.new { } (proc.c の mrb_proc_s_new): ブロックの Proc を写し、initialize を送る。呼んだ所の env を持つ strict でない Proc は ORPHAN
+  # C: src/proc.c mrb_proc_s_new
+  def self.new(&blk)
+    __fpga_raise(ArgumentError, "no block given") if __fpga_tag(blk) == 0 # L:TAG_NIL mrb_get_args の &!
+    b = __fpga_addr(blk)
+    p = __fpga_slot(__fpga_addr(self), 16) # L:TT_PROC
+    __fpga_st32(p + 24, __fpga_ld32(b + 24)) # L:P_FLAGS mrb_proc_copy
+    __fpga_st32(p + 8, __fpga_ld32(b + 8)) # L:P_BODY
+    __fpga_st32(p + 12, __fpga_ld32(b + 12)) # L:P_UPPER
+    __fpga_st32(p + 16, __fpga_ld32(b + 16)) # L:P_ENV
+    __fpga_st32(p + 20, __fpga_ld32(b + 20)) # L:P_TCLASS
+    proc = __fpga_obj(p)
+    __fpga_sendv(proc, :initialize, [], proc, true)
+    ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI
+    if __fpga_and(__fpga_ld32(p + 24), 256) == 0 && ci > __fpga_cibase && __fpga_proc_env(p) == __fpga_ld32(ci - 64 + 24) # L:P_FLAGS L:PROC_STRICT L:CI_SIZE L:CI_U
+      __fpga_st32(p + 24, __fpga_or(__fpga_ld32(p + 24), 512)) # L:P_FLAGS L:PROC_ORPHAN
+    end
+    proc
   end
 end

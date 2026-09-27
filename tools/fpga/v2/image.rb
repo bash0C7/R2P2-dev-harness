@@ -365,7 +365,9 @@ end
       w32(ir + I_ILEN, 1)
       w32(ir + I_ISEQ, code)
       proc = @classes["Proc"]
-      mt_set(r32(proc + C_ROM), intern("call"), new_proc(ir, proc, PROC_SCOPE | PROC_STRICT))
+      m = new_proc(ir, proc, PROC_SCOPE | PROC_STRICT)
+      mt_set(r32(proc + C_ROM), intern("call"), m) # proc.c の mrb_init_proc: call と [] に同じメソッド
+      mt_set(r32(proc + C_ROM), intern("[]"), m)
     end
 
     def build_firmware
