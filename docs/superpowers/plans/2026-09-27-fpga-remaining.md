@@ -179,6 +179,24 @@ Runner と同じ末尾を付けて走らせる。
   (置き換えの文字列の `\0` `\1` を解かせない)。日本語を含むものを `ruby -e` に渡さない
 - **重い rake (fuzz / gap / check / tb) は同じ worktree で1つずつ。** 長いものは nohup でログを scratchpad に、止める時は PID で
 
+## P9a gem の `test/` を gap に入れる (P9b の前に測る)
+
+P9b の前に分かったこと: picotest の stub / mock を使うのは example ではなく gem の `test/` (`mrbgems/*/test/*_test.rb`、44 個の gem、
+stub / mock を使うのは 6 本: adc、dfu、quectel_cellular、sandbox ほか)。upstream の `rake test` (tasks/picoruby/test.rake) は
+`Picotest::Runner.new(test_dir, require_name: <gem の require の名前>)` で走らせる。今の gap はここを見ていないので、P9b の表の
+「止まる理由」を実測できない。先に gap に入れて測り、P9b の表をその数で書き直す。
+
+| 変える意味 | 直す test と表 |
+|---|---|
+| gap の対象に `mrbgems/*/test/*_test.rb` を足す。Runner と同じく先頭に `require 'picotest'` と `require '<require_name>'` (mrbgem.rake の `spec.require_name`、無ければ gem の名前から `picoruby-` を除いたもの)、末尾は P9 の `picotest_tail` | gap.rb の `targets`・`test_head`、gap_test |
+| 範囲外の判定は今と同じで、付けた require も数える (net/*、mbedtls、dfu などは範囲外) | gap_test |
+| Runner が付ける `Kernel#require` の包み (LoadError を無視) と `$LOAD_PATH` は付けない。FPGA の require は変換の時に解くので、FPGA 版の gem が無ければ gap の「require X」として止まる理由に出す (黙って飛ばさない) | spec §10 |
+
+- [ ] fuzz: 変えない (道具だけの段。コアも参照も変えない)
+- [ ] gap の見込み: example と corpus の 118 本の数は P9 と同じ (72 / 70 / 70 / 2)。gem の test は測る段なので数を決めない。
+  測った数と止まる理由を記録に書き、P9b の表 (と P9c 以降に要るもの) をその数で書き直す
+- [ ] test:fpga (gap_test)
+
 ## P9b 動的なメソッドの定義 (picotest の stub / mock)
 
 double.rb と double.c (src/mruby/picotest.c) を読んで分かったこと: stub / mock に要るのは次の4つ。

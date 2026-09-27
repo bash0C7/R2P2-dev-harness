@@ -1,6 +1,6 @@
 # 実在の PicoRuby プログラムが FPGA コアでどこまで動くかを測る (rake fpga:gap)。
 #
-# 対象は vendor/picoruby の gem の example と examples/ と fpga/corpus/。1本ずつ mrbc にかけ、
+# 対象は vendor/picoruby の gem の example と test (`test/*_test.rb`) と examples/ と fpga/corpus/。1本ずつ mrbc にかけ、
 # 変換を止める理由を「最初の1つ」ではなく全部数える (命令、メソッド、pool、require)。
 # ハードウェアに無いもの (ネットワーク、BLE、TLS、ファイル、USB デバイス、コンパイラ) を require するものは範囲外。
 # 計画: docs/superpowers/plans/2026-09-26-fpga-full-picoruby.md
@@ -46,7 +46,19 @@ module FpgaGap
   def targets
     vendor = Dir[File.join(ROOT, "vendor/picoruby/mrbgems/*/{example,examples,sample}/**/*.rb")]
     vendor.reject! { |f| File.basename(f).start_with?("cruby_") }
-    (vendor + Dir[File.join(ROOT, "examples/**/*.rb")] + Dir[File.join(ROOT, "fpga/corpus/*.rb")]).sort
+    tests = Dir[File.join(ROOT, "vendor/picoruby/mrbgems/*/test/*_test.rb")]
+    (vendor + tests + Dir[File.join(ROOT, "examples/**/*.rb")] + Dir[File.join(ROOT, "fpga/corpus/*.rb")]).sort
+  end
+
+  # gem のテスト (mrbgems/<gem>/test/*_test.rb) の頭。upstream の rake test (tasks/picoruby/test.rake) の Picotest::Runner と同じく
+  # picotest と、その gem の require の名前 (mrbgem.rake の spec.require_name、無ければ gem の名前から picoruby- を除いたもの) を
+  # require する。Runner の Kernel#require の包み (LoadError を無視) は付けない: FPGA の require は変換の時に解くので、
+  # FPGA 版の gem が無ければ止まる理由に出す。gem のテストでなければ nil
+  def gem_test_head(path)
+    m = path.match(%r{/mrbgems/([^/]+)/test/[^/]+_test\.rb\z}) or return nil
+    rake = File.join(ROOT, "vendor/picoruby/mrbgems", m[1], "mrbgem.rake")
+    name = File.exist?(rake) && File.read(rake)[/^\s*spec\.require_name\s*=\s*["']([^"']+)["']/, 1]
+    "require 'picotest'\nrequire '#{name || m[1].delete_prefix("picoruby-")}'\n"
   end
 
   def rel(path)
@@ -152,14 +164,16 @@ module FpgaGap
   # 1本を調べる。{ path:, status: :out_of_scope / :blocked / :converted, reasons: [...], hex: }
   def check(path, mrbc:, dir:)
     src = File.read(path, encoding: "UTF-8").scrub
+    head = gem_test_head(path)
+    src = head + src if head
     oos = out_of_scope(src)
     return { path: path, status: :out_of_scope, reasons: [oos] } if oos
 
     tail = picotest_tail(src)
-    if tail
-      # Runner と同じ末尾を付けた写しを compile する (require 'picotest' も付ける)
+    if tail || head
+      # Runner と同じ頭と末尾を付けた写しを compile する (gem のテストでなければ頭は require 'picotest' だけ)
       copy = File.join(dir, rel(path).tr("/", "_"))
-      File.write(copy, "require 'picotest'\n" + src + tail)
+      File.write(copy, (head ? "" : "require 'picotest'\n") + src + tail.to_s)
       path_for_compile = copy
     else
       path_for_compile = path

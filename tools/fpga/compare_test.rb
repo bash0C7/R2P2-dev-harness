@@ -30,6 +30,14 @@ class FpgaCompareTest < Minitest::Test
     assert_match(/first difference at step 2, pc 2 \(SUB\)/, r.message)
   end
 
+  # シミュレーションが cycle の上限で止まった (T 行) なら、それまでが同じでも食い違い
+  def test_cycle_limit_is_a_difference
+    sim = REF[0..5] + ["T 3"]
+    r = FpgaCompare.compare(REF, sim)
+    refute r.ok
+    assert_equal "T 3", r.ending
+  end
+
   def test_decode_values
     assert_equal(-1, FpgaCompare.decode(FpgaIsa::TAG_INT, 0xFFFF_FFFF_FFFF_FFFF)) # Integer は 64bit
     assert_equal 4_294_967_295, FpgaCompare.decode(FpgaIsa::TAG_INT, 0xFFFF_FFFF)

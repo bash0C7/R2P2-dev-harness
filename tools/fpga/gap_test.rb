@@ -25,6 +25,17 @@ class FpgaGapTest < Minitest::Test
     assert_nil FpgaGap.picotest_tail("class A\nend\n")
   end
 
+  # gem のテストは upstream の rake test の Runner と同じく picotest と gem の require の名前を頭に付ける
+  def test_gem_test_head_requires_the_gem
+    root = FpgaGap::ROOT
+    skip "vendor/picoruby が無い" unless File.directory?(File.join(root, "vendor/picoruby/mrbgems"))
+    assert_equal "require 'picotest'\nrequire 'adc'\n", FpgaGap.gem_test_head("#{root}/vendor/picoruby/mrbgems/picoruby-adc/test/adc_test.rb")
+    assert_equal "require 'picotest'\nrequire 'net/http'\n", FpgaGap.gem_test_head("#{root}/vendor/picoruby/mrbgems/picoruby-net-http/test/http_test.rb") # spec.require_name
+    assert_equal "require socket", FpgaGap.out_of_scope("require 'picotest'\nrequire 'socket'\n")
+    assert_nil FpgaGap.gem_test_head("#{root}/vendor/picoruby/mrbgems/picoruby-adc/example/adc.rb")
+    assert_includes FpgaGap.targets, "#{root}/vendor/picoruby/mrbgems/picoruby-adc/test/adc_test.rb"
+  end
+
   # 最初の1つで止めず、止まる理由を全部挙げる (Float のリテラルはもう理由にならない)
   def test_blockers_lists_every_reason
     bin = rite([op("LOADL"), 1, 0, op("SSEND"), 1, 0, 1, op("UNDEF"), 0, op("STOP")], syms: %w[foo], pool: [:float])

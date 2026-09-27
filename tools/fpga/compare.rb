@@ -1,6 +1,6 @@
 # 参照インタプリタ (ref_vm.rb) とシミュレーション (fpga/sim/mrb_run_tb.sv) のトレースの突き合わせ。
 #
-# 合否は I/O の系列 (O 行) と終わり方 (最後の H/E/L 行) で決める。
+# 合否は I/O の系列 (O 行) と終わり方 (最後の H/E/L 行、シミュレーションが cycle の上限で止まった T 行) で決める。
 # 食い違ったら、トレース全体 (X/W/O) で最初にずれた行を探し、その step の命令を示す。
 require_relative "converter"
 
@@ -10,7 +10,7 @@ module FpgaCompare
   module_function
 
   def io_lines(trace)
-    trace.grep(/\A[OHEL] /)
+    trace.grep(/\A[OHELT] /)
   end
 
   def compare(ref, sim, words: nil)
