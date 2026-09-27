@@ -13,12 +13,15 @@ FPGA_RTL_DIR   = File.join(FPGA_DIR, "rtl")
 FPGA_TB_DIR    = File.join(FPGA_DIR, "tb")
 FPGA_BUILD_DIR = File.join(BUILD_DIR, "fpga")
 
-# 必須は verilator と iverilog/vvp。surfer は波形を見る時だけ要る。
+# 必須は verilator と iverilog/vvp。surfer は波形を見る時だけ要る。yosys と sv2v は資源の関所 (rake fpga:synth) だけで要る
+# (sv2v は apt に無いので、Linux では fpga:setup が GitHub の release を build/fpga/tools/sv2v に置く)。
 FPGA_TOOLS = {
   "verilator" => { required: true,  brew: "verilator",      apt: "verilator" },
   "iverilog"  => { required: true,  brew: "icarus-verilog", apt: "iverilog" },
   "vvp"       => { required: true,  brew: "icarus-verilog", apt: "iverilog" },
-  "surfer"    => { required: false, brew: "surfer",         apt: nil }
+  "surfer"    => { required: false, brew: "surfer",         apt: nil,     why: "waveform viewer" },
+  "yosys"     => { required: false, brew: "yosys",          apt: "yosys", why: "resource gate, rake fpga:synth" },
+  "sv2v"      => { required: false, brew: "sv2v",           apt: nil,     why: "resource gate, rake fpga:synth" }
 }.freeze
 
 def fpga_os
@@ -30,6 +33,7 @@ def fpga_os
 end
 
 def fpga_tool?(name)
+  return !FpgaSynth.sv2v.nil? if name == "sv2v" # build/fpga/tools/sv2v も見る
   ENV["PATH"].to_s.split(File::PATH_SEPARATOR).any? do |dir|
     path = File.join(dir, name)
     File.file?(path) && File.executable?(path)
@@ -58,6 +62,19 @@ end
 FPGA_SURFER_LINUX_HINT = "surfer is not in apt. Get the Linux binary from " \
                          "https://gitlab.com/surfer-project/surfer/-/releases " \
                          "or `cargo install --git https://gitlab.com/surfer-project/surfer surfer`".freeze
+
+# sv2v の Linux の release (zachjs/sv2v) を build/fpga/tools/sv2v に置く
+FPGA_SV2V_URL = "https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip".freeze
+
+def fpga_install_sv2v
+  dir = File.join(FPGA_BUILD_DIR, "tools")
+  FileUtils.mkdir_p dir
+  zip = File.join(dir, "sv2v.zip")
+  sh "curl", "-fsSL", "-o", zip, FPGA_SV2V_URL
+  sh "unzip", "-o", "-q", zip, "-d", dir
+  FileUtils.rm_rf File.join(dir, "sv2v")
+  FileUtils.mv File.join(dir, "sv2v-Linux"), File.join(dir, "sv2v")
+end
 
 def require_fpga_tools!
   missing = fpga_missing_tools
@@ -145,7 +162,7 @@ namespace :fpga do
   desc "Check that the FPGA simulators (Verilator, Icarus Verilog) and Surfer are installed"
   task :doctor do
     FPGA_TOOLS.each do |name, t|
-      state = fpga_tool?(name) ? "ok" : (t[:required] ? "MISSING" : "missing (optional, waveform viewer)")
+      state = fpga_tool?(name) ? "ok" : (t[:required] ? "MISSING" : "missing (optional, #{t[:why]})")
       puts format("%-10s %s", name, state)
     end
     puts `verilator --version`.strip if fpga_tool?("verilator")
@@ -165,6 +182,7 @@ namespace :fpga do
       raise "don't know how to install #{missing.join(', ')} on #{RbConfig::CONFIG['host_os']}"
     end
     puts FPGA_SURFER_LINUX_HINT if fpga_os == :linux && !fpga_tool?("surfer")
+    fpga_install_sv2v if fpga_os == :linux && FpgaSynth.sv2v.nil?
     Rake::Task["fpga:doctor"].invoke
   end
 
@@ -261,6 +279,8 @@ require_relative "../tools/fpga/emu"
 require_relative "../tools/fpga/fuzz"
 require_relative "../tools/fpga/gap"
 require_relative "../tools/fpga/parallel"
+require_relative "../tools/fpga/synth"
+require_relative "../tools/fpga/oracle"
 require "open3"
 require "stringio"
 
@@ -544,8 +564,19 @@ namespace :fpga do
          "  reached: #{stats.sort.map { |k, v| "#{k} #{v}" }.join(', ')}"
   end
 
-  desc "Measure how many real PicoRuby programs (gem examples, examples/, fpga/corpus) convert and run on the core, and what blocks the rest"
-  task :gap, [:verbose] do |_t, args|
+  desc "Run every gap target (corpus, gem examples and tests, examples/) on host PicoRuby and keep the output: the correctness oracle"
+  task oracle: "fpga:picoruby" do
+    dir = File.join(FPGA_BUILD_DIR, "oracle")
+    FileUtils.rm_rf dir
+    FileUtils.mkdir_p dir
+    results = FpgaParallel.threads(FpgaGap.targets) { |path| FpgaOracle.run(path, dir: dir) }
+    File.write(File.join(dir, "oracle.json"), JSON.pretty_generate(results.map(&:to_h).map { |h| h.merge(path: FpgaGap.rel(h[:path])) }))
+    results.group_by(&:status).sort_by { |k, _| k.to_s }.each { |st, rs| puts format("%-13s %d", st, rs.size) }
+    puts "outputs: #{fpga_rel(dir)}"
+  end
+
+  desc "Measure how many real PicoRuby programs (gem examples and tests, examples/, fpga/corpus) convert and run on the core, give the same output as host PicoRuby, and what blocks the rest"
+  task :gap, [:verbose] => "fpga:picoruby" do |_t, args|
     require_fpga_tools!
     mrbc = FpgaCorpus.default_mrbc
     raise "#{mrbc} is not built. Run `rake setup` and `rake test:host`" unless File.executable?(mrbc)
@@ -553,13 +584,16 @@ namespace :fpga do
     FileUtils.rm_rf dir
     FileUtils.mkdir_p dir
     fpga_runner # 並べる前に親で1回だけ build する
-    # 1 本ごとに変換し、変換できたものは参照とコアで走らせて突き合わせる
+    # 1 本ごとに変換し、変換できたものは参照とコアで走らせて突き合わせ、コアのコンソールの出力を host の PicoRuby (oracle) と比べる
     results = FpgaParallel.map(FpgaGap.targets) do |path|
       r = FpgaGap.check(path, mrbc: mrbc, dir: dir)
       if r[:status] == :converted
         ref = fpga_ref_trace(r[:hex], stim: nil, max: FPGA_DEFAULT_STEPS)
         sim = fpga_sim_trace(r[:hex], name: "gap_#{File.basename(r[:hex], '.hex')}", stim: nil, max: FPGA_DEFAULT_STEPS)
         r[:status] = FpgaCompare.compare(ref, sim).ok ? :matched : :differs
+        host = FpgaOracle.run(path, dir: dir)
+        cut = FpgaCompare.io_lines(sim).last.to_s.match?(/\A[LT] /)
+        r[:host] = FpgaOracle.judge(host, FpgaCompare.console(sim), fpga_cut: cut)
       end
       r
     end
@@ -569,11 +603,15 @@ namespace :fpga do
     lines << "#{results.size} program(s): #{in_scope} in scope, #{count.(:out_of_scope)} out of scope (hardware the board lacks, or host-side tools)"
     lines << "in scope: #{count.(:matched) + count.(:differs)} convert, #{count.(:matched)} match the reference, " \
              "#{count.(:differs)} differ, #{count.(:blocked)} blocked"
+    host = ->(v) { results.count { |r| r[:host] == v } }
+    lines << "against host PicoRuby (the oracle): #{host.(:same)} same output, #{host.(:prefix)} same up to a cut (timeout or step limit), " \
+             "#{host.(:differs)} different output"
     lines << "blocked by (programs):"
     FpgaGap.histogram(results).each { |reason, n| lines << format("  %4d  %s", n, reason) }
     lines << "per program:"
     results.each do |r|
-      lines << format("  %-13s %s%s", r[:status], FpgaGap.rel(r[:path]), r[:reasons].empty? ? "" : "  (#{r[:reasons].join(', ')})")
+      host = r[:host] ? " host:#{r[:host]}" : ""
+      lines << format("  %-13s %s%s%s", r[:status], FpgaGap.rel(r[:path]), host, r[:reasons].empty? ? "" : "  (#{r[:reasons].join(', ')})")
     end
     report = File.join(FPGA_BUILD_DIR, "gap.txt")
     File.write(report, lines.join("\n") + "\n")
@@ -581,13 +619,16 @@ namespace :fpga do
     puts "full report: #{fpga_rel(report)}"
   end
 
-  desc "Build the host picoruby that runs the converter (build_config/fpga-tools.rb, no PICORB_DEBUG) into build/picoruby-fpga"
+  desc "Build the host picoruby that runs the converter and the oracle (build_config/fpga-tools.rb, no PICORB_DEBUG) into build/picoruby-fpga"
   task :picoruby do
     # vendor の rake の `all`。build の dir と、bin の symlink を置く dir (INSTALL_DIR) を harness の build/ に向け、
-    # vendor/picoruby/bin (host のテストの VM) には触らない
+    # vendor/picoruby/bin (host のテストの VM) には触らない。firmware-patches/ を当てて build する (実機の firmware と同じ直し。
+    # gpio-pin-num-mrb-int.patch が無いと GPIO の gem が MRB_INT64 でスタックを壊す)
     dir = FpgaConverter::PICORUBY_DIR
-    vendor_rake({ "MRUBY_CONFIG" => File.join(HARNESS_ROOT, "build_config", "fpga-tools.rb"), "MRUBY_BUILD_DIR" => dir,
-                  "INSTALL_DIR" => File.join(dir, "bin"), "PICORB_DEBUG" => nil }, "all")
+    with_firmware_patches do
+      vendor_rake({ "MRUBY_CONFIG" => File.join(HARNESS_ROOT, "build_config", "fpga-tools.rb"), "MRUBY_BUILD_DIR" => dir,
+                    "INSTALL_DIR" => File.join(dir, "bin"), "PICORB_DEBUG" => nil }, "all")
+    end
   end
 
   desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
@@ -666,6 +707,20 @@ namespace :fpga do
       raise "openFPGALoader not found. `brew install openfpgaloader` (macOS) / `apt-get install openfpgaloader` (Linux)"
     end
     sh "openFPGALoader", "-c", ENV["FPGA_CABLE"] || "usb-blaster", svf
+  end
+
+  desc "Resource gate: synthesize RTL parts with yosys for Cyclone IV and compare LE / M9K / logic depth with the budget (e.g. rake fpga:synth[counter8])"
+  task :synth, [:name] do |_, args|
+    names = args[:name] ? [args[:name]] : FpgaSynth::TARGETS.keys
+    over = []
+    names.each do |name|
+      t = FpgaSynth::TARGETS.fetch(name) { raise "unknown synth target #{name} (#{FpgaSynth::TARGETS.keys.join(', ')})" }
+      r = FpgaSynth.run(files: t[:files].map { |f| File.join(HARNESS_ROOT, f) }, top: t[:top], params: t[:params] || {},
+                        blackbox: t[:blackbox] || [])
+      puts FpgaSynth.report(r, t[:budget])
+      over << name unless r.over(t[:budget]).empty?
+    end
+    raise "over budget: #{over.join(', ')}" unless over.empty?
   end
 end
 
