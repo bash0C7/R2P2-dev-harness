@@ -1,29 +1,6 @@
 # firmware: Module と Class のメソッドの残り (mruby の src/class.c の ROM の表、src/vm.c の module_eval / instance_eval、
 # src/kernel.c の __case_eqq)。計画 S5-1
 class Object
-  # rescue *list と when *list の照らし (kernel.c の mrb_obj_ceqq): 配列なら要素ごとに ===
-  # C: src/kernel.c mrb_obj_ceqq
-  def __fpga_ceqq(pat, v)
-    if __fpga_tag(pat) == 7 && __fpga_tt(__fpga_addr(pat)) == 17 # L:TAG_OBJ L:TT_ARRAY
-      ary = pat
-    elsif __fpga_tag(pat) == 0 # L:TAG_NIL
-      return false
-    elsif __fpga_search(__fpga_addr(__fpga_class_of(pat)), __fpga_addr(:to_a)) == 0 # mrb_respond_to
-      return (pat === v) ? true : false
-    else
-      ary = pat.to_a
-      return pat === v if __fpga_tag(ary) == 0 # L:TAG_NIL
-      __fpga_ensure_array_type(ary)
-    end
-    len = __fpga_alen(ary)
-    i = 0
-    while i < len && i < __fpga_alen(ary)
-      return true if __fpga_aref(ary, i) === v
-      i += 1
-    end
-    false
-  end
-
   # 呼んだ側の scope の可視性 (class.c の caller_scope_visibility)。呼んだフレームの target class と self が c の時だけ
   # その ci の可視性 (ブロックの env の可視性を辿る find_visibility_scope は D19)
   # C: src/class.c caller_scope_visibility (D19)
@@ -156,18 +133,9 @@ module Kernel
     __fpga_obj(p)
   end
 
-  # C: src/kernel.c mrb_obj_ceqq
-  def __case_eqq(v)
-    __fpga_ceqq(self, v)
-  end
 end
 
 class Module
-  # C: src/class.c mrb_mod_eqq
-  def ===(obj)
-    __fpga_kind_of(obj, self)
-  end
-
   # C: src/class.c mrb_mod_ancestors
   def ancestors
     result = []
