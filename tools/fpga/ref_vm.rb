@@ -3,7 +3,7 @@
 # ROM (rom.rb の 48bit 語) を1命令ずつ実行し、ハードウェアのシミュレーション
 # (fpga/sim/mrb_run_tb.sv) と同じ書式のトレースを出す。命令の意味の正本は
 # mruby/mruby の src/vm.c。ここに書くのは FPGA 版として決めた意味 (docs/spec.md §10):
-#   - 整数は 32bit で折り返す (mruby の Integer の範囲外は仕様外)
+#   - 整数は 64bit。あふれると RangeError (PicoRuby の MRB_INT64 と同じ。docs/spec.md §10「64bit の Integer (P8)」)
 #   - 型の合わない演算、0 での割り算、範囲外は「エラー停止」(mruby ならメソッド探索や例外)
 #   - メソッド呼び出しはレジスタ窓: 呼び出し先の R0 は呼び出し元の R[a]。レジスタファイルは全フレームで共有
 #   - RETURN / RETNIL はフレームが無ければ停止、あれば呼び出し元へ戻る。STOP は停止
@@ -169,6 +169,26 @@ class FpgaRefVm
 
   def int(v)
     [FpgaIsa::TAG_INT, v & MASK]
+  end
+
+  INT_MAX = (1 << (FpgaIsa::INT_BITS - 1)) - 1
+  INT_MIN = -(1 << (FpgaIsa::INT_BITS - 1))
+
+  # 符号付きの v を Integer にする。64bit に入らなければ桁あふれ (RangeError。where は isa.rb の OVF_*)
+  def ovf(v, where)
+    overflow!(where) if v > INT_MAX || v < INT_MIN
+    int(v)
+  end
+
+  def overflow!(where)
+    @stats[:overflow] += 1
+    core_error!(FpgaIsa::CERR_OVERFLOW, int(where))
+  end
+
+  # デバイスの 32bit のレジスタの値を符号付きに (-1 は -1 のまま)
+  def sext32(v)
+    v &= 0xFFFF_FFFF
+    v >= 0x8000_0000 ? v - 0x1_0000_0000 : v
   end
 
   def signed(v)
@@ -359,7 +379,7 @@ class FpgaRefVm
   def set_abs(step, i, value)
     fault! unless i < @regs.size
     @regs[i] = value
-    @trace << format("W %d %d %d %08x", step, i, value[0], value[1])
+    @trace << format("W %d %d %d %016x", step, i, value[0], value[1])
     nil
   end
 
@@ -628,7 +648,7 @@ class FpgaRefVm
     when "LOADI__1" then set(step, a, int(-1))
     when /\ALOADI_(\d)\z/ then set(step, a, int(Regexp.last_match(1).to_i))
     when "LOADI16"  then set(step, a, int(sext16(b)))
-    when "LOADI32"  then set(step, a, int((b << 16) | c))
+    when "LOADI32"  then set(step, a, int(sext32((b << 16) | c)))
     when "LOADNIL" then set(step, a, NIL)
     when "TDEF", "SDEF" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "CLASS" then set(step, a, [FpgaIsa::TAG_CLASS, b])
@@ -671,7 +691,10 @@ class FpgaRefVm
     when "LOADSYM" then set(step, a, [FpgaIsa::TAG_SYM, b])
     when "LOADF"
       # Float のリテラル: ROM のデータの2語 (上位 32bit、下位 32bit) から箱を作る
-      put_float(step, a, bits_float(rom_word(b) & MASK, rom_word(b + 1) & MASK))
+      put_float(step, a, bits_float(rom_word(b) & 0xFFFF_FFFF, rom_word(b + 1) & 0xFFFF_FFFF))
+    when "LOADI64"
+      # 32bit に入らない整数のリテラル: ROM のデータの2語 (上位 32bit、下位 32bit)
+      set(step, a, int(((rom_word(b) & 0xFFFF_FFFF) << 32) | (rom_word(b + 1) & 0xFFFF_FFFF)))
     when "STRING"
       fault! unless ok?(a)
       set(step, a, rom_string(b, c))
@@ -686,7 +709,7 @@ class FpgaRefVm
       v = reg(a)
       fault! if port >= FpgaIoMap::NPORTS || ref?(v) # 配列や Proc はピンに出せない
       @io[port] = v
-      @trace << format("O %d %d %d %08x", step, port, v[0], v[1])
+      @trace << format("O %d %d %d %016x", step, port, v[0], v[1])
     when "GETCONST"
       fault! if b >= FpgaIsa::NCONST || @consts[b].nil?
       set(step, a, @consts[b])
@@ -708,11 +731,13 @@ class FpgaRefVm
         @regs[@bp + a + 1] = int(d)
         return send_op(step, pc, a, name == "ADDI" ? "+" : "-", 1)
       end
-      set(step, a, int(name == "ADDI" ? reg(a)[1] + d : reg(a)[1] - d))
+      x = signed(reg(a)[1])
+      set(step, a, ovf(name == "ADDI" ? x + d : x - d, FpgaIsa::OVF_PLAIN))
     when "ADDILV", "SUBILV"
       fault! unless int?(reg(a))
       d = c & 0xFF
-      set(step, a, int(name == "ADDILV" ? reg(a)[1] + d : reg(a)[1] - d))
+      x = signed(reg(a)[1])
+      set(step, a, ovf(name == "ADDILV" ? x + d : x - d, FpgaIsa::OVF_PLAIN))
     when "SEND", "SEND0" then return send(step, pc, a, b, c, false)
     when "SSEND", "SSEND0" then return send(step, pc, a, b, c, true)
     when "ENTER" then return enter(pc, a, b, c)
@@ -1200,10 +1225,13 @@ class FpgaRefVm
     end
   end
 
+  # x << s (s が負なら算術右シフト)。左へずらして 64bit からあふれたら桁あふれ (0 はいくつずらしても 0。mruby の int_lshift)
   def shift_left(x, s)
-    return int(0) if s >= FpgaIsa::INT_BITS
     return int(x < 0 ? -1 : 0) if s <= -FpgaIsa::INT_BITS
-    s >= 0 ? int(x << s) : int(x >> -s)
+    return int(x >> -s) if s <= 0
+    return int(0) if x.zero?
+    overflow!(FpgaIsa::OVF_SHIFT) if s >= FpgaIsa::INT_BITS
+    ovf(x << s, FpgaIsa::OVF_SHIFT)
   end
 
   # primitive (isa.rb の PRIMS)。受け手の型が違えばエラー (表が壊れていても同じ結果になるように)
@@ -1275,7 +1303,7 @@ class FpgaRefVm
       end
       core_error!(%w[ILT ILE IGT IGE].include?(name) ? FpgaIsa::CERR_COMPARE : FpgaIsa::CERR_TYPE, reg(a + 1), x) unless int?(reg(a + 1))
       binop(step, pc, { "IADD" => "ADD", "ISUB" => "SUB", "IMUL" => "MUL", "IDIV" => "DIV",
-                        "ILT" => "LT", "ILE" => "LE", "IGT" => "GT", "IGE" => "GE" }[name], a)
+                        "ILT" => "LT", "ILE" => "LE", "IGT" => "GT", "IGE" => "GE" }[name], a, true)
       return pc + 1
     when "IEQ"
       fault! unless int?(x)
@@ -1304,7 +1332,7 @@ class FpgaRefVm
   def psg_lines(step)
     @dev.take_psg.each do |ms, word, aux|
       @stats[:psg] += 1
-      @trace << format("P %d %d %08x %04x", step, ms & MASK, word & MASK, aux)
+      @trace << format("P %d %d %08x %04x", step, ms, word & 0xFFFF_FFFF, aux)
     end
   end
 
@@ -1317,7 +1345,7 @@ class FpgaRefVm
             FpgaIoMap::IN_MASK[n] == 1 ? input(step, n) : @io[n]
           elsif FpgaDevices.device?(n)
             r = @dev.read(n, step, vtime(step, true))
-            @stats[:irq_event] += 1 if n == FpgaDevices::IRQ_EVENT && r != MASK
+            @stats[:irq_event] += 1 if n == FpgaDevices::IRQ_EVENT && r != -1
             r.nil? ? NIL : int(r)
           else
             NIL
@@ -1329,9 +1357,9 @@ class FpgaRefVm
     fault! if ref?(v) || (n < FpgaIoMap::NPORTS && FpgaIoMap::IN_MASK[n] == 1)
     core_error!(FpgaIsa::CERR_TYPE, v) if FpgaDevices.device?(n) && !int?(v)
     @io[n] = v if n < FpgaIoMap::NPORTS
-    @dev.write(n, v[1], vtime(step, true)) if FpgaDevices.device?(n)
+    @dev.write(n, v[1] & 0xFFFF_FFFF, vtime(step, true)) if FpgaDevices.device?(n) # 下の 32bit
     set(step, a, v) # RTL と同じく W 行が先
-    @trace << format("O %d %d %d %08x", step, n, v[0], v[1])
+    @trace << format("O %d %d %d %016x", step, n, v[0], v[1])
     psg_lines(step)
     pc + 1
   end
@@ -1454,7 +1482,7 @@ class FpgaRefVm
     when "FTOI"
       core_error!(FpgaIsa::CERR_FLOATDOMAIN, x) if xf.nan? || xf.infinite?
       t = xf.truncate
-      core_error!(FpgaIsa::CERR_RANGE, x) if t < -2**31 || t >= 2**31
+      core_error!(FpgaIsa::CERR_RANGE, x) if t < INT_MIN || t > INT_MAX
       set(step, a, int(t))
     when "FFLOOR", "FCEIL", "FROUND"
       r = if !xf.finite? then xf
@@ -1519,7 +1547,7 @@ class FpgaRefVm
     when "SSLICE"
       i = reg(a + 1)
       n = reg(a + 2)
-      fault! unless int?(i) && int?(n) && i[1] + n[1] <= len # 負の数は 32bit の大きな値なので外れる
+      fault! unless int?(i) && int?(n) && i[1] + n[1] <= len # 負の数は 64bit の大きな値なので外れる
       p = new_array(Array.new(n[1]), FpgaIsa::CLS_STRING)
       src = reg(a) # 確保で GC が走ると動く
       n[1].times { |k| @heap[p + 4 + k] = ary_get(src, i[1] + k) }
@@ -1598,14 +1626,14 @@ class FpgaRefVm
               when "MOD"
                 core_error!(FpgaIsa::CERR_ZERODIV) if sy.zero?
                 int(sx % sy) # Ruby の % は floor 側に丸めた余り
-              when "NEG" then int(-sx)
+              when "NEG" then ovf(-sx, FpgaIsa::OVF_PLAIN)
               when "SHL" then shift_left(sx, sy)
               when "SHR" then shift_left(sx, -sy)
               when "AND" then int(sx & sy)
               when "OR" then int(sx | sy)
               when "XOR" then int(sx ^ sy)
               when "INV" then int(~sx)
-              when "ABS" then int(sx.abs)
+              when "ABS" then ovf(sx.abs, FpgaIsa::OVF_PLAIN)
               when "ZERO" then bool(sx.zero?)
               when "EVEN" then bool(sx.even?)
               when "ODD" then bool(sx.odd?)
@@ -1623,7 +1651,8 @@ class FpgaRefVm
 
   # 整数同士なら計算し、そうでなければ同名のメソッドを送る (その時は飛び先を返す)。
   # == はどちらもヒープのオブジェクトでなければ値を比べ、そうでなければ == を送る
-  def binop(step, pc, name, a)
+  # prim はメソッドとして呼んだもの (桁あふれのメッセージに " in addition" などが付く)
+  def binop(step, pc, name, a, prim = false)
     x = reg(a)
     y = reg(a + 1)
     if name == "EQ"
@@ -1636,12 +1665,12 @@ class FpgaRefVm
     sx = signed(x[1])
     sy = signed(y[1])
     value = case name
-            when "ADD" then int(sx + sy)
-            when "SUB" then int(sx - sy)
-            when "MUL" then int(sx * sy)
+            when "ADD" then ovf(sx + sy, prim ? FpgaIsa::OVF_ADD : FpgaIsa::OVF_PLAIN)
+            when "SUB" then ovf(sx - sy, prim ? FpgaIsa::OVF_SUB : FpgaIsa::OVF_PLAIN)
+            when "MUL" then ovf(sx * sy, prim ? FpgaIsa::OVF_MUL : FpgaIsa::OVF_PLAIN)
             when "DIV"
               core_error!(FpgaIsa::CERR_ZERODIV) if sy.zero?
-              int(sx.div(sy)) # Ruby の / は floor 側に丸める。INT_MIN / -1 は折り返して INT_MIN
+              ovf(sx.div(sy), FpgaIsa::OVF_DIV) # Ruby の / は floor 側に丸める。INT_MIN / -1 は桁あふれ (命令でも " in division")
             when "LT"  then bool(sx < sy)
             when "LE"  then bool(sx <= sy)
             when "GT"  then bool(sx > sy)

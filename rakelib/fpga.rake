@@ -204,7 +204,7 @@ namespace :fpga do
         last = vm.run(100_000).last
         show = lambda do |(tag, x)|
           case tag
-          when FpgaIsa::TAG_INT then (x >= 2**31 ? x - 2**32 : x).to_s
+          when FpgaIsa::TAG_INT then (x >= 2**63 ? x - 2**64 : x).to_s
           when FpgaIsa::TAG_TRUE then "true"
           when FpgaIsa::TAG_FALSE then "false"
           when FpgaIsa::TAG_SYM then ":#{x}"

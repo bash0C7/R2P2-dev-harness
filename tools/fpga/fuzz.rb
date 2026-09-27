@@ -139,6 +139,7 @@ module FpgaFuzz
     when "LOADI8", "LOADINEG", "ADDI", "SUBI" then b = rng.rand(256)
     when "LOADI16" then b = rng.rand(0x10000)
     when "LOADI32" then b = rng.rand(0x10000); c = rng.rand(0x10000)
+    when "LOADF", "LOADI64" then b = rng.rand(len + 4) # ROM のどこかの2語 (命令の語の下の 32bit)
     when "ADDILV", "SUBILV" then b = small.call; c = rng.rand(256)
     when "GETGV", "SETGV" then b = rng.rand(FpgaIoMap::NPORTS + 1)
     when "GETCONST", "SETCONST" then b = rng.rand(4) # 未定義の定数も出るように少ない番号で
@@ -201,8 +202,13 @@ module FpgaFuzz
   TASK_SYMS = TASK_PRIM.keys.each_with_index.to_h { |k, i| [k, STOD_SYM + 5 + i] }.freeze
   # 動的な呼び出しの断片 (pick 24) の primitive のシンボル
   DSEND_SYMS = { dsend: TASK_SYMS.values.max + 1, symat: TASK_SYMS.values.max + 2 }.freeze
+  # 64bit の整数の断片 (pick 25) が送る Integer の primitive (桁あふれを見るもの) のシンボル
+  INT64_SYMS = %w[IADD ISUB IMUL IDIV MOD NEG ABS SHL SHR].each_with_index.to_h { |n, i| [n, DSEND_SYMS.values.max + 1 + i] }.freeze
   # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
-  FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0].freeze
+  FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0,
+                  2.0**63, -2.0**63, 9223372036854774784.0, -9223372036854777856.0, 2.0**62].freeze
+  # LOADI64 の値 (64bit の境目と、2乗や足し算で境目を越えるもの。ほかにランダムな値を足す)
+  INT64_VALUES = [2**63 - 1, -2**63, 2**62, -2**62, 2**32, -1, 3_037_000_499, 3_037_000_500, 2**31, -2**31 - 1].freeze
   FLOAT_LITS = %w[1.5e3 -0.001 123456789012345678901234567890 1e400 1e-400 2.4703282292062328e-324 0.1 12 1. abc -].freeze
   HEAP_TABLE_LOG = 7 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
   HEAP_SYMS = [[0, 5], [7, 4], [0, 0], [4, 8]].freeze
@@ -220,6 +226,8 @@ module FpgaFuzz
     catches = [] # [種類, begin, end, 飛び先]
     floats = FLOAT_VALUES + Array.new(4) { [rng.rand(1 << 64)].pack("Q").unpack1("D") }
     nfloat = floats.size
+    int64s = INT64_VALUES + Array.new(4) { rng.rand(1 << 64) - (1 << 63) }
+    nint64 = int64s.size
     8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
     words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
     words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
@@ -236,7 +244,8 @@ module FpgaFuzz
     wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
     inited = [] # タスクの断片 (pick 23) が __task_init した区画 (切り替えはたいていここへ)
     body.times do
-      pick = rng.rand(25)
+      pick = rng.rand(28)
+      pick = 25 if pick > 25 # 64bit の整数の断片は重くして、桁あふれに多く届くように
       case pick
       when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
         words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
@@ -466,6 +475,26 @@ module FpgaFuzz
           words << encode(FpgaIsa.op("SEND0"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 0)
         end
         words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 25 # 64bit の整数 (P8): LOADI64 か小さい整数を2つ置き、命令 (ADD SUB MUL DIV / ADDI SUBI) か primitive で計算する。
+        # 桁あふれはコアのエラー (__core_error)
+        name = INT64_SYMS.keys.sample(random: rng)
+        [12, 13].each do |r|
+          if r == 13 && %w[SHL SHR].include?(name) && rng.rand(2).zero?
+            words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(70), 0) # ずらす数は境目 (63、64) のまわりも
+          elsif rng.rand(3).zero?
+            words << encode(FpgaIsa.op("MOVE"), r, ints.sample(random: rng), 0)
+          else
+            words << [:int64, rng.rand(nint64), r]
+          end
+        end
+        case rng.rand(3)
+        when 0 then words << encode(FpgaIsa.op(%w[ADD SUB MUL DIV].sample(random: rng)), 12, 0, 0)
+        when 1 then words << encode(FpgaIsa.op(%w[ADDI SUBI].sample(random: rng)), 12, rng.rand(256), 0)
+        else
+          unary = %w[NEG ABS].include?(name)
+          words << encode(FpgaIsa.op(unary ? "SEND0" : "SEND"), 12, INT64_SYMS[name], unary ? 0 : 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
       when 18 # Symbol#to_s (ROM のシンボル表)
         words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
         words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
@@ -691,6 +720,7 @@ module FpgaFuzz
       *FLOAT_SEND.each_with_index.map { |n, i| [FpgaIsa::CLS_FLOAT, FLOAT_SYM + i, prim.(n)] },
       [FpgaIsa::CLS_INT, I2F_SYM, prim.("I2F")], [FpgaIsa::CLS_STRING, STOD_SYM, prim.("STOD")],
       *IFLT_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
+      *INT64_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
       [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
       [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
       [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],
@@ -719,6 +749,9 @@ module FpgaFuzz
     # Float の値 (1つ 2語: 上位 32bit、下位 32bit) と String#__strtod の文字列
     float_at = words.size
     floats.each { |v| words.concat([v].pack("G").unpack("NN")) }
+    # 64bit の整数 (1つ 2語: 上位 32bit、下位 32bit)
+    int64_at = words.size
+    int64s.each { |v| words.concat([(v >> 32) & 0xFFFF_FFFF, v & 0xFFFF_FFFF]) }
     lit_at = []
     FLOAT_LITS.each do |t|
       lit_at << words.size
@@ -732,6 +765,8 @@ module FpgaFuzz
         encode(FpgaIsa.op("STRING"), 12, data_at, w.to_s.sub("string", "").to_i)
       elsif w.is_a?(Array) && w[0] == :float
         encode(FpgaIsa.op("LOADF"), w[2] || 12, float_at + 2 * w[1], 0)
+      elsif w.is_a?(Array) && w[0] == :int64
+        encode(FpgaIsa.op("LOADI64"), w[2], int64_at + 2 * w[1], 0)
       elsif w.is_a?(Array) && w[0] == :lit
         encode(FpgaIsa.op("STRING"), 12, lit_at[w[1]], FLOAT_LITS[w[1]].bytesize)
       else

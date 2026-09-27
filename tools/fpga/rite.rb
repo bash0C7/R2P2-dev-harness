@@ -133,9 +133,10 @@ module Rite
     when 1 # IREP_TT_INT32
       v = u32(bin, pos)
       [[:int, v >= 0x8000_0000 ? v - 0x1_0000_0000 : v], pos + 4]
-    when 3 # IREP_TT_INT64
-      v = (u32(bin, pos) << 32) | u32(bin, pos + 4)
-      [[:int, v >= 0x8000_0000_0000_0000 ? v - 0x1_0000_0000_0000_0000 : v], pos + 8]
+    when 3 # IREP_TT_INT64 (PicoRuby の 64bit の Integer でもあふれないように、上位を符号付きにしてから掛ける)
+      hi = u32(bin, pos)
+      hi -= 0x1_0000_0000 if hi >= 0x8000_0000
+      [[:int, hi * 0x1_0000_0000 + u32(bin, pos + 4)], pos + 8]
     when 5 # IREP_TT_FLOAT: double を little endian で。[:float, 上位 32bit, 下位 32bit]
       lo = bin.getbyte(pos) | (bin.getbyte(pos + 1) << 8) | (bin.getbyte(pos + 2) << 16) | (bin.getbyte(pos + 3) << 24)
       hi = bin.getbyte(pos + 4) | (bin.getbyte(pos + 5) << 8) | (bin.getbyte(pos + 6) << 16) | (bin.getbyte(pos + 7) << 24)

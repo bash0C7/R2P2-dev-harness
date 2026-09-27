@@ -5,9 +5,9 @@ class FpgaCompareTest < Minitest::Test
   include FpgaTestHelper
 
   REF = [
-    "X 0 0 07", "W 0 1 3 00000001",
-    "X 1 1 16", "O 1 0 3 00000001",
-    format("X 2 2 %02x", FpgaIsa.op("SUB").num), "W 2 1 3 00000000",
+    "X 0 0 07", "W 0 1 3 0000000000000001",
+    "X 1 1 16", "O 1 0 3 0000000000000001",
+    format("X 2 2 %02x", FpgaIsa.op("SUB").num), "W 2 1 3 0000000000000000",
     "X 3 3 76", "H 3 3"
   ].freeze
 
@@ -20,7 +20,7 @@ class FpgaCompareTest < Minitest::Test
 
   def test_names_the_instruction_where_they_diverge
     sim = REF.dup
-    sim[5] = "W 2 1 3 00000002"
+    sim[5] = "W 2 1 3 0000000000000002"
     r = FpgaCompare.compare(REF, sim)
     # I/O は同じでもトレースがずれていれば落とすのではなく、合否は I/O で決める
     assert r.ok
@@ -31,7 +31,8 @@ class FpgaCompareTest < Minitest::Test
   end
 
   def test_decode_values
-    assert_equal(-1, FpgaCompare.decode(FpgaIsa::TAG_INT, 0xFFFF_FFFF))
+    assert_equal(-1, FpgaCompare.decode(FpgaIsa::TAG_INT, 0xFFFF_FFFF_FFFF_FFFF)) # Integer は 64bit
+    assert_equal 4_294_967_295, FpgaCompare.decode(FpgaIsa::TAG_INT, 0xFFFF_FFFF)
     assert_nil FpgaCompare.decode(FpgaIsa::TAG_NIL, 0)
     assert_equal true, FpgaCompare.decode(FpgaIsa::TAG_TRUE, 0)
   end

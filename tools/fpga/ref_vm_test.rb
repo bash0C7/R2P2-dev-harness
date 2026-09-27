@@ -17,10 +17,16 @@ class FpgaRefVmTest < Minitest::Test
     FpgaRom::Word.new(0, nil, op(name), a, b, c).value
   end
 
-  def test_int_wraps_at_32_bits
-    vm, trace = run_words([w("LOADI32", 1, 0x7FFF, 0xFFFF), w("ADDI", 1, 1), w("STOP")])
+  # Integer は 64bit (P8): LOADI32 は符号拡張、2**31 はあふれない。64bit からあふれると (例外の表が無ければ) エラー停止
+  def test_int_is_64_bits
+    vm, trace = run_words([w("LOADI32", 1, 0x7FFF, 0xFFFF), w("ADDI", 1, 1), w("LOADI32", 2, 0xFFFF, 0xFFFE), w("STOP")])
     assert_equal [FpgaIsa::TAG_INT, 0x8000_0000], vm.regs[1]
-    assert_equal "H 2 2", trace.last
+    assert_equal [FpgaIsa::TAG_INT, 2**64 - 2], vm.regs[2] # -2
+    assert_equal "W 1 1 3 0000000080000000", trace[3]
+    assert_equal "H 3 3", trace.last
+    vm, trace = run_words([w("LOADI32", 1, 0x4000, 0), w("MOVE", 2, 1), w("MUL", 1), w("MOVE", 2, 1), w("MUL", 1), w("STOP")])
+    assert_equal [FpgaIsa::TAG_INT, 2**60], vm.regs[1] # 2**120 はあふれる
+    assert_equal format("E 4 4 %02x", op("MUL")), trace.last
   end
 
   def test_arith_on_nil_is_an_error
@@ -47,8 +53,9 @@ class FpgaRefVmTest < Minitest::Test
 
   # 参照インタプリタ自体の正しさ: CRuby で同じ .rb を走らせ、ピンへの代入の系列を比べる。止まるプログラムは
   # console に書いたバイト列も CRuby の標準出力と比べる。入力を読むプログラム (.stim があるもの) は step と対応が付かないので対象外。
-  # watchdog の再起動、Task (区画の切り替え)、PSG の列 (仮想の時計で進む) は CRuby では表せないので比べない (Task は下で picoruby と比べる)
-  CRUBY_CANNOT = %w[watchdog tasks psg].freeze
+  # watchdog の再起動、Task (区画の切り替え)、PSG の列 (仮想の時計で進む)、64bit の桁あふれ (CRuby は Bignum に上がる) は
+  # CRuby では表せないので比べない (Task と int64 は下で picoruby と比べる)
+  CRUBY_CANNOT = %w[watchdog tasks psg mml int64].freeze
 
   def test_corpus_agrees_with_cruby
     Dir[File.join(CORPUS, "*.rb")].sort.each do |src|
@@ -122,5 +129,16 @@ class FpgaRefVmTest < Minitest::Test
     notes = FpgaPsg.from_trace(trace).select { |_, v, n| v.zero? && n }.map { |t, _, n| [t, n[0]] }
     assert_equal %w[C4 E4 G4 C5], notes.map(&:last)
     assert_equal [250, 250, 250], notes.each_cons(2).map { |(a, _), (b, _)| b - a }
+  end
+
+  # MML (P8): midibase-mml の Player の待ち時間 (delta_ticks * 60_000_000 / (ppqn * tempo)) は 64bit の Integer で計算する。
+  # T120 の四分音符は 500ms (Task の tick の 1ms ずれは PicoRuby の sleep と同じ)。32bit では桁があふれて数 ms に詰まった
+  def test_mml_corpus_waits_a_quarter_note_between_notes
+    trace = FpgaRefVm.new(FpgaConverter.read_hex(File.join(CORPUS, "mml.hex"))).run(1_000_000)
+    assert trace.last.start_with?("H "), trace.last
+    assert_equal "end\n", FpgaCompare.console(trace)
+    notes = FpgaPsg.from_trace(trace).select { |_, v, n| v.zero? && n }.map { |t, _, n| [t, n[0]] }
+    assert_equal %w[F5 F5 C6 C6], notes.map(&:last)
+    notes.each_cons(2) { |(a, _), (b, _)| assert_includes 500..501, b - a }
   end
 end

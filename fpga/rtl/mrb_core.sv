@@ -164,7 +164,7 @@ module mrb_core
   logic [NTASKS-1:0]    sv_valid;  // 止めている (__task_init で作ったか、__task_switch で離れた) 区画
   logic                tlock;     // tick の割り込みを止めている (スケジューラーの中)
   logic                tnext_v;   // タスクがある (__task_on に ms を渡した)
-  logic [31:0]         tnext;     // 次に割り込む仮想の時計の ms
+  logic [INT_BITS-1:0] tnext;     // 次に割り込む仮想の時計の ms
   logic                trap_end;  // S_LKDONE (LM_TRAP): 一番外の終わりの __task_main_end (見つからなければ止まる)
   logic                trap_skip; // 割り込めなかった: 同じ命令の区切りではもう割り込まない
   logic                refetch;   // 割り込みを見た後の S_FETCH (デバイスの tick とテストベンチの入力は済んでいる)
@@ -190,7 +190,7 @@ module mrb_core
   logic [PC_BITS-1:0]  h_tgt;     // 見つかった handler
   logic [15:0]         h_beg, h_end;
   logic                x_deliver; // S_XPOP: 畳んだフレームで巻き戻しを終える
-  logic [2:0]          cx_kind;   // S_CERR: エラーの種類と詳細、[種類, 詳細1, 詳細2] を置くフレームの位置
+  logic [3:0]          cx_kind;   // S_CERR: エラーの種類と詳細、[種類, 詳細1, 詳細2] を置くフレームの位置
   logic [VAL_BITS-1:0] cx_a1, cx_a2;
   logic [7:0]          cx_base;
   logic [PC_BITS-1:0]  m_rom;     // String を作る時の ROM のデータの語アドレス
@@ -316,8 +316,38 @@ module mrb_core
   function automatic logic f_isinf(input logic [63:0] b);
     return b[62:52] == 11'h7FF && b[51:0] == 52'd0;
   endfunction
-  function automatic logic [63:0] f_int(input logic [31:0] i);
-    return $realtobits($itor($signed(i)));
+  // Integer (64bit) → double。C の (double) と同じく最も近い値 (偶数へ)。$itor は 32bit なので bit で組む
+  function automatic logic [63:0] f_int(input logic [63:0] i);
+    logic [63:0] m;
+    logic [10:0] e;
+    logic [52:0] q;
+    logic        rb, st;
+    int          p, sh;
+    if (i == 64'd0) return 64'd0;
+    m = i[63] ? -i : i;
+    p = 63;
+    while (!m[p]) p--;
+    e = 11'(1023 + p);
+    if (p <= 52) return {i[63], e, 52'(m << (52 - p))};
+    sh = p - 52;
+    q  = 53'(m >> sh);
+    rb = m[sh - 1];
+    st = (m & ((64'd1 << (sh - 1)) - 64'd1)) != 64'd0;
+    if (rb && (st || q[0])) begin
+      q = q + 53'd1;
+      if (q == 53'd0) e = e + 11'd1; // 2 の冪に繰り上がった (仮数は全部 0)
+    end
+    return {i[63], e, q[51:0]};
+  endfunction
+  // double → Integer (0 へ切り捨て)。|x| < 2**63 の時だけ呼ぶ
+  function automatic logic [63:0] f_toi(input logic [63:0] b);
+    logic [63:0] m;
+    int          ex;
+    ex = int'(b[62:52]) - 1023;
+    if (ex < 0) return 64'd0;
+    m = {11'd0, 1'b1, b[51:0]};
+    m = ex >= 52 ? m << (ex - 52) : m >> (52 - ex);
+    return b[63] ? -m : m;
   endfunction
   // C の fmod (丸めずに。符号は x)
   function automatic logic [63:0] f_fmod(input logic [63:0] xb, input logic [63:0] yb);
@@ -403,8 +433,8 @@ module mrb_core
   assign ra1_proc  = tag_of(ra1) == TAG_OBJ && heap[ha(val_of(ra1))][31:16] == CLS_PROC;
   logic ra_proc, rb_ary, cp_proc, walk_proc, ra_str, ra1_byte, ra2_byte;
   assign ra_str    = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_STRING;
-  assign ra1_byte  = tag_of(ra1) == TAG_INT && val_of(ra1) <= 32'd255;
-  assign ra2_byte  = tag_of(ra2) == TAG_INT && val_of(ra2) <= 32'd255;
+  assign ra1_byte  = tag_of(ra1) == TAG_INT && val_of(ra1) <= INT_BITS'(255);
+  assign ra2_byte  = tag_of(ra2) == TAG_INT && val_of(ra2) <= INT_BITS'(255);
   logic ra2_int, s_idx_ok, s_slice_ok;
   // R[a] が巻き戻しの塊か、その {種類, 行き先} と運ぶ値 (RAISEIF)
   logic                ra_brk, ra1_float, ra_float;
@@ -415,7 +445,7 @@ module mrb_core
   assign brk_w1  = heap[ha(val_of(ra)) + HB'(1)];
   assign brk_val = heap[ha(val_of(ra)) + HB'(2)];
   // String の primitive の範囲 (Icarus は always_comb の中で関数を呼ぶ式があると時刻を進めなくなることがあるので wire に)
-  assign s_idx_ok   = val_of(ra1) < 32'(arr_len);
+  assign s_idx_ok   = val_of(ra1) < INT_BITS'(arr_len);
   assign s_slice_ok = 33'(val_of(ra1)) + 33'(val_of(ra2)) <= 33'(arr_len);
   assign ra2_int   = tag_of(ra2) == TAG_INT;
   assign ra_proc   = tag_of(ra) == TAG_OBJ && heap[ha(val_of(ra))][31:16] == CLS_PROC;
@@ -447,14 +477,63 @@ module mrb_core
     r_floor = (r_trunc != 0 && ((r_trunc < 0) != (y < 0))) ? r_trunc + y : r_trunc;
   end
 
-  // x << s (s が負なら算術右シフト)。32 以上ずらすと 0 か符号
+  // x << s (s が負なら算術右シフト)。INT_BITS 以上ずらすと 0 か符号 (左へのあふれは shl_ovf で見る)
   function automatic logic [INT_BITS-1:0] shift(input logic signed [INT_BITS-1:0] v,
                                                 input logic signed [INT_BITS:0] s);
     if (s >= (INT_BITS+1)'(INT_BITS)) return '0;
     if (s <= -(INT_BITS+1)'(INT_BITS)) return v < 0 ? '1 : '0;
-    if (s >= 0) return v << s[5:0];
+    if (s >= 0) return v << s[$clog2(INT_BITS)-1:0];
     return v >>> (-s);
   endfunction
+  // x << s が INT_BITS bit の符号付きからあふれるか (0 はいくつずらしても 0。mruby の int_lshift)
+  function automatic logic shl_ovf(input logic signed [INT_BITS-1:0] v, input logic signed [INT_BITS:0] s);
+    logic signed [INT_BITS-1:0] t;
+    if (s <= 0 || v == 0) return 1'b0;
+    if (s >= (INT_BITS+1)'(INT_BITS)) return 1'b1;
+    t = v << s[$clog2(INT_BITS)-1:0];
+    return (t >>> s[$clog2(INT_BITS)-1:0]) != v;
+  endfunction
+
+  // ---- 桁あふれ (isa.rb の CERR_OVERFLOW): 結果が INT_BITS bit の符号付きに入らなければ RangeError
+  logic signed [INT_BITS-1:0]   add_r, sub_r, addi_r, subi_r;
+  logic signed [2*INT_BITS-1:0] mul_r;
+  logic [7:0] imm8; // ADDI / SUBI (b) と ADDILV / SUBILV (c) の足す数
+  logic add_ovf, sub_ovf, mul_ovf, div_ovf, neg_ovf, addi_ovf, subi_ovf, shl_o, shr_o;
+  assign imm8     = (op == OP_ADDILV || op == OP_SUBILV) ? c[7:0] : b[7:0];
+  assign add_r    = x + y;
+  assign sub_r    = x - y;
+  assign addi_r   = x + INT_BITS'(imm8);
+  assign subi_r   = x - INT_BITS'(imm8);
+  assign mul_r    = $signed({{INT_BITS{x[INT_BITS-1]}}, x}) * $signed({{INT_BITS{y[INT_BITS-1]}}, y});
+  assign add_ovf  = x[INT_BITS-1] == y[INT_BITS-1] && add_r[INT_BITS-1] != x[INT_BITS-1];
+  assign sub_ovf  = x[INT_BITS-1] != y[INT_BITS-1] && sub_r[INT_BITS-1] != x[INT_BITS-1];
+  assign mul_ovf  = mul_r[2*INT_BITS-1:INT_BITS-1] != {(INT_BITS+1){mul_r[INT_BITS-1]}};
+  assign div_ovf  = x == INT_MIN && y == -1;
+  assign neg_ovf  = x == INT_MIN;
+  assign addi_ovf = !x[INT_BITS-1] && addi_r[INT_BITS-1];
+  assign subi_ovf = x[INT_BITS-1] && !subi_r[INT_BITS-1];
+  assign shl_o    = shl_ovf(x, {y[INT_BITS-1], y});
+  assign shr_o    = shl_ovf(x, -{y[INT_BITS-1], y});
+  // primitive (メソッドとして呼んだもの) の桁あふれと、その場所 (OVF_*)
+  logic       p_ovf;
+  logic [2:0] p_ovf_at;
+  always_comb begin
+    case (prim)
+      PR_IADD: begin p_ovf = add_ovf; p_ovf_at = OVF_ADD; end
+      PR_ISUB: begin p_ovf = sub_ovf; p_ovf_at = OVF_SUB; end
+      PR_IMUL: begin p_ovf = mul_ovf; p_ovf_at = OVF_MUL; end
+      PR_IDIV: begin p_ovf = div_ovf; p_ovf_at = OVF_DIV; end
+      PR_NEG, PR_ABS: begin p_ovf = neg_ovf; p_ovf_at = OVF_PLAIN; end
+      PR_SHL:  begin p_ovf = shl_o; p_ovf_at = OVF_SHIFT; end
+      PR_SHR:  begin p_ovf = shr_o; p_ovf_at = OVF_SHIFT; end
+      default: begin p_ovf = 1'b0; p_ovf_at = OVF_PLAIN; end
+    endcase
+  end
+  // 命令 (ADD / SUB / MUL / DIV) の桁あふれ。DIV は命令でも " in division"
+  logic o_ovf;
+  logic [2:0] o_ovf_at;
+  assign o_ovf_at = op == OP_DIV ? OVF_DIV : OVF_PLAIN;
+  assign o_ovf = op == OP_ADD ? add_ovf : op == OP_SUB ? sub_ovf : op == OP_MUL ? mul_ovf : op == OP_DIV ? div_ovf : 1'b0;
 
   // ---- 配列 (R[a] が配列の時): 長さ、中身、容量
   logic [HB-1:0] arr_p, arr_d;
@@ -566,7 +645,7 @@ module mrb_core
   logic [HB-1:0]  pr_p;
   logic [31:0]    pr_info;
   assign pr_p    = ha(val_of(ra));
-  assign pr_info = val_of(heap[pr_p + HB'(1)]);
+  assign pr_info = heap[pr_p + HB'(1)][31:0];
 
   // ---- ブロックの呼び出し (BLKCALL と Proc#call): フレームは bp + a、引数 blk_n 個 (15 は R[a+1] の配列)。
   //      ブロックの枠は R[a + blk_win]。数の検査と並べ替えは Proc の先頭の ENTER がする
@@ -621,14 +700,14 @@ module mrb_core
   assign eh_p = p_new[HB-1:0] + (en_r ? HB'(4) + HB'(en_rn) : '0);
   always_comb begin
     case (m_k[3:0])
-      4'd0:  eh_word = mk(TAG_HDR, {CLS_HASH, 16'd4});
-      4'd1:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd5);
-      4'd2:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd9);
-      4'd5, 4'd9: eh_word = mk(TAG_HDR, {CLS_ARRAY, 16'd2});
+      4'd0:  eh_word = mk(TAG_HDR, INT_BITS'({CLS_HASH, 16'd4}));
+      4'd1:  eh_word = mk(TAG_OBJ, INT_BITS'(eh_p) + INT_BITS'(5));
+      4'd2:  eh_word = mk(TAG_OBJ, INT_BITS'(eh_p) + INT_BITS'(9));
+      4'd5, 4'd9: eh_word = mk(TAG_HDR, INT_BITS'({CLS_ARRAY, 16'd2}));
       4'd6, 4'd10: eh_word = mk_int('0);
-      4'd7:  eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd8);
-      4'd11: eh_word = mk(TAG_OBJ, 32'(eh_p) + 32'd12);
-      4'd8, 4'd12: eh_word = mk(TAG_HDR, {CLS_DATA, 16'd0});
+      4'd7:  eh_word = mk(TAG_OBJ, INT_BITS'(eh_p) + INT_BITS'(8));
+      4'd11: eh_word = mk(TAG_OBJ, INT_BITS'(eh_p) + INT_BITS'(12));
+      4'd8, 4'd12: eh_word = mk(TAG_HDR, INT_BITS'({CLS_DATA, 16'd0}));
       default: eh_word = V_NIL;
     endcase
   end
@@ -703,7 +782,7 @@ module mrb_core
   logic                go_dsend; // __send: 名前を外して引数をずらし (S_SHIFT)、その名前を引く
   // Ruby の例外にできるエラー (isa.rb の CERR_*): 例外の表があれば S_CERR で Integer#__core_error を呼ぶ
   logic                cerr;
-  logic [2:0]          cerr_kind;
+  logic [3:0]          cerr_kind;
   logic [VAL_BITS-1:0] cerr_a1, cerr_a2;
   logic [7:0]          cerr_base;
   logic [2:0]          x_kind_n;
@@ -737,7 +816,7 @@ module mrb_core
   assign ra1_truthy = tag_of(ra1) != TAG_NIL && tag_of(ra1) != TAG_FALSE;
   assign ra2_info   = heap[ha(val_of(ra2)) + HB'(1)];
   assign tt       = ra1[TB-1:0];
-  assign t_in     = val_of(ra1) < 32'(NTASKS);
+  assign t_in     = val_of(ra1) < INT_BITS'(NTASKS);
   assign ra2_proc = tag_of(ra2) == TAG_OBJ && heap[ha(val_of(ra2))][31:16] == CLS_PROC;
 
   // __object_id: 即値の object_id (Integer 2n+1、nil 8、true 20、false 0、Symbol s<<8|12、クラス c<<8|28)。ヒープは nil
@@ -745,18 +824,18 @@ module mrb_core
   always_comb begin
     case (ra[VAL_BITS-1 -: TAG_BITS])
       TAG_INT:   objid = {TAG_INT, ra[INT_BITS-2:0], 1'b1};
-      TAG_NIL:   objid = {TAG_INT, 32'd8};
-      TAG_TRUE:  objid = {TAG_INT, 32'd20};
-      TAG_FALSE: objid = {TAG_INT, 32'd0};
-      TAG_SYM:   objid = {TAG_INT, ra[23:0], 8'd12};
-      TAG_CLASS: objid = {TAG_INT, ra[23:0], 8'd28};
+      TAG_NIL:   objid = mk_int(INT_BITS'(8));
+      TAG_TRUE:  objid = mk_int(INT_BITS'(20));
+      TAG_FALSE: objid = mk_int('0);
+      TAG_SYM:   objid = mk_int(INT_BITS'({ra[INT_BITS-9:0], 8'd12}));
+      TAG_CLASS: objid = mk_int(INT_BITS'({ra[INT_BITS-9:0], 8'd28}));
       default:   objid = V_NIL;
     endcase
   end
 
   // __sym_at: R[a] がシンボル表 (TABLE の c から、メソッド表の前まで) の中か (Icarus のために wire に)
   logic symat_in;
-  assign symat_in = ra[INT_BITS-1:0] < 32'(tbase) - 32'(symtab);
+  assign symat_in = ra[INT_BITS-1:0] < INT_BITS'(tbase) - INT_BITS'(symtab);
 
   logic io_prim;
   // __io_read / __io_write の番地と値の検査 (Icarus は always_comb の if の条件に関数の呼び出しがあると止まるので wire に)
@@ -840,11 +919,13 @@ module mrb_core
             cerr_kind = (prim == PR_ILT || prim == PR_ILE || prim == PR_IGT || prim == PR_IGE) ? CERR_COMPARE : CERR_TYPE;
           end else if (!prim_argc_bad && ra_int && prim == PR_IDIV && y == 0) begin
             cerr = 1'b1; cerr_kind = CERR_ZERODIV;
+          end else if (!prim_argc_bad && ra_int && ra1_int && p_ovf) begin
+            err = 1'b1; cerr = 1'b1; cerr_kind = CERR_OVERFLOW; cerr_a1 = mk_int(INT_BITS'(p_ovf_at));
           end
           case (prim)
-            PR_IADD: wval = mk_int(x + y);
-            PR_ISUB: wval = mk_int(x - y);
-            PR_IMUL: wval = mk_int(x * y);
+            PR_IADD: wval = mk_int(add_r);
+            PR_ISUB: wval = mk_int(sub_r);
+            PR_IMUL: wval = mk_int(mul_r[INT_BITS-1:0]);
             PR_IDIV: wval = mk_int(q_floor);
             PR_ILT:  wval = mk_bool(x < y);
             PR_ILE:  wval = mk_bool(x <= y);
@@ -864,6 +945,8 @@ module mrb_core
             cerr = 1'b1; cerr_kind = CERR_TYPE; cerr_a1 = ra1; cerr_a2 = ra;
           end else if (!prim_argc_bad && ra_int && prim == PR_MOD && y == 0) begin
             cerr = 1'b1; cerr_kind = CERR_ZERODIV;
+          end else if (!prim_argc_bad && ra_int && (lk_argc == 7'd0 || ra1_int) && p_ovf) begin
+            cerr = 1'b1; cerr_kind = CERR_OVERFLOW; cerr_a1 = mk_int(INT_BITS'(p_ovf_at));
           end
           case (prim)
             PR_MOD:  begin err = prim_argc_bad || !ra_int || !ra1_int || y == 0; wval = mk_int(r_floor); end
@@ -879,11 +962,12 @@ module mrb_core
             PR_EVEN: wval = mk_bool(!x[0]);
             default: wval = mk_bool(x[0]);
           endcase
+          if (cerr && cerr_kind == CERR_OVERFLOW) err = 1'b1;
           if (prim == PR_MOD && !prim_argc_bad && ra_int && ra1_float) begin err = 1'b0; cerr = 1'b0; wr = 1'b0; go_fp = 1'b1; end
         end
         PR_NOT:     begin err = prim_argc_bad; wval = mk_bool(!ra_truthy); end
         PR_OEQ, PR_SAME: begin err = prim_argc_bad; wval = mk_bool(ra == ra1); end // 同じものか
-        PR_CLASSOF: begin err = prim_argc_bad; wval = mk(TAG_CLASS, {16'd0, recv_cls[15] ? CLS_CLASS : recv_cls}); end
+        PR_CLASSOF: begin err = prim_argc_bad; wval = mk(TAG_CLASS, INT_BITS'({16'd0, recv_cls[15] ? CLS_CLASS : recv_cls})); end
         PR_SLEEPMS, PR_SLEEP: begin
           // 時間を待ってから R[a] = 引数
           wr       = 1'b0;
@@ -896,7 +980,7 @@ module mrb_core
           set_lam = 1'b1;
           wval    = ra1;
         end
-        PR_SIZE, PR_LENGTH: begin err = prim_argc_bad || !ra_ary; wval = mk_int({16'd0, arr_len}); end
+        PR_SIZE, PR_LENGTH: begin err = prim_argc_bad || !ra_ary; wval = mk_int(INT_BITS'({16'd0, arr_len})); end
         PR_EMPTY: begin err = prim_argc_bad || !ra_ary; wval = mk_bool(arr_len == 0); end
         PR_FIRST: begin err = prim_argc_bad || !ra_ary; wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(1)]; end
         PR_LAST:  begin err = prim_argc_bad || !ra_ary; wval = arr_len == 0 ? V_NIL : heap[arr_d + HB'(arr_len)]; end
@@ -911,10 +995,10 @@ module mrb_core
           wr       = 1'b0;
           go_set   = 1'b1;
           set_aset = 1'b1;
-          err      = prim_argc_bad || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
+          err      = prim_argc_bad || !ra_ary || !ra1_int || idx_adj < 0 || idx_adj >= INT_BITS'(32'sh10000);
         end
         // String (Array と同じ形で1語に1バイト)。範囲の外や型の違いはエラー (丸めはプレリュード)
-        PR_SBYTES: begin err = prim_argc_bad || !ra_str; wval = mk_int({16'd0, arr_len}); end
+        PR_SBYTES: begin err = prim_argc_bad || !ra_str; wval = mk_int(INT_BITS'({16'd0, arr_len})); end
         PR_SGETB:  begin err = prim_argc_bad || !ra_str || !ra1_int; wval = idx_val; end
         PR_SASET: begin
           wr       = 1'b0;
@@ -1018,7 +1102,7 @@ module mrb_core
           err     = prim_argc_bad || !ra1_int || !t_in || (tt != task_id && !sv_valid[tt]);
           if (tt != task_id) npc = sv_pc[tt];
         end
-        PR_TSLOT: begin err = prim_argc_bad; wval = mk_int(32'(task_id)); end
+        PR_TSLOT: begin err = prim_argc_bad; wval = mk_int(INT_BITS'(task_id)); end
         PR_TLOCK: begin err = prim_argc_bad; wval = mk_bool(tlock); go_task = 1'b1; end
         PR_TON: begin
           // __task_on(ms か nil): 次に割り込む ms (nil は割り込まない)
@@ -1043,23 +1127,23 @@ module mrb_core
       endcase
       // 引数の数が違う (回路の primitive)。ほかのどのエラーより先
       if (prim < 14'(NPRIMS) && prim_nargs(prim) != 8'hff && prim_nargs(prim) != {1'b0, lk_argc}) begin
-        err = 1'b1; cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(32'(lk_argc)); cerr_a2 = mk_int(32'(prim_nargs(prim)));
+        err = 1'b1; cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(INT_BITS'(lk_argc)); cerr_a2 = mk_int(INT_BITS'(prim_nargs(prim)));
       end
     end else begin
       case (op)
         OP_NOP: ;
         OP_MOVE:      begin wr = 1'b1; wval = rb; err = !b_ok; end
-        OP_LOADI8:    begin wr = 1'b1; wval = mk_int({24'd0, b[7:0]}); end
-        OP_LOADINEG:  begin wr = 1'b1; wval = mk_int(-{24'd0, b[7:0]}); end
-        OP_LOADI__1:  begin wr = 1'b1; wval = mk_int(-32'sd1); end
+        OP_LOADI8:    begin wr = 1'b1; wval = mk_int(INT_BITS'({24'd0, b[7:0]})); end
+        OP_LOADINEG:  begin wr = 1'b1; wval = mk_int(-INT_BITS'(b[7:0])); end
+        OP_LOADI__1:  begin wr = 1'b1; wval = mk_int(-INT_BITS'(1)); end
         OP_LOADI_0, OP_LOADI_1, OP_LOADI_2, OP_LOADI_3,
         OP_LOADI_4, OP_LOADI_5, OP_LOADI_6, OP_LOADI_7:
-                      begin wr = 1'b1; wval = mk_int({24'd0, op - OP_LOADI_0}); end
-        OP_LOADI16:   begin wr = 1'b1; wval = mk_int({{16{b[15]}}, b}); end
-        OP_LOADI32:   begin wr = 1'b1; wval = mk_int({b, c}); end
+                      begin wr = 1'b1; wval = mk_int(INT_BITS'({24'd0, op - OP_LOADI_0})); end
+        OP_LOADI16:   begin wr = 1'b1; wval = mk_int(INT_BITS'($signed(b))); end
+        OP_LOADI32:   begin wr = 1'b1; wval = mk_int(INT_BITS'($signed({b, c}))); end
         OP_LOADNIL:   begin wr = 1'b1; wval = V_NIL; end
-        OP_TDEF, OP_SDEF, OP_LOADSYM: begin wr = 1'b1; wval = mk(TAG_SYM, {16'd0, b}); end
-        OP_CLASS:     begin wr = 1'b1; wval = mk(TAG_CLASS, {16'd0, b}); end
+        OP_TDEF, OP_SDEF, OP_LOADSYM: begin wr = 1'b1; wval = mk(TAG_SYM, INT_BITS'({16'd0, b})); end
+        OP_CLASS:     begin wr = 1'b1; wval = mk(TAG_CLASS, INT_BITS'({16'd0, b})); end
         OP_LOADTRUE:  begin wr = 1'b1; wval = mk_bool(1'b1); end
         OP_LOADFALSE: begin wr = 1'b1; wval = mk_bool(1'b0); end
         OP_TABLE:     begin set_table = 1'b1; err = a > 8'(PC_BITS); end
@@ -1091,7 +1175,7 @@ module mrb_core
         end
         OP_JMPUW: begin go_x = 1'b1; x_kind_n = BRK_JUMP; x_target_n = b; end
         OP_STRING:    go_string = 1'b1;
-        OP_LOADF:     go_loadf = 1'b1;
+        OP_LOADF, OP_LOADI64: go_loadf = 1'b1;
         OP_GETGV:     begin wr = 1'b1; wval = io_rdata; err = b[7:0] >= 8'(NPORTS); end
         // ヒープのオブジェクトはピンに出せない
         OP_SETGV:     begin iow = 1'b1; err = b[7:0] >= 8'(NPORTS) || is_ref(ra); end
@@ -1132,10 +1216,13 @@ module mrb_core
             wr  = 1'b1;
             err = op == OP_DIV && y == 0;
             if (err) begin cerr = 1'b1; cerr_kind = CERR_ZERODIV; end
+            else if (o_ovf) begin
+              err = 1'b1; cerr = 1'b1; cerr_kind = CERR_OVERFLOW; cerr_a1 = mk_int(INT_BITS'(o_ovf_at));
+            end
             case (op)
-              OP_ADD:  wval = mk_int(x + y);
-              OP_SUB:  wval = mk_int(x - y);
-              OP_MUL:  wval = mk_int(x * y);
+              OP_ADD:  wval = mk_int(add_r);
+              OP_SUB:  wval = mk_int(sub_r);
+              OP_MUL:  wval = mk_int(mul_r[INT_BITS-1:0]);
               OP_DIV:  wval = mk_int(q_floor);
               OP_LT:   wval = mk_bool(x < y);
               OP_LE:   wval = mk_bool(x <= y);
@@ -1147,18 +1234,25 @@ module mrb_core
         OP_ADDI, OP_SUBI: begin
           if (ra_int) begin
             wr   = 1'b1;
-            wval = mk_int(op == OP_ADDI ? x + {24'd0, b[7:0]} : x - {24'd0, b[7:0]});
+            wval = mk_int(op == OP_ADDI ? addi_r : subi_r);
+            if (op == OP_ADDI ? addi_ovf : subi_ovf) begin
+              err = 1'b1; cerr = 1'b1; cerr_kind = CERR_OVERFLOW; cerr_a1 = mk_int(INT_BITS'(OVF_PLAIN));
+            end
           end else begin
             // 整数でなければ R[a+1] = b にして + / - を送る
             go_lookup = 1'b1;
             lk_sym_n  = op == OP_ADDI ? SYM_ADD : SYM_SUB;
             pre_a1    = 1'b1;
-            pre_a1v   = mk_int({24'd0, b[7:0]});
+            pre_a1v   = mk_int(INT_BITS'({24'd0, b[7:0]}));
             err       = !a2_ok;
           end
         end
-        OP_ADDILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x + {24'd0, c[7:0]}); end
-        OP_SUBILV: begin wr = 1'b1; err = !ra_int; wval = mk_int(x - {24'd0, c[7:0]}); end
+        OP_ADDILV, OP_SUBILV: begin
+          wr   = 1'b1;
+          wval = mk_int(op == OP_ADDILV ? addi_r : subi_r);
+          err  = !ra_int || (op == OP_ADDILV ? addi_ovf : subi_ovf);
+          if (ra_int && err) begin cerr = 1'b1; cerr_kind = CERR_OVERFLOW; cerr_a1 = mk_int(INT_BITS'(OVF_PLAIN)); end
+        end
         OP_SEND, OP_SEND0, OP_SSEND, OP_SSEND0: begin
           go_lookup = 1'b1;
           lk_argc_n = c[6:0];
@@ -1195,7 +1289,7 @@ module mrb_core
           // 引数を調べて並べ、nregs (b) までのレジスタを nil で埋める。必須の引数だけで数が合えば埋めるだけ
           err = e_bad;
           if (!e_hard && e_argnum) begin
-            cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(32'(e_cnt)); cerr_a2 = mk_int(32'(17'(e_m1 + e_m2))); cerr_base = b[7:0];
+            cerr = 1'b1; cerr_kind = CERR_ARGNUM; cerr_a1 = mk_int(INT_BITS'(e_cnt)); cerr_a2 = mk_int(INT_BITS'(17'(e_m1 + e_m2))); cerr_base = b[7:0];
           end
           if (e_fast) do_enter = 1'b1;
           else go_enter = 1'b1;
@@ -1299,7 +1393,7 @@ module mrb_core
             go_lookup = 1'b1; lk_sym_n = SYM_ASET; lk_argc_n = 7'd2; err = !a3_ok;
           end else begin
             go_set = 1'b1;
-            err    = !ra1_int || idx_adj < 0 || idx_adj >= 32'sh10000;
+            err    = !ra1_int || idx_adj < 0 || idx_adj >= INT_BITS'(32'sh10000);
           end
         end
         // タスクがあれば止まる前に __task_main_end (残りのタスクを走らせ、終わったら割り込みを止めて戻る)
@@ -1353,7 +1447,7 @@ module mrb_core
     m_waddr = RB'(m_dst);
     m_wdata = V_NIL;
     case (state)
-      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_proc)); end
+      S_BLOCK: begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, INT_BITS'(p_proc)); end
       S_RETFIN: if (!ret_ctor[topi]) begin m_we = 1'b1; m_waddr = RB'(bp); m_wdata = hold; end
       S_LKDONE: if (!lkd_err) begin
         m_waddr = RB'(ia[RB-1:0]);
@@ -1364,17 +1458,18 @@ module mrb_core
           end
           LM_GETIV: begin m_we = 1'b1; m_wdata = lk_hitr ? heap[iv_addr] : V_NIL; end
           LM_ISA, LM_RESPOND: begin m_we = 1'b1; m_wdata = mk_bool(lk_hitr); end
-          LM_NAME: begin m_we = 1'b1; m_wdata = lk_hitr ? mk(TAG_SYM, {16'd0, lk_tgt}) : V_NIL; end
+          LM_NAME: begin m_we = 1'b1; m_wdata = lk_hitr ? mk(TAG_SYM, INT_BITS'({16'd0, lk_tgt})) : V_NIL; end
           LM_RESCUE: begin m_we = 1'b1; m_waddr = RB'(ib[RB-1:0]); m_wdata = mk_bool(lk_hitr); end
           default: ;
         endcase
       end
       S_FP: if (fk == FK_VAL) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = fval; end
-      S_FBOX: begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_FSTR: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_AELEM: if (17'(m_k) == 17'(m_n) && m_after != AF_ENTER) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
-      S_SROM: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, 32'(p_new)); end
+      S_FBOX: begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
+      S_LF3: if (op == OP_LOADI64) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk_int(INT_BITS'({fres[63:32], rom_data[31:0]})); end
+      S_FSTR: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
+      S_OBJ: if (m_k == (HB+1)'(obj_n)) begin m_we = 1'b1; m_waddr = RB'(ia[RB-1:0]); m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
+      S_AELEM: if (17'(m_k) == 17'(m_n) && m_after != AF_ENTER) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
+      S_SROM: if (17'(m_k) == 17'(m_n)) begin m_we = 1'b1; m_wdata = mk(TAG_OBJ, INT_BITS'(p_new)); end
       S_APOST: if (en_k < 17'(c)) begin
         m_we    = 1'b1;
         m_waddr = RB'(ia + 17'd1 + en_k);
@@ -1455,14 +1550,14 @@ module mrb_core
   wire run  = (state == S_EXEC || state == S_PRIM) && en; // 命令か primitive の結果を書く cycle
   // タスクの割り込み: 仮想の時計がスケジューラーの決めた ms (tnext) に届いた命令の区切りで、割り込みを止めておらず、
   // 今のフレームが ENTER を済ませている (fn > 0) なら Integer#__task_tick を呼ぶ (ref_vm.rb の run)
-  logic [31:0] vt_ms, hw_ms;
+  logic [63:0] vt_ms, hw_ms;
   logic [VSB-1:0] vt_sub;  // 仮想の時計の 1µs の中の端数 (LOCKED_INSNS_PER_US 分の 1 µs が単位)
   logic [VSB:0]   vt_next; // 今の命令を足した端数 (bit VSB が 1µs の繰り上がり)
   assign vt_next = {1'b0, vt_sub} + (tlock ? (VSB+1)'(1) : (VSB+1)'(LOCKED_INSNS_PER_US / INSNS_PER_US));
-  assign hw_ms    = unsigned'(y) / 32'd1000; // __hw_sleep_us で待つ ms
+  assign hw_ms    = unsigned'(y) / 64'd1000; // __hw_sleep_us で待つ ms
   logic        trap_now;
-  assign vt_ms    = 32'(vtime / 64'd1000);
-  assign trap_now = tnext_v && !tlock && fn != 8'd0 && !trap_skip && vtime >= 64'(tnext) * 64'd1000;
+  assign vt_ms    = vtime / 64'd1000;
+  assign trap_now = tnext_v && !tlock && fn != 8'd0 && !trap_skip && vt_ms >= tnext; // 参照と同じく ms で比べる
 
   assign rom_addr = (state == S_LOOKUP || state == S_PROBE) ? probe_addr :
                     state == S_SROM ? m_rom + PC_BITS'(m_k[HB:2]) :
@@ -1569,8 +1664,8 @@ module mrb_core
             if (state == S_EXEC) ir <= rom_data;
             if (wr) regs[ia[RB-1:0]] <= wval;
             if (set_up) regs[iu[RB-1:0]] <= ra;
-            if (pop_len) heap[arr_p + HB'(1)] <= mk_int({16'd0, arr_len - 16'd1});
-            if (set_lam) heap[ha(val_of(ra1)) + HB'(1)] <= mk_int(val_of(heap[ha(val_of(ra1)) + HB'(1)]) | 32'h0080_0000);
+            if (pop_len) heap[arr_p + HB'(1)] <= mk_int(INT_BITS'({16'd0, arr_len - 16'd1}));
+            if (set_lam) heap[ha(val_of(ra1)) + HB'(1)] <= mk_int(val_of(heap[ha(val_of(ra1)) + HB'(1)]) | INT_BITS'(32'h0080_0000));
             if (set_const) begin
               consts[b[CB-1:0]] <= ra;
               cvalid[b[CB-1:0]] <= 1'b1;
@@ -1901,9 +1996,9 @@ module mrb_core
                 fk     <= FK_HARD;
                 fres   <= '0;
                 fval   <= V_NIL;
-                xb     = ra_int ? f_int(ra[31:0]) : {heap[ha(val_of(ra)) + HB'(1)][31:0], heap[ha(val_of(ra)) + HB'(2)][31:0]};
+                xb     = ra_int ? f_int(ra[63:0]) : {heap[ha(val_of(ra)) + HB'(1)][31:0], heap[ha(val_of(ra)) + HB'(2)][31:0]};
                 y_num  = ra1_int || ra1_float;
-                yb     = ra1_int ? f_int(ra1[31:0]) : {heap[ha(val_of(ra1)) + HB'(1)][31:0], heap[ha(val_of(ra1)) + HB'(2)][31:0]};
+                yb     = ra1_int ? f_int(ra1[63:0]) : {heap[ha(val_of(ra1)) + HB'(1)][31:0], heap[ha(val_of(ra1)) + HB'(2)][31:0]};
                 xr     = $bitstoreal(xb);
                 yr     = $bitstoreal(yb);
                 cmp    = prim == PR_FLT || prim == PR_FLE || prim == PR_FGT || prim == PR_FGE ||
@@ -1928,19 +2023,19 @@ module mrb_core
                       PR_FEQ, PR_IEQ: begin fk <= FK_VAL; fval <= mk_bool(y_num && xr == yr); end
                       PR_FCMP: begin
                         fk   <= FK_VAL;
-                        fval <= !y_num || f_isnan(xb) || f_isnan(yb) ? V_NIL : mk_int(xr < yr ? -32'sd1 : (xr > yr ? 32'sd1 : 32'sd0));
+                        fval <= !y_num || f_isnan(xb) || f_isnan(yb) ? V_NIL : mk_int(xr < yr ? -INT_BITS'(1) : (xr > yr ? INT_BITS'(1) : INT_BITS'(0)));
                       end
                       PR_FNEG: begin fk <= FK_FLOAT; fres <= {~xb[63], xb[62:0]}; end
                       PR_FTOI: begin
                         if (f_isnan(xb) || f_isinf(xb)) begin fk <= FK_CERR; cx_kind <= CERR_FLOATDOMAIN; cx_a1 <= ra; cx_a2 <= V_NIL; cx_base <= fn; end
-                        else if (xr <= -2147483649.0 || xr >= 2147483648.0) begin fk <= FK_CERR; cx_kind <= CERR_RANGE; cx_a1 <= ra; cx_a2 <= V_NIL; cx_base <= fn; end
-                        else begin fk <= FK_VAL; fval <= mk_int(32'($rtoi(xr))); end
+                        else if (xr < -9223372036854775808.0 || xr >= 9223372036854775808.0) begin fk <= FK_CERR; cx_kind <= CERR_RANGE; cx_a1 <= ra; cx_a2 <= V_NIL; cx_base <= fn; end
+                        else begin fk <= FK_VAL; fval <= mk_int(f_toi(xb)); end
                       end
                       PR_FFLOOR: begin fk <= FK_FLOAT; fres <= f_floor(xb); end
                       PR_FCEIL:  begin fk <= FK_FLOAT; fres <= f_ceil(xb); end
                       PR_FROUND: begin fk <= FK_FLOAT; fres <= f_round(xb); end
                       PR_FNAN:   begin fk <= FK_VAL; fval <= mk_bool(f_isnan(xb)); end
-                      PR_FINF:   begin fk <= FK_VAL; fval <= f_isinf(xb) ? mk_int(xb[63] ? -32'sd1 : 32'sd1) : V_NIL; end
+                      PR_FINF:   begin fk <= FK_VAL; fval <= f_isinf(xb) ? mk_int(xb[63] ? -INT_BITS'(1) : INT_BITS'(1)) : V_NIL; end
                       PR_FTOS: begin fk <= FK_STR; fstr <= f_to_s(xb); end
                       PR_FFMT: begin
                         // ra1 = 変換の文字 (f e E g G)、ra2 = 精度 (0..20)。有限の値だけ (プレリュードが先に見る)
@@ -2084,7 +2179,7 @@ module mrb_core
             if (lkd_err && lk_mode == LM_CALL && !lk_hitr) begin
               // メソッドが無い: NoMethodError (名前、受け手)
               cx_kind <= CERR_NOMETHOD;
-              cx_a1   <= mk(TAG_SYM, {16'd0, lk_sym});
+              cx_a1   <= mk(TAG_SYM, INT_BITS'({16'd0, lk_sym}));
               cx_a2   <= ra;
               cx_base <= fn;
               state   <= S_CERR;
@@ -2199,7 +2294,7 @@ module mrb_core
           // ---- new: インスタンス変数を nil で埋め、見出しを書いて R[a] に置き (m_we)、initialize を引く
           S_OBJ: begin
             if (m_k == (HB+1)'(obj_n)) begin
-              heap[p_new[HB-1:0]] <= mk(TAG_HDR, {lk_cls, obj_n});
+              heap[p_new[HB-1:0]] <= mk(TAG_HDR, INT_BITS'({lk_cls, obj_n}));
               lk_mode  <= LM_INIT;
               lk_sym   <= SYM_INIT;
               lk_super <= 1'b0;
@@ -2296,25 +2391,25 @@ module mrb_core
             heap[gfree[HB-1:0] + fw_k[HB-1:0]] <= heap[fw_src[HB-1:0] + fw_k[HB-1:0]];
             fw_k <= fw_k + 1'b1;
             if (fw_k == fw_size) begin
-              heap[fw_src[HB-1:0]] <= mk(TAG_FWD, 32'(gfree));
+              heap[fw_src[HB-1:0]] <= mk(TAG_FWD, INT_BITS'(gfree));
               gfree <= gfree + fw_size + 1'b1;
               case (gphase)
-                3'd0: regs[gi[RB-1:0]] <= mk(fw_tag, 32'(gfree));
-                3'd1: consts[gi[CB-1:0]] <= mk(fw_tag, 32'(gfree));
-                3'd2: if (gi[0]) ret_env[gi_ent] <= mk(fw_tag, 32'(gfree));
-                      else ret_cp[gi_ent] <= mk(fw_tag, 32'(gfree));
+                3'd0: regs[gi[RB-1:0]] <= mk(fw_tag, INT_BITS'(gfree));
+                3'd1: consts[gi[CB-1:0]] <= mk(fw_tag, INT_BITS'(gfree));
+                3'd2: if (gi[0]) ret_env[gi_ent] <= mk(fw_tag, INT_BITS'(gfree));
+                      else ret_cp[gi_ent] <= mk(fw_tag, INT_BITS'(gfree));
                 3'd3: if (gi_ctask == task_id) case (gi[1:0])
-                  2'd0: cp <= mk(fw_tag, 32'(gfree));
-                  2'd1: env <= mk(fw_tag, 32'(gfree));
-                  2'd2: exc <= mk(fw_tag, 32'(gfree));
-                  default: xval <= mk(fw_tag, 32'(gfree));
+                  2'd0: cp <= mk(fw_tag, INT_BITS'(gfree));
+                  2'd1: env <= mk(fw_tag, INT_BITS'(gfree));
+                  2'd2: exc <= mk(fw_tag, INT_BITS'(gfree));
+                  default: xval <= mk(fw_tag, INT_BITS'(gfree));
                 endcase else case (gi[1:0])
-                  2'd0: sv_cp[gi_ctask] <= mk(fw_tag, 32'(gfree));
-                  2'd1: sv_env[gi_ctask] <= mk(fw_tag, 32'(gfree));
-                  2'd2: sv_exc[gi_ctask] <= mk(fw_tag, 32'(gfree));
-                  default: sv_xval[gi_ctask] <= mk(fw_tag, 32'(gfree));
+                  2'd0: sv_cp[gi_ctask] <= mk(fw_tag, INT_BITS'(gfree));
+                  2'd1: sv_env[gi_ctask] <= mk(fw_tag, INT_BITS'(gfree));
+                  2'd2: sv_exc[gi_ctask] <= mk(fw_tag, INT_BITS'(gfree));
+                  default: sv_xval[gi_ctask] <= mk(fw_tag, INT_BITS'(gfree));
                 endcase
-                default: heap[scan[HB-1:0]] <= mk(fw_tag, 32'(gfree));
+                default: heap[scan[HB-1:0]] <= mk(fw_tag, INT_BITS'(gfree));
               endcase
               if (gphase == 3'd4) begin
                 scan  <= scan + 1'b1;
@@ -2329,9 +2424,9 @@ module mrb_core
           // ---- env: 見出し、生きている間の bp、レジスタ fn 本 (nil で埋める)
           S_ENV: begin
             if (m_k == (HB+1)'(fn)) begin
-              heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_ENV, 16'(fn) + 16'd1});
-              heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(bp));
-              env   <= mk(TAG_OBJ, 32'(p_new));
+              heap[p_new[HB-1:0]]          <= mk(TAG_HDR, INT_BITS'({CLS_ENV, 16'(fn) + 16'd1}));
+              heap[p_new[HB-1:0] + HB'(1)] <= mk_int(INT_BITS'(bp));
+              env   <= mk(TAG_OBJ, INT_BITS'(p_new));
               state <= S_BLOCK;
             end else begin
               heap[p_new[HB-1:0] + HB'(2) + m_k[HB-1:0]] <= V_NIL;
@@ -2341,9 +2436,9 @@ module mrb_core
           // ---- Proc: 見出し、{先頭 pc | lambda << 23}、作ったフレームの env、
           //      外側の Proc、作ったフレームの self
           S_BLOCK: begin
-            heap[p_proc]          <= mk(TAG_HDR, {CLS_PROC, 16'd4});
-            heap[p_proc + HB'(1)] <= mk_int({8'd0, c[7], 7'd0, b});
-            heap[p_proc + HB'(2)] <= env_new ? mk(TAG_OBJ, 32'(p_new)) : env;
+            heap[p_proc]          <= mk(TAG_HDR, INT_BITS'({CLS_PROC, 16'd4}));
+            heap[p_proc + HB'(1)] <= mk_int(INT_BITS'({8'd0, c[7], 7'd0, b}));
+            heap[p_proc + HB'(2)] <= env_new ? mk(TAG_OBJ, INT_BITS'(p_new)) : env;
             heap[p_proc + HB'(3)] <= cp;
             heap[p_proc + HB'(4)] <= regs[bp];
             pc    <= pc + PC_BITS'(1);
@@ -2396,10 +2491,10 @@ module mrb_core
 
           // ---- 配列リテラル: 見出し 4 語、要素を1つずつ
           S_AHDR: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {m_cls, 16'd2});
-            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(32'(m_n));
-            heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_OBJ, 32'(p_new) + 32'd3);
-            heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, {CLS_DATA, 16'(m_n)});
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, INT_BITS'({m_cls, 16'd2}));
+            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(INT_BITS'(m_n));
+            heap[p_new[HB-1:0] + HB'(2)] <= mk(TAG_OBJ, INT_BITS'(p_new) + INT_BITS'(3));
+            heap[p_new[HB-1:0] + HB'(3)] <= mk(TAG_HDR, INT_BITS'({CLS_DATA, 16'(m_n)}));
             state <= m_fromrom ? S_SROM : (m_fromfpu ? S_FSTR : S_AELEM);
           end
 
@@ -2412,7 +2507,7 @@ module mrb_core
             end else state <= S_SBYTE;
           end
           S_SBYTE: begin
-            heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int({24'd0, rom_data[8 * m_k[1:0] +: 8]});
+            heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int(INT_BITS'({24'd0, rom_data[8 * m_k[1:0] +: 8]}));
             m_k   <= m_k + 1'b1;
             state <= S_SROM;
           end
@@ -2424,7 +2519,11 @@ module mrb_core
             fres[63:32] <= rom_data[31:0];
             state       <= S_LF3;
           end
-          S_LF3: begin
+          S_LF3: if (op == OP_LOADI64) begin
+            // LOADI64: 2語が整数の上位と下位 (R[a] への書き込みは m_we)
+            pc    <= pc + PC_BITS'(1);
+            state <= S_FETCH;
+          end else begin
             fres[31:0] <= rom_data[31:0];
             need       <= 17'd3;
             mop        <= MO_FLOAT;
@@ -2462,9 +2561,9 @@ module mrb_core
           end
           // ---- Float の箱: 見出し、上位 32bit、下位 32bit (R[a] への書き込みは m_we)
           S_FBOX: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_FLOAT, 16'd2});
-            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(fres[63:32]);
-            heap[p_new[HB-1:0] + HB'(2)] <= mk_int(fres[31:0]);
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, INT_BITS'({CLS_FLOAT, 16'd2}));
+            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(INT_BITS'(fres[63:32]));
+            heap[p_new[HB-1:0] + HB'(2)] <= mk_int(INT_BITS'(fres[31:0]));
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
           end
@@ -2475,7 +2574,7 @@ module mrb_core
               pc        <= pc + PC_BITS'(1);
               state     <= S_FETCH;
             end else begin
-              heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int({24'd0, fs_at(fstr, int'(m_k))});
+              heap[p_new[HB-1:0] + HB'(4) + m_k[HB-1:0]] <= mk_int(INT_BITS'({24'd0, fs_at(fstr, int'(m_k))}));
               m_k <= m_k + 1'b1;
             end
           end
@@ -2533,7 +2632,7 @@ module mrb_core
           end
           S_ENLATCH: begin
             en_blk   <= regs[RB'(17'(bp) + en_blksrc)];
-            en_kdict <= en_mkhash ? mk(TAG_OBJ, 32'(eh_p)) : regs[RB'(17'(bp) + en_kidx)];
+            en_kdict <= en_mkhash ? mk(TAG_OBJ, INT_BITS'(eh_p)) : regs[RB'(17'(bp) + en_kidx)];
             en_src <= ha(val_of(heap[ha(val_of(r1v)) + HB'(2)]));
             if (en_m2 != 17'd0) begin
               en_k  <= '0;
@@ -2560,7 +2659,7 @@ module mrb_core
             end
           end
           S_ENFIN: begin
-            if (en_r) regs[RB'(17'(bp) + en_m1 + en_o + 17'd1)] <= mk(TAG_OBJ, 32'(p_new));
+            if (en_r) regs[RB'(17'(bp) + en_m1 + en_o + 17'd1)] <= mk(TAG_OBJ, INT_BITS'(p_new));
             if (en_kd) regs[RB'(17'(bp) + en_len + 17'd1)] <= en_kdict;
             regs[RB'(17'(bp) + en_len + 17'(en_kd) + 17'd1)] <= en_blk;
             fn      <= en_nregs;
@@ -2592,9 +2691,9 @@ module mrb_core
           end
           S_GROW: begin
             // p_new: 新しい中身。m_k 語目を写す (長さまでは元の中身、残りは nil)
-            if (m_k == '0) heap[p_new[HB-1:0]] <= mk(TAG_HDR, {CLS_DATA, m_cap});
+            if (m_k == '0) heap[p_new[HB-1:0]] <= mk(TAG_HDR, INT_BITS'({CLS_DATA, m_cap}));
             if (m_k == (HB+1)'(m_cap)) begin
-              heap[s_p + HB'(2)] <= mk(TAG_OBJ, 32'(p_new));
+              heap[s_p + HB'(2)] <= mk(TAG_OBJ, INT_BITS'(p_new));
               m_k   <= (HB+1)'(m_len);
               state <= S_FILL;
             end else begin
@@ -2611,7 +2710,7 @@ module mrb_core
           end
           S_PUT: begin
             heap[s_d + HB'(1) + m_i[HB-1:0]] <= regs[m_val[RB-1:0]];
-            if (m_i >= m_len) heap[s_p + HB'(1)] <= mk_int(32'(m_i) + 32'd1);
+            if (m_i >= m_len) heap[s_p + HB'(1)] <= mk_int(INT_BITS'(m_i) + INT_BITS'(1));
             pc    <= pc + PC_BITS'(1);
             state <= S_FETCH;
           end
@@ -2628,7 +2727,7 @@ module mrb_core
           S_CERR: begin
             if (hcount == 16'd0 || !(17'(bp) + 17'(cx_base) + 17'd3 < rlim)) state <= S_ERROR;
             else begin
-              regs[RB'(17'(bp) + 17'(cx_base))]         <= mk_int({29'd0, cx_kind});
+              regs[RB'(17'(bp) + 17'(cx_base))]         <= mk_int(INT_BITS'(cx_kind));
               regs[RB'(17'(bp) + 17'(cx_base) + 17'd1)] <= cx_a1;
               regs[RB'(17'(bp) + 17'(cx_base) + 17'd2)] <= cx_a2;
               lk_cls   <= CLS_INT;
@@ -2685,10 +2784,10 @@ module mrb_core
             end
           end
           S_BRKW: begin
-            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, {CLS_BRK, 16'd2});
-            heap[p_new[HB-1:0] + HB'(1)] <= mk_int({13'd0, x_kind, x_target});
+            heap[p_new[HB-1:0]]          <= mk(TAG_HDR, INT_BITS'({CLS_BRK, 16'd2}));
+            heap[p_new[HB-1:0] + HB'(1)] <= mk_int(INT_BITS'({13'd0, x_kind, x_target}));
             heap[p_new[HB-1:0] + HB'(2)] <= xval;
-            exc   <= mk(TAG_OBJ, 32'(p_new));
+            exc   <= mk(TAG_OBJ, INT_BITS'(p_new));
             xval  <= V_NIL;
             pc    <= h_tgt;
             state <= S_FETCH;

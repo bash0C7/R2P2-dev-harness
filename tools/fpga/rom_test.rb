@@ -42,12 +42,12 @@ class FpgaRomTest < Minitest::Test
     "LOADSELF" => %w[MOVE], "RETSELF" => %w[RETURN], "RETTRUE" => %w[LOADTRUE], "RETFALSE" => %w[LOADFALSE],
     "SEND" => %w[ARRAY MOVE], "SUPER" => %w[ARRAY MOVE], # キーワード引数は Hash にしてから呼ぶ
     "KARG" => %w[MOVE], "KEY_P" => %w[MOVE], "KEYEND" => %w[MOVE],
-    "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE],
+    "GETCONST" => %w[CLASS], "SSEND0" => %w[BLKPUSH LOADNIL], "SSEND" => %w[LOADNIL ARRAY MOVE SSEND0], # SSEND0 は defined?(X) (__const_str)
     "GETCV" => %w[GETCONST], "SETCV" => %w[SETCONST], "GETMCNST" => %w[CLASS GETCONST], "SETMCNST" => %w[SETCONST],
     "GETGV" => %w[GETCONST], "SETGV" => %w[SETCONST], # ポートでないグローバル変数
     "GETIV" => %w[GETCONST], "SETIV" => %w[SETCONST], # クラスのインスタンス変数 (クラスごとの定数)
     "SCLASS" => %w[NOP], "OCLASS" => %w[CLASS], # class << self (本体は特異メソッド)、::X
-    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF], "ALIAS" => %w[NOP],
+    "JMPUW" => %w[JMP], "STRCAT" => %w[SEND], "LOADL" => %w[LOADI32 LOADF LOADI64], "ALIAS" => %w[NOP],
     "HASH" => %w[ARRAY], "HASHADD" => %w[ARRAY], "HASHCAT" => %w[SEND], "RANGE_INC" => %w[SEND], "RANGE_EXC" => %w[SEND]
   }.freeze
 
@@ -177,12 +177,13 @@ class FpgaRomTest < Minitest::Test
     assert_match(/# irep 1  nregs 3\n   7  000  ENTER/, image.listing)
   end
 
-  # 同じ名前を2回 def したら後の定義 (静的に決める)
+  # 同じ名前を2回 def したら後の定義 (静的に決める)。f を呼ばないと使わないメソッドとして ROM から落ちる (live_ireps)
   def test_later_definition_wins
     one = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
     two = irep_record([op("ENTER"), 0, 0, 0, op("RETNIL")])
-    bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("STOP")], syms: ["f"], reps: [one, two])
+    bin = rite([op("TDEF"), 1, 0, 0, op("TDEF"), 1, 0, 1, op("SSEND0"), 1, 0, op("STOP")], syms: ["f"], reps: [one, two])
     image = FpgaRom.from_binary(bin)
+    refute_nil image.ireps[2].base
     assert_equal image.ireps[2].base, lookup(image, FpgaIsa::CLS_OBJECT, "f")
   end
 
@@ -319,7 +320,8 @@ class FpgaRomTest < Minitest::Test
     end
   end
 
-  # pool: 文字列はデータ領域 (同じ中身は1つ) に置き STRING の b / c がその場所と長さ。LOADL は 32bit の整数だけ
+  # pool: 文字列はデータ領域 (同じ中身は1つ) に置き STRING の b / c がその場所と長さ。LOADL は 32bit の整数なら LOADI32、
+  # 入らなければ LOADI64 (データの2語、上位 32bit と下位 32bit)
   def test_pool_strings_and_integers
     image = FpgaRom.from_binary(rite([op("STRING"), 1, 0, op("STRING"), 2, 1, op("STRING"), 3, 0, op("LOADL"), 4, 3, op("STOP")],
                                      pool: ["hello", "", "hello", -7]))
@@ -334,8 +336,11 @@ class FpgaRomTest < Minitest::Test
     e = image.words[image.symtab + sym]
     assert_equal "initi", [image.words[e.b].value, image.words[e.b + 1].value].pack("VV")[0, 5]
     assert_equal 10, e.c
-    e = assert_raises(FpgaRom::Error) { FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [2**40])) }
-    assert_match(/does not fit in 32 bits/, e.message)
+    [[2**40 + 5, [0x100, 5]], [-2**40, [0xFFFF_FF00, 0]], [2**31, [0, 0x8000_0000]]].each do |v, words|
+      image = FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [v]))
+      l = image.words.find { |w| w.first && FpgaIsa::OPS[w.op].name == "LOADI64" }
+      assert_equal words, [image.words[l.b].value & 0xFFFF_FFFF, image.words[l.b + 1].value & 0xFFFF_FFFF], v
+    end
     # Float は LOADF になり、b がデータの2語 (上位 32bit、下位 32bit) を指す (0.0 の double は全 bit 0)
     image = FpgaRom.from_binary(rite([op("LOADL"), 1, 0, op("STOP")], pool: [:float]))
     f = image.words.find { |w| w.first && FpgaIsa::OPS[w.op].name == "LOADF" }

@@ -67,7 +67,7 @@ module FpgaCompare
     when FpgaIsa::TAG_NIL   then nil
     when FpgaIsa::TAG_FALSE then false
     when FpgaIsa::TAG_TRUE  then true
-    else val >= 2**31 ? val - 2**32 : val
+    else val >= 2**63 ? val - 2**64 : val # Integer は 64bit
     end
   end
 

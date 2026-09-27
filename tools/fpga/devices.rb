@@ -1,7 +1,8 @@
 # CPU コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI、PSG の列) の参照モデル。docs/spec.md §10「デバイス (P5)」。
 #
 # コアは primitive の __io_read(addr) / __io_write(addr, value) でデバイスのレジスタを読み書きする (16bit の番地、
-# 値は 32bit の Integer)。RTL (fpga/rtl/mrb_dev.sv) と参照インタプリタ (ref_vm.rb) と、CRuby での突き合わせ
+# レジスタは 32bit。読んだ値は符号付きに広げた 64bit の Integer (-1 は -1)、ただし TIME_US と TIME_MS は 64bit の時計そのもの。
+# 書くのは下の 32bit)。RTL (fpga/rtl/mrb_dev.sv) と参照インタプリタ (ref_vm.rb) と、CRuby での突き合わせ
 # (oracle.rb が __io_read / __io_write をこのモデルで定義する) が同じ形で動く。
 #
 # 外からの入力は刺激 ([step, 番地, 値]) で与える: GPIO の EXT_LOW / EXT_HIGH はその step からの値 (最後が勝つ)、
@@ -18,9 +19,9 @@ module FpgaDevices
   GPIO_LEVEL    = 0x105 # ピンの今の値 (読むだけ)
   GPIO_EXT_LOW  = 0x106 # 外から L に落としているピン (刺激)
   GPIO_EXT_HIGH = 0x107 # 外から H にしているピン (刺激)
-  TIME_US       = 0x110 # 仮想の時計 (µs) の下位 32bit: 始めた命令の数 + sleep した時間
+  TIME_US       = 0x110 # 仮想の時計 (µs、64bit): 始めた命令の数 + sleep した時間
   TIME_US_HI    = 0x111
-  TIME_MS       = 0x112 # 仮想の時計 / 1000 の下位 32bit
+  TIME_MS       = 0x112 # 仮想の時計 / 1000 (64bit)
   UART_TX       = 0x120 # 書くと1バイト送る
   UART_RX       = 0x121 # 読むと受けた1バイト (無ければ -1)
   UART_AVAIL    = 0x122 # 受けて読んでいないバイトの数
@@ -231,15 +232,21 @@ module FpgaDevices
       @rx.count { |s, _| s <= step } - @rp
     end
 
-    # 読む。vtime は仮想の時計 (µs)。知らない番地は nil
+    # 読む。vtime は仮想の時計 (µs)。知らない番地は nil。32bit のレジスタは符号付きに広げる (コアの Integer は 64bit)
     def read(addr, step, vtime)
+      return vtime if addr == TIME_US
+      return vtime / 1000 if addr == TIME_MS
+      v = read32(addr, step, vtime)
+      v.nil? ? nil : (v >= 0x8000_0000 ? v - 0x1_0000_0000 : v)
+    end
+
+    # 32bit のレジスタの値 (符号なし)
+    def read32(addr, step, vtime)
       case addr
       when *REGS then @regs[addr]
       when GPIO_LEVEL then pin_levels(step)
       when GPIO_EXT_LOW, GPIO_EXT_HIGH then level_input(addr, step)
-      when TIME_US then vtime & MASK
       when TIME_US_HI then (vtime >> 32) & MASK
-      when TIME_MS then (vtime / 1000) & MASK
       when UART_RX
         return MASK if rx_avail(step) <= 0 # -1
         b = @rx[@rp][1]

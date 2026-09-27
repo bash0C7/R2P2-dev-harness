@@ -5,7 +5,7 @@
 /* verilator lint_off UNUSEDPARAM */
 package mrb_pkg;
   // レジスタの値 = {tag[TAG_BITS-1:0], value[31:0]}。OBJ はヒープの語アドレス、FWD / HDR はヒープの中だけ
-  localparam int INT_BITS = 32;
+  localparam int INT_BITS = 64;
   localparam int TAG_BITS = 4;
   localparam int VAL_BITS = INT_BITS + TAG_BITS;
   localparam logic [TAG_BITS-1:0] TAG_NIL   = 4'd0;
@@ -170,13 +170,21 @@ package mrb_pkg;
   localparam logic [13:0] PR_OBJID    = 14'd89; // Object#__object_id (0 arg)
   localparam int NPRIMS = 90;
   // コアの実行時エラーの種類 (Integer#__core_error の受け手)
-  localparam logic [2:0] CERR_ZERODIV     = 3'd1;
-  localparam logic [2:0] CERR_NOMETHOD    = 3'd2;
-  localparam logic [2:0] CERR_ARGNUM      = 3'd3;
-  localparam logic [2:0] CERR_TYPE        = 3'd4;
-  localparam logic [2:0] CERR_COMPARE     = 3'd5;
-  localparam logic [2:0] CERR_FLOATDOMAIN = 3'd6;
-  localparam logic [2:0] CERR_RANGE       = 3'd7;
+  localparam logic [3:0] CERR_ZERODIV     = 4'd1;
+  localparam logic [3:0] CERR_NOMETHOD    = 4'd2;
+  localparam logic [3:0] CERR_ARGNUM      = 4'd3;
+  localparam logic [3:0] CERR_TYPE        = 4'd4;
+  localparam logic [3:0] CERR_COMPARE     = 4'd5;
+  localparam logic [3:0] CERR_FLOATDOMAIN = 4'd6;
+  localparam logic [3:0] CERR_RANGE       = 4'd7;
+  localparam logic [3:0] CERR_OVERFLOW    = 4'd8;
+  // 桁あふれの場所 (CERR_OVERFLOW の詳細1)
+  localparam logic [2:0] OVF_PLAIN = 3'd0;
+  localparam logic [2:0] OVF_ADD   = 3'd1;
+  localparam logic [2:0] OVF_SUB   = 3'd2;
+  localparam logic [2:0] OVF_MUL   = 3'd3;
+  localparam logic [2:0] OVF_DIV   = 3'd4;
+  localparam logic [2:0] OVF_SHIFT = 3'd5;
   // 引数の数 (8'hff は何個でも)
   function automatic logic [7:0] prim_nargs(input logic [13:0] p);
     case (p)
@@ -363,4 +371,5 @@ package mrb_pkg;
   localparam logic [7:0] OP_TABLE      = 8'd240; // BS
   localparam logic [7:0] OP_HTABLE     = 8'd241; // BS
   localparam logic [7:0] OP_LOADF      = 8'd242; // BS
+  localparam logic [7:0] OP_LOADI64    = 8'd243; // BS
 endpackage

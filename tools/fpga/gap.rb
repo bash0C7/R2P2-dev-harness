@@ -91,7 +91,7 @@ module FpgaGap
     found = {}
     ireps.each_with_index do |ir, i|
       ir.pool.each do |e|
-        found["big integer literal"] = true if e[0] == :bigint || (e[0] == :int && (e[1] < -2**31 || e[1] >= 2**31))
+        found["big integer literal"] = true if e[0] == :bigint || (e[0] == :int && (e[1] < -2**63 || e[1] >= 2**63))
       end
       decoded[i].each do |insn|
         found["op #{insn.name}"] = true unless FpgaIsa.convertible?(insn.name)

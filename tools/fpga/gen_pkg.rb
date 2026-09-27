@@ -61,7 +61,9 @@ module FpgaGenPkg
     end
     lines << "  localparam int NPRIMS = #{FpgaIsa::PRIMS.size};"
     lines << "  // コアの実行時エラーの種類 (Integer#__core_error の受け手)"
-    %w[ZERODIV NOMETHOD ARGNUM TYPE COMPARE FLOATDOMAIN RANGE].each { |k| lines << format("  localparam logic [2:0] CERR_%-11s = 3'd%d;", k, FpgaIsa.const_get("CERR_#{k}")) }
+    %w[ZERODIV NOMETHOD ARGNUM TYPE COMPARE FLOATDOMAIN RANGE OVERFLOW].each { |k| lines << format("  localparam logic [3:0] CERR_%-11s = 4'd%d;", k, FpgaIsa.const_get("CERR_#{k}")) }
+    lines << "  // 桁あふれの場所 (CERR_OVERFLOW の詳細1)"
+    %w[PLAIN ADD SUB MUL DIV SHIFT].each { |k| lines << format("  localparam logic [2:0] OVF_%-5s = 3'd%d;", k, FpgaIsa.const_get("OVF_#{k}")) }
     lines << "  // 引数の数 (8'hff は何個でも)"
     lines << "  function automatic logic [7:0] prim_nargs(input logic [13:0] p);"
     lines << "    case (p)"

@@ -82,8 +82,11 @@ class Integer
           ArgumentError.new("comparison of #{other.class} with #{detail.nil? ? 'nil' : detail.class} failed")
         elsif self == 6
           FloatDomainError.new(detail.to_s)
+        elsif self == 7
+          RangeError.new("integer overflow in to_f") # PicoRuby の Float#to_i のメッセージ
         else
-          RangeError.new("float #{detail} out of range of integer")
+          RangeError.new("integer overflow" + ["", " in addition", " in subtraction", " in multiplication", " in division",
+                                               " in bit shift"][detail])
         end
     __raise(e)
   end

@@ -25,22 +25,36 @@ class Float
   end
 
   def truncate
+    __rounded_to_i
+  end
+
+  # 丸めた値を Integer に。64bit に入らなければ PicoRuby と同じく "integer overflow in rounding"
+  # (NaN と Infinity は to_i の FloatDomainError)
+  def __rounded_to_i
+    if finite? && (self >= 9223372036854775808.0 || self < -9223372036854775808.0)
+      __raise(RangeError.new("integer overflow in rounding"))
+    end
     to_i
   end
 
   def floor(ndigits = 0)
-    return __floorf.to_i if ndigits == 0
+    return __floorf.__rounded_to_i if ndigits == 0
     __round_digits(ndigits) { |x| x.__floorf }
   end
 
   def ceil(ndigits = 0)
-    return __ceilf.to_i if ndigits == 0
+    return __ceilf.__rounded_to_i if ndigits == 0
     __round_digits(ndigits) { |x| x.__ceilf }
   end
 
-  # 0.5 は 0 から遠い方へ (CRuby の既定)。ndigits は CRuby の round_half_up と同じ補正をする
+  # 0.5 は 0 から遠い方へ (CRuby の既定)。ndigits は CRuby の round_half_up と同じ補正をする。
+  # 64bit に入らない値は PicoRuby と同じく Float のまま
   def round(ndigits = 0)
-    return __roundf.to_i if ndigits == 0
+    if ndigits == 0
+      r = __roundf
+      return r if finite? && (r >= 9223372036854775808.0 || r < -9223372036854775808.0)
+      return r.to_i
+    end
     return self if nan? || infinite?
     if ndigits > 0
       return self if ndigits >= 17
