@@ -44,6 +44,7 @@ module FpgaV2
       l << "module M#{rng.rand(3)}\n  K = #{literal(rng)}\n  def mix\n    #{literal(rng)}\n  end\nend"
       mod = l[0][/module (\w+)/, 1]
       depth = rng.rand(1..3)
+      mm = false # 鎖のどこかに method_missing がある
       names = (0...depth).map { |k| "C#{k}" }
       names.each_with_index do |c, k|
         sup = k.zero? ? "" : " < #{names[k - 1]}"
@@ -59,13 +60,16 @@ module FpgaV2
         else
           body << "  def h\n    3\n  end"
         end
-        body << "  def method_missing(name, *args)\n    name.to_s.size + args.size\n  end" if rng.rand(3).zero?
+        if rng.rand(3).zero?
+          body << "  def method_missing(name, *args)\n    name.to_s.size + args.size\n  end"
+          mm = true
+        end
         l << "class #{c}#{sup}\n#{body.join("\n")}\nend"
       end
       obj = names.last
       l << "o = #{obj}.new(#{literal(rng)})"
       rng.rand(4..8).times do
-        l << case rng.rand(8)
+        l << case rng.rand(9)
              when 0 then "puts o.f(#{literal(rng)})"
              when 1 then "puts o.g"
              when 2 then "puts o.h"
@@ -73,6 +77,7 @@ module FpgaV2
              when 4 then "class #{names.sample(random: rng)}\n  def h\n    #{literal(rng)}\n  end\nend\nputs o.h"
              when 5 then "puts o.respond_to?(:mix), o.respond_to?(:nope)"
              when 6 then "def o.s\n  #{literal(rng)}\nend\nputs o.s"
+             when 7 then mm ? "puts o.nope#{rng.rand(9)}(#{literal(rng)}, 2)" : "puts o.respond_to?(:h)"
              else "puts o.is_a?(#{names.first}), o.is_a?(#{mod})"
              end
       end
