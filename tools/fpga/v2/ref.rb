@@ -70,7 +70,8 @@ module FpgaV2
       end
 
       def vis=(v)
-        @r.w8(@addr + CI_VIS, v == 3 ? VIS_PRIVATE | CI_MODFUNC_BIT : v)
+        keep = @r.r8(@addr + CI_VIS) & ~(3 | CI_MODFUNC_BIT) # VISIBILITY_BREAK と GIVEN_CLASS の印は残す
+        @r.w8(@addr + CI_VIS, keep | (v == 3 ? VIS_PRIVATE | CI_MODFUNC_BIT : v))
       end
 
       def kind
@@ -458,22 +459,23 @@ module FpgaV2
         return prim_call(prim, a, n & CALL_ARGS)
       end
       cls = class_of(reg(a))
-      if (e = @cache[[cls, sym]])
+      if (e = @cache[[cls, sym]]) # {メソッド表の値, 見つかったクラス} (vm.c の mrb_vm_find_method の *cp、mrb_cache_entry の c0)
         @stats[:mcache_hit] += 1
-        return call_entry(e, a, n, sym, ret_pc, dst, fcall)
+        return call_entry(e[0], a, n, sym, ret_pc, dst, fcall, e[1])
       end
       @stats[:mcache_miss] += 1
       trap_call("__fpga_trap_lookup", [obj(cls), [TAG_SYM, sym]], resume: [:send, a, n, sym, ret_pc, dst, fcall], above: a + wlen(n) + 2)
     end
 
     # メソッド表の値 (Proc の番地 | 可視性) を呼ぶ。private は fcall でなければ見つからないのと同じ (mruby の vm.c: NoMethodError)
-    def call_entry(e, a, n, sym, ret_pc, dst, fcall)
+    # found は見つかったクラス (呼ばれるフレームの ci->u.target_class、vm.c の L_SENDB_SYM)
+    def call_entry(e, a, n, sym, ret_pc, dst, fcall, found = nil)
       vis = e & VIS_MASK
       if vis == VIS_PRIVATE && !fcall
         @stats[:private_denied] += 1
         return missing(a, n, sym, ret_pc, dst)
       end
-      call_proc(e & ~VIS_MASK, a, n, sym, ret_pc, dst)
+      call_proc(e & ~VIS_MASK, a, n, sym, ret_pc, dst, found)
     end
 
     # 罠: firmware のメソッドを、今の命令のレジスタの窓の上で呼ぶ。self は main。戻ったら resume。
@@ -490,7 +492,7 @@ module FpgaV2
       push_frame(pr, base, args.size, kind: :trap, mid: sym_id(name), ret_pc: @pc_next, resume: resume || [:advance])
     end
 
-    def call_proc(pr, a, n, mid, ret_pc, dst = nil)
+    def call_proc(pr, a, n, mid, ret_pc, dst = nil, found = nil)
       case r32(pr + P_FLAGS) & 3
       when PROC_PRIM
         raise Error, "primitive procs with dst" if dst
@@ -503,7 +505,7 @@ module FpgaV2
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
-        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst)
+        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst, tclass: found)
         b = rv(@stbase + (@f.bp + wlen(n) + 1) * VALUE)
         w32(@f.addr + CI_BLK, b[1]) if b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC]
       end
@@ -511,7 +513,7 @@ module FpgaV2
 
     # フレームを積む。呼んだ側は ret_pc から続ける。dst は結果を置く呼んだ側のレジスタ (nil は呼ばれた側の R0 = 呼んだ側の R[a])
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
-    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil)
+    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil, tclass: nil)
       ci = @f.addr + CI_SIZE
       # vm.c の cipush: ci の数が MRB_CALL_LEVEL_MAX に届いたら mrb->stack_err を上げる (罠は上げるための余りの枠を使う)
       # firmware (像の中の Proc) のフレームからの呼び出しは数えない (上げる途中の firmware が同じ罠に入らないため)
@@ -521,19 +523,19 @@ module FpgaV2
       end
       raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND)
       @f.pc = ret_pc
-      write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n)
+      write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n, tclass)
       @jumped = true
       @stats[:call] += 1
     end
 
     # mrb_callinfo を 1 つ書いて今のフレームにする (ctx->ci も)
-    def write_ci(ci, pr, stack, mid, kind, resume, dst, n)
+    def write_ci(ci, pr, stack, mid, kind, resume, dst, n, tclass = nil)
       @m[ci, CI_SIZE] = ("\x00" * CI_SIZE).b
       w8(ci + CI_CCI, kind == :call ? CINFO_NONE : CINFO_DIRECT)
       w32(ci + CI_MID, mid)
       w32(ci + CI_PROC, pr)
       w32(ci + CI_STACK, stack)
-      w32(ci + CI_U, r32(pr + P_TCLASS))
+      w32(ci + CI_U, tclass || r32(pr + P_TCLASS))
       cont = { trap: CONT_OF.fetch((resume || [:advance])[0]), boot: CONT_BOOT, run: CONT_RUN }.fetch(kind, CONT_NONE)
       w8(ci + CI_CONT, cont)
       w32(ci + CI_CDST, dst ? dst + 1 : 0)
@@ -670,7 +672,7 @@ module FpgaV2
         return send_kw(a, sym, n, true, true, fcall, ret_pc)
       when :send # 探索の罠の結果: メソッド表の値 (Integer) か nil
         @pc_next = ret_pc
-        return call_entry(v[1], a, n, sym, ret_pc, dst, fcall) if v[0] == TAG_INT
+        return call_entry(v[1], a, n, sym, ret_pc, dst, fcall, @cache[[class_of(reg(a)), sym]]&.last) if v[0] == TAG_INT
         missing(a, n, sym, ret_pc, dst)
       end
     end
@@ -716,7 +718,7 @@ module FpgaV2
           when "__fpga_lo" then int(args[0][1] & 0xFFFF_FFFF)
           when "__fpga_putc" then (@console << (args[0][1] & 0xFF).chr; NIL)
           when "__fpga_alloc" then int(alloc(args[0][1]))
-          when "__fpga_mcache_fill" then (@cache[[args[0][1], args[1][1]]] = args[2][1]; NIL)
+          when "__fpga_mcache_fill" then (@cache[[args[0][1], args[1][1]]] = [args[2][1], args[3][1]]; NIL) # (cls, sym, 値, 見つかったクラス)
           when "__fpga_mcache_clear" then (@cache.clear; NIL)
           when "__fpga_mid" then [TAG_SYM, trapped[0].mid] # 罠を起こしたフレームのメソッドの名前 (mruby の ci->mid)
           when "__fpga_proc" then int(trapped[0].proc) # 罠を起こしたフレームの Proc (定数の字句の鎖、super、def の upper)
@@ -742,7 +744,7 @@ module FpgaV2
           when "__fpga_unwind" then return unwind(args[0][1], args[1][1]) # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
           when "__fpga_unwind_ret" then return unwind_ret(args[0][1], args[1]) # ci から値を返す (vm.c の L_RETURN)
           when "__fpga_run" then return run_irep(args[0][1], args[1], a)
-          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5], args[6]) # 7 つ目はキーワードの Hash
+          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5], args[6], args[7]) # 7 つ目はキーワードの Hash、8 つ目はクラスを与えた印
           else raise Error, "primitive #{name} is not implemented"
           end
       setreg(a, r)
@@ -806,12 +808,15 @@ module FpgaV2
 
     # __fpga_invoke(recv, proc, args の配列, blk, mid, tclass, kdict): proc (メソッド表の値でも可、可視性の bit は見ない) を recv で呼ぶ。
     # mid は呼ばれるフレームのメソッドの名前 (super の先も元の名前、mruby の ci->mid)。戻り値は R[a] へ
-    # tclass を渡すと、呼ばれるフレームの定義の入れ物をそれにする (vm.c の mrb_yield_with_class、class_eval / instance_exec)
-    def invoke(recv, pr, args, blk, mid, a, tclass = nil, kdict = nil)
+    # tclass を渡すと、呼ばれるフレームの ci->u.target_class をそれにする (super の見つかったクラス)。
+    # given が真なら、クラスを与えられたフレームの印も付ける (vm.c の yield_with_attr: MRB_CI_SET_VISIBILITY_BREAK と MRB_CI_SET_GIVEN_CLASS、class_eval / instance_exec)
+    def invoke(recv, pr, args, blk, mid, a, tclass = nil, kdict = nil, given = nil)
       base = r16(@f.irep + I_NREGS)
       list = window(base, recv, args, blk, kdict)
-      call_proc(pr & ~VIS_MASK, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a)
-      w32(@f.addr + CI_U, tclass[1]) if tclass && tclass[0] == TAG_OBJ && (r32((pr & ~VIS_MASK) + P_FLAGS) & 3) == PROC_IREP
+      pr &= ~VIS_MASK
+      tc = tclass && tclass[0] == TAG_OBJ && (r32(pr + P_FLAGS) & 3) == PROC_IREP ? tclass[1] : nil
+      call_proc(pr, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a, tc)
+      w8(@f.addr + CI_VIS, r8(@f.addr + CI_VIS) | CI_VISIBILITY_BREAK_BIT | CI_GIVEN_CLASS_BIT) if tc && given && truthy?(given) && @f.proc == pr
     end
 
     # __fpga_sendv(recv, sym, args の配列, blk, fcall): 名前で引いて呼ぶ (探索は回路と同じ、fcall なら private も)。戻り値は R[a] へ

@@ -257,7 +257,8 @@ class Object
   # C: src/vm.c OP_GETCONST
   def __fpga_op_GETCONST(a, b, c)
     sym = __fpga_irep_sym(__fpga_irep, b)
-    cref = __fpga_addr(__fpga_tclass)
+    cref = __fpga_cref_class(__fpga_ci) # mrb_vm_const_get
+    cref = __fpga_image(5) if cref == 0 # L:IMG_object_class
     row = __fpga_const_row(cref, sym)
     if row == 0
       pr = __fpga_ld32(__fpga_proc + 12) # L:P_UPPER
@@ -313,7 +314,8 @@ class Object
   def __fpga_op_SETCONST(a, b, c)
     v = __fpga_reg(a)
     sym = __fpga_irep_sym(__fpga_irep, b)
-    target = __fpga_addr(__fpga_tclass)
+    target = __fpga_cref_class(__fpga_ci)
+    target = __fpga_image(5) if target == 0 # L:IMG_object_class
     __fpga_tbl_set(__fpga_iv_tbl(target), sym, v) # mrb_const_set (表が無ければ作る)
     __fpga_name_class(v, sym, target)
   end
@@ -438,7 +440,8 @@ class Object
     base = __fpga_reg(a)
     sup = __fpga_reg(a + 1)
     id = __fpga_irep_sym(__fpga_irep, b)
-    outer = base.nil? ? __fpga_addr(__fpga_tclass) : __fpga_addr(base)
+    outer = __fpga_tag(base) == 0 ? __fpga_cref_class(__fpga_ci) : __fpga_addr(base) # L:TAG_NIL
+    outer = __fpga_image(5) if outer == 0 # L:IMG_object_class
     row = __fpga_const_row(outer, id)
     if row > 0 # 再オープン
       v = __fpga_ldv(row + 4)
@@ -460,7 +463,8 @@ class Object
   def __fpga_op_MODULE(a, b, c)
     base = __fpga_reg(a)
     id = __fpga_irep_sym(__fpga_irep, b)
-    outer = base.nil? ? __fpga_addr(__fpga_tclass) : __fpga_addr(base)
+    outer = __fpga_tag(base) == 0 ? __fpga_cref_class(__fpga_ci) : __fpga_addr(base) # L:TAG_NIL
+    outer = __fpga_image(5) if outer == 0 # L:IMG_object_class
     row = __fpga_const_row(outer, id)
     return __fpga_setreg(a, __fpga_ldv(row + 4)) if row > 0
     m = __fpga_obj(__fpga_module_new(id, outer))
@@ -517,11 +521,21 @@ class Object
   # C: src/class.c mrb_define_method_raw
   def __fpga_define(target, sym, pr, vis)
     if vis == 3
-      __fpga_mt_set(__fpga_ld32(target + 12), sym, pr + 1) # L:C_MT L:VIS_PRIVATE
-      __fpga_mt_set(__fpga_ld32(__fpga_singleton(__fpga_obj(target)) + 12), sym, pr)
+      __fpga_method_raw(target, sym, pr + 1) # L:VIS_PRIVATE
+      __fpga_method_raw(__fpga_singleton(__fpga_obj(target)), sym, pr)
     else
-      __fpga_mt_set(__fpga_ld32(target + 12), sym, pr + vis)
+      __fpga_method_raw(target, sym, pr + vis)
     end
+  end
+
+  # c (prepend されていれば origin) の表に sym = val (メソッド表の値 Proc | 可視性、undef は 0) を置く。表が無ければ作る
+  # C: src/class.c mrb_define_method_raw
+  def __fpga_method_raw(c, sym, val)
+    named = c
+    c = __fpga_class_origin(c)
+    __fpga_check_frozen(named) # mt_writable
+    __fpga_st32(c + 12, __fpga_mt_new) if __fpga_ld32(c + 12) == 0 # L:C_MT mt_writable の mt_new
+    __fpga_mt_set(__fpga_ld32(c + 12), sym, val) # L:C_MT
     __fpga_mcache_clear
   end
 
@@ -534,6 +548,18 @@ class Object
       e = __fpga_mt_get(__fpga_ld32(c + 16), sym) # L:C_ROM
       return e if e >= 0
       c = __fpga_ld32(c + 8)
+    end
+    0
+  end
+
+  # 探索して、見つかったクラス (mrb_vm_find_method の *cp) を返す。無いか undef なら 0
+  # C: src/class.c mrb_vm_find_method (D05)
+  def __fpga_search_class(c, sym)
+    while c > 0
+      e = __fpga_mt_get(__fpga_ld32(c + 12), sym) # L:C_MT
+      e = __fpga_mt_get(__fpga_ld32(c + 16), sym) if e < 0 # L:C_ROM
+      return e == 0 ? 0 : c if e >= 0
+      c = __fpga_ld32(c + 8) # L:C_SUPER
     end
     0
   end
@@ -560,21 +586,19 @@ class Object
   # C: src/vm.c OP_ALIAS
   def __fpga_op_ALIAS(a, b, c)
     ir = __fpga_irep
-    target = __fpga_addr(__fpga_tclass)
+    target = __fpga_check_target_class
     e = __fpga_search(target, __fpga_irep_sym(ir, b))
     __fpga_method_search_error(target, __fpga_irep_sym(ir, b)) if e == 0 # mrb_alias_method の mrb_method_search
-    __fpga_mt_set(__fpga_ld32(target + 12), __fpga_irep_sym(ir, a), e)
-    __fpga_mcache_clear
+    __fpga_method_raw(target, __fpga_irep_sym(ir, a), e)
   end
 
   # OP_UNDEF: target_class の Syms[a] を undef (値 0、mruby の MRB_MT_REMOVED)
   # C: src/vm.c OP_UNDEF
   def __fpga_op_UNDEF(a, b, c)
-    target = __fpga_addr(__fpga_tclass)
+    target = __fpga_check_target_class
     sym = __fpga_irep_sym(__fpga_irep, a)
     __fpga_name_error(sym, "undefined method '%n' for class '%C'", [__fpga_mkval(4, sym), __fpga_obj(target)]) if __fpga_search(target, sym) == 0 # L:TAG_SYM mrb_undef_method_id
-    __fpga_mt_set(__fpga_ld32(target + 12), sym, 0)
-    __fpga_mcache_clear
+    __fpga_method_raw(target, sym, 0)
   end
 
   # OP_SUPER (BB): R[a] = super(R[a+1] ... R[a+n])、b = n | キーワード << 4、ブロックは R[a+n+1]。今のメソッドの見つかったクラス (Proc の target_class) の親から
@@ -585,19 +609,12 @@ class Object
     nk = __fpga_shr(b, 4)
     recv = __fpga_reg(0)
     mid = __fpga_mid
-    owner = __fpga_ld32(__fpga_proc + 20) # L:P_TCLASS
-    __fpga_raise(NoMethodError, "super called outside of method") if __fpga_addr(mid) == 0 || owner == 0
-    start = __fpga_ld32(owner + 8) # L:C_SUPER
-    if __fpga_tt(owner) == 10 # L:TT_MODULE
-      k = __fpga_addr(__fpga_class_of(recv))
-      mt = __fpga_ld32(owner + 12) # L:C_MT
-      while k > 0 && (__fpga_tt(k) == 15 && __fpga_ld32(k + 12) == mt) == false # L:TT_ICLASS
-        k = __fpga_ld32(k + 8) # L:C_SUPER
-      end
-      start = k > 0 ? __fpga_ld32(k + 8) : 0 # L:C_SUPER
-    elsif __fpga_kind_of(recv, __fpga_obj(owner)) == false
+    target = __fpga_ci_tclass(__fpga_ci) # CI_TARGET_CLASS(ci): メソッドが見つかったクラス (module のメソッドなら iclass)
+    __fpga_raise(NoMethodError, "super called outside of method") if __fpga_addr(mid) == 0 || target == 0
+    if __fpga_and(__fpga_ld32(target + 4), 2147483648) > 0 || __fpga_tt(target) == 10 || __fpga_kind_of(recv, __fpga_obj(target)) == false # L:H_FLAGS L:CLASS_IS_PREPENDED L:TT_MODULE
       __fpga_raise(TypeError, "self has wrong type to call super in this context")
     end
+
     kidx = a + (n == 15 ? 1 : n) + 1
     kdict = nil
     if nk == 15
@@ -621,11 +638,12 @@ class Object
         k += 1
       end
     end
-    e = __fpga_search(start, __fpga_addr(mid))
+    found = __fpga_search_class(__fpga_ld32(target + 8), __fpga_addr(mid)) # L:C_SUPER CI_TARGET_CLASS(ci - 1)->super から
+    e = found == 0 ? 0 : __fpga_search(found, __fpga_addr(mid))
     if e == 0 # vm.c の prepare_missing (method_missing の再定義は S5)
       __fpga_no_method_error(__fpga_addr(mid), args, "no superclass method '%n' for %T", [mid, recv])
     end
-    __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid, nil, kdict))
+    __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid, __fpga_obj(found), kdict)) # 呼ばれるフレームの target_class は見つかったクラス
   end
 
 end
@@ -678,13 +696,15 @@ module Kernel
     __fpga_obj(__fpga_singleton(self))
   end
 
-  # extend (kernel.c の mrb_obj_extend): 特異クラスに include
-  # C: src/kernel.c mrb_obj_extend
+  # C: src/class.c mrb_obj_extend
   def extend(*mods)
-    sc = __fpga_obj(__fpga_singleton(self))
+    cc = __fpga_singleton(self)
     k = __fpga_alen(mods) - 1
     while k >= 0
-      sc.__fpga_include1(__fpga_addr(sc), __fpga_addr(__fpga_aref(mods, k))) # mrb_include_module (helper は Module に置いてある)
+      m = __fpga_aref(mods, k)
+      __fpga_check_type_module(m)
+      __fpga_include_module(cc, __fpga_addr(m))
+      m.extended(self) unless __fpga_func_basic_p(m, __fpga_addr(:extended), Module) # mrb_do_nothing
       k -= 1
     end
     self
@@ -699,33 +719,156 @@ module Kernel
 end
 
 class Module
-  # include (class.c の mrb_include_module): self と親の間に iclass を挟む。既にあれば何もしない
   # C: src/class.c mrb_mod_include
   def include(*mods)
     k = __fpga_alen(mods) - 1
     while k >= 0
-      __fpga_include1(__fpga_addr(self), __fpga_addr(__fpga_aref(mods, k)))
+      m = __fpga_aref(mods, k)
+      __fpga_check_type_module(m)
+      __fpga_include_module(__fpga_addr(self), __fpga_addr(m))
+      m.included(self) unless __fpga_func_basic_p(m, __fpga_addr(:included), Module) # mrb_do_nothing
       k -= 1
     end
     self
   end
 
-  # C: src/class.c include_module_at
-  def __fpga_include1(c, m)
-    mt = __fpga_ld32(m + 12)
-    k = __fpga_ld32(c + 8)
-    while k > 0
-      return if __fpga_tt(k) == 15 && __fpga_ld32(k + 12) == mt # L:TT_ICLASS
-      k = __fpga_ld32(k + 8)
+  # C: src/class.c mrb_mod_prepend
+  def prepend(*mods)
+    k = __fpga_alen(mods) - 1
+    while k >= 0
+      m = __fpga_aref(mods, k)
+      __fpga_check_type_module(m)
+      __fpga_prepend_module(__fpga_addr(self), __fpga_addr(m))
+      m.prepended(self) unless __fpga_func_basic_p(m, __fpga_addr(:prepended), Module) # mrb_do_nothing
+      k -= 1
     end
-    ic = __fpga_slot(m, 15) # iclass の見出しのクラスは module
-    __fpga_st32(ic + 8, __fpga_ld32(c + 8))
-    __fpga_st32(ic + 12, mt)
-    __fpga_st32(ic + 16, __fpga_ld32(m + 16)) # L:C_ROM
-    __fpga_st32(ic + 60, __fpga_iv_tbl(m)) # module の定数を共有する (空なら作ってから、include_class_new)
-    __fpga_st32(c + 8, ic)
-    __fpga_mcache_clear
+    self
   end
+
+  # C: src/class.c mrb_do_nothing
+  def included(m)
+  end
+
+  # C: src/class.c mrb_do_nothing
+  def prepended(m)
+  end
+
+  # C: src/class.c mrb_do_nothing
+  def extended(m)
+  end
+
+end
+
+class Object
+  # mrb_check_type(x, MRB_TT_MODULE)
+  # C: src/object.c mrb_check_type
+  def __fpga_check_type_module(x)
+    return if __fpga_tag(x) == 7 && __fpga_tt(__fpga_addr(x)) == 10 # L:TAG_OBJ L:TT_MODULE
+    t = __fpga_tag(x)
+    if t == 0 # L:TAG_NIL
+      ename = "nil"
+    elsif t == 3 # L:TAG_INT
+      ename = "Integer"
+    elsif t == 4 # L:TAG_SYM
+      ename = "Symbol"
+    elsif t < 7 # L:TAG_OBJ mrb_immediate_p
+      ename = __fpga_obj_as_string(x)
+    else
+      ename = __fpga_mod_to_s(__fpga_obj_class(x)) # mrb_obj_classname
+    end
+    __fpga_raisef(TypeError, "wrong argument type %S (expected Module)", [ename])
+  end
+
+  # MRB_CLASS_ORIGIN: prepend された class / module は、表を持つ origin の iclass へ
+  # C: include/mruby/class.h MRB_CLASS_ORIGIN
+  def __fpga_class_origin(c)
+    if __fpga_and(__fpga_ld32(c + 4), 2147483648) > 0 # L:H_FLAGS L:CLASS_IS_PREPENDED
+      c = __fpga_ld32(c + 8) # L:C_SUPER
+      while __fpga_and(__fpga_ld32(c + 4), 1073741824) == 0 # L:H_FLAGS L:CLASS_IS_ORIGIN
+        c = __fpga_ld32(c + 8) # L:C_SUPER
+      end
+    end
+    c
+  end
+
+  # C: src/class.c include_class_new
+  def __fpga_include_class_new(m, sup)
+    m = __fpga_ld32(m + 0) if __fpga_tt(m) == 15 # L:H_CLASS L:TT_ICLASS m->c
+    m = __fpga_class_origin(m)
+    c = __fpga_tt(m) == 15 ? __fpga_ld32(m + 0) : m # L:TT_ICLASS L:H_CLASS
+    ic = __fpga_slot(c, 15) # L:TT_ICLASS MRB_OBJ_ALLOC(ICLASS, class_class) の後 ic->c = m
+    __fpga_st32(ic + 12, __fpga_ld32(m + 12)) # L:C_MT
+    __fpga_st32(ic + 16, __fpga_ld32(m + 16)) # L:C_ROM (D05 の ROM の表も同じ物を指す)
+    __fpga_st32(ic + 60, __fpga_iv_tbl(c)) # L:IV module の定数を共有する (iv_tbl、空なら作ってから)
+    __fpga_st32(ic + 8, sup) # L:C_SUPER
+    ic
+  end
+
+  # 0 は入れた、-1 は輪 (c の表と m の表が同じ)
+  # C: src/class.c include_module_at
+  def __fpga_include_module_at(c, ins_pos, m, search_super)
+    klass_mt = __fpga_ld32(__fpga_class_origin(c) + 12) # L:C_MT
+    while m > 0
+      p = __fpga_ld32(c + 8) # L:C_SUPER
+      original_seen = false
+      superclass_seen = false
+      original_seen = true if c == ins_pos
+      skip = __fpga_and(__fpga_ld32(m + 4), 2147483648) > 0 # L:H_FLAGS L:CLASS_IS_PREPENDED
+      unless skip
+        return -1 if klass_mt > 0 && klass_mt == __fpga_ld32(m + 12) # L:C_MT
+        while p > 0
+          original_seen = true if c == p
+          if __fpga_tt(p) == 15 # L:TT_ICLASS
+            if __fpga_ld32(p + 12) == __fpga_ld32(m + 12) # L:C_MT
+              ins_pos = p if superclass_seen == false && original_seen # move insert point
+              skip = true
+              break
+            end
+          elsif __fpga_tt(p) == 9 # L:TT_CLASS
+            break if search_super == 0
+            superclass_seen = true
+          end
+          p = __fpga_ld32(p + 8) # L:C_SUPER
+        end
+      end
+      unless skip
+        ic = __fpga_include_class_new(m, __fpga_ld32(ins_pos + 8)) # L:C_SUPER
+        __fpga_st32(m + 4, __fpga_or(__fpga_ld32(m + 4), 536870912)) # L:H_FLAGS L:CLASS_IS_INHERITED
+        __fpga_st32(ins_pos + 8, ic) # L:C_SUPER
+        ins_pos = ic
+      end
+      m = __fpga_ld32(m + 8) # L:C_SUPER
+    end
+    __fpga_mcache_clear
+    0
+  end
+
+  # fix_include_module (既に include された module へ伝える) は mrb_objspace_each_objects が要るので写していない (D60)
+  # C: src/class.c mrb_include_module
+  def __fpga_include_module(c, m)
+    __fpga_check_frozen(c)
+    __fpga_raise(ArgumentError, "cyclic include detected") if __fpga_include_module_at(c, __fpga_class_origin(c), m, 1) < 0
+  end
+
+  # C: src/class.c mrb_prepend_module
+  def __fpga_prepend_module(c, m)
+    __fpga_check_frozen(c)
+    if __fpga_and(__fpga_ld32(c + 4), 2147483648) == 0 # L:H_FLAGS L:CLASS_IS_PREPENDED
+      origin = __fpga_slot(c, 15) # L:TT_ICLASS MRB_OBJ_ALLOC(ICLASS, c)
+      __fpga_st32(origin + 4, __fpga_or(__fpga_ld32(origin + 4), 1073741824 + 536870912)) # L:H_FLAGS L:CLASS_IS_ORIGIN L:CLASS_IS_INHERITED
+      __fpga_st32(origin + 8, __fpga_ld32(c + 8)) # L:C_SUPER
+      __fpga_st32(c + 8, origin) # L:C_SUPER
+      __fpga_st32(origin + 12, __fpga_ld32(c + 12)) # L:C_MT
+      __fpga_st32(c + 12, 0) # L:C_MT
+      __fpga_st32(origin + 16, __fpga_ld32(c + 16)) # L:C_ROM (D05 の ROM の表も origin へ)
+      __fpga_st32(c + 16, 0) # L:C_ROM
+      __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 2147483648)) # L:H_FLAGS L:CLASS_IS_PREPENDED
+    end
+    __fpga_raise(ArgumentError, "cyclic prepend detected") if __fpga_include_module_at(c, c, m, 0) < 0
+  end
+end
+
+class Module
 
   # 可視性 (class.c の mrb_mod_public / private / protected / module_function)。引数が無ければ、呼んだフレームの既定を変える
   # 引数が無い時の __fpga_set_caller_vis は、このメソッドを呼んだフレーム (クラスの本体) に効くので、ここで直接呼ぶ
@@ -753,8 +896,8 @@ class Module
     k = 0
     while k < __fpga_alen(names)
       e = __fpga_search(__fpga_addr(self), __fpga_addr(__fpga_aref(names, k)))
-      __fpga_mt_set(__fpga_ld32(__fpga_addr(self) + 12), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + 1)
-      __fpga_mt_set(__fpga_ld32(__fpga_singleton(self) + 12), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4))
+      __fpga_method_raw(__fpga_addr(self), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + 1)
+      __fpga_method_raw(__fpga_singleton(self), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4))
       k += 1
     end
     __fpga_mcache_clear
@@ -768,7 +911,7 @@ class Module
     while k < __fpga_alen(names)
       e = __fpga_search(c, __fpga_addr(__fpga_aref(names, k)))
       __fpga_method_search_error(c, __fpga_addr(__fpga_aref(names, k))) if e == 0
-      __fpga_mt_set(__fpga_ld32(c + 12), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + vis)
+      __fpga_method_raw(c, __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + vis)
       k += 1
     end
     __fpga_mcache_clear

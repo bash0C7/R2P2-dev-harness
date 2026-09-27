@@ -92,12 +92,10 @@ class Object
     __fpga_setreg(a, __fpga_mkval(4, __fpga_intern(__fpga_lo(v), __fpga_hi(v)))) # L:TAG_SYM
   end
 
-  # OP_TCLASS: R[a] = 定義の入れ物 (check_target_class。mrb_vm_definee_class の cref は D19)
-  # C: src/vm.c OP_TCLASS (D19)
+  # OP_TCLASS: R[a] = 定義の入れ物 (check_target_class)
+  # C: src/vm.c OP_TCLASS
   def __fpga_op_TCLASS(a, b, c)
-    t = __fpga_tclass
-    __fpga_raise(TypeError, "no class/module to add method") if __fpga_tag(t) == 0 # L:TAG_NIL
-    __fpga_setreg(a, t)
+    __fpga_setreg(a, __fpga_obj(__fpga_check_target_class))
   end
 
   # OP_DEF: R[a] (クラス) に Syms[b] を R[a+1] (Proc) で定義し、R[a] = :名前。可視性はフレームの既定 (MRB_METHOD_VDEFAULT_FL)。

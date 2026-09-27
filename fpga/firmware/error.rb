@@ -545,6 +545,14 @@ module Kernel
   # C: src/kernel.c mrb_f_raise
   def raise(*args)
     __fpga_check_argc(args, 0, 2) # MRB_ARGS_OPT(2)
+    __fpga_f_raise(args)
+  end
+end
+
+class Object
+  # Kernel#raise と Kernel.raise の本体 (C は同じ関数)
+  # C: src/kernel.c mrb_f_raise
+  def __fpga_f_raise(args)
     argc = __fpga_alen(args)
     if argc == 0
       exc = $!
