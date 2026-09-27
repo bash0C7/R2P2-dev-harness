@@ -82,6 +82,15 @@ class Object
     e
   end
 
+  # ブロックを self と定義の入れ物 c で呼ぶ (class_eval の VISIBILITY_BREAK と GIVEN_CLASS の印は D19)
+  # C: src/vm.c yield_with_attr (D19)
+  def __fpga_yield_with_class(b, args, self_, c)
+    p = __fpga_addr(b)
+    e = __fpga_proc_env(p)
+    mid = e > 0 ? __fpga_mkval(4, __fpga_ld32(e + 16)) : nil # L:TAG_SYM L:E_MID
+    __fpga_invoke(self_, p, args, nil, mid, c)
+  end
+
   # C: include/mruby/proc.h MRB_PROC_ENV
   def __fpga_proc_env(p)
     __fpga_and(__fpga_ld32(p + 24), 1024) > 0 ? __fpga_ld32(p + 16) : 0 # L:P_FLAGS L:PROC_ENVSET L:P_ENV

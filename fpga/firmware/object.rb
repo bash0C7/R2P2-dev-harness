@@ -101,7 +101,16 @@ class Object
   # C: src/class.c init_copy
   def __fpga_init_copy(dest, obj)
     t = __fpga_tt(__fpga_addr(obj))
-    __fpga_halt if t == 9 || t == 10 || t == 15 # L:TT_CLASS L:TT_MODULE L:TT_ICLASS copy_class は S5
+    if t == 15 # L:TT_ICLASS
+      __fpga_copy_class(dest, obj)
+      return
+    end
+    if t == 9 || t == 10 # L:TT_CLASS L:TT_MODULE
+      __fpga_copy_class(dest, obj)
+      __fpga_iv_copy(dest, obj) # 名前 (__classname__) は C_NAME の欄なので写さない (D04)
+      __fpga_st32(__fpga_addr(dest) + 24, 0) # L:C_NAME
+      __fpga_st32(__fpga_addr(dest) + 28, 0) # L:C_OUTER
+    end
     __fpga_iv_copy(dest, obj) if t == 8 || t == 11 || t == 12 || t == 13 || t == 14 # L:TT_OBJECT L:TT_SCLASS L:TT_HASH L:TT_CDATA L:TT_EXCEPTION
     dest.initialize_copy(obj) unless __fpga_func_basic_p(dest, __fpga_addr(:initialize_copy), Kernel)
   end
@@ -143,17 +152,24 @@ module Kernel
 end
 
 class BasicObject
+  # C: src/kernel.c mrb_obj_id_m
+  def __id__
+    __fpga_obj_id(self)
+  end
+end
+
+class Object
   # MakeID: 番地 (即値は値) と tt の xor
   # C: src/etc.c mrb_obj_id
-  def __id__
-    t = __fpga_tag(self)
+  def __fpga_obj_id(obj)
+    t = __fpga_tag(obj)
     return __fpga_xor(4, 0) if t == 0 # L:TAG_NIL MakeID(4, MRB_TT_FALSE)
     return __fpga_xor(0, 0) if t == 1 # L:TAG_FALSE MakeID(0, MRB_TT_FALSE)
     return __fpga_xor(2, 1) if t == 2 # L:TAG_TRUE MakeID(2, MRB_TT_TRUE)
-    return __fpga_xor(__fpga_addr(self), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
-    return __fpga_xor(self, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
+    return __fpga_xor(__fpga_addr(obj), 2) if t == 4 # L:TAG_SYM MRB_TT_SYMBOL
+    return __fpga_xor(obj, 6) if t == 3 # L:TAG_INT MRB_TT_INTEGER
     __fpga_halt if t == 5 # L:TAG_FLOAT mrb_float_id は S5f
-    __fpga_xor(__fpga_addr(self), __fpga_tt(__fpga_addr(self)))
+    __fpga_xor(__fpga_addr(obj), __fpga_tt(__fpga_addr(obj)))
   end
 end
 

@@ -201,6 +201,14 @@ class Array
     __fpga_join_ary(self, sep, "", [])
   end
 
+  # C: src/array.c mrb_ary_svalue
+  def __svalue
+    n = __fpga_alen(self)
+    return nil if n == 0
+    return __fpga_aref(self, 0) if n == 1
+    self
+  end
+
   # C: mrbgems/mruby-array-ext/src/array.c ary_include
   def include?(obj)
     i = 0

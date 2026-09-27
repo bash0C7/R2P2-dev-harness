@@ -187,6 +187,36 @@ class String
 end
 
 class Symbol
+  # C: src/object.c mrb_obj_itself
+  def to_sym
+    self
+  end
+
+  # 名前の String (frozen)
+  # C: src/symbol.c sym_name
+  def name
+    s = __fpga_sym_str(__fpga_addr(self))
+    __fpga_st32(__fpga_addr(s) + 4, __fpga_or(__fpga_ld32(__fpga_addr(s) + 4), 2048)) # L:H_FLAGS frozen の bit 11
+    s
+  end
+
+  # C: src/symbol.c sym_cmp
+  def <=>(s2)
+    return nil unless __fpga_tag(s2) == 4 # L:TAG_SYM
+    return 0 if __fpga_addr(s2) == __fpga_addr(self)
+    tab = __fpga_image(26) # L:IMG_symtbl
+    i1 = __fpga_addr(self)
+    i2 = __fpga_addr(s2)
+    len1 = __fpga_ld32(tab + i1 * 8 + 4)
+    len2 = __fpga_ld32(tab + i2 * 8 + 4)
+    r = __fpga_memcmp(__fpga_ld32(tab + i1 * 8), __fpga_ld32(tab + i2 * 8), len1 < len2 ? len1 : len2)
+    if r == 0
+      return 0 if len1 == len2
+      return len1 > len2 ? 1 : -1
+    end
+    r > 0 ? 1 : -1
+  end
+
   # :名前。名前が symbol の literal として書けなければ :"..." (str_escape)
   # C: src/symbol.c sym_inspect
   def inspect

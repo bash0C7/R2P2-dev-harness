@@ -36,9 +36,10 @@ module FpgaV2
       ["KeyError", "IndexError", :class], ["NoMatchingPatternError", "StandardError", :class],
       ["SystemStackError", "Exception", :class], ["NoMemoryError", "Exception", :class]
     ].freeze
-    # インスタンスの tt (MRB_SET_INSTANCE_TT をする所: error.c、string.c、array.c、hash.c、range.c、proc.c、symbol.c、numeric.c、object.c)。
+    # インスタンスの tt (boot_defclass と MRB_SET_INSTANCE_TT をする所: class.c、error.c、string.c、array.c、hash.c、range.c、proc.c、symbol.c、numeric.c、object.c)。
     # ほかのクラスは親から継ぐ (class.c の boot_defclass)
     INSTANCE_TT = {
+      "BasicObject" => :OBJECT, "Object" => :OBJECT, "Module" => :MODULE, "Class" => :CLASS, # class.c の mrb_init_class
       "Exception" => :EXCEPTION, "String" => :STRING, "Array" => :ARRAY, "Hash" => :HASH, "Range" => :RANGE, "Proc" => :PROC,
       "Symbol" => :SYMBOL, "Integer" => :INTEGER, "Float" => :FLOAT, "NilClass" => :FALSE, "TrueClass" => :TRUE, "FalseClass" => :FALSE
     }.freeze

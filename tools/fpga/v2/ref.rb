@@ -470,9 +470,10 @@ module FpgaV2
         raise Error, "primitive procs with dst" if dst
         prim_call(r32(pr + P_BODY), a, n)
       when PROC_IVGET, PROC_IVSET # attr_reader / attr_writer (class.c の attr の C の closure): 罠で iv を読み書きする
-        raise Error, "attr with #{n} argument(s)" unless n == ((r32(pr + P_FLAGS) & 3) == PROC_IVGET ? 0 : 1)
-        @stats[:attr] += 1
         @pc_next = ret_pc
+        want = (r32(pr + P_FLAGS) & 3) == PROC_IVGET ? 0 : 1 # reader は MRB_PROC_NOARG、writer は mrb_get_arg1
+        return trap_call("__fpga_raise_argnum", [int(n), int(want), int(want)], above: a + n + 2) unless n == want
+        @stats[:attr] += 1
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
@@ -486,7 +487,13 @@ module FpgaV2
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
     def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil)
       ci = @f.addr + CI_SIZE
-      raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND) # mruby は SystemStackError (mrb->stack_err、S5)
+      # vm.c の cipush: ci の数が MRB_CALL_LEVEL_MAX に届いたら mrb->stack_err を上げる (罠は上げるための余りの枠を使う)
+      # firmware (像の中の Proc) のフレームからの呼び出しは数えない (上げる途中の firmware が同じ罠に入らないため)
+      if kind != :trap && (ci - r32(@ctx + CTX_CIBASE)) / CI_SIZE >= MRB_CALL_LEVEL_MAX && @f.proc >= r32(IMG.fetch(:heap_start) * WORD)
+        @pc_next = ret_pc
+        return trap_call("__fpga_op_stack_err", [], above: a + n + 2)
+      end
+      raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND)
       @f.pc = ret_pc
       write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n)
       @jumped = true
@@ -706,7 +713,7 @@ module FpgaV2
           when "__fpga_unwind" then return unwind(args[0][1], args[1][1]) # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
           when "__fpga_unwind_ret" then return unwind_ret(args[0][1], args[1]) # ci から値を返す (vm.c の L_RETURN)
           when "__fpga_run" then return run_irep(args[0][1], args[1], a)
-          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a)
+          when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5])
           else raise Error, "primitive #{name} is not implemented"
           end
       setreg(a, r)
@@ -770,10 +777,12 @@ module FpgaV2
 
     # __fpga_invoke(recv, proc, args の配列, blk, mid): proc (メソッド表の値でも可、可視性の bit は見ない) を recv で呼ぶ。
     # mid は呼ばれるフレームのメソッドの名前 (super の先も元の名前、mruby の ci->mid)。戻り値は R[a] へ
-    def invoke(recv, pr, args, blk, mid, a)
+    # tclass を渡すと、呼ばれるフレームの定義の入れ物をそれにする (vm.c の mrb_yield_with_class、class_eval / instance_exec)
+    def invoke(recv, pr, args, blk, mid, a, tclass = nil)
       base = r16(@f.irep + I_NREGS)
       list = window(base, recv, args, blk)
-      call_proc(pr & ~VIS_MASK, base, list, mid ? mid[1] : @f.mid, @pc_next, a)
+      call_proc(pr & ~VIS_MASK, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a)
+      w32(@f.addr + CI_U, tclass[1]) if tclass && tclass[0] == TAG_OBJ && (r32((pr & ~VIS_MASK) + P_FLAGS) & 3) == PROC_IREP
     end
 
     # __fpga_sendv(recv, sym, args の配列, blk, fcall): 名前で引いて呼ぶ (探索は回路と同じ、fcall なら private も)。戻り値は R[a] へ

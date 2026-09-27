@@ -237,6 +237,8 @@ module FpgaV2
     CI_CDST   = 48
     CI_CFCALL = 52
     CI_SIZE   = 64
+    # C: src/vm.c MRB_CALL_LEVEL_MAX
+    MRB_CALL_LEVEL_MAX = 512
     CONT_NONE    = 0 # 普通の戻り (呼んだ側の R[a] か dst へ)
     CONT_ADVANCE = 1 # 罠の命令を終えて次へ
     CONT_SEND    = 2 # 探索の罠の続き (見つかれば呼ぶ、無ければ method_missing)
