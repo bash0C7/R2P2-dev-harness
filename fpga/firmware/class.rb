@@ -952,6 +952,14 @@ class Module
     self
   end
 
+  # clone (特異クラスも写す) して凍っていない物に
+  # C: src/class.c mrb_mod_dup
+  def dup
+    mod = __fpga_obj_clone(self)
+    __fpga_st32(__fpga_addr(mod) + 4, __fpga_and(__fpga_ld32(__fpga_addr(mod) + 4), 4294967295 - 2048)) # L:H_FLAGS L:H_FROZEN
+    mod
+  end
+
   # C: src/class.c mrb_do_nothing
   def included(m)
   end

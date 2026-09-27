@@ -343,6 +343,7 @@ class Module
   def remove_const(name)
     id = __fpga_obj_to_sym(name)
     __fpga_check_const_name_sym(id)
+    __fpga_check_frozen(__fpga_addr(self)) # mrb_iv_remove は先に凍った物を調べる
     row = __fpga_const_row(__fpga_addr(self), id)
     __fpga_name_error(id, "constant %n not defined", [__fpga_mkval(4, id)]) if row == 0 # L:TAG_SYM
     v = __fpga_ldv(row + 4)
