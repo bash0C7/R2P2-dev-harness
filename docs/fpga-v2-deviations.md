@@ -35,6 +35,8 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D19 | Proc の入れ物のクラスは ci の target class だけで決める (mrb_vm_cref_class の cref の鎖と、class_eval などで与えられたクラス (MRB_PROC_GIVEN、MRB_ENV_SET_GIVEN_CLASS) は未写し) | proc.c の mrb_proc_new / mrb_method_proc_new / mrb_env_new | 計画 S4-1 ではブロックとメソッドの定義だけ | class_eval / instance_eval の中の def と定数 | 今ある。**S5 (class_eval、module_eval を写す時) に消す** |
 | D17 | libc の関数 (memcmp など) を firmware の helper で書く | libc | firmware に libc が無い | 無い | 今ある |
 | D16 | メソッドの cache を回路に持つ (組み込みの profile は `MRB_NO_METHOD_CACHE`) | class.c の method cache | 呼び出しの速さ | 無い (cache の消去が正しければ) | 今ある |
+| D42 | mruby-array-ext の集合の演算 (`Array#-`、`#\|`) の ary_memb は、要素が多い時 (SET_OP_HASH_THRESHOLD 8 を超える) の khash の set を作らず、いつも配列を辿る (ary_elem_eql = mrb_eql) | mruby-array-ext の array.c の ary_memb_init / ary_memb_has / ary_memb_first | khash (khash.h) を firmware に写していない | 9 個以上の時に要素の `hash` が呼ばれない (結果は `hash` と `eql?` が合っていれば同じ) | 今ある。**khash を写す時 (S5 の Array か S6) に消す** |
+| D43 | `mrb->bop_redefined` を持たない (Integer / Symbol の `==` を再定義しても mrb_equal_in_c は C の近道のまま) | object.c の mrb_equal_in_c、vm.c の OP_EQ | 再定義の印をまだ写していない | Integer#== / Symbol#== を再定義した時の Hash の `__value_eq` など | 今ある。**S5 で vm.c の bop を写す時に消す** |
 
 ## 立ち上げの間だけの違い
 

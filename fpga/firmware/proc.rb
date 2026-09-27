@@ -101,6 +101,25 @@ class Object
     __fpga_proc_env(p1) == __fpga_proc_env(p2)
   end
 
+  # 引数の数 (irep の最初の OP_ENTER の aspec から。C の関数の Proc は caspec が無いので -1)。p は Proc の番地
+  # C: src/proc.c mrb_proc_arity
+  def __fpga_proc_arity(p)
+    return 0 if p == 0
+    return -1 unless __fpga_and(__fpga_ld32(p + 24), 3) == 0 # L:P_FLAGS L:PROC_IREP MRB_PROC_CFUNC_P (primitive と attr)
+    irep = __fpga_ld32(p + 8) # L:P_BODY
+    return 0 if irep == 0
+    pc = __fpga_ld32(irep + 8) # L:I_ISEQ
+    return 0 unless __fpga_ld8(pc) == 57 # L:OP_ENTER
+    aspec = __fpga_or(__fpga_or(__fpga_shl(__fpga_ld8(pc + 1), 16), __fpga_shl(__fpga_ld8(pc + 2), 8)), __fpga_ld8(pc + 3)) # PEEK_W
+    ma = __fpga_and(__fpga_shr(aspec, 18), 31) # MRB_ASPEC_REQ
+    op = __fpga_and(__fpga_shr(aspec, 13), 31) # MRB_ASPEC_OPT
+    ra = __fpga_and(__fpga_shr(aspec, 12), 1) # MRB_ASPEC_REST
+    pa = __fpga_and(__fpga_shr(aspec, 7), 31) # MRB_ASPEC_POST
+    strict = __fpga_and(__fpga_ld32(p + 24), 256) > 0 # L:P_FLAGS L:PROC_STRICT
+    return 0 - (ma + pa + 1) if ra > 0 || (strict && op > 0)
+    ma + pa
+  end
+
   # ci->u が REnv なら それ、でなければ 0
   # C: src/vm.c mrb_vm_ci_env
   def __fpga_ci_env(ci)
@@ -121,6 +140,15 @@ class Proc
   # C: src/proc.c proc_eql
   def ==(other)
     __fpga_proc_eql(self, other)
+  end
+
+  alias eql? == # proc.c は == と eql? に同じ関数 proc_eql を置く
+
+  # irep の番地 ^ (env >> 2) ^ MRB_TT_PROC
+  # C: src/proc.c proc_hash
+  def hash
+    p = __fpga_addr(self)
+    __fpga_xor(__fpga_xor(__fpga_ld32(p + 8), __fpga_shr(__fpga_proc_env(p), 2)), 16) # L:P_BODY L:TT_PROC
   end
 
   # Proc.new { } (proc.c の mrb_proc_s_new): ブロックの Proc を写し、initialize を送る。呼んだ所の env を持つ strict でない Proc は ORPHAN

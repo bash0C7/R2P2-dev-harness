@@ -170,3 +170,39 @@ class Integer
     x >= y
   end
 end
+
+class Integer
+  # 64bit の値の 8 バイトの FNV-1a
+  # C: src/numeric.c int_hash
+  def hash
+    __fpga_int64_byte_hash(self)
+  end
+end
+
+class Float
+  # -0.0 は 0.0 にそろえて double の 8 バイトの FNV-1a
+  # C: src/numeric.c flo_hash
+  def hash
+    bits = __fpga_int(self)
+    bits = 0 if bits == __fpga_shl(1, 63) # -0.0 (f == 0)
+    __fpga_int64_byte_hash(bits)
+  end
+end
+
+class Numeric
+  # 型も値も同じ (1.eql?(1.0) は偽)。Integer と Float 以外の Numeric は同じ型で ==
+  # C: src/numeric.c num_eql
+  def eql?(y)
+    x = self
+    if __fpga_tag(x) == 5 # L:TAG_FLOAT
+      return false unless __fpga_tag(y) == 5 # L:TAG_FLOAT
+      return __fpga_float_eq(x, y)
+    end
+    if __fpga_tag(x) == 3 # L:TAG_INT
+      return false unless __fpga_tag(y) == 3 # L:TAG_INT
+      return x == y
+    end
+    return false unless __fpga_tag(x) == __fpga_tag(y) && (__fpga_tag(x) < 7 || __fpga_tt(__fpga_addr(x)) == __fpga_tt(__fpga_addr(y))) # L:TAG_OBJ mrb_type
+    __fpga_equal(x, y)
+  end
+end
