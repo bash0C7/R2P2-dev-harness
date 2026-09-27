@@ -47,7 +47,7 @@ class Integer
   end
 
   # 四則と比較のメソッド (numeric.c の int_plus ... int_equal)。self が受け手の式と send から呼ばれる。
-  # 局所変数同士にすると回路の命令 (ADD、EQ ...) になる。整数でない相手は V2d / V2e (Float と例外)
+  # 局所変数同士にすると回路の命令 (ADD、EQ ...) になる。整数でない相手 (Float) は S5f
   # C: src/numeric.c int_equal
   def ==(y)
     return false unless __fpga_tag(y) == 3 # L:TAG_INT

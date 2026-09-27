@@ -35,6 +35,12 @@ module FpgaV2
       ["ZeroDivisionError", "StandardError", :class], ["LocalJumpError", "StandardError", :class],
       ["SystemStackError", "Exception", :class], ["NoMemoryError", "Exception", :class]
     ].freeze
+    # インスタンスの tt (MRB_SET_INSTANCE_TT をする所: error.c、string.c、array.c、hash.c、range.c、proc.c、symbol.c、numeric.c、object.c)。
+    # ほかのクラスは親から継ぐ (class.c の boot_defclass)
+    INSTANCE_TT = {
+      "Exception" => :EXCEPTION, "String" => :STRING, "Array" => :ARRAY, "Hash" => :HASH, "Range" => :RANGE, "Proc" => :PROC,
+      "Symbol" => :SYMBOL, "Integer" => :INTEGER, "Float" => :FLOAT, "NilClass" => :FALSE, "TrueClass" => :TRUE, "FalseClass" => :FALSE
+    }.freeze
     # Object は Kernel を include する (mruby の mrb_init_kernel)
     CORE_INCLUDES = { "Object" => "Kernel" }.freeze
     # 即値の tag → クラス (回路の class_of が引く表。像の core_classes の並び)
@@ -48,7 +54,7 @@ module FpgaV2
       __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
       __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc __fpga_frame_vis __fpga_set_caller_vis
-      __fpga_class_of __fpga_sendv __fpga_ci
+      __fpga_class_of __fpga_sendv __fpga_ci __fpga_unwind __fpga_unwind_ret
     ].freeze
 
     # 回路が名前で送るシンボル (演算の落ち先と method_missing。mruby の MRB_OPSYM と同じく presym)
@@ -204,6 +210,8 @@ end
         w32(c + C_ROM, mtable)
         w32(c + C_NAME, intern(name))
         w32(c + C_IV, ivtable(name == "Object" ? 128 : 16))
+        itt = INSTANCE_TT.key?(name) ? TT.fetch(INSTANCE_TT[name]) : (sup ? (r32(@classes[sup] + H_FLAGS) >> H_FLAGS_SHIFT) & INSTANCE_TT_MASK : 0)
+        w32(c + H_FLAGS, r32(c + H_FLAGS) | (itt << H_FLAGS_SHIFT))
         @classes[name] = c
       end
       # 定数 (Object::Integer ...。mruby の mrb_define_class が Object に置く)

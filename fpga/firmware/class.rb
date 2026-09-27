@@ -115,7 +115,7 @@ class Object
 
   # C: src/variable.c mrb_iv_set
   def __fpga_iv_set(obj, sym, v)
-    __fpga_halt unless __fpga_iv_p(obj) # ArgumentError "cannot set instance variable" (例外は V2d)
+    __fpga_raise(ArgumentError, "cannot set instance variable") unless __fpga_iv_p(obj)
     __fpga_tbl_set(__fpga_iv_tbl(__fpga_addr(obj)), sym, v)
   end
 
@@ -171,7 +171,10 @@ class Object
 
   # C: src/class.c mrb_const_missing
   def __fpga_const_missing(c, sym)
-    __fpga_halt # NameError "uninitialized constant" (例外は V2d)
+    unless __fpga_real(c) == __fpga_image(5) # L:IMG_object_class
+      __fpga_name_error(sym, "uninitialized constant %v::%n", [__fpga_obj(c), __fpga_mkval(4, sym)]) # L:TAG_SYM
+    end
+    __fpga_name_error(sym, "uninitialized constant %n", [__fpga_mkval(4, sym)]) # L:TAG_SYM
   end
 
   # OP_GETCONST: R[a] = 定数 Syms[b]。今のクラス → 字句の外側 (upper の Proc の target_class、一番外は除く) → 祖先 → module なら Object
@@ -253,6 +256,18 @@ class Object
     o
   end
 
+  # インスタンスを作る: tt はクラスの MRB_INSTANCE_TT (0 は OBJECT)。特異クラスと、即値の型 (CPTR 以下) は TypeError
+  # C: src/class.c mrb_instance_alloc
+  def __fpga_instance_alloc(cv)
+    c = __fpga_addr(cv)
+    __fpga_raise(TypeError, "can't create instance of singleton class") if __fpga_tt(c) == 11 # L:TT_SCLASS
+    tt = __fpga_and(__fpga_shr(__fpga_ld32(c + 4), 12), 31) # L:H_FLAGS L:H_FLAGS_SHIFT L:INSTANCE_TT_MASK
+    nil_or_false = c == __fpga_image(17) || c == __fpga_image(16) # L:IMG_nil_class L:IMG_false_class
+    tt = 8 if tt == 0 && nil_or_false == false # L:TT_OBJECT
+    __fpga_raisef(TypeError, "can't create instance of %v", [cv]) if tt <= 7 # L:TT_CPTR
+    __fpga_obj(__fpga_slot(c, tt))
+  end
+
   # C: src/class.c mt_new (D05)
   def __fpga_mt_new
     t = __fpga_alloc(12) # L:MT_HEAD
@@ -275,7 +290,8 @@ class Object
     __fpga_st32(meta + 8, meta_sup) # L:C_SUPER
     __fpga_st32(meta + 12, __fpga_mt_new) # L:C_MT
     __fpga_st32(meta + 60, __fpga_tbl_new(8)) # L:C_IV
-    c = __fpga_slot(meta, 9) # L:TT_CLASS
+    itt = sup > 0 ? __fpga_and(__fpga_shr(__fpga_ld32(sup + 4), 12), 31) : 0 # L:H_FLAGS L:H_FLAGS_SHIFT L:INSTANCE_TT_MASK 親の MRB_INSTANCE_TT
+    c = __fpga_slot(meta, __fpga_or(9, __fpga_shl(itt, 12))) # L:TT_CLASS L:H_FLAGS_SHIFT
     __fpga_st32(meta + 28, c) # L:C_OUTER (付いているクラス)
     __fpga_st32(c + 8, sup)
     __fpga_st32(c + 12, __fpga_mt_new)
@@ -314,8 +330,10 @@ class Object
     row = __fpga_const_row(outer, id)
     if row > 0 # 再オープン
       v = __fpga_ldv(row + 4)
-      __fpga_halt unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 9 # TypeError "X is not a class" (V2d)
-      __fpga_halt if !sup.nil? && __fpga_real(__fpga_ld32(__fpga_addr(v) + 8)) != __fpga_addr(sup) # superclass mismatch (V2d)
+      __fpga_raisef(TypeError, "%!v is not a class", [v]) unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 9 # L:TAG_OBJ L:TT_CLASS
+      if __fpga_tag(sup) == 7 && (__fpga_real(__fpga_ld32(__fpga_addr(v) + 8)) == __fpga_addr(sup)) == false # L:TAG_OBJ L:C_SUPER
+        __fpga_raisef(TypeError, "superclass mismatch for %v", [v])
+      end
       return __fpga_setreg(a, v)
     end
     s = sup.nil? ? __fpga_addr(__fpga_core(13)) : __fpga_addr(sup)
@@ -350,7 +368,7 @@ class Object
   # 特異クラス (class.c の mrb_singleton_class): オブジェクトとその class の間に SCLASS を挟む
   # C: src/class.c prepare_singleton_class
   def __fpga_singleton(obj)
-    __fpga_halt unless __fpga_tag(obj) == 7 # 即値は TypeError (V2d)
+    __fpga_raise(TypeError, "can't define singleton") unless __fpga_tag(obj) == 7 # 即値 (nil / true / false の特異クラスは S5)
     o = __fpga_addr(obj)
     k = __fpga_ld32(o + 0)
     return k if __fpga_tt(k) == 11 && __fpga_ld32(k + 28) == o # L:TT_SCLASS L:C_OUTER
@@ -432,7 +450,7 @@ class Object
     ir = __fpga_irep
     target = __fpga_addr(__fpga_tclass)
     e = __fpga_search(target, __fpga_irep_sym(ir, b))
-    __fpga_halt if e == 0 # NameError "undefined method" (V2d)
+    __fpga_method_search_error(target, __fpga_irep_sym(ir, b)) if e == 0 # mrb_alias_method の mrb_method_search
     __fpga_mt_set(__fpga_ld32(target + 12), __fpga_irep_sym(ir, a), e)
     __fpga_mcache_clear
   end
@@ -442,7 +460,7 @@ class Object
   def __fpga_op_UNDEF(a, b, c)
     target = __fpga_addr(__fpga_tclass)
     sym = __fpga_irep_sym(__fpga_irep, a)
-    __fpga_halt if __fpga_search(target, sym) == 0 # NameError (V2d)
+    __fpga_name_error(sym, "undefined method '%n' for class '%C'", [__fpga_mkval(4, sym), __fpga_obj(target)]) if __fpga_search(target, sym) == 0 # L:TAG_SYM mrb_undef_method_id
     __fpga_mt_set(__fpga_ld32(target + 12), sym, 0)
     __fpga_mcache_clear
   end
@@ -473,11 +491,13 @@ class Object
       k += 1
     end
     blk = __fpga_reg(a + n + 1)
-    __fpga_halt if e == 0 # NoMethodError "super: no superclass method" (V2d)
+    if e == 0 # vm.c の prepare_missing (method_missing の再定義は S5)
+      __fpga_no_method_error(__fpga_addr(mid), args, "no superclass method '%n' for %T", [mid, recv])
+    end
     __fpga_setreg(a, __fpga_invoke(recv, e, args, blk, mid))
   end
 
-  # 引数の数が違う (ArgumentError、V2d)
+  # キーワード引数と &nil (vm_op_enter の kdict と MRB_ASPEC_NOBLOCK) は S5
   # C: src/vm.c OP_ENTER
   def __fpga_op_enter_kw(aspec, argc)
     __fpga_halt
@@ -545,14 +565,7 @@ module Kernel
 
   # C: src/kernel.c mrb_obj_is_kind_of_m
   def is_a?(c)
-    k = __fpga_addr(__fpga_class_of(self))
-    t = __fpga_addr(c)
-    tm = __fpga_ld32(t + 12)
-    while k > 0
-      return true if k == t || (__fpga_tt(k) == 15 && __fpga_ld32(k + 12) == tm) # iclass は module の表を共有する
-      k = __fpga_ld32(k + 8)
-    end
-    false
+    __fpga_kind_of(self, c)
   end
 
   alias kind_of? is_a? # kernel.c は is_a? と kind_of? に同じ関数 mrb_obj_is_kind_of_m を置く
@@ -627,7 +640,7 @@ class Module
     k = 0
     while k < __fpga_alen(names)
       e = __fpga_search(c, __fpga_addr(__fpga_aref(names, k)))
-      __fpga_halt if e == 0 # NameError (V2d)
+      __fpga_method_search_error(c, __fpga_addr(__fpga_aref(names, k))) if e == 0
       __fpga_mt_set(__fpga_ld32(c + 12), __fpga_addr(__fpga_aref(names, k)), __fpga_and(e, -4) + vis)
       k += 1
     end
@@ -689,7 +702,7 @@ class Class
 
   # C: src/class.c mrb_instance_alloc
   def allocate
-    __fpga_obj(__fpga_slot(__fpga_addr(self), 8)) # L:TT_OBJECT (組み込みの型のサブクラスは V2c)
+    __fpga_instance_alloc(self)
   end
 
   # Class#inherited (private、何もしない)

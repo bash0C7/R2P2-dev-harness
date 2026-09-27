@@ -36,6 +36,8 @@ module FpgaV2
       # ブロック (計画 S4-1): yield する each_n と、ブロックを返すメソッド (フレームを出た env)
       lines << "def each_n(n)\n  i = 0\n  while i < n\n    yield i\n    i += 1\n  end\nend"
       lines << "def adder(k)\n  ->(x) { x + k }\nend"
+      # 例外 (計画 S4-2): ensure を越える return
+      lines << "def safe(x)\n  begin\n    return x * 2\n  ensure\n    puts 0\n  end\nend"
       rng.rand(4..10).times { lines << statement(rng, vars, defs) }
       lines.join("\n") + "\n"
     end
@@ -123,7 +125,7 @@ module FpgaV2
 
     def statement(rng, vars, defs)
       v = vars.sample(random: rng)
-      case rng.rand(10)
+      case rng.rand(14)
       when 0, 1 then "#{v} = #{expr(rng, vars, 2)}"
       when 2 then "puts #{expr(rng, vars, 2)}"
       when 3 then "puts #{call(rng, vars, defs)}"
@@ -132,8 +134,23 @@ module FpgaV2
       when 7 then "each_n(#{rng.rand(0..4)}) { |x| #{v} = #{expr(rng, vars + ['x'], 1)}; puts #{v} }" # 外の局所変数を書く (SETUPVAR)
       when 8 then "f = adder(#{expr(rng, vars, 1)})\nputs f.call(#{expr(rng, vars, 1)})" # フレームを出た env
       when 9 then "each_n(2) { |x| each_n(2) { |y| #{v} = #{v} + x * y } }\nputs #{v}" # 入れ子のブロック
+      # 例外 (計画 S4-2): 桁あふれの RangeError を捕まえる、raise と rescue、ブロックからの break、ensure を越える return
+      when 6 then "begin\n  #{v} = #{expr(rng, vars, 2)}\n  puts #{v}\nrescue RangeError => e\n  puts e.message\nensure\n  puts #{literal(rng)}\nend"
+      when 10 then "begin\n  raise ArgumentError, \"e\" + #{v}.to_s if #{v} #{%w[< > ==].sample(random: rng)} #{literal(rng)}\n  puts 1\nrescue ArgumentError => e\n  puts e.message\nend"
+      when 11 then "r = each_n(#{rng.rand(1..5)}) { |x| break x + #{literal(rng)} if x == #{rng.rand(0..3)} }\nputs r"
+      when 12 then "puts safe(#{expr(rng, vars, 1)})"
       else "puts #{vars.map { |x| x }.join(', ')}"
       end
+    end
+
+    # 捕まらなかった例外の表示 (mrb_print_backtrace) の場所の所を消す。host は backtrace と "file:line: "、firmware は backtrace を
+    # 残さない (S5) ので "(unknown):0: "。message と class は比べる
+    def uncaught(out)
+      lines = out.lines
+      k = lines.index { |l| l.start_with?("trace (most recent call last)") }
+      lines = lines[0...k] + [lines.last] if k
+      lines[-1] = lines[-1].sub(/\A\S+:\d+(?::in (?:(?!: ).)*)?: /, "") if lines.any? && (k || lines[-1].start_with?("(unknown):0: "))
+      lines.join
     end
 
     # 1本を host と参照で走らせて比べる
@@ -142,9 +159,8 @@ module FpgaV2
         rb = File.join(dir, "fuzz.rb")
         File.write(rb, src)
         host, = Open3.capture2e("timeout", "10", picoruby, rb)
-        host = host.lines.take_while { |l| !l.start_with?("trace (most recent call last)") }.join # 例外は stderr と同じ所に出るので切る
         ref, st = Build.run_source(src, max_steps: 20_000_000)
-        Result.new(ok: host.b == ref, src: src, host: host, ref: ref, stats: st.stats)
+        Result.new(ok: uncaught(host.b) == uncaught(ref.b), src: src, host: host, ref: ref, stats: st.stats)
       end
     end
   end

@@ -29,7 +29,7 @@ class String
   # + (string.c の mrb_str_plus)
   # C: src/string.c mrb_str_plus_m
   def +(other)
-    __fpga_halt unless __fpga_tag(other) == 7 && __fpga_tt(__fpga_addr(other)) == 18 # TypeError (V2d) L:TT_STRING
+    __fpga_ensure_string_type(other) # mrb_get_args の S
     a = __fpga_addr(self)
     b = __fpga_addr(other)
     la = __fpga_ld32(a + 8) # L:S_LEN
@@ -58,9 +58,7 @@ class Symbol
   # to_s / id2name (symbol.c): シンボル表の名前から新しい String
   # C: src/symbol.c sym_to_s
   def to_s
-    tab = __fpga_image(26) # L:IMG_symtbl
-    i = __fpga_addr(self)
-    __fpga_str_new(__fpga_ld32(tab + i * 8), __fpga_ld32(tab + i * 8 + 4))
+    __fpga_sym_str(__fpga_addr(self))
   end
 end
 
@@ -146,6 +144,37 @@ class FalseClass
 end
 
 class Object
+  # 後ろに ptr から len バイトを足す (その場で。容量が足りなければ足りるだけの領域に写す)
+  # C: src/string.c mrb_str_cat
+  def __fpga_str_cat(s, ptr, len)
+    return s if len == 0
+    a = __fpga_addr(s)
+    n = __fpga_ld32(a + 8) # L:S_LEN
+    if n + len > __fpga_ld32(a + 12) # L:S_CAPA
+      buf = __fpga_alloc(n + len + 1)
+      __fpga_copy(buf, __fpga_ld32(a + 16), n) # L:S_PTR
+      __fpga_st32(a + 16, buf) # L:S_PTR
+      __fpga_st32(a + 12, n + len) # L:S_CAPA
+    end
+    buf = __fpga_ld32(a + 16) # L:S_PTR
+    __fpga_copy(buf + n, ptr, len)
+    __fpga_st8(buf + n + len, 0)
+    __fpga_st32(a + 8, n + len) # L:S_LEN
+    s
+  end
+
+  # C: src/string.c mrb_str_cat_str
+  def __fpga_str_cat_str(s, t)
+    __fpga_str_cat(s, __fpga_ld32(__fpga_addr(t) + 16), __fpga_ld32(__fpga_addr(t) + 8)) # L:S_PTR L:S_LEN
+  end
+
+  # シンボル表の名前から新しい String
+  # C: src/symbol.c mrb_sym_str
+  def __fpga_sym_str(i)
+    tab = __fpga_image(26) # L:IMG_symtbl
+    __fpga_str_new(__fpga_ld32(tab + i * 8), __fpga_ld32(tab + i * 8 + 4))
+  end
+
   # 配列の長さと要素を、メソッドを送らずに読む (C の RARRAY_LEN / RARRAY_PTR。firmware の残りの引数に使う)
   # C: include/mruby/array.h RARRAY_LEN
   def __fpga_alen(a)

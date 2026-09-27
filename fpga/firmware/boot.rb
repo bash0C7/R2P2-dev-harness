@@ -11,8 +11,20 @@ class Object
     while i < n
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
       __fpga_run(ir, self)
+      __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD 捕まらなかった例外 (mrb_load_exec)
       i += 1
     end
+    __fpga_halt
+  end
+
+  # 捕まらなかった例外を出して止まる (mrb_print_error)。backtrace を残すのは S5 なので、backtrace の無い時の形
+  # "(unknown):0: message (Class)" (backtrace.c の print_backtrace の n == 0)
+  # C: src/backtrace.c print_backtrace (D41)
+  def __fpga_print_error
+    exc = __fpga_obj(__fpga_ld32(3 * 4)) # L:IMG_exc L:WORD
+    __fpga_write_str("(unknown):0: ") # UNKNOWN_LOCATION
+    __fpga_write_str(__fpga_exc_get_output(exc))
+    __fpga_putc(10)
     __fpga_halt
   end
 
@@ -301,29 +313,13 @@ end
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
   end
 
-  # 例外は V2d。それまでは止める
-  # C: src/vm.c argnum_error
-  def __fpga_op_argc(given, min, max)
-    __fpga_halt
-  end
-
-  # C: src/vm.c L_INT_OVERFLOW
-  def __fpga_op_overflow(a, op)
-    __fpga_halt
-  end
-
-  # C: src/numeric.c mrb_int_zerodiv
-  def __fpga_op_zerodiv(a)
-    __fpga_halt
-  end
-
-  # OP_ARYCAT の遅い道 (回路は Array 同士だけ): R[a] が nil なら splat(R[a+1])、そうでなければ R[a] に足す。R[a] が Array でなければ TypeError (S4)
+  # OP_ARYCAT の遅い道 (回路は Array 同士だけ): R[a] が nil なら splat(R[a+1])、そうでなければ R[a] に足す。R[a] が Array でなければ TypeError
   # C: src/vm.c OP_ARYCAT
   def __fpga_op_ARYCAT(a, b, c)
     x = __fpga_reg(a)
     s = __fpga_ary_splat(__fpga_reg(a + 1))
     return __fpga_setreg(a, s) if x == nil
-    __fpga_halt unless __fpga_tag(x) == 7 && __fpga_tt(__fpga_addr(x)) == 17 # mrb_ensure_array_type の TypeError (S4) L:TAG_OBJ L:TT_ARRAY
+    __fpga_ensure_array_type(x)
     k = 0
     n = __fpga_alen(s)
     while k < n
@@ -339,7 +335,7 @@ end
       return [v] if __fpga_search(__fpga_addr(__fpga_class_of(v)), __fpga_addr(:to_a)) == 0 # mrb_respond_to
       a = v.to_a
       return [v] if a == nil
-      __fpga_halt unless __fpga_tag(a) == 7 && __fpga_tt(__fpga_addr(a)) == 17 # mrb_ensure_array_type の TypeError (S4) L:TAG_OBJ L:TT_ARRAY
+      __fpga_ensure_array_type(a)
       v = a
     end
     d = []
@@ -350,12 +346,6 @@ end
       k += 1
     end
     d
-  end
-
-  # OP_ARYPUSH の遅い道: R[a] が Array でない (mrb_ensure_array_type の TypeError、S4)
-  # C: src/vm.c OP_ARYPUSH
-  def __fpga_op_ARYPUSH(a, b, c)
-    __fpga_halt
   end
 
   # OP_GETGV: R[a] = 大域変数 Syms[b] (variable.c の mrb_gv_get、表は mrb_state.globals)。仮想の大域変数 ($~ など) は S5
