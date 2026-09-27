@@ -6,7 +6,7 @@ class Object
   # --- mrb->exc (mrb_state の exc の語)
   # C: src/error.c mrb_exc_set
   def __fpga_exc_set(v)
-    __fpga_st32(3 * 4, v == nil ? 0 : __fpga_addr(v)) # L:IMG_exc L:WORD
+    __fpga_st32(3 * 4, __fpga_tag(v) == 0 ? 0 : __fpga_addr(v)) # L:IMG_exc L:WORD
   end
 
   # C: src/error.c mrb_exc_new_str
@@ -32,7 +32,7 @@ class Object
   def __fpga_exc_get_output(exc)
     cname = __fpga_mod_to_s(__fpga_obj_class(exc))
     mesg = __fpga_exc_mesg_get(exc)
-    return cname if mesg == nil || __fpga_ld32(__fpga_addr(mesg) + 8) == 0 # L:S_LEN
+    return cname if __fpga_tag(mesg) == 0 || __fpga_ld32(__fpga_addr(mesg) + 8) == 0 # L:S_LEN
     __fpga_format("%v (%v)", [mesg, cname])
   end
 
@@ -96,9 +96,9 @@ class Object
   # C: src/error.c mrb_make_exception
   def __fpga_make_exception(exc, mesg)
     if __fpga_tag(exc) == 7 && __fpga_class_p(__fpga_addr(exc)) # L:TAG_OBJ mrb_class_p
-      exc = mesg == nil ? exc.new : exc.new(mesg)
+      exc = __fpga_tag(mesg) == 0 ? exc.new : exc.new(mesg)
     elsif __fpga_tag(exc) == 7 && __fpga_tt(__fpga_addr(exc)) == 14 # L:TAG_OBJ L:TT_EXCEPTION
-      __fpga_halt unless mesg == nil # mrb_obj_clone は S5
+      __fpga_halt unless __fpga_tag(mesg) == 0 # mrb_obj_clone は S5
     else
       __fpga_raise(TypeError, "exception class/object expected")
     end
@@ -176,7 +176,7 @@ class Object
     outer = __fpga_ld32(c + 28) # L:C_OUTER
     return name if outer == 0 || outer == __fpga_image(5) # L:IMG_object_class
     op = __fpga_class_path(outer)
-    return nil if op == nil
+    return nil if __fpga_tag(op) == 0
     __fpga_str_cat_str(op, "::")
     __fpga_str_cat_str(op, name)
   end
@@ -186,7 +186,7 @@ class Object
     c = __fpga_addr(klass)
     __fpga_halt if __fpga_tt(c) == 11 # L:TT_SCLASS 特異クラスの名前は S5
     path = __fpga_class_path(c)
-    __fpga_halt if path == nil # 無名のクラスの名前 (mrb_ptr_to_str) は S5
+    __fpga_halt if __fpga_tag(path) == 0 # 無名のクラスの名前 (mrb_ptr_to_str) は S5
     path
   end
 
@@ -472,7 +472,7 @@ class Exception
   def inspect
     cname = __fpga_mod_to_s(__fpga_obj_class(self))
     mesg = __fpga_exc_mesg_get(self)
-    return cname if mesg == nil || __fpga_ld32(__fpga_addr(mesg) + 8) == 0 # L:S_LEN
+    return cname if __fpga_tag(mesg) == 0 || __fpga_ld32(__fpga_addr(mesg) + 8) == 0 # L:S_LEN
     __fpga_format("#<%v: %v>", [cname, mesg])
   end
 
@@ -505,7 +505,7 @@ module Kernel
     argc = __fpga_alen(args)
     if argc == 0
       exc = $!
-      __fpga_exc_raise(exc) unless exc == nil
+      __fpga_exc_raise(exc) unless __fpga_tag(exc) == 0
       __fpga_raise(RuntimeError, "")
     end
     exc = __fpga_aref(args, 0)

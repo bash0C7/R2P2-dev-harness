@@ -169,6 +169,52 @@ class Object
     0
   end
 
+  # const_defined_0: klass から (recurse なら親へ) 定数の表を見る。exclude でない module は Object も
+  # C: src/variable.c const_defined_0
+  def __fpga_const_defined(klass, id, exclude, recurse)
+    tmp = klass
+    mod_retry = false
+    while true
+      while tmp > 0
+        return true if __fpga_const_row(tmp, id) > 0
+        break if recurse == false && (klass == __fpga_image(5)) == false # L:IMG_object_class
+        tmp = __fpga_ld32(tmp + 8) # L:C_SUPER
+      end
+      return false if exclude || mod_retry || (__fpga_tt(klass) == 10) == false # L:TT_MODULE
+      mod_retry = true
+      tmp = __fpga_image(5) # L:IMG_object_class
+    end
+  end
+
+  # C: src/etc.c mrb_obj_to_sym
+  def __fpga_obj_to_sym(name)
+    return __fpga_addr(name) if __fpga_tag(name) == 4 # L:TAG_SYM
+    return __fpga_intern_str(name) if __fpga_tag(name) == 7 && __fpga_tt(__fpga_addr(name)) == 18 # L:TAG_OBJ L:TT_STRING
+    __fpga_raisef(TypeError, "%!v is not a symbol nor a string", [name])
+  end
+
+  # 大文字で始まり、後ろは英数字と _ (と 0x80 以上) だけ (mrb_ident_p)
+  # C: src/class.c mrb_const_name_p
+  def __fpga_const_name_p(id)
+    tab = __fpga_image(26) # L:IMG_symtbl
+    p = __fpga_ld32(tab + id * 8)
+    len = __fpga_ld32(tab + id * 8 + 4)
+    return false unless len > 0 && __fpga_ld8(p) >= 65 && __fpga_ld8(p) <= 90 # ISUPPER
+    k = 1
+    while k < len
+      ch = __fpga_ld8(p + k)
+      ok = (ch >= 48 && ch <= 57) || (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95 || ch >= 128
+      return false unless ok
+      k += 1
+    end
+    true
+  end
+
+  # C: src/class.c check_const_name_sym
+  def __fpga_check_const_name_sym(id)
+    __fpga_name_error(id, "wrong constant name %n", [__fpga_mkval(4, id)]) unless __fpga_const_name_p(id) # L:TAG_SYM
+  end
+
   # C: src/class.c mrb_const_missing
   def __fpga_const_missing(c, sym)
     unless __fpga_real(c) == __fpga_image(5) # L:IMG_object_class
@@ -688,6 +734,15 @@ class Module
     __fpga_st32(pr + 24, kind) # L:P_FLAGS
     sym = writer ? __fpga_intern_str(s + "=") : __fpga_addr(name)
     __fpga_define(__fpga_addr(self), sym, pr, 0)
+  end
+end
+
+class Module
+  # C: src/class.c mrb_mod_const_defined
+  def const_defined?(name, inherit = true)
+    id = __fpga_obj_to_sym(name)
+    __fpga_check_const_name_sym(id)
+    __fpga_const_defined(__fpga_addr(self), id, true, inherit ? true : false) # mrb_const_defined / mrb_const_defined_at
   end
 end
 

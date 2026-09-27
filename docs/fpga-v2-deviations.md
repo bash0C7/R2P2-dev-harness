@@ -40,7 +40,7 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 
 | D | 違い | mruby の正本 | 理由 | 見える所 | 状態 |
 |---|---|---|---|---|---|
-| D40 | mrblib (mruby ソースコード) のメソッドを firmware に仮に写す (Kernel#puts / print、Numeric#-@) | mruby と gem の mrblib | 計画 S4 で mrblib をそのまま像に入れるまで、programs と fuzz を走らせるため | 定義の場所 (`source_location` など) | 今ある。**S4 で消す** |
+| D40 | gem の mrblib (mruby ソースコード) のメソッドを firmware に仮に写す (Kernel#puts / print、picoruby-machine の IO を通す形でなくコンソールに直接) | picoruby-machine の mrblib と C | 計画 S7 で gem をそのまま像に入れるまで、programs と fuzz を走らせるため | 定義の場所 (`source_location` など)、`$stdout` を差し替えた時 | 今ある。mruby の mrblib の仮の写し (Numeric#-@) は S4-3 で消した。**S7 で消す** |
 | D41 | 例外に backtrace を残さない (`mrb_keep_backtrace` を呼ばない) | error.c の mrb_exc_set、backtrace.c | 残すには irep の debug 情報 (行の表) を読む。計画 S4-2 は巻き戻しまで | `Exception#backtrace` が nil、捕まらない例外の表示が backtrace の無い時の形 `(unknown):0: message (Class)` (fuzz は場所の所を消して比べる) | 今ある。**S5 で消す** |
 
 ## 記憶の管理 (計画 S6、設計 §6)

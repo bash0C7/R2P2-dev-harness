@@ -103,11 +103,3 @@ class Integer
     x >= y
   end
 end
-
-class Numeric
-  # -@ は mruby の mrblib/numeric.rb の Numeric#-@ (C には無い)。mrblib をそのまま読む (計画 S4) までの仮の写し
-  # C: none (D40)
-  def -@
-    -1 * self
-  end
-end

@@ -40,6 +40,32 @@ class String
     __fpga_str_new(buf, la + lb)
   end
 
+  # C: src/string.c mrb_str_equal_m
+  def ==(str2)
+    return false unless __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 # L:TAG_OBJ L:TT_STRING mrb_str_equal
+    a = __fpga_addr(self)
+    b = __fpga_addr(str2)
+    len = __fpga_ld32(a + 8) # L:S_LEN str_eql
+    return false unless len == __fpga_ld32(b + 8) # L:S_LEN
+    __fpga_memeq(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
+  end
+
+  # C: src/string.c mrb_str_cmp_m
+  def <=>(str2)
+    return nil unless __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 # L:TAG_OBJ L:TT_STRING
+    a = __fpga_addr(self)
+    b = __fpga_addr(str2)
+    len1 = __fpga_ld32(a + 8) # L:S_LEN mrb_str_cmp
+    len2 = __fpga_ld32(b + 8) # L:S_LEN
+    len = len1 < len2 ? len1 : len2
+    r = len == 0 ? 0 : __fpga_memcmp(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
+    if r == 0
+      return 0 if len1 == len2
+      return len1 > len2 ? 1 : -1
+    end
+    r > 0 ? 1 : -1
+  end
+
   # C: src/string.c mrb_str_intern
   def to_sym
     __fpga_mkval(4, __fpga_intern_str(self)) # L:TAG_SYM
@@ -67,6 +93,8 @@ class Array
   def size
     __fpga_ld32(__fpga_addr(self) + 8) # L:A_LEN
   end
+
+  alias length size # array.c は size と length に同じ関数 mrb_ary_size を置く
 
   # push / << (array.c の mrb_ary_push): 容量が足りなければ倍の領域に写す
   # C: src/array.c mrb_ary_push_m
