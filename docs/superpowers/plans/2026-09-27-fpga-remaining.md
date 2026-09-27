@@ -165,7 +165,7 @@ test:fpga、check、emu:check、tb の mrb_core_tb (両シミュレーター)。
 | fuzz seed 1–4 を1本ずつ順に (`rake fpga:fuzz[300,N]`) | 4 本とも mismatch 0。要約の `frame_pc`・`rom_word`・`truncate` がどの seed でも 0 でない。`frame_pc` は断片の中のブロックと maker のメソッドから呼ぶので、深さ 1 以上の値 (0 と nil 以外) が出る | 断片 (fuzz.rb の pick 26) を直し、直した理由を「見つけたこと」に書いてからもう一度 |
 | gap | 範囲内 72 (71 + corpus の picotest.rb。注釈の語で範囲外にされていたもの)、変換 70、一致 70、止まる 2 (pio、pitchdetector)。範囲外の理由に "host side" が runner.rb の1本だけ | 数が違えば、どの program かを gap の出力で見て、判定の条件 (下の「gap の判定」) のどれに当たるかを書いてから直す |
 | `rake fpga:tb` の全部 | 全 tb が Verilator と Icarus の両方で PASS | 落ちた tb を1本だけ回して直す |
-| 記録と commit | 計画の P9 の行、記録に1行、WIP commit を `fpga: P9 picotest and caller` に直して push (自分のブランチなので force-with-lease) | — |
+| 記録と commit | 計画の P9 の行、記録に1行、commit `fpga: P9 picotest and caller, finish` を WIP commit (cace315) の上に積んで push (計画の commit 5e0ad35 が間に入ったので書き直さない) | — |
 
 **gap の判定 (P9 の時点):** 範囲外 = (1) 板に無いハード (`HARDWARE` の表)、(2) host 側の係 (`HOST_SIDE_CONSTS`: `Picotest::Runner`。
 注釈の行を除いてから探す)。範囲内で止まる = 変換器か GEMS が足りない。テストのファイル (`Picotest::Test` を継ぐクラスがある) は
@@ -257,6 +257,7 @@ PERIDOT-Air に RP2040 の PIO は無いが、FPGA なので PIO 相当の回路
 
 | 日付 | 段 | 結果 |
 |---|---|---|
+| 2026-09-27 | P9 picotest と caller | fuzz seed 1–4 一致 (frame_pc 172 / 204 / 52 / 26、rom_word 195 / 203 / 63 / 152、truncate 22 / 56 / 24 / 109)。gap 118 本: 範囲内 72 / 変換 70 / 一致 70 / 止まる 2 (pio、pitchdetector)、host 側 1 (runner.rb)。tb 4 本が Verilator と Icarus で PASS。test:fpga 89 秒。corpus の picotest.rb と caller.rb は host の picoruby と全行一致 |
 | 2026-09-27 | Q6 測って AOT はやらない | 変換器の遅さ (CRuby の 200 倍) は host のテストの VM の debug (ESTALLOC_DEBUG の est_free が n²) で、AOT の出番ではなかった。debug 無しの VM (`rake fpga:picoruby`) で collections 34 秒 → 1.6 秒、出力は bytes で同じ。`fpga:corpus:check` 311 秒 → 17 秒、`test:fpga` 約 19 分 → 51 秒。ref_vm は 1 本 1〜2 秒で、並べた後の check / gap / fuzz の長さはシミュレーションの側 |
 | 2026-09-27 | Q1〜Q5 並列化 | CPU 4。`fpga:corpus:check` 1162 秒 → 311 秒。`fpga:test` 全体 1345 秒 (tb の Icarus で peridot_air_top を compile する所が 17 分ほどで一番長い)。check 39 行、gap (71 / 66 / 66 / 5)、fuzz seed 1–4 の要約は1本ずつ回した時と1字も違わない |
 
