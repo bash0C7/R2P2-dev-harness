@@ -24,7 +24,7 @@ module FpgaV2
       NOP MOVE LOADL LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5 LOADI_6 LOADI_7 LOADI16 LOADI32
       LOADSYM LOADNIL LOADSELF LOADTRUE LOADFALSE JMP JMPIF JMPNOT JMPNIL SEND SEND0 SSEND SSEND0 SENDB SSENDB ENTER
       RETURN RETURN_BLK RETNIL RETSELF RETTRUE RETFALSE STOP ADD ADDI SUB SUBI MUL DIV EQ LT LE GT GE ADDILV SUBILV
-      GETIDX GETIDX0 SETIDX ARRAY ARRAY2 ARYCAT ARYPUSH
+      GETIDX GETIDX0 SETIDX ARRAY ARRAY2 ARYCAT ARYPUSH GETUPVAR SETUPVAR BLKPUSH CALL BLKCALL
     ].freeze
 
     # フレーム = 記憶の中の mrb_callinfo (layout.rb の CI_*、計画 S2b)。Ci はその番地を読み書きする窓で、回路の ci のレジスタに当たる。
@@ -49,7 +49,10 @@ module FpgaV2
         @r.w32(@addr + CI_PC, @r.r32(@irep + I_ISEQ) + v)
       end
       def mid = @r.r32(@addr + CI_MID)
-      def tclass = @r.r32(@addr + CI_U)
+      def tclass
+        u = @r.r32(@addr + CI_U)
+        @r.env?(u) ? @r.r32(u + H_CLASS) : u
+      end
       def argc = @r.r32(@addr + CI_ARGC)
 
       def argc=(n)
@@ -319,6 +322,11 @@ module FpgaV2
       when "ADDILV" then addilv(a, b, c, :+)
       when "SUBILV" then addilv(a, b, c, :-)
       when "EQ", "LT", "LE", "GT", "GE" then compare(i.name, a)
+      when "GETUPVAR" then getupvar(a, b, c)
+      when "SETUPVAR" then setupvar(a, b, c)
+      when "BLKPUSH" then blkpush(i, a, b)
+      when "CALL" then vm_call_proc(reg(0)[1], @f.argc + 2) # ci_bidx(ci) + 1
+      when "BLKCALL" then blkcall(i, a, b)
       else raise Error, "unhandled #{i.name}"
       end
     end
@@ -528,28 +536,40 @@ module FpgaV2
       noblock = (aspec >> 23) & 1 # `&nil` (MRB_ASPEC_NOBLOCK): ブロックを渡されたら ArgumentError
       return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)]) unless (kw | kd | noblock).zero?
       argc = @f.argc
-      if argc < m1 + m2 || (r.zero? && argc > m1 + o + m2)
-        return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
-      end
+      len = m1 + o + r + m2
       args = (1..argc).map { |k| reg(k) }
       blk = reg(argc + 1)
-      pre = args.shift(m1)
-      post = args.pop(m2)
-      opt = args.shift([o, args.size].min)
-      rest = args
-      regs = pre + opt + Array.new(o - opt.size, NIL)
-      regs << alloc_array(rest) if r == 1
-      regs.concat(post)
+      if (r32(@f.proc + P_FLAGS) & PROC_STRICT) != 0
+        if argc < m1 + m2 || (r.zero? && argc > len)
+          return trap_call("__fpga_op_argc", [int(argc), int(m1 + m2), int(r.zero? ? m1 + o + m2 : -1)])
+        end
+      elsif len > 1 && argc == 1 && array?(args[0]) # strict でない Proc (ブロック) は 1 つの配列を広げる
+        args = ary_values(args[0][1])
+        argc = args.size
+      end
+      regs = Array.new(len, NIL)
+      if argc < len
+        mlen = m2
+        mlen = m1 < argc ? argc - m1 : 0 if argc < m1 + m2
+        args[0, argc - mlen].each_with_index { |v, k| regs[k] = v } # m1 と o の前から
+        args[argc - mlen, mlen].each_with_index { |v, k| regs[len - m2 + k] = v } # 後ろの必須
+        regs[m1 + o] = alloc_array([]) if r == 1
+        @pc_next += (argc - m1 - m2) * 3 if o.positive? && argc > m1 + m2 # 渡された省略可能の数だけ初期値の JMP の表を飛ばす
+      else
+        rnum = argc - m1 - o - m2
+        args[0, m1 + o].each_with_index { |v, k| regs[k] = v }
+        regs[m1 + o] = alloc_array(args[m1 + o, rnum]) if r == 1
+        args[m1 + o + rnum, m2].each_with_index { |v, k| regs[m1 + o + r + k] = v } if m2.positive?
+        @pc_next += o * 3
+      end
       regs.each_with_index { |v, k| setreg(k + 1, v) }
-      setreg(regs.size + 1, blk)
-      # blk の後ろを nlocals まで nil (vm_op_enter の stack_clear)。ci->n は引数の枠の数 (len、15 で飽和)
+      setreg(len + 1, blk)
+      # blk の後ろを nlocals まで nil (stack_clear)。ci->n は引数の枠の数 (len、15 で飽和)
       nlocals = r16(@f.irep + I_NLOCALS)
-      ((regs.size + 2)...nlocals).each { |k| setreg(k, NIL) }
-      @f.argc = regs.size
-      # 渡された省略可能の数だけ初期値の JMP の表を飛ばす (vm.c: pc += (argc - m1 - m2) * 3、全部なら o * 3)
-      @pc_next += opt.size * 3
+      ((len + 2)...nlocals).each { |k| setreg(k, NIL) }
+      @f.argc = len
     end
-    
+
     # 回路が作る配列 (RArray、layout.rb)。枠と中身の領域を1つずつ
     def alloc_array(values)
       ary = alloc(SLOT)
@@ -566,6 +586,7 @@ module FpgaV2
 
     def ret(v)
       done = @f
+      env_unshare(r32(done.addr + CI_U))
       raise Halt if done.addr == r32(@ctx + CTX_CIBASE)
       w32(@ctx + CTX_CI, done.addr - CI_SIZE)
       @f = Ci.new(self, done.addr - CI_SIZE)
@@ -644,6 +665,7 @@ module FpgaV2
           when "__fpga_reg" then rv(@stbase + (trapped[0].bp + args[0][1]) * VALUE) # 罠を起こしたフレームのレジスタ
           when "__fpga_setreg" then (wv(@stbase + (trapped[0].bp + args[0][1]) * VALUE, args[1]); NIL)
           when "__fpga_irep" then int(trapped[0].irep)
+          when "__fpga_ci" then int(trapped[0].addr) # 罠を起こしたフレームの mrb_callinfo の番地 (記憶の中、計画 S2b)
           when "__fpga_tclass" then obj(trapped[0].tclass) # 罠を起こしたフレームの定義の入れ物
           when "__fpga_and" then int(s64(args[0][1] & args[1][1]))
           when "__fpga_or" then int(s64(args[0][1] | args[1][1]))
@@ -713,6 +735,91 @@ module FpgaV2
       list.each_with_index { |v, k| setreg(base + 1 + k, v) }
       setreg(base + list.size + 1, blk)
       list.size
+    end
+
+    # --- ブロックと env (計画 S4-1)
+    def env?(u) = !u.zero? && (r32(u + H_FLAGS) & 0xFF) == TT[:ENV]
+    def env_len(e) = (r32(e + H_FLAGS) >> H_FLAGS_SHIFT) & 0xFF
+
+    # vm.c の uvenv: 今の Proc から up 段の upper の env (無ければ nil)
+    def uvenv(up)
+      pr = @f.proc
+      up.times do
+        pr = r32(pr + P_UPPER)
+        return nil if pr.zero?
+      end
+      (r32(pr + P_FLAGS) & PROC_ENVSET).zero? ? nil : r32(pr + P_ENV)
+    end
+
+    # OP_GETUPVAR: R[a] = uvenv(c)[b] (長さの外は nil)
+    def getupvar(a, b, c)
+      e = uvenv(c)
+      setreg(a, e && b < env_len(e) ? rv(r32(e + E_STACK) + b * VALUE) : NIL)
+    end
+
+    # OP_SETUPVAR: uvenv(c)[b] = R[a]
+    def setupvar(a, b, c)
+      e = uvenv(c)
+      wv(r32(e + E_STACK) + b * VALUE, reg(a)) if e && b < env_len(e)
+    end
+
+    # OP_BLKPUSH (vm.c の vm_op_blkpush): 外の枠のブロックを R[a] へ。無ければ LocalJumpError (罠)
+    def blkpush(i, a, b)
+      m1 = (b >> 11) & 0x3F
+      r = (b >> 10) & 1
+      m2 = (b >> 5) & 0x1F
+      kd = (b >> 4) & 1
+      lv = b & 0xF
+      offset = m1 + r + m2 + kd
+      if lv.zero?
+        v = reg(1 + offset)
+      else
+        e = uvenv(lv - 1)
+        return trap_op(i) if e.nil? || (r32(e + E_CXT).zero? && r32(e + E_MID).zero?) || env_len(e) <= offset + 1
+        v = rv(r32(e + E_STACK) + (1 + offset) * VALUE)
+      end
+      return trap_op(i) if v[0] == TAG_NIL
+      setreg(a, v)
+    end
+
+    # OP_BLKCALL: R[a] の Proc を R[a+1..a+b] で呼ぶ (cipush の後に vm_call_proc)。Proc でなければ TypeError (罠)
+    def blkcall(i, a, b)
+      v = reg(a)
+      return trap_op(i) unless v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:PROC]
+
+      push_frame(v[1], a, b, kind: :call, mid: 0, ret_pc: @pc_next)
+      vm_call_proc(v[1], b + 1)
+    end
+
+    # vm.c の vm_call_proc: 今のフレームで Proc pr を実行する (OP_CALL は Proc#call の irep の中から、OP_BLKCALL は積んだフレームで)。
+    # nargs より上を nregs まで nil、env があれば self は env の self
+    def vm_call_proc(pr, nargs)
+      envset = (r32(pr + P_FLAGS) & PROC_ENVSET) != 0
+      env = envset ? r32(pr + P_ENV) : 0
+      w32(@f.addr + CI_MID, r32(env + E_MID)) if envset
+      w32(@f.addr + CI_U, envset ? r32(env + H_CLASS) : r32(pr + P_TCLASS)) # MRB_PROC_TARGET_CLASS
+      raise Error, "calling a C function proc is S5" unless (r32(pr + P_FLAGS) & 3) == PROC_IREP
+      w32(@f.addr + CI_PROC, pr)
+      @f = Ci.new(self, @f.addr)
+      nregs = r16(@f.irep + I_NREGS)
+      (nargs...nregs).each { |k| setreg(k, NIL) }
+      setreg(0, rv(r32(env + E_STACK))) if envset
+      jump(0)
+    end
+
+    # vm.c の cipop の mrb_env_unshare: 戻るフレームの env がスタックを指していれば、中身を写して閉じる
+    def env_unshare(u)
+      return unless env?(u) && !r32(u + E_CXT).zero?
+
+      len = env_len(u)
+      if len.zero?
+        w32(u + E_STACK, 0)
+      else
+        buf = alloc(len * VALUE)
+        @m[buf, len * VALUE] = @m.byteslice(r32(u + E_STACK), len * VALUE)
+        w32(u + E_STACK, buf)
+      end
+      w32(u + E_CXT, 0)
     end
 
     def array?(v) = v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:ARRAY]

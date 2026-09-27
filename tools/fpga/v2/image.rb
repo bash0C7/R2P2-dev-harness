@@ -48,7 +48,7 @@ module FpgaV2
       __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
       __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc __fpga_frame_vis __fpga_set_caller_vis
-      __fpga_class_of __fpga_sendv
+      __fpga_class_of __fpga_sendv __fpga_ci
     ].freeze
 
     # 回路が名前で送るシンボル (演算の落ち先と method_missing。mruby の MRB_OPSYM と同じく presym)
@@ -337,12 +337,26 @@ end
     def iseq_of(ir) = @mem.byteslice(r32(ir + I_ISEQ), r32(ir + I_ILEN))
 
     # --- firmware の読み (クラスの本体の def を ROM の表に)
-    def new_proc(ir, target)
+    # firmware のメソッドの Proc (vm.c の vm_define_method と同じく STRICT | SCOPE | CREF)
+    def new_proc(ir, target, flags = PROC_METHOD_FLAGS)
       pr = obj(@classes["Proc"], :PROC)
       w32(pr + P_BODY, ir)
       w32(pr + P_TCLASS, target)
-      w32(pr + P_FLAGS, PROC_IREP)
+      w32(pr + P_FLAGS, PROC_IREP | flags)
       pr
+    end
+
+    # Proc#call (proc.c の call_irep と call_proc): 命令 OP_CALL 1 つの irep (nlocals 0、nregs 2) を Proc の ROM の表に置く
+    def build_proc_call
+      code = alloc(4, 4)
+      @mem.setbyte(code, Ops::NAMES.index("CALL"))
+      ir = alloc(IREP, 4)
+      w16(ir + I_NLOCALS, 0)
+      w16(ir + I_NREGS, 2)
+      w32(ir + I_ILEN, 1)
+      w32(ir + I_ISEQ, code)
+      proc = @classes["Proc"]
+      mt_set(r32(proc + C_ROM), intern("call"), new_proc(ir, proc, PROC_SCOPE | PROC_STRICT))
     end
 
     def build_firmware
@@ -416,6 +430,7 @@ end
       HW_SYMS.each { |n| intern(n) }
       build_classes
       build_firmware
+      build_proc_call
       core = alloc(CORE_TABLE.size * WORD, 4)
       CORE_TABLE.each_with_index { |n, k| w32(core + k * WORD, @classes.fetch(n)) }
       main = obj(@classes["Object"], :OBJECT)

@@ -33,6 +33,9 @@ module FpgaV2
         lines << "def #{name}(#{params})\n  #{body}\nend"
         defs << [name, kind]
       end
+      # ブロック (計画 S4-1): yield する each_n と、ブロックを返すメソッド (フレームを出た env)
+      lines << "def each_n(n)\n  i = 0\n  while i < n\n    yield i\n    i += 1\n  end\nend"
+      lines << "def adder(k)\n  ->(x) { x + k }\nend"
       rng.rand(4..10).times { lines << statement(rng, vars, defs) }
       lines.join("\n") + "\n"
     end
@@ -120,12 +123,15 @@ module FpgaV2
 
     def statement(rng, vars, defs)
       v = vars.sample(random: rng)
-      case rng.rand(7)
+      case rng.rand(10)
       when 0, 1 then "#{v} = #{expr(rng, vars, 2)}"
       when 2 then "puts #{expr(rng, vars, 2)}"
       when 3 then "puts #{call(rng, vars, defs)}"
       when 4 then "i = 0\nwhile i < #{rng.rand(1..5)}\n  #{v} = #{expr(rng, vars, 1)}\n  puts #{v}\n  i += 1\nend"
       when 5 then "if #{expr(rng, vars, 1)} #{%w[< > ==].sample(random: rng)} #{literal(rng)}\n  puts #{v}\nelse\n  puts #{%w[true false nil 1].sample(random: rng)}\nend"
+      when 7 then "each_n(#{rng.rand(0..4)}) { |x| #{v} = #{expr(rng, vars + ['x'], 1)}; puts #{v} }" # 外の局所変数を書く (SETUPVAR)
+      when 8 then "f = adder(#{expr(rng, vars, 1)})\nputs f.call(#{expr(rng, vars, 1)})" # フレームを出た env
+      when 9 then "each_n(2) { |x| each_n(2) { |y| #{v} = #{v} + x * y } }\nputs #{v}" # 入れ子のブロック
       else "puts #{vars.map { |x| x }.join(', ')}"
       end
     end

@@ -247,7 +247,7 @@ end
 
   # --- オブジェクトを作る
   # C: src/proc.c mrb_proc_new
-  def __fpga_proc_new(irep, target)
+  def __fpga_proc_new(irep, target, flags)
     pr = __fpga_alloc(64) # L:SLOT
     __fpga_st32(pr, __fpga_addr(__fpga_core(10))) # L:CORE_PROC
     __fpga_st32(pr + 4, 16) # L:TT_PROC
@@ -255,7 +255,7 @@ end
     __fpga_st32(pr + 12, 0)
     __fpga_st32(pr + 16, 0)
     __fpga_st32(pr + 20, target) # L:P_TCLASS
-    __fpga_st32(pr + 24, 0) # L:P_FLAGS
+    __fpga_st32(pr + 24, flags) # L:P_FLAGS
     pr
   end
 
@@ -295,7 +295,7 @@ end
     ir = __fpga_irep
     sym = __fpga_irep_sym(ir, b)
     target = __fpga_addr(__fpga_tclass)
-    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), target) # L:I_REPS
+    pr = __fpga_proc_new(__fpga_ld32(__fpga_ld32(ir + 28) + c * 4), target, 18688) # L:I_REPS L:PROC_METHOD_FLAGS (vm_define_method)
     __fpga_st32(pr + 12, __fpga_proc) # L:P_UPPER
     __fpga_define(target, sym, pr, __fpga_frame_vis)
     __fpga_setreg(a, __fpga_mkval(4, sym)) # L:TAG_SYM
