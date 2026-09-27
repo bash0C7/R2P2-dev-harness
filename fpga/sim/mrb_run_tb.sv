@@ -5,6 +5,8 @@
 //   +rom=<hex>    tools/fpga/rom.rb が出した $readmemh ファイル
 //   +trace=<out>  トレースの書き出し先
 //   +max=<n>      命令数の上限 (既定 20000)
+//   +cycles=<n>   cycle の上限 (既定 max × 1000)。長い sleep で命令が進まないまま止まらないプログラム (範囲外の ms の sleep_ms など) を
+//                 "T <step>" で終える。参照には T が無いので compare は食い違いとして報せる
 //   +stim=<file>  入力の刺激。1行 "<step> <port> <value>" (10進)。step 番目の命令から port が value になる。
 //                 port が 0x100 から上はデバイスの番地 (tools/fpga/devices.rb)
 //   +dump=<fst>   波形
@@ -97,6 +99,7 @@ endtask
   // ---- トレース
   int    fd;
   int    max_steps = 20000;
+  longint max_cycles = 0, cycles = 0;
   string rom_file, trace_file, stim_file, dump;
 
   // 組み合わせの信号が落ち着いた negedge で見る。1命令が数 cycle かかる (ヒープ・呼び出し・GC・sleep) ので、
@@ -104,6 +107,11 @@ endtask
   int cur = 0;
   always @(negedge clk) begin
     if (rst_n) begin
+      cycles = cycles + 1;
+      if (cycles > max_cycles) begin
+        $fdisplay(fd, "T %0d", step);
+        finish();
+      end
       // watchdog の再起動 (コアはリセットされ、この step の命令は pc 0 からやり直す)
       if (dut.reboot && step < max_steps) $fdisplay(fd, "B %0d", step); // 上限の step は参照と同じく L だけ
       if (dut.core.retire) begin
@@ -148,6 +156,8 @@ endtask
     if (!$value$plusargs("rom=%s", rom_file)) $fatal(1, "+rom=<hex> is required");
     if (!$value$plusargs("trace=%s", trace_file)) $fatal(1, "+trace=<file> is required");
     void'($value$plusargs("max=%d", max_steps));
+    max_cycles = longint'(max_steps) * 1000;
+    void'($value$plusargs("cycles=%d", max_cycles));
     if ($value$plusargs("dump=%s", dump)) begin
       $dumpfile(dump);
       $dumpvars(0, mrb_run_tb);
