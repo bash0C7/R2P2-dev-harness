@@ -477,11 +477,13 @@ module FpgaV2
     end
 
     # 罠: firmware のメソッドを、今の命令のレジスタの窓の上で呼ぶ。self は main。戻ったら resume。
-    # 置き場は nregs の後ろ、呼び出しの途中なら その窓 (受け手・引数・ブロック、above) の後ろ (__fpga_sendv の窓は nregs から始まる)
+    # 置き場は nregs の 1 つ後ろ、呼び出しの途中なら その窓 (受け手・引数・ブロック、above) の後ろ (__fpga_sendv の窓は nregs から始まる)。
+    # 1 つ空けるのは、mruby-compiler の begin/rescue/ensure (codegen.c の OP_EXCEPT の idx) が nregs に数えない R[nregs] を使うため。
+    # mruby の C の関数 (罠の写し元) は VM のスタックを使わないので、その R[nregs] を壊さない (D11)
     def trap_call(name, args, resume: nil, above: 0)
       @stats[:trap] += 1
       pr = trap_proc(name)
-      base = [r16(@f.irep + I_NREGS), above].max
+      base = [r16(@f.irep + I_NREGS) + 1, above].max
       setreg(base, obj(@main))
       args.each_with_index { |v, k| setreg(base + 1 + k, v) }
       setreg(base + args.size + 1, NIL)

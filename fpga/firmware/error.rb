@@ -119,7 +119,10 @@ class Object
     if __fpga_tag(exc) == 7 && __fpga_class_p(__fpga_addr(exc)) # L:TAG_OBJ mrb_class_p
       exc = __fpga_tag(mesg) == 0 ? exc.new : exc.new(mesg)
     elsif __fpga_tag(exc) == 7 && __fpga_tt(__fpga_addr(exc)) == 14 # L:TAG_OBJ L:TT_EXCEPTION
-      __fpga_halt unless __fpga_tag(mesg) == 0 # mrb_obj_clone は S5
+      unless __fpga_tag(mesg) == 0 # L:TAG_NIL
+        exc = __fpga_obj_clone(exc)
+        __fpga_exc_mesg_set(exc, mesg)
+      end
     else
       __fpga_raise(TypeError, "exception class/object expected")
     end
@@ -486,7 +489,9 @@ class Exception
     return self if __fpga_alen(args) == 0
     a = __fpga_aref(args, 0)
     return self if __fpga_tag(a) == __fpga_tag(self) && __fpga_int(a) == __fpga_int(self) # mrb_obj_equal
-    __fpga_halt # mrb_obj_clone は S5
+    exc = __fpga_obj_clone(self)
+    __fpga_exc_mesg_set(exc, a)
+    exc
   end
 
   # C: src/error.c exc_initialize
