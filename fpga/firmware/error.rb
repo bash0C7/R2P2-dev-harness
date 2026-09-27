@@ -85,6 +85,25 @@ class Object
     __fpga_raisef(ArgumentError, "wrong number of arguments (given %i, expected %i)", [given, min])
   end
 
+  # 呼び出しの深さが MRB_CALL_LEVEL_MAX に届いた (回路の罠)
+  # C: src/vm.c cipush
+  def __fpga_op_stack_err
+    __fpga_exc_raise(__fpga_obj(__fpga_image(31))) # L:IMG_stack_err
+  end
+
+  # OP_BLKPUSH の遅い道: ブロックが無い
+  # C: src/vm.c vm_op_blkpush
+  def __fpga_op_BLKPUSH(a, b, c)
+    __fpga_raise(LocalJumpError, "unexpected yield")
+  end
+
+  # 起動の時に作る例外の物 (mrb_init_exception の stack_err と nomem_err)
+  # C: src/error.c mrb_init_exception
+  def __fpga_init_exception
+    __fpga_st32(31 * 4, __fpga_addr(__fpga_exc_new_str(SystemStackError, "stack level too deep"))) # L:IMG_stack_err L:WORD
+    __fpga_st32(30 * 4, __fpga_addr(__fpga_exc_new_str(NoMemoryError, "Out of memory"))) # L:IMG_nomem_err L:WORD
+  end
+
   # C: src/vm.c L_INT_OVERFLOW
   def __fpga_op_overflow(a, op)
     __fpga_raise(RangeError, "integer overflow")
@@ -183,13 +202,27 @@ class Object
     __fpga_str_cat_str(op, name)
   end
 
+  # 特異クラスは "#<Class:付いている物>"、ほかは class_name_str (名前の道、無名なら "#<Class:0x..>")
   # C: src/class.c mrb_mod_to_s
   def __fpga_mod_to_s(klass)
     c = __fpga_addr(klass)
-    __fpga_halt if __fpga_tt(c) == 11 # L:TT_SCLASS 特異クラスの名前は S5
+    if __fpga_tt(c) == 11 # L:TT_SCLASS
+      v = __fpga_ld32(c + 28) # L:C_OUTER __attached__
+      str = "#<Class:"
+      att = __fpga_obj(v)
+      __fpga_str_cat_str(str, __fpga_class_p(v) ? __fpga_inspect(att) : __fpga_any_to_s(att)) # class_ptr_p
+      return __fpga_str_cat_str(str, ">")
+    end
+    __fpga_class_name_str(c)
+  end
+
+  # C: src/class.c class_name_str
+  def __fpga_class_name_str(c)
     path = __fpga_class_path(c)
-    __fpga_halt if __fpga_tag(path) == 0 # 無名のクラスの名前 (mrb_ptr_to_str) は S5
-    path
+    return path unless __fpga_tag(path) == 0 # L:TAG_NIL
+    path = __fpga_tt(c) == 10 ? "#<Module:" : "#<Class:" # L:TT_MODULE
+    __fpga_str_cat_str(path, __fpga_ptr_to_str(c))
+    __fpga_str_cat_str(path, ">")
   end
 
   # --- catch handler の表 (irep.h の mrb_irep_catch_handler、13 バイト)。xpc は次の命令の位置 (vm.c と同じく pc > begin && pc <= end)

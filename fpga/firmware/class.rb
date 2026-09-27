@@ -238,8 +238,44 @@ class Object
       end
     end
     row = __fpga_const_walk(cref, sym, true) if row == 0
-    return __fpga_setreg(a, __fpga_const_missing(cref, sym)) if row == 0
+    return __fpga_setreg(a, __fpga_const_hook(cref, sym)) if row == 0
     __fpga_setreg(a, __fpga_ldv(row + 4))
+  end
+
+  # 見つからない定数: const_missing が Module のもの (mrb_mod_const_missing) なら NameError、ほかは const_missing を送る
+  # C: src/variable.c const_get
+  def __fpga_const_hook(base, sym)
+    mod = __fpga_obj(base)
+    return __fpga_const_missing(base, sym) if __fpga_func_basic_p(mod, __fpga_addr(:const_missing), Module)
+    mod.const_missing(__fpga_mkval(4, sym)) # L:TAG_SYM
+  end
+
+  # C: src/variable.c mrb_const_get
+  def __fpga_const_get(mod, sym)
+    row = __fpga_const_walk(__fpga_addr(mod), sym, false) # const_get_nohook
+    return __fpga_const_hook(__fpga_addr(mod), sym) if row == 0
+    __fpga_ldv(row + 4)
+  end
+
+  # 表から sym の行を消す (開番地法なので、残りを入れ直す)
+  # C: src/variable.c iv_del (D06)
+  def __fpga_tbl_delete(t, sym)
+    capa = __fpga_ld32(t + 4) # L:MT_CAPA
+    old = __fpga_ld32(t + 8) # L:MT_ROWS
+    rows = __fpga_alloc(capa * 20) # L:IV_ENTRY
+    k = 0
+    while k < capa
+      __fpga_st32(rows + k * 20, 4294967295) # L:MT_EMPTY
+      k += 1
+    end
+    __fpga_st32(t + 8, rows) # L:MT_ROWS
+    __fpga_st32(t + 0, 0) # L:MT_COUNT
+    k = 0
+    while k < capa
+      e = __fpga_ld32(old + k * 20)
+      __fpga_tbl_set(t, e, __fpga_ldv(old + k * 20 + 4)) if e < 4294967295 && (e == sym) == false
+      k += 1
+    end
   end
 
   # OP_SETCONST: 定数 Syms[b] = R[a] (今のクラスに)
@@ -248,7 +284,7 @@ class Object
     v = __fpga_reg(a)
     sym = __fpga_irep_sym(__fpga_irep, b)
     target = __fpga_addr(__fpga_tclass)
-    __fpga_tbl_set(__fpga_ld32(target + 60), sym, v) # L:C_IV
+    __fpga_tbl_set(__fpga_iv_tbl(target), sym, v) # mrb_const_set (表が無ければ作る)
     __fpga_name_class(v, sym, target)
   end
 
@@ -268,7 +304,7 @@ class Object
     v = __fpga_reg(a)
     base = __fpga_addr(__fpga_reg(a + 1))
     sym = __fpga_irep_sym(__fpga_irep, b)
-    __fpga_tbl_set(__fpga_ld32(base + 60), sym, v)
+    __fpga_tbl_set(__fpga_iv_tbl(base), sym, v)
     __fpga_name_class(v, sym, base)
   end
 
@@ -384,7 +420,7 @@ class Object
     end
     s = sup.nil? ? __fpga_addr(__fpga_core(13)) : __fpga_addr(sup)
     cls = __fpga_obj(__fpga_class_new(s, id, outer))
-    __fpga_tbl_set(__fpga_ld32(outer + 60), id, cls)
+    __fpga_tbl_set(__fpga_iv_tbl(outer), id, cls)
     __fpga_sendv(__fpga_obj(s), :inherited, [cls], nil, true) # class.c の mrb_class_inherited (mrb_funcall_argv、可視性を見ない)
     __fpga_setreg(a, cls)
   end
@@ -398,7 +434,7 @@ class Object
     row = __fpga_const_row(outer, id)
     return __fpga_setreg(a, __fpga_ldv(row + 4)) if row > 0
     m = __fpga_obj(__fpga_module_new(id, outer))
-    __fpga_tbl_set(__fpga_ld32(outer + 60), id, m)
+    __fpga_tbl_set(__fpga_iv_tbl(outer), id, m)
     __fpga_setreg(a, m)
   end
 
@@ -642,7 +678,7 @@ class Module
     __fpga_st32(ic + 8, __fpga_ld32(c + 8))
     __fpga_st32(ic + 12, mt)
     __fpga_st32(ic + 16, __fpga_ld32(m + 16)) # L:C_ROM
-    __fpga_st32(ic + 60, __fpga_ld32(m + 60)) # module の定数を共有する
+    __fpga_st32(ic + 60, __fpga_iv_tbl(m)) # module の定数を共有する (空なら作ってから、include_class_new)
     __fpga_st32(c + 8, ic)
     __fpga_mcache_clear
   end
@@ -706,6 +742,8 @@ class Module
     nil
   end
 
+  alias attr attr_reader # class.c の mrb_define_alias_id (attr は attr_reader)
+
   # C: src/class.c mrb_mod_attr_writer
   def attr_writer(*names)
     k = 0
@@ -752,8 +790,31 @@ class Class
   # C: src/class.c new_iseq
   def new(*args, &blk)
     o = allocate
-    o.__send__(:initialize, *args, &blk)
+    __fpga_sendv(o, :initialize, args, blk, true) # SSENDB :initialize (新しい物が self、private も)
     o
+  end
+
+  # Class.new(super = Object) { } (class.c の mrb_class_new_class): 名前の無いクラスを作り、inherited と initialize
+  # C: src/class.c mrb_class_new_class
+  def self.new(*args, &blk)
+    __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
+    sup = __fpga_alen(args) == 0 ? Object : __fpga_aref(args, 0)
+    __fpga_raisef(TypeError, "%v is not class/module", [sup]) unless __fpga_tag(sup) == 7 && __fpga_class_p(__fpga_addr(sup)) # L:TAG_OBJ mrb_get_args の C
+    s = __fpga_addr(sup)
+    __fpga_raisef(TypeError, "superclass must be a Class (%C given)", [sup]) unless __fpga_tt(s) == 9 # L:TT_CLASS mrb_check_inheritable
+    __fpga_raise(TypeError, "can't make subclass of Class") if s == __fpga_image(6) # L:IMG_class_class
+    c = __fpga_obj(__fpga_class_new(s, 0, 0)) # mrb_class_new
+    __fpga_sendv(sup, :inherited, [c], nil, true) # mrb_class_inherited
+    __fpga_sendv(c, :initialize, args, blk, true)
+    c
+  end
+
+  # Class#initialize: ブロックがあれば、クラスを self と定義の入れ物にして呼ぶ
+  # C: src/class.c mrb_class_initialize
+  def initialize(*args, &blk)
+    __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
+    __fpga_yield_with_class(blk, [self], self, self) unless __fpga_tag(blk) == 0 # L:TAG_NIL
+    self
   end
 
   # C: src/class.c mrb_instance_alloc
