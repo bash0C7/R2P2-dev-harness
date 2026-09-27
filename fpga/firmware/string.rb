@@ -53,17 +53,7 @@ class String
   # C: src/string.c mrb_str_cmp_m
   def <=>(str2)
     return nil unless __fpga_tag(str2) == 7 && __fpga_tt(__fpga_addr(str2)) == 18 # L:TAG_OBJ L:TT_STRING
-    a = __fpga_addr(self)
-    b = __fpga_addr(str2)
-    len1 = __fpga_ld32(a + 8) # L:S_LEN mrb_str_cmp
-    len2 = __fpga_ld32(b + 8) # L:S_LEN
-    len = len1 < len2 ? len1 : len2
-    r = len == 0 ? 0 : __fpga_memcmp(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
-    if r == 0
-      return 0 if len1 == len2
-      return len1 > len2 ? 1 : -1
-    end
-    r > 0 ? 1 : -1
+    __fpga_str_cmp(self, str2)
   end
 
   # C: src/string.c mrb_str_empty_p
@@ -1737,6 +1727,22 @@ class Object
     __fpga_st32(a + 8, total) # L:S_LEN
     __fpga_st8(buf + total, 0)
     s
+  end
+
+  # 0、1、-1 (バイトの辞書順、短い方が小さい)
+  # C: src/string.c mrb_str_cmp
+  def __fpga_str_cmp(str1, str2)
+    a = __fpga_addr(str1)
+    b = __fpga_addr(str2)
+    len1 = __fpga_ld32(a + 8) # L:S_LEN
+    len2 = __fpga_ld32(b + 8) # L:S_LEN
+    len = len1 < len2 ? len1 : len2
+    r = len == 0 ? 0 : __fpga_memcmp(__fpga_ld32(a + 16), __fpga_ld32(b + 16), len) # L:S_PTR
+    if r == 0
+      return 0 if len1 == len2
+      return len1 > len2 ? 1 : -1
+    end
+    r > 0 ? 1 : -1
   end
 
   # C: src/string.c mrb_str_equal
