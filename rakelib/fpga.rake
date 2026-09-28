@@ -677,26 +677,7 @@ namespace :fpga do
   task :build, [:src, :ce_div] do |_t, args|
     raise "usage: rake fpga:build[<file.rb|file.mrb>,<CE_DIV>]" unless args[:src]
     hex = fpga_rom(args[:src])
-    dir = FpgaQuartus.write_project(FPGA_BOARD_BUILD, hex, ce_div: (args[:ce_div] || 1000).to_i)
-    rel = fpga_rel(dir)
-    puts "project: #{rel}"
-
-    host = ENV["FPGA_QUARTUS_HOST"]
-    if fpga_tool?("quartus_sh")
-      FileUtils.cd(dir) { sh FpgaQuartus.compile_script }
-    elsif host
-      remote = ENV["FPGA_QUARTUS_DIR"] || "r2p2-fpga-build"
-      sh "rsync", "-a", "--delete", "#{dir}/", "#{host}:#{remote}/"
-      sh "ssh", host, "cd #{remote.shellescape} && #{FpgaQuartus.compile_script}"
-      sh "rsync", "-a", "#{host}:#{remote}/output_files/", File.join(dir, "output_files/")
-    else
-      raise "Quartus is not here. Put quartus_sh on PATH, or set FPGA_QUARTUS_HOST=<ssh host> " \
-            "(a Linux VM with Quartus Lite; docs/spec.md §10). The project is ready in #{rel}"
-    end
-
-    summary = FpgaQuartus.fit_summary(dir)
-    puts summary ? summary.join("\n") : "no fit summary in #{rel}/output_files"
-    puts "svf: #{FpgaQuartus.svf_path(dir).sub("#{HARNESS_ROOT}/", '')}"
+    fpga_quartus_compile(FpgaQuartus.write_project(FPGA_BOARD_BUILD, hex, ce_div: (args[:ce_div] || 1000).to_i))
   end
 
   desc "Write the last fpga:build into PERIDOT-Air's SRAM over USB-Blaster with openFPGALoader (lost at power off)"
@@ -852,5 +833,65 @@ namespace :test do
     runs.each { |test_file, out, _| puts "#{RbConfig.ruby} #{test_file}", out }
     failed = runs.reject { |_, _, ok| ok }.map { |test_file, _, _| File.basename(test_file) }
     raise "tools/fpga tests failed: #{failed.join(', ')}" unless failed.empty?
+  end
+end
+# Quartus で合成し、書き込み用の .svf を作る (rake fpga:build と fpga:rite:build)
+def fpga_quartus_compile(dir)
+  rel = fpga_rel(dir)
+  puts "project: #{rel}"
+  host = ENV["FPGA_QUARTUS_HOST"]
+  if fpga_tool?("quartus_sh")
+    FileUtils.cd(dir) { sh FpgaQuartus.compile_script }
+  elsif host
+    remote = ENV["FPGA_QUARTUS_DIR"] || "r2p2-fpga-build"
+    sh "rsync", "-a", "--delete", "#{dir}/", "#{host}:#{remote}/"
+    sh "ssh", host, "cd #{remote.shellescape} && #{FpgaQuartus.compile_script}"
+    sh "rsync", "-a", "#{host}:#{remote}/output_files/", File.join(dir, "output_files/")
+  else
+    raise "Quartus is not here. Put quartus_sh on PATH, or set FPGA_QUARTUS_HOST=<ssh host> " \
+          "(a Linux VM with Quartus Lite; docs/spec.md §10). The project is ready in #{rel}"
+  end
+  summary = FpgaQuartus.fit_summary(dir)
+  puts summary ? summary.join("\n") : "no fit summary in #{rel}/output_files"
+  puts "svf: #{FpgaQuartus.svf_path(dir).sub("#{HARNESS_ROOT}/", '')}"
+end
+
+# mruby のバイトコードを直接実行する回路 (fpga/rtl/rite_core.sv、最初の反復: Lチカの命令だけ)
+namespace :fpga do
+  namespace :rite do
+    desc "Write fpga/rite/*.hex (the .mrb as ROM) and *.pins (host PicoRuby's pin changes up to 2000 ms) for rite_core_tb"
+    task hex: "fpga:picoruby" do
+      require_relative "../tools/fpga/rite_rtl"
+      FpgaRite.programs.each do |rb|
+        base = rb.sub(/\.rb\z/, "")
+        File.write("#{base}.hex", FpgaRite.rom_hex(rb))
+        File.write("#{base}.pins", FpgaRite.format_pins(FpgaRite.host(rb)).join("\n") + "\n")
+        puts "wrote #{fpga_rel(base)}.{hex,pins}"
+      end
+    end
+
+    desc "Run fpga/rite/*.rb on rite_core (Icarus) and on host PicoRuby with the board model, and compare the pin changes up to <ms> (default 2000)"
+    task :check, [:ms] => "fpga:picoruby" do |_t, args|
+      require_relative "../tools/fpga/rite_rtl"
+      ms = (args[:ms] || FpgaRite::UNTIL_MS).to_i
+      bad = FpgaRite.programs.reject do |rb|
+        r = FpgaRite.check(rb, until_ms: ms)
+        status = r.sim.error ? "error op=#{r.sim.op} pc=#{r.sim.pc}" : "#{r.sim.pins.size} pin change(s)"
+        puts format("%-4s %-12s %s up to %d ms", r.ok? ? "ok" : "DIFF", r.name, status, ms)
+        unless r.ok?
+          puts "  host: #{FpgaRite.format_pins(r.host_pins).join(' / ')}"
+          puts "  rtl:  #{FpgaRite.format_pins(r.sim.pins).join(' / ')}"
+        end
+        r.ok?
+      end
+      raise "differ: #{bad.map { |b| File.basename(b) }.join(' ')}" unless bad.empty?
+    end
+
+    desc "Synthesize rite_core for PERIDOT-Air with Quartus (USER_LED[0] = pin 28, USER_LED[1] = error). e.g. rake fpga:rite:build[fpga/rite/blink.rb]"
+    task :build, [:src] => "fpga:picoruby" do |_t, args|
+      require_relative "../tools/fpga/rite_rtl"
+      src = args[:src] || File.join(FpgaRite::DIR, "blink.rb")
+      fpga_quartus_compile(FpgaQuartus.write_rite_project(FPGA_BOARD_BUILD, FpgaRite.rom_hex(src)))
+    end
   end
 end
