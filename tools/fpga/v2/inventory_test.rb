@@ -143,6 +143,13 @@ class FpgaV2InventoryTest < Minitest::Test
     assert_equal "none", by["MOVE"][:arena]
     assert_includes by["SEND"][:via].split, "L_SENDB" # SEND は L_SENDB へ goto する
     assert_includes by["ARRAY"][:calls].split, "mrb_ary_new_from_values"
+    # restore の時点 (計画 S6 §5.4): CASE の本文、C の関数の後の shrink、helper が自分の ai を save した所
+    assert_equal "case", by["ARRAY"][:when]
+    assert_equal "case", by["RETURN"][:when]
+    assert_equal "cfunc", by["SEND"][:when]
+    assert_equal "funcall", by["ADDILV"][:when]
+    assert_equal %w[cfunc funcall], by["GETIDX"][:when].split
+    assert_equal "none", by["MOVE"][:when]
     assert uncovered.all? { |fn, _| fn.is_a?(String) }
   end
 end

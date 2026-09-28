@@ -103,38 +103,136 @@ module FpgaV2
       errors
     end
 
-    # firmware の def ごとの SEND 先 (入れ子の block も)。[持ち主, 特異か, 名前] → [名前…]
-    def sends
-      img = Image.new(firmware: Build.firmware)
-      img.build
-      top = img.irep_top(img.bytes(Build.firmware))
-      out = {}
-      regs = {}
-      collect = lambda do |ir, acc|
-        img.each_insn(ir) do |i|
+    # firmware の def ごとの SEND 先と命令の名前 (入れ子の block も)。[持ち主, 特異か, 名前] → [[名前…], [命令…]]
+    def insns
+      @insns ||= begin
+        img = Image.new(firmware: Build.firmware)
+        img.build
+        top = img.irep_top(img.bytes(Build.firmware))
+        out = {}
+        regs = {}
+        collect = lambda do |ir, acc, ops|
+          img.each_insn(ir) do |i|
+            ops << i.name
+            case i.name
+            when /\AS?SEND/ then acc << img.sym_name(img.irep_sym(ir, i.b)) # SEND SEND0 SENDB SSEND SSEND0 SSENDB ほか
+            when "GETIDX", "GETIDX0" then acc << "[]"
+            when "SETIDX" then acc << "[]="
+            end
+          end
+          img.irep_field(ir, Layout::I_RLEN).times { |k| collect.(img.irep_rep(ir, k), acc, ops) }
+          acc
+        end
+        img.each_insn(top) do |i|
           case i.name
-          when /\AS?SEND/ then acc << img.sym_name(img.irep_sym(ir, i.b)) # SEND SEND0 SENDB SSEND SSEND0 SSENDB ほか
-          when "GETIDX", "GETIDX0" then acc << "[]"
-          when "SETIDX" then acc << "[]="
-          end
-        end
-        img.irep_field(ir, Layout::I_RLEN).times { |k| collect.(img.irep_rep(ir, k), acc) }
-        acc
-      end
-      img.each_insn(top) do |i|
-        case i.name
-        when "CLASS", "MODULE" then regs[i.a] = img.sym_name(img.irep_sym(top, i.b))
-        when "EXEC"
-          body = img.irep_rep(top, i.b)
-          owner = regs.fetch(i.a)
-          img.each_insn(body) do |j|
-            next unless %w[TDEF SDEF].include?(j.name)
+          when "CLASS", "MODULE" then regs[i.a] = img.sym_name(img.irep_sym(top, i.b))
+          when "EXEC"
+            body = img.irep_rep(top, i.b)
+            owner = regs.fetch(i.a)
+            img.each_insn(body) do |j|
+              next unless %w[TDEF SDEF].include?(j.name)
 
-            out[[owner, j.name == "SDEF", img.sym_name(img.irep_sym(body, j.b))]] = collect.(img.irep_rep(body, j.c), []).uniq
+              ops = []
+              sends = collect.(img.irep_rep(body, j.c), [], ops).uniq
+              out[[owner, j.name == "SDEF", img.sym_name(img.irep_sym(body, j.b))]] = [sends, ops.uniq]
+            end
           end
         end
+        out
       end
-      out
+    end
+
+    def sends = insns.transform_values(&:first)
+
+    # C の動的な呼び出しと GC の関所の種類 (c_calls.rb)。firmware の def の写し元の C の関数の全部について 1 回だけ作る
+    def c_targets
+      defs.select(&:ann).filter_map do |d|
+        path, name, = parse(d.ann)
+        next unless name && File.file?(path.to_s) && path.end_with?(".c")
+
+        [d, "c:#{Inventory.rel(path)}:#{name}"]
+      end
+    end
+
+    def ccalls
+      require_relative "c_calls"
+      @ccalls ||= CCalls.build(c_targets.map(&:last))
+    end
+
+    # 物を作る命令 (計画 S6 §3.5: GC の中では確保しない)
+    ALLOC_OPS = %w[ARRAY ARRAY2 ARYCAT ARYPUSH ARYSPLAT STRING STRCAT HASH HASHADD HASHCAT LAMBDA BLOCK METHOD RANGE_INC RANGE_EXC INTERN
+                   APOST].freeze
+    # GC の本体の file (S6-4 から)。その def は物を作る命令を持たない
+    GC_FILES = %w[gc.rb].freeze
+
+    # 間違いの一覧: GC の file の def が物を作る命令を持つ、firmware のどこかに Proc を作る命令 (LAMBDA / BLOCK / METHOD) がある
+    def check_alloc_ops
+      ins = insns
+      errors = []
+      defs.each do |d|
+        ops = ins[[d.owner, d.sing, d.name]]&.last or next
+        where = "#{d.file}:#{d.line} #{d.owner}#{d.sing ? '.' : '#'}#{d.name}"
+        (ops & %w[LAMBDA BLOCK METHOD]).each { |o| errors << "#{where}: #{o} makes a Proc in firmware (plan S6 §3.4)" }
+        next unless GC_FILES.include?(d.file)
+
+        (ops & ALLOC_OPS).each { |o| errors << "#{where}: #{o} allocates inside the GC (plan S6 §3.5)" }
+      end
+      errors
+    end
+
+    GC_CALLS = File.join(Inventory::ROOT, "fpga", "v2", "inventory", "gc_calls.tsv")
+
+    # GC の関所の表 (計画 S6 §3.5)。firmware の def ごとに、写し元の C の関数が辿って使う GC の API の種類と、
+    # firmware の def が __fpga_ の helper を辿って使う種類 (`# C:` がその API の def に着いた所)。足りない種類を最後の列に
+    def gc_rows
+      require_relative "c_calls"
+      by_name = Hash.new { |h, k| h[k] = [] }
+      defs.each { |d| by_name[d.name] << d }
+      ins = insns
+      api_of = lambda do |d|
+        _, name, = d.ann ? parse(d.ann) : nil
+        name
+      end
+      fw_reach = lambda do |d0|
+        seen = {}
+        queue = [d0]
+        kinds = []
+        until queue.empty?
+          d = queue.shift
+          next if seen[d]
+
+          seen[d] = true
+          api = api_of.(d)
+          if d != d0 && api && CCalls::GC_API.key?(api)
+            kinds << CCalls::GC_API[api]
+            next
+          end
+          next if d != d0 && api&.match?(CCalls::GC_LEAF)
+
+          (ins[[d.owner, d.sing, d.name]]&.first || []).each do |s|
+            next unless s.start_with?("__fpga_")
+
+            by_name[s].each { |x| queue << x }
+          end
+        end
+        kinds.uniq.sort
+      end
+      c_of = c_targets.to_h { |d, src| [d, src] }
+      rows = defs.filter_map do |d|
+        src = c_of[d]
+        need = src ? (ccalls.gc_by_src[src] || []) : []
+        have = fw_reach.(d)
+        next if need.empty? && have.empty?
+
+        ["#{d.file} #{d.owner}#{d.sing ? '.' : '#'}#{d.name}", d.ann.to_s, need.join(" "), have.join(" "), (need - have).join(" ")]
+      end
+      rows.sort
+    end
+
+    def gc_calls_tsv(rows = gc_rows)
+      "# GC の関所 (計画 S6 §3.5、rake fpga:v2:inventory が作る。手で書かない)。写し元の C の関数が辿って使う GC の API\n" \
+        "# (arena_save arena_restore protect register barrier free realloc) を firmware の def も使うか。最後の列が足りない種類\n" \
+        "# def<TAB>写し元<TAB>C<TAB>firmware<TAB>足りない\n" + rows.map { |r| r.join("\t") }.join("\n") + "\n"
     end
 
     # 棚卸しの aspec ("1"、"0..1"、"1+"、k 付き) → [min, max] (max -1 は上限無し)
@@ -169,17 +267,9 @@ module FpgaV2
 
     # SEND 先の間違い: 写し元の C の関数が動的に呼ばない先
     def check_sends
-      require_relative "c_calls"
       sent = sends
-      ds = defs.select { |d| d.ann }
-      targets = ds.filter_map do |d|
-        path, name, = parse(d.ann)
-        next unless name && File.file?(path.to_s) && path.end_with?(".c")
-
-        [d, "c:#{Inventory.rel(path)}:#{name}"]
-      end
-      dyn = CCalls.build(targets.map(&:last)).by_src
-      targets.flat_map do |d, src|
+      dyn = ccalls.by_src
+      c_targets.flat_map do |d, src|
         allowed = dyn[src] or next [] # C の関数でない名前 (label、CASE) は検査しない
         (sent[[d.owner, d.sing, d.name]] || []).reject { |s| s.start_with?("__fpga_") || allowed.include?(s) }.map do |s|
           "#{d.file}:#{d.line} #{d.owner}#{d.sing ? '.' : '#'}#{d.name} sends #{s} (#{d.ann} calls #{allowed.empty? ? 'nothing' : allowed.join(' ')})"

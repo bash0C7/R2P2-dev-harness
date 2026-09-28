@@ -176,8 +176,8 @@ class Object
   # firmware だけのフレーム: 名前が __fpga_ のメソッド (helper と罠)。C には ci が無い (D41)
   # C: none (D41)
   def __fpga_bt_hidden_p(mid)
-    return false if mid >= __fpga_image(27) # L:IMG_symcapa
-    tab = __fpga_image(26) # L:IMG_symtbl
+    return false if mid >= __fpga_image(1077) # L:IMG_symcapa
+    tab = __fpga_image(1076) # L:IMG_symtbl
     p = __fpga_ld32(tab + mid * 8)
     return false if __fpga_ld32(tab + mid * 8 + 4) < 7
     __fpga_ld8(p) == 95 && __fpga_ld8(p + 1) == 95 && __fpga_ld8(p + 2) == 102 && __fpga_ld8(p + 3) == 112 &&
@@ -187,7 +187,7 @@ class Object
   # ROM の Proc (firmware) は C の関数のフレーム (MRB_PROC_CFUNC_P)
   # C: include/mruby/proc.h MRB_PROC_CFUNC_P (D41)
   def __fpga_bt_cfunc_p(pr)
-    pr < __fpga_image(35) || __fpga_and(__fpga_ld32(pr + 24), 3) > 0 # L:IMG_heap_start L:P_FLAGS PROC_IREP でない
+    pr < __fpga_image(1085) || __fpga_and(__fpga_ld32(pr + 24), 3) > 0 # L:IMG_heap_start L:P_FLAGS PROC_IREP でない
   end
 
   # 記憶の ci の pc (次の命令の番地) から、irep の中の今の命令の位置 (&ci->pc[-1] - irep->iseq)
@@ -313,7 +313,7 @@ class Object
     else
       __fpga_write_str("(unknown):0: ") # UNKNOWN_LOCATION
     end
-    if exc == __fpga_image(30) # L:IMG_nomem_err
+    if exc == __fpga_image(1080) # L:IMG_nomem_err
       __fpga_write_str("Out of memory (NoMemoryError)\n")
     else
       __fpga_write_str(__fpga_exc_get_output(__fpga_obj(exc)))

@@ -1002,15 +1002,15 @@ class Object
   # mrb->nan_serial++ (uint64_t を 2 語で)
   # C: src/etc.c mrb_nan_serial_next
   def __fpga_nan_serial_next
-    hi = __fpga_ld32(43 * 4) # L:IMG_nan_serial L:WORD
-    lo = __fpga_ld32(44 * 4) # L:IMG_nan_serial_lo L:WORD
+    hi = __fpga_ld32(1093 * 4) # L:IMG_nan_serial L:WORD
+    lo = __fpga_ld32(1094 * 4) # L:IMG_nan_serial_lo L:WORD
     n = __fpga_or(__fpga_shl(hi, 32), lo)
     lo += 1
     if lo == 4294967296
       lo = 0
-      __fpga_st32(43 * 4, __fpga_and(hi + 1, 4294967295)) # L:IMG_nan_serial L:WORD
+      __fpga_st32(1093 * 4, __fpga_and(hi + 1, 4294967295)) # L:IMG_nan_serial L:WORD
     end
-    __fpga_st32(44 * 4, lo) # L:IMG_nan_serial_lo L:WORD
+    __fpga_st32(1094 * 4, lo) # L:IMG_nan_serial_lo L:WORD
     n
   end
 
