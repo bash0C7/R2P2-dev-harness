@@ -20,6 +20,15 @@ module FpgaV2
     INT_MAX = (1 << 63) - 1
     MASK64 = (1 << 64) - 1
 
+    # R2 (計画 S6 §3.4): 命令を終えた時に arena を ai へ戻す命令。ops.tsv (vm.c から生成) の restore の時点が case で、
+    # CASE の本文に restore の行があるもの。goto の先が別の命令の本文の restore なら数える (BLOCK / METHOD は L_MAKE_LAMBDA)。
+    # RETURN 系と、戻りや送りや例外へ飛ぶ所は ret と巻き戻しの中で戻す。ADD の restore は文字列の枝 (mrb_str_plus) だけで、
+    # ref は String#+ を送り R3 で戻すので数えない。{名前 => true}
+    RESTORE_OPS = File.readlines(File.expand_path("../../../fpga/v2/inventory/ops.tsv", __dir__), chomp: true, encoding: "UTF-8")
+                      .reject { |l| l.start_with?("#") }.map { |l| l.split("\t", -1) }
+                      .select { |r| r[7].to_s.split.include?("case") && r[3].split.any? { |x| !x.include?("@") || (x.start_with?("L_") && !x.match?(/\AL_(OP_\w+_BODY|OP_RETURN|RETURN|CHECKPOINT|SENDB|RAISE)/)) } }
+                      .map(&:first).reject { |n| n.start_with?("RET", "EXT") || n == "BREAK" || n == "ADD" }.to_h { |n| [n, true] }.freeze
+
     # 回路が自分で実行する命令 (ほかは罠)
     HW_OPS = %w[
       NOP MOVE LOADL LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5 LOADI_6 LOADI_7 LOADI16 LOADI32
@@ -35,13 +44,14 @@ module FpgaV2
     # - kind / resume / dst: 罠の続き (延長の語、D11)
     class Ci
       include Layout
-      attr_reader :addr, :proc, :irep, :bp
+      attr_reader :addr, :proc, :irep, :bp, :fw
 
       def initialize(ref, addr)
         @r = ref
         @addr = addr
         @proc = ref.r32(addr + CI_PROC)
         @irep = ref.r32(@proc + P_BODY)
+        @fw = @irep < ref.heap_start # firmware のフレーム (C の関数): irep が像の中 (ROM)
         @bp = (ref.r32(addr + CI_STACK) - ref.stbase) / VALUE
       end
 
@@ -109,7 +119,7 @@ module FpgaV2
     CALL_ARGS = 0xFF
     CALL_KW = 0x100
 
-    attr_reader :console, :stats, :steps, :stbase
+    attr_reader :console, :stats, :steps, :stbase, :heap_start, :ai
     attr_writer :board
 
     # 板のモデル (mmio、board.rb)。番地が MMIO_BASE 以上の __fpga_ld32 / __fpga_st32 はここへ
@@ -135,13 +145,14 @@ module FpgaV2
       @entry = h.(:fw_entry)
       @object = h.(:object_class)
       @f = nil
+      @ai = 0 # 今の活性化の ai (mrb_vm_exec の C の局所変数、記憶の正本は SKIP のフレームの CI_AI、D82)
     end
 
     # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる。
     # @dcache は命令のデコードの cache (回路の命令 cache に当たる記憶の写し。fetch が使う前に記憶のバイト列と比べるので、書き込みで外れる)
     CRUBY_STATE = %i[
       @m @max @steps @console @stats @cache @heap_start @ctx @stbase @stend @core @prims @main @entry @object @f
-      @sym_ids @dcache @pc_next @jumped @board
+      @sym_ids @dcache @pc_next @jumped @board @ai @fpga_syms
     ].freeze
 
     # 起動の像を写した記憶 (IO::Buffer は CRuby 3.3 で experimental の警告を出すので、作る間だけ黙らせる)
@@ -318,9 +329,13 @@ module FpgaV2
       @stats[:insn] += 1
       if e[4]
         exec(i)
+        arena_restore if !@f.fw && RESTORE_OPS[i.name]
       else
         trap_op(i)
       end
+      idx = arena_idx
+      @stats[:arena_max] = idx if idx > @stats[:arena_max]
+      raise Error, "arena_idx #{idx} < ai #{@ai}" if !@f.fw && idx < @ai # 像の外の命令の切れ目の不変条件 (S6-3)
       if @f && !@jumped # @f.pc = @pc_next を開いたもの
         @m.set_value(:U32, @f.addr + CI_PC, (@m.get_value(:U32, @f.irep + I_ISEQ) + @pc_next) & 0xFFFF_FFFF)
       end
@@ -596,7 +611,7 @@ module FpgaV2
       push_frame(pr, base, args.size, kind: :trap, mid: sym_id(name), ret_pc: @pc_next, resume: resume || [:advance])
     end
 
-    def call_proc(pr, a, n, mid, ret_pc, dst = nil, found = nil)
+    def call_proc(pr, a, n, mid, ret_pc, dst = nil, found = nil, via: :send)
       case r32(pr + P_FLAGS) & 3
       when PROC_PRIM
         raise Error, "primitive procs with dst" if dst
@@ -609,7 +624,7 @@ module FpgaV2
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
-        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst, tclass: found)
+        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst, tclass: found, via: via)
         b = rv(@stbase + (@f.bp + wlen(n) + 1) * VALUE)
         w32(@f.addr + CI_BLK, b[1]) if b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC]
       end
@@ -617,7 +632,8 @@ module FpgaV2
 
     # フレームを積む。呼んだ側は ret_pc から続ける。dst は結果を置く呼んだ側のレジスタ (nil は呼ばれた側の R0 = 呼んだ側の R[a])
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
-    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil, tclass: nil)
+    # via: :send (名前で呼んだ、C の mrb_funcall に当たる)、:yield (ブロック、mrb_yield)、:run (mrb_vm_run)。R1 の protect を決める
+    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil, tclass: nil, via: :send)
       ci = @f.addr + CI_SIZE
       # vm.c の cipush: ci の数が MRB_CALL_LEVEL_MAX に届いたら mrb->stack_err を上げる (罠は上げるための余りの枠を使う)
       # firmware (像の中の Proc) のフレームからの呼び出しは数えない (上げる途中の firmware が同じ罠に入らないため)
@@ -627,7 +643,9 @@ module FpgaV2
       end
       raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND)
       @f.pc = ret_pc
+      below_fw = @f.fw
       write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n, tclass)
+      activation_at(ci, below_fw, kind == :run ? :run : via)
       @jumped = true
       @stats[:call] += 1
     end
@@ -643,6 +661,7 @@ module FpgaV2
       cont = { trap: CONT_OF.fetch((resume || [:advance])[0]), boot: CONT_BOOT, run: CONT_RUN }.fetch(kind, CONT_NONE)
       w8(ci + CI_CONT, cont)
       w32(ci + CI_CDST, dst ? dst + 1 : 0)
+      w32(ci + CI_CFCALL, 1) if resume && resume[0] == :advance && resume[1] # 罠から戻ったら arena を戻す命令 (R2)
       if resume && resume[0] != :advance
         _, ca, cn, csym, cret, _, fcall = resume
         w32(ci + CI_CA, ca)
@@ -716,6 +735,73 @@ module FpgaV2
       nlocals = r16(@f.irep + I_NLOCALS)
       ((len + 2)...nlocals).each { |k| setreg(k, NIL) }
       @f.argc = len
+    end
+
+    # --- arena (計画 S6 §3.4 の R1〜R5)
+    ARENA_IDX_AT = IMG.fetch(:gc_arena_idx) * WORD
+    def arena_idx = r32(ARENA_IDX_AT)
+    # vm.c の mrb_gc_arena_restore(mrb, ai)
+    def arena_restore(ai = @ai) = w32(ARENA_IDX_AT, ai)
+
+    # 活性化の ai: ci から下で一番近い CINFO_SKIP のフレームの CI_AI (無ければ起動の 0)
+    def activation_ai(ci)
+      base = r32(@ctx + CTX_CIBASE)
+      while ci >= base
+        return (r32(ci + CI_AI) & ~CI_AI_PROTECT) - 1 if r8(ci + CI_CCI) == CINFO_SKIP
+
+        ci -= CI_SIZE
+      end
+      0
+    end
+
+    # gc.c の mrb_gc_protect: 即値と RED の物は積まない。arena はいつも 1 つ空いている (D91) ので確保は要らない
+    def arena_protect(v)
+      return unless v[0] == TAG_OBJ
+      return if ((r32(v[1] + H_FLAGS) >> H_COLOR_SHIFT) & GC_COLOR_MASK) == GC_RED
+
+      idx = arena_idx
+      raise Error, "arena has no room for the protect" if idx >= r32(GC_AT[:gc_arena_capa])
+
+      w32(r32(GC_AT[:gc_arena]) + idx * WORD, v[1])
+      w32(ARENA_IDX_AT, idx + 1)
+    end
+
+    # firmware の helper の名前 (__fpga_ で始まる。C の関数の直接の呼び出し、D14)
+    def fpga_sym?(sym)
+      @fpga_syms ||= {}
+      @fpga_syms.fetch(sym) { @fpga_syms[sym] = sym_name(sym).start_with?("__fpga_") }
+    end
+
+    # R1 / R1': ci (今積んだフレーム) の proc を置いた所で、下のフレームが firmware なら C から VM を点けた (SKIP) か、C から名前で
+    # C の関数を呼んだ (DIRECT)。protect は戻りで値を arena に積むか (mrb_funcall は積む、yield は積まない)
+    def activation_at(ci, below_fw, via)
+      return unless below_fw
+
+      pr = r32(ci + CI_PROC)
+      callee_fw = r32(pr + P_BODY) < @heap_start
+      if callee_fw
+        return unless via == :send && !fpga_sym?(r32(ci + CI_MID)) # R1': firmware の def を名前で (mrb_funcall の cfunc の道)
+
+        return if r8(ci + CI_CONT) != CONT_NONE # 罠のフレームは D11 のまま
+
+        w8(ci + CI_CCI, CINFO_DIRECT)
+        save_ai(ci, CI_AI_PROTECT)
+        return
+      end
+      return if r8(ci + CI_CCI) == CINFO_SKIP # BLKCALL は write_ci と vm_call_proc の両方で当たる。2 回目は何もしない
+
+      w8(ci + CI_CCI, CINFO_SKIP)
+      # protect は mrb_funcall だけ (yield_with_attr も mrb_vm_run の cipush も積まない)。R1' が先に置いたら上書きしない
+      save_ai(ci, via == :send ? CI_AI_PROTECT : 0) if r32(ci + CI_AI).zero?
+      @ai = (r32(ci + CI_AI) & ~CI_AI_PROTECT) - 1
+    end
+
+    # CI_AI に ai + 1 と protect の bit を置く。保存した ai はどれも arena_capa より小さい (D91、S6-3 の不変条件)
+    def save_ai(ci, protect)
+      ai = arena_idx
+      raise Error, "saved ai #{ai} is not below arena_capa (D91)" unless ai < r32(GC_AT[:gc_arena_capa])
+
+      w32(ci + CI_AI, (ai + 1) | protect)
     end
 
     # --- 確保の速い道 (gc.c の mrb_obj_alloc_core の freelist から外す所、計画 S6 §5.1)。記憶の中の mrb_gc を読み書きする
@@ -794,6 +880,8 @@ module FpgaV2
       done = @f
       cipop(done.addr)
       raise Halt if done.addr == r32(@ctx + CTX_CIBASE)
+      saved = r32(done.addr + CI_AI)
+      skip = r8(done.addr + CI_CCI) == CINFO_SKIP
       w32(@ctx + CTX_CI, done.addr - CI_SIZE)
       @f = Ci.new(self, done.addr - CI_SIZE)
       @jumped = true
@@ -804,12 +892,21 @@ module FpgaV2
       else
         wv(@stbase + done.bp * VALUE, v) # 呼んだ側の R[a] は呼ばれた側の R0 (同じ場所)
       end
+      if !saved.zero? # R4: 活性化 (SKIP) か、名前で呼んだ C の関数 (DIRECT) の終わり。mrb_funcall_with_block の restore と protect
+        arena_restore((saved & ~CI_AI_PROTECT) - 1)
+        arena_protect(v) if saved.anybits?(CI_AI_PROTECT)
+        @ai = activation_ai(@f.addr) if skip
+      elsif done.kind != :trap && !@f.fw # R3 (C の関数の後、shrink は D94) と、Ruby から Ruby への戻り (L_RETURN の restore)
+        arena_restore
+      end
     end
 
     # 罠から戻った: resume のとおり続ける (呼んだ側の pc は push_frame で ret_pc にしてある)
     def resume_trap(done, v)
       what, a, n, sym, ret_pc, dst, fcall = done.resume || [:advance]
       case what
+      when :advance # R2: 罠で終えた命令の restore
+        arena_restore if r32(done.addr + CI_CFCALL) == 1 && !@f.fw
       when :value # 罠の結果を R[a] へ (attr)
         setreg(a, v)
       when :blksend # ブロックを Proc にした後の SEND
@@ -843,7 +940,7 @@ module FpgaV2
     # --- 回路が持たない命令: __fpga_op_<名前>(a, b, c)
     def trap_op(i)
       @stats[:"op_#{i.name}"] += 1
-      trap_call("__fpga_op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)])
+      trap_call("__fpga_op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)], resume: [:advance, RESTORE_OPS[i.name]])
     end
 
     # --- 特権の primitive (Image::PRIMS の並び)
@@ -918,11 +1015,13 @@ module FpgaV2
       end
       w32(@ctx + CTX_CI, ci)
       @f = Ci.new(self, ci)
+      @ai = activation_ai(ci) # R5
     end
 
     # __fpga_unwind(ci, pc): ci の上を捨て、ci の pc (iseq の中の位置) から続ける
     def unwind(ci, pc)
       pop_to(ci)
+      arena_restore unless @f.fw # R5: mrb_vm_exec の RETRY_TRY_BLOCK の restore
       jump(pc)
     end
 
@@ -970,7 +1069,7 @@ module FpgaV2
       list = window(base, recv, args, blk, kdict)
       pr &= ~VIS_MASK
       tc = tclass && tclass[0] == TAG_OBJ && (r32(pr + P_FLAGS) & 3) == PROC_IREP ? tclass[1] : nil
-      call_proc(pr, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a, tc)
+      call_proc(pr, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a, tc, via: given && truthy?(given) ? :yield : :send)
       w8(@f.addr + CI_VIS, r8(@f.addr + CI_VIS) | CI_VISIBILITY_BREAK_BIT | CI_GIVEN_CLASS_BIT) if tc && given && truthy?(given) && @f.proc == pr
     end
 
@@ -1043,7 +1142,7 @@ module FpgaV2
       v = reg(a)
       return trap_op(i) unless v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:PROC]
 
-      push_frame(v[1], a, b, kind: :call, mid: 0, ret_pc: @pc_next)
+      push_frame(v[1], a, b, kind: :call, mid: 0, ret_pc: @pc_next, via: :yield)
       vm_call_proc(v[1], b + 1)
     end
 
@@ -1057,6 +1156,7 @@ module FpgaV2
       raise Error, "calling a C function proc is S5" unless (r32(pr + P_FLAGS) & 3) == PROC_IREP
       w32(@f.addr + CI_PROC, pr)
       @f = Ci.new(self, @f.addr)
+      activation_at(@f.addr, @f.addr > r32(@ctx + CTX_CIBASE) && r32(r32(@f.addr - CI_SIZE + CI_PROC) + P_BODY) < @heap_start, :yield) # R1 (Proc#call)
       nregs = r16(@f.irep + I_NREGS)
       (nargs...nregs).each { |k| setreg(k, NIL) }
       setreg(0, rv(r32(env + E_STACK))) if envset

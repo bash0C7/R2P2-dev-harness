@@ -10,6 +10,10 @@ class Object
       __fpga_st32(3 * 4, 0) # L:IMG_exc L:WORD
     else
       __fpga_st32(3 * 4, __fpga_addr(v)) # L:IMG_exc L:WORD
+      idx = __fpga_image(1074) # L:IMG_gc_arena_idx
+      if idx > 0 && __fpga_addr(v) == __fpga_ld32(__fpga_image(1072) + (idx - 1) * 4) # L:IMG_gc_arena L:WORD
+        __fpga_st32(1074 * 4, idx - 1) # L:IMG_gc_arena_idx L:WORD
+      end
       __fpga_keep_backtrace(v) unless __fpga_addr(v) == __fpga_image(1080) || __fpga_and(__fpga_ld32(__fpga_addr(v) + 4), 2048) > 0 # L:IMG_nomem_err L:H_FLAGS L:H_FROZEN
     end
   end
@@ -179,6 +183,7 @@ class Object
     p = __fpga_ld32(__fpga_addr(fmt) + 16) # L:S_PTR
     len = __fpga_ld32(__fpga_addr(fmt) + 8) # L:S_LEN
     result = __fpga_str_new(p, 0)
+    ai = __fpga_gc_arena_save
     b = 0
     k = 0
     n = 0
@@ -212,6 +217,7 @@ class Object
         end
         __fpga_str_cat_str(result, inspect ? __fpga_inspect(obj) : __fpga_obj_as_string(obj))
       end
+      __fpga_gc_arena_restore(ai) # L_cat_plain
       b = k
     end
     __fpga_str_cat(result, p + b, len - b)

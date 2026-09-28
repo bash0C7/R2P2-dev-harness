@@ -407,6 +407,7 @@ class String
       skip = true
       idx = beg
       en = beg
+      ai = __fpga_gc_arena_save
       while idx < str_len
         c = __fpga_ld8(sp + idx)
         idx += 1
@@ -420,6 +421,7 @@ class String
           end
         elsif __fpga_isspace(c)
           result.__fpga_push1(__fpga_str_byte_subseq(self, beg, en - beg))
+          __fpga_gc_arena_restore(ai)
           skip = true
           beg = idx
           i += 1 if lim_p
@@ -430,6 +432,7 @@ class String
     else
       pat_len = __fpga_ld32(__fpga_addr(spat) + 8) # L:S_LEN
       idx = 0
+      ai = __fpga_gc_arena_save
       while idx < str_len
         if pat_len > 0
           en = __fpga_memsearch(__fpga_ld32(__fpga_addr(spat) + 16), pat_len, sp + idx, str_len - idx) # L:S_PTR
@@ -438,6 +441,7 @@ class String
           en = __fpga_str_char_to_byte(self, idx, 1)
         end
         result.__fpga_push1(__fpga_str_byte_subseq(self, idx, en))
+        __fpga_gc_arena_restore(ai)
         idx += en + pat_len
         i += 1
         break if lim_p && lim <= i

@@ -1160,6 +1160,7 @@ class Module
       __fpga_set_scope_vis(__fpga_ld32(__fpga_image(0) + 12) - 64, 3) # L:IMG_c L:CTX_CI L:CI_SIZE 呼んだ側 (ec->ci - 1) を private と MODFUNC に
       return self
     end
+    ai = __fpga_gc_arena_save
     k = 0
     while k < __fpga_alen(names)
       mid = __fpga_check_type_symbol(__fpga_aref(names, k))
@@ -1167,6 +1168,7 @@ class Module
       __fpga_method_search_error(__fpga_addr(self), mid) if e == 0 # mrb_method_search
       __fpga_method_raw(__fpga_singleton(self), mid, __fpga_and(e, -4)) # VIS_PUBLIC (0)
       __fpga_method_raw(__fpga_addr(self), mid, __fpga_and(e, -4) + 1) # L:VIS_PRIVATE
+      __fpga_gc_arena_restore(ai)
       k += 1
     end
     self
@@ -1216,6 +1218,7 @@ class Module
     c = __fpga_addr(self)
     vis = 1 if vis == 3 # L:VIS_PRIVATE modfunc
     result = []
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(names)
       sym = __fpga_obj_to_sym(__fpga_aref(names, i)) # to_sym
@@ -1231,6 +1234,7 @@ class Module
         end
         w += 1
       end
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     result

@@ -401,6 +401,7 @@ module FpgaV2
     # cci の値 (vm.c の CINFO_*)
     # C: src/vm.c CINFO_DIRECT
     CINFO_NONE   = 0
+    CINFO_SKIP   = 1
     CINFO_DIRECT = 2
     CI_MODFUNC_BIT = 8
     # C: include/mruby/internal.h MRB_CI_SET_VISIBILITY_BREAK

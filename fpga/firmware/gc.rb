@@ -165,6 +165,26 @@ class Object
     __fpga_st32(1074 * 4, idx + 1) # L:IMG_gc_arena_idx L:WORD
   end
 
+  # 値 obj を arena に積む (即値と RED の物は積まない)
+  # C: src/gc.c mrb_gc_protect
+  def __fpga_gc_protect_value(obj)
+    return nil unless __fpga_tag(obj) == 7 # L:TAG_OBJ mrb_immediate_p
+    p = __fpga_addr(obj)
+    return nil if __fpga_and(__fpga_shr(__fpga_ld32(p + 4), 8), 7) == 7 # L:H_FLAGS L:H_COLOR_SHIFT L:GC_COLOR_MASK L:GC_RED is_red
+    __fpga_gc_arena_keep
+    __fpga_gc_protect(p)
+  end
+
+  # C: include/mruby.h mrb_gc_arena_save
+  def __fpga_gc_arena_save
+    __fpga_image(1074) # L:IMG_gc_arena_idx
+  end
+
+  # C: include/mruby.h mrb_gc_arena_restore
+  def __fpga_gc_arena_restore(idx)
+    __fpga_st32(1074 * 4, idx) # L:IMG_gc_arena_idx L:WORD
+  end
+
   # 枠を 1 つ作る (見出しの語 ttype と、クラス cls)。回路の速い道 (__fpga_obj_alloc) が条件に合わない時の落ち先
   # C: src/gc.c mrb_obj_alloc_core
   def __fpga_obj_alloc_core(ttype, cls)

@@ -5,17 +5,24 @@ class Object
   # 起動 (mruby の mrb_open の後の mrb_load_irep): 像のプログラムを順に読み込み、main で実行する
   # C: src/load.c mrb_load_irep
   def __fpga_boot
+    # 各 init の後の __fpga_gc_arena_restore(0) は init.c の mrb_init_core の DONE と、mrb_open の gem の init の後の restore
     __fpga_init_exception # mrb_init_exception の stack_err と nomem_err
+    __fpga_gc_arena_restore(0)
     __fpga_init_main # mrb_init_class の top_self の inspect / to_s
+    __fpga_gc_arena_restore(0)
     __fpga_init_numeric # mrb_init_core の mrb_init_numeric
+    __fpga_gc_arena_restore(0)
     __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
+    __fpga_gc_arena_restore(0)
     __fpga_init_task # mruby-task の mrb_mruby_task_gem_init (gem の C の init)
     __fpga_init_gpio # picoruby-gpio の mrb_picoruby_gpio_gem_init (gem の C の init)
+    __fpga_gc_arena_restore(0)
     lib = __fpga_image(1092) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0
       __fpga_run(__fpga_proc_new(__fpga_load(lib), __fpga_image(5), 0), self) # L:IMG_object_class load.c の mrb_proc_new (target は Object)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD
     end
+    __fpga_gc_arena_restore(0)
     __fpga_builtin_op_init # mrb_open_core の bootstrapping の後
     progs = __fpga_image(1089) # L:IMG_programs
     n = __fpga_image(1090) # L:IMG_nprograms
@@ -23,9 +30,9 @@ class Object
     while i < n
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
       t = __fpga_task_create # main task (picoruby-bin-picoruby の mrc_create_task、D103)
-      __fpga_execute_task(t)
+      ai = __fpga_execute_task(t)
       __fpga_run(__fpga_proc_new(ir, __fpga_image(5), 0), self) # L:IMG_object_class load.c の mrb_proc_new
-      __fpga_task_stopped(t)
+      __fpga_task_stopped(t, ai)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD 捕まらなかった例外 (mrb_load_exec)
       i += 1
     end
@@ -73,6 +80,7 @@ class Object
   # cur (8 バイトの領域) の番地から irep を1つ読み (子も)、cur を進める
   # C: src/load.c read_irep_record_1
   def __fpga_read_irep(cur)
+    ai = __fpga_gc_arena_save # read_irep_record と read_irep_record_1 (同じ所で save する)
     rec = __fpga_ld32(cur)
     nlocals = __fpga_u16(rec + 4)
     nregs = __fpga_u16(rec + 6)
@@ -123,6 +131,7 @@ class Object
       else
         __fpga_st32(syms + k * 4, __fpga_intern(p + 2, len))
         p += 3 + len
+        __fpga_gc_arena_restore(ai)
       end
       k += 1
     end
@@ -142,9 +151,11 @@ class Object
     __fpga_st32(ir + 40, clen) # L:I_CLEN
     __fpga_st32(ir + 44, 0) # L:I_DEBUG
     __fpga_st32(cur, p)
+    __fpga_gc_arena_restore(ai) # read_irep_record
     k = 0
     while k < rlen
       __fpga_st32(reps + k * 4, __fpga_read_irep(cur))
+      __fpga_gc_arena_restore(ai)
       k += 1
     end
     ir

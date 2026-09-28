@@ -79,7 +79,10 @@ end
 module Kernel
   # C: src/kernel.c mrb_obj_not_match
   def !~(arg)
-    (self =~ arg) ? false : true
+    ai = __fpga_gc_arena_save
+    matched = (self =~ arg) ? true : false # mrb_funcall_argv
+    __fpga_gc_arena_restore(ai)
+    matched ? false : true
   end
 
   # <=>: 呼び出しの鎖に同じ self と引数の <=> があれば nil (再帰の印)、== なら 0

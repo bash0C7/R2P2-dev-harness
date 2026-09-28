@@ -1208,7 +1208,10 @@ class Hash
     h = __fpga_addr(self)
     __fpga_hash_modify(self)
     return nil if __fpga_h_size(h) == 0
-    __fpga_h_shift(h) # mrb_assoc_new
+    kv = __fpga_h_shift(h) # [del_key, del_val] (h_shift が mrb_assoc_new の配列にして返す)
+    __fpga_gc_protect_value(__fpga_aref(kv, 0))
+    __fpga_gc_protect_value(__fpga_aref(kv, 1))
+    kv
   end
 
   # C: src/hash.c mrb_hash_values
@@ -1232,6 +1235,7 @@ class Hash
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
     __fpga_st32(ci + 4, __fpga_addr(:inspect)) # L:CI_MID mrb->c->ci->mid = MRB_SYM(inspect)
     ret = "{"
+    ai = __fpga_gc_arena_save
     if __fpga_recursive_method_p(ci, __fpga_addr(:inspect), self, nil)
       __fpga_str_cat_str(ret, "...}")
       return ret
@@ -1246,6 +1250,7 @@ class Hash
       key = __fpga_ldv(e + 0) # L:HE_KEY
       if __fpga_tag(key) == 4 # L:TAG_SYM
         __fpga_str_cat_str(ret, __fpga_obj_as_string(key))
+        __fpga_gc_arena_restore(ai)
         __fpga_str_cat_str(ret, ": ")
       else
         c = __fpga_h_check_modified_init(h)
@@ -1253,6 +1258,7 @@ class Hash
           __fpga_str_cat_str(ret, __fpga_inspect(key))
           __fpga_h_check_modified_validate(c, h)
         end
+        __fpga_gc_arena_restore(ai)
         __fpga_str_cat_str(ret, " => ")
       end
       c = __fpga_h_check_modified_init(h)
@@ -1260,6 +1266,7 @@ class Hash
         __fpga_str_cat_str(ret, __fpga_inspect(__fpga_ldv(e + 16))) # L:HE_VAL
         __fpga_h_check_modified_validate(c, h)
       end
+      __fpga_gc_arena_restore(ai)
       e += 32 # L:HASH_ENTRY
       n -= 1
       i += 1
@@ -1339,11 +1346,13 @@ class Hash
     klen = __fpga_alen(keys)
     h = __fpga_addr(self)
     result = []
+    ai = __fpga_gc_arena_save
     i = 0
     while i < klen && i < __fpga_alen(keys)
       val = __fpga_h_get(h, __fpga_aref(keys, i))
       return false if __fpga_tag(val) == 6 # L:TAG_UNDEF
       result.__fpga_push1(val)
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     result
@@ -1356,6 +1365,7 @@ class Hash
     klen = __fpga_alen(keys)
     result = __fpga_hash_new
     h = __fpga_addr(self)
+    ai = __fpga_gc_arena_save
     n = __fpga_h_size(h)
     e = __fpga_h_ea(h)
     en = e + __fpga_h_ea_capa(h) * 32 # L:HASH_ENTRY H_EACH
@@ -1382,6 +1392,7 @@ class Hash
           __fpga_h_check_modified_validate(c, h)
         end
       end
+      __fpga_gc_arena_restore(ai)
       e += 32 # L:HASH_ENTRY
       n -= 1
     end
@@ -1392,9 +1403,12 @@ class Hash
   # C: mrbgems/mruby-hash-ext/src/hash_ext.c hash_values_at
   def values_at(*args)
     result = []
+    return result if __fpga_alen(args) == 0
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(args)
       result.__fpga_push1(__fpga_hash_get(self, __fpga_aref(args, i)))
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     result

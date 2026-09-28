@@ -39,8 +39,12 @@ class Object
     main = __fpga_obj(__fpga_image(4)) # L:IMG_top_self
     m = __fpga_search(__fpga_addr(Object), __fpga_addr(:__fpga_inspect_main))
     sc = __fpga_singleton(main)
+    ai = __fpga_gc_arena_save # define_method_id
     __fpga_define(sc, __fpga_addr(:inspect), __fpga_and(m, -4), 0) # L:VIS_MASK (~3) L:VIS_PUBLIC
+    __fpga_gc_arena_restore(ai)
+    ai = __fpga_gc_arena_save # define_method_id
     __fpga_define(sc, __fpga_addr(:to_s), __fpga_and(m, -4), 0)
+    __fpga_gc_arena_restore(ai)
   end
 
   # C: src/object.c mrb_any_to_s
