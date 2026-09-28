@@ -36,8 +36,12 @@ module FpgaV2
     MRBLIB_GEMS_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems", "picoruby-mruby", "lib", "mruby", "mrbgems")
     MRBLIB_GEMS = %w[mruby-proc-ext mruby-toplevel-ext mruby-object-ext mruby-numeric-ext mruby-string-ext mruby-array-ext
                      mruby-hash-ext mruby-sprintf].freeze
+    # 板の gem (PicoRuby の gem、core の gem の後)。C は firmware に写す (計画 S7-1)
+    BOARD_GEMS_DIR = File.join(ROOT, "vendor", "picoruby", "mrbgems")
+    MRBLIB_BOARD_GEMS = %w[picoruby-gpio].freeze
     def mrblib_sources
-      Dir[File.join(MRBLIB_DIR, "*.rb")].sort + MRBLIB_GEMS.flat_map { |g| Dir[File.join(MRBLIB_GEMS_DIR, g, "mrblib", "*.rb")].sort }
+      Dir[File.join(MRBLIB_DIR, "*.rb")].sort + MRBLIB_GEMS.flat_map { |g| Dir[File.join(MRBLIB_GEMS_DIR, g, "mrblib", "*.rb")].sort } +
+        MRBLIB_BOARD_GEMS.flat_map { |g| Dir[File.join(BOARD_GEMS_DIR, g, "mrblib", "*.rb")].sort }
     end
     def mrblib = compile(mrblib_sources, debug: false)
 

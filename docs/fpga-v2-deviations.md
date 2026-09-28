@@ -61,6 +61,17 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D25 | estalloc の firmware の写しは 64bit で C の .so と比べる。32bit の型は estalloc 自身の make の組み合わせだけで確かめる | estalloc.c (`PLATFORM_64BIT`) | 64bit の CRuby は 32bit の .so を読めない | 無い | 予定 S6 |
 | D26 | profile の違い: FPGA は constrained (heap page 128、`KHASH_INITIAL_SIZE` 16)、基準の host は baseline (1024) | `picoruby-mruby/mrbgem.rake`、mrbconf.h | FPGA は組み込みの build を写す | `GC.stat` の値 | 今ある (host は変えない) |
 
+## 板のモデルと task (計画 S7、[S7-1](superpowers/plans/2026-09-28-fpga-v2-s7-gems.md))
+
+| D | 違い | mruby の正本 | 理由 | 見える所 | 状態 |
+|---|---|---|---|---|---|
+| D100 | 板のモデルの時刻は tick (`MRB_TICK_UNIT` ms) の数で、全 task が待つ時 (scheduler の idle と HAL の止まる sleep) だけ 1 tick ずつ進む。命令は時間を使わず、tick の割り込みは idle の中でだけ入る。host の fpga の VM も firmware-patches の `posix-board-clock.patch` で同じにする (SIGALRM を使わない) | mruby-task の ports/posix/task_hal.c (SIGALRM と setitimer で実時間の tick) | host と ref でピンの列を同じ時刻で比べるため (実時間と命令の速さに依らない) | 時間切れ (timeslice) の task の切り替えが起きない。止まる sleep は tick の単位に切り捨てる | 今ある。V4 のボードエミュレーターで 100 MHz の時刻に置き換える |
+| D101 | 板のモデルのピンは 32 本 (0〜31)。入力は pull down の時 0、ほかは 1。32 以上のピンは無い (書いても変わらず、読むと 1)。`open_drain`、`set_function`、HIGH_Z は何もしない。LED のピンは板のモデルの定数 (`Board::LED_PIN`) | picoruby-gpio の ports/rp2040/gpio.c (pico-sdk の gpio) | PERIDOT-Air のピンの割り当ては V4 で決める | ピンの番号と入力の既定値 | 今ある。V4 で板の資料に合わせる |
+| D102 | GPIO と task の port の関数 (`GPIO_*`、`mrb_hal_task_*`、tick の割り込みの処理) を mmio の読み書き (layout.rb の `MMIO_*`) で書く。割り込みは WFI の後に firmware が IRQ のレジスタを見て処理する | picoruby-gpio の ports/*/gpio.c、mruby-task の ports/*/task_hal.c | FPGA の port には C が無い | 無い | 今ある |
+| D103 | プログラムは root_c の firmware のフレームの上で走り、task の context (mrb_context、stack、ci) を作らない。起動が 1 本ごとに main task の構造体 (mrb_task の next、priority、status、reason、timeslice、wait.wakeup_tick) だけを作り、走っている task を mrb_state の延長の語 (`task_running`) に置く (MRB2TASK の代わり)。sleep は task を WAITING にし、VM から scheduler へ戻る代わりに sleep の中で task_run_body の loop を回す | mruby-task の task.c (task_init_context、execute_task、MRB2TASK)、picoruby-bin-picoruby の mrc_create_task | Task.new と Task::Queue はまだ写していない。task が 1 つなら見える順は同じ | Task クラス (`Task.current`、`Task.new` ほか) が無い | 今ある。**Task を写す時 (S7 の後の段) に消す** |
+| D104 | C の整数の型 (uint32_t の桁あふれ、int32_t への cast、uint8_t への切り詰め、int への cast) を firmware の helper (`__fpga_u32`、`__fpga_i32` ほか) で書く | task.c の tick の比べ方、gpio.c の pin_num と port の引数 | firmware の Integer は符号付きの 64bit | 無い | 今ある |
+| D105 | sleep_us_impl の「C の関数の中か」(ci->cci > 0) は、プログラムの `__fpga_run` のフレームより上だけを見る。sleep を呼んだ firmware のフレームの並び (C の関数そのもの) より下に firmware のフレーム (像の中の Proc) があれば、C の関数の中とみなす | task.c の sleep_us_impl | firmware の起動と run のフレームは CINFO_DIRECT で、C の関数の写しのフレームは CINFO_NONE で積む (D11) | 無い | 今ある |
+
 ## 範囲 (accept の範囲外の理由)
 
 | D | 範囲外 | 理由 | 確かめ方 (accept.rb) |
