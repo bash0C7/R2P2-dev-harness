@@ -111,12 +111,13 @@ module FpgaV2
     attr_reader :console, :stats, :steps, :stbase
 
     def initialize(image, max_steps: 10_000_000)
-      @m = image.dup.force_encoding(Encoding::BINARY)
+      @m = Ref.buffer(image)
       @max = max_steps
       @steps = 0
       @console = +"".b
       @stats = Hash.new(0)
       @cache = {}
+      @dcache = {}
       h = ->(k) { r32(IMG.fetch(k) * WORD) }
       # 回路のレジスタに当たるもの (mrb_state と mrb_context から起動の時に読む定数の番地と、ヒープの bump の位置)
       @heap = h.(:heap_start)
@@ -132,44 +133,49 @@ module FpgaV2
       @f = nil
     end
 
-    # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる
+    # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる。
+    # @dcache は命令のデコードの cache (回路の命令 cache に当たる記憶の写し。fetch が使う前に記憶のバイト列と比べるので、書き込みで外れる)
     CRUBY_STATE = %i[
       @m @max @steps @console @stats @cache @heap @heap_end @ctx @stbase @stend @core @prims @main @entry @object @f
-      @sym_ids @iseq_cache @pc_next @jumped
+      @sym_ids @dcache @pc_next @jumped
     ].freeze
+
+    # 起動の像を写した記憶 (IO::Buffer は CRuby 3.3 で experimental の警告を出すので、作る間だけ黙らせる)
+    def self.buffer(image)
+      warn = Warning[:experimental]
+      Warning[:experimental] = false
+      buf = IO::Buffer.new(image.bytesize)
+      buf.set_string(image.b)
+      buf
+    ensure
+      Warning[:experimental] = warn
+    end
 
     # 使ったヒープのバイト数 (accept の記録。GC が無い間は確保の合計)
     def heap_used = @heap - r32(IMG.fetch(:heap_start) * WORD)
 
     # --- 記憶
-    def r8(a) = @m.getbyte(a)
-    def w8(a, v) = @m.setbyte(a, v & 0xFF)
-    def r16(a) = (@m.getbyte(a) << 8) | @m.getbyte(a + 1)
-    def r32(a) = (@m.getbyte(a) << 24) | (@m.getbyte(a + 1) << 16) | (@m.getbyte(a + 2) << 8) | @m.getbyte(a + 3)
-
-    def w32(a, v)
-      v &= 0xFFFF_FFFF
-      @m.setbyte(a, v >> 24)
-      @m.setbyte(a + 1, (v >> 16) & 0xFF)
-      @m.setbyte(a + 2, (v >> 8) & 0xFF)
-      @m.setbyte(a + 3, v & 0xFF)
-    end
+    # 記憶は IO::Buffer (big endian の語を 1 回で読み書きする)。バイト列は bytes_at / put_bytes
+    def r8(a) = @m.get_value(:U8, a)
+    def w8(a, v) = @m.set_value(:U8, a, v & 0xFF)
+    def r16(a) = @m.get_value(:U16, a)
+    def r32(a) = @m.get_value(:U32, a)
+    def w32(a, v) = @m.set_value(:U32, a, v & 0xFFFF_FFFF)
+    def bytes_at(a, n) = @m.get_string(a, n)
+    def put_bytes(a, s) = @m.set_string(s, a)
 
     def s64(v) = (v &= MASK64) >= 1 << 63 ? v - (1 << 64) : v
 
+    # 値の枠 (VALUE バイト): タグの語、0 の語、64bit の値
     def rv(a)
-      tag = r32(a)
-      v = (r32(a + 8) << 32) | r32(a + 12)
-      [tag, tag == TAG_INT ? s64(v) : v]
+      tag = @m.get_value(:U32, a)
+      [tag, @m.get_value(tag == TAG_INT ? :S64 : :U64, a + 8)]
     end
 
     def wv(a, val)
-      tag, v = val
-      v &= MASK64
-      w32(a, tag)
-      w32(a + 4, 0)
-      w32(a + 8, v >> 32)
-      w32(a + 12, v & 0xFFFF_FFFF)
+      @m.set_value(:U32, a, val[0] & 0xFFFF_FFFF)
+      @m.set_value(:U32, a + 4, 0)
+      @m.set_value(:U64, a + 8, val[1] & MASK64)
     end
 
     NIL = [TAG_NIL, 0].freeze
@@ -180,12 +186,29 @@ module FpgaV2
     def truthy?(v) = v[0] != TAG_NIL && v[0] != TAG_FALSE
 
     # --- レジスタ (今のフレームの窓)
-    def reg(i) = rv(@stbase + (@f.bp + i) * VALUE)
+    # (rv と wv を中に開いてある)
+    def reg(i)
+      a = @stbase + (@f.bp + i) * VALUE
+      tag = @m.get_value(:U32, a)
+      [tag, @m.get_value(tag == TAG_INT ? :S64 : :U64, a + 8)]
+    end
 
     def setreg(i, v)
       a = @stbase + (@f.bp + i) * VALUE
       raise Error, "stack overflow" if a + VALUE > @stend
-      wv(a, v)
+      @m.set_value(:U32, a, v[0] & 0xFFFF_FFFF)
+      @m.set_value(:U32, a + 4, 0)
+      @m.set_value(:U64, a + 8, v[1] & MASK64)
+    end
+
+    # MOVE: setreg(a, reg(b)) と同じ記憶の中身 (タグの語、0 の語、値の 64bit をそのまま)
+    def move(a, b)
+      s = @stbase + (@f.bp + b) * VALUE
+      d = @stbase + (@f.bp + a) * VALUE
+      raise Error, "stack overflow" if d + VALUE > @stend
+      @m.set_value(:U32, d, @m.get_value(:U32, s))
+      @m.set_value(:U32, d + 4, 0)
+      @m.set_value(:U64, d + 8, @m.get_value(:U64, s + 8))
     end
 
     # --- クラス
@@ -217,11 +240,13 @@ module FpgaV2
       capa = r32(head + MT_CAPA)
       rows = r32(head + MT_ROWS)
       i = sym & (capa - 1)
-      capa.times do
+      k = 0
+      while k < capa
         s = r32(rows + i * MT_ENTRY)
         return nil if s == MT_EMPTY
         return r32(rows + i * MT_ENTRY + 4) if s == sym
         i = (i + 1) & (capa - 1)
+        k += 1
       end
       nil
     end
@@ -239,7 +264,7 @@ module FpgaV2
         loop do
           p = r32(tab + i * 8)
           raise Error, "symbol #{name} is not in the image" if p.zero?
-          break i if r32(tab + i * 8 + 4) == name.bytesize && @m.byteslice(p, name.bytesize) == name
+          break i if r32(tab + i * 8 + 4) == name.bytesize && bytes_at(p, name.bytesize) == name
           i = (i + 1) & (capa - 1)
         end
       end
@@ -247,7 +272,7 @@ module FpgaV2
 
     def sym_name(id)
       tab = r32(IMG[:symtbl] * WORD)
-      @m.byteslice(r32(tab + id * 8), r32(tab + id * 8 + 4))
+      bytes_at(r32(tab + id * 8), r32(tab + id * 8 + 4))
     end
 
     # --- 実行
@@ -261,28 +286,41 @@ module FpgaV2
       @console
     end
 
-    def iseq_byte_reader(ir) = r32(ir + I_ISEQ)
+    # 命令の長さの上限 (EXT + 命令 + BSS の 5 バイト)
+    INSN_MAX = 7
 
+    # 命令の読み出しとデコード。デコードの cache (@dcache) は回路の命令 cache に当たる記憶の写しで、
+    # 命令の番地 → [iseq の先頭, 命令のバイト列 (Integer), 右へずらす bit 数, Insn, 回路が実行するか]。
+    # 使う前に記憶の今のバイト列と比べるので、書き込み (自己書き換え) の後は外れてデコードし直す
     def fetch
       ir = @f.irep
-      base = r32(ir + I_ISEQ)
-      len = r32(ir + I_ILEN)
-      @iseq_cache ||= {}
-      iseq = (@iseq_cache[base] ||= @m.byteslice(base, len))
-      Ops.decode(iseq, @f.pc)
+      base = @m.get_value(:U32, ir + I_ISEQ)
+      len = @m.get_value(:U32, ir + I_ILEN)
+      addr = @m.get_value(:U32, @f.addr + CI_PC)
+      e = @dcache[addr]
+      whole = addr + 8 <= @m.size # 命令の後ろを含めて 8 バイト読めるか (記憶の終わりの命令は cache しない)
+      return e if e && whole && e[0] == base && e[3].next_pc <= len && (@m.get_value(:U64, addr) >> e[2]) == e[1]
+
+      pc = addr - base
+      i = Ops.decode(bytes_at(base, [len, pc + INSN_MAX].min), pc)
+      shift = 64 - (i.next_pc - pc) * 8
+      @dcache[addr] = [base, whole ? @m.get_value(:U64, addr) >> shift : -1, shift, i, HW_OPS.include?(i.name)]
     end
 
     def step
       @steps += 1
-      i = fetch
+      e = fetch
+      i = e[3]
       @pc_next = i.next_pc
       @stats[:insn] += 1
-      if HW_OPS.include?(i.name)
+      if e[4]
         exec(i)
       else
         trap_op(i)
       end
-      @f.pc = @pc_next if @f && !@jumped
+      if @f && !@jumped # @f.pc = @pc_next を開いたもの
+        @m.set_value(:U32, @f.addr + CI_PC, (@m.get_value(:U32, @f.irep + I_ISEQ) + @pc_next) & 0xFFFF_FFFF)
+      end
       @jumped = false
     end
 
@@ -297,12 +335,12 @@ module FpgaV2
       c = i.c
       case i.name
       when "NOP"
-      when "MOVE" then setreg(a, reg(b))
+      when "MOVE" then move(a, b)
       when "LOADL" then setreg(a, pool(b))
       when "LOADI8" then setreg(a, int(b))
       when "LOADINEG" then setreg(a, int(-b))
       when "LOADI__1" then setreg(a, int(-1))
-      when /\ALOADI_(\d)\z/ then setreg(a, int(Regexp.last_match(1).to_i))
+      when "LOADI_0", "LOADI_1", "LOADI_2", "LOADI_3", "LOADI_4", "LOADI_5", "LOADI_6", "LOADI_7" then setreg(a, int(i.name.getbyte(6) - 48))
       when "LOADI16" then setreg(a, int(b >= 0x8000 ? b - 0x10000 : b))
       when "LOADI32" then setreg(a, int(s32((b << 16) | c)))
       when "LOADSYM" then setreg(a, [TAG_SYM, irep_sym(@f.irep, b)])
@@ -314,12 +352,12 @@ module FpgaV2
       when "JMPIF" then jump(@pc_next + s16(b)) if truthy?(reg(a))
       when "JMPNOT" then jump(@pc_next + s16(b)) unless truthy?(reg(a))
       when "JMPNIL" then jump(@pc_next + s16(b)) if reg(a)[0] == TAG_NIL
-      when "SEND", "SSEND", "SENDB", "SSENDB"
-        setreg(a, reg(0)) if i.name.start_with?("SS")
-        send_op(a, irep_sym(@f.irep, b), c, i.name.end_with?("B"), fcall: i.name.start_with?("SS"))
-      when "SEND0", "SSEND0"
-        setreg(a, reg(0)) if i.name == "SSEND0"
-        send_op(a, irep_sym(@f.irep, b), 0, false, fcall: i.name == "SSEND0")
+      when "SEND" then send_op(a, irep_sym(@f.irep, b), c, false, fcall: false)
+      when "SENDB" then send_op(a, irep_sym(@f.irep, b), c, true, fcall: false)
+      when "SSEND" then (move(a, 0); send_op(a, irep_sym(@f.irep, b), c, false, fcall: true))
+      when "SSENDB" then (move(a, 0); send_op(a, irep_sym(@f.irep, b), c, true, fcall: true))
+      when "SEND0" then send_op(a, irep_sym(@f.irep, b), 0, false, fcall: false)
+      when "SSEND0" then (move(a, 0); send_op(a, irep_sym(@f.irep, b), 0, false, fcall: true))
       when "ENTER" then enter(a)
       when "RETURN" then return_op(reg(a))
       when "RETURN_BLK" # env のある strict でないブロックは罠 (vm.c の OP_RETURN_BLK)。ほかは RETURN と同じ
@@ -370,17 +408,21 @@ module FpgaV2
     # mrb_state.bop_redefined の bit (mruby.h の MRB_BOP_*): 演算子を再定義したら、回路の近道をやめて送る (vm.c の OP_ADD / OP_CMP / OP_EQ)
     BOP_SLOT = { "ADD" => 0, "SUB" => 1, "MUL" => 2, "DIV" => 3, "EQ" => 4, "LT" => 5, "LE" => 6, "GT" => 7, "GE" => 8 }.freeze
     # firmware (像の中の Proc、C の関数の写し) の命令は再定義を見ない (C の演算子は Ruby のメソッドを呼ばない)
-    def bop = @f.proc < r32(IMG.fetch(:heap_start) * WORD) ? 0 : r32(IMG.fetch(:bop_redefined) * WORD)
-    def bop_int?(name) = (bop & (1 << BOP_SLOT.fetch(name))).zero?
+    HEAP_START_AT = IMG.fetch(:heap_start) * WORD
+    BOP_REDEFINED_AT = IMG.fetch(:bop_redefined) * WORD
+    BOP_BIT = BOP_SLOT.transform_values { |k| 1 << k }.freeze
+    def bop = @f.proc < r32(HEAP_START_AT) ? 0 : r32(BOP_REDEFINED_AT)
+    def bop_int?(name) = (bop & BOP_BIT.fetch(name)).zero?
 
     OPSYM = { "ADD" => "+", "SUB" => "-", "MUL" => "*", "DIV" => "/", "EQ" => "==", "LT" => "<", "LE" => "<=", "GT" => ">", "GE" => ">=" }.freeze
+    OPSYM_SYM = OPSYM.transform_values(&:to_sym).freeze
 
     # 整数同士なら回路で (64bit、桁あふれは罠)。ほかはメソッドを送る (mruby の OP_ADD と同じ)
     def arith(name, a)
       x = reg(a)
       y = reg(a + 1)
       if x[0] == TAG_INT && y[0] == TAG_INT && bop_int?(name)
-        r = x[1].send(OPSYM[name].to_sym, y[1])
+        r = x[1].send(OPSYM_SYM[name], y[1])
         return overflow(name, a) if r < INT_MIN || r > INT_MAX
         return setreg(a, int(r))
       end
@@ -426,10 +468,11 @@ module FpgaV2
 
     # OP_EQ の近道 (同じ即値は真、Symbol は偽) は、Integer / Float / Symbol の == と nil / true / false の == のどれも再定義されていない時だけ。
     # heap の物は送る (mruby は同じ物で EQ_DEFINED の無いクラスなら真だが、送っても BasicObject#== が同じ答え)。Float は firmware (D50)
+    EQ_MASK = (1 << BOP_SLOT["EQ"]) | (1 << (BOP_COUNT + BOP_SLOT["EQ"])) | (1 << BOP_SYMBOL_EQ_SLOT) | BOP_NIL_TRUE_FALSE_EQ
     def compare(name, a)
       x = reg(a)
       y = reg(a + 1)
-      eq_mask = (1 << BOP_SLOT["EQ"]) | (1 << (BOP_COUNT + BOP_SLOT["EQ"])) | (1 << BOP_SYMBOL_EQ_SLOT) | BOP_NIL_TRUE_FALSE_EQ
+      eq_mask = EQ_MASK
       if name == "EQ" && (bop & eq_mask).zero? && x[0] != TAG_OBJ && x[0] != TAG_FLOAT
         return setreg(a, TRUE_) if x == y
         return setreg(a, FALSE_) if x[0] == TAG_SYM
@@ -438,7 +481,7 @@ module FpgaV2
         return setreg(a, TRUE_) # 同じ物で、クラスが == を定義していない (MRB_FL_CLASS_EQ_DEFINED が無い)
       end
       if x[0] == TAG_INT && y[0] == TAG_INT && bop_int?(name)
-        return setreg(a, x[1].send(OPSYM[name].to_sym, y[1]) ? TRUE_ : FALSE_)
+        return setreg(a, x[1].send(OPSYM_SYM[name], y[1]) ? TRUE_ : FALSE_)
       end
       if name == "EQ" && (bop & eq_mask).zero? && x[0] != TAG_OBJ && x[0] != TAG_FLOAT && y[0] != TAG_OBJ && y[0] != TAG_FLOAT
         return setreg(a, FALSE_) # 違う即値 (nil / true / false / Integer と Symbol の組): 送っても BasicObject#== と Integer#== が偽
@@ -491,6 +534,9 @@ module FpgaV2
     # 窓の中の引数の枠の数 (キーワードの Hash も数える)
     def wlen(n) = (n & CALL_ARGS) + ((n & CALL_KW).zero? ? 0 : 1)
 
+    # メソッドの cache の鍵 {クラス, シンボル} (どちらも 32bit) を 1 つの Integer に
+    def mkey(cls, sym) = (cls << 32) | sym
+
     # 引いて呼ぶ。ret_pc は呼び出しの後に続ける pc (罠から戻った時も同じ所へ)。dst は結果を置く呼んだ側のレジスタ
     def dispatch(a, sym, n, ret_pc, dst: nil, fcall: false)
       if (prim = table_get(@prims, sym))
@@ -499,7 +545,7 @@ module FpgaV2
         return prim_call(prim, a, n & CALL_ARGS)
       end
       cls = class_of(reg(a))
-      if (e = @cache[[cls, sym]]) # {メソッド表の値, 見つかったクラス} (vm.c の mrb_vm_find_method の *cp、mrb_cache_entry の c0)
+      if (e = @cache[mkey(cls, sym)]) # {メソッド表の値, 見つかったクラス} (vm.c の mrb_vm_find_method の *cp、mrb_cache_entry の c0)
         @stats[:mcache_hit] += 1
         return call_entry(e[0], a, n, sym, ret_pc, dst, fcall, e[1])
       end
@@ -586,7 +632,7 @@ module FpgaV2
 
     # mrb_callinfo を 1 つ書いて今のフレームにする (ctx->ci も)
     def write_ci(ci, pr, stack, mid, kind, resume, dst, n, tclass = nil)
-      @m[ci, CI_SIZE] = ("\x00" * CI_SIZE).b
+      @m.clear(0, ci, CI_SIZE)
       w8(ci + CI_CCI, kind == :call ? CINFO_NONE : CINFO_DIRECT)
       w32(ci + CI_MID, mid)
       w32(ci + CI_PROC, pr)
@@ -733,7 +779,7 @@ module FpgaV2
         return send_kw(a, sym, n, true, true, fcall, ret_pc)
       when :send # 探索の罠の結果: メソッド表の値 (Integer) か nil
         @pc_next = ret_pc
-        return call_entry(v[1], a, n, sym, ret_pc, dst, fcall, @cache[[class_of(reg(a)), sym]]&.last) if v[0] == TAG_INT
+        return call_entry(v[1], a, n, sym, ret_pc, dst, fcall, @cache[mkey(class_of(reg(a)), sym)]&.last) if v[0] == TAG_INT
         missing(a, n, sym, ret_pc, dst)
       end
     end
@@ -779,7 +825,7 @@ module FpgaV2
           when "__fpga_lo" then int(args[0][1] & 0xFFFF_FFFF)
           when "__fpga_putc" then (@console << (args[0][1] & 0xFF).chr; NIL)
           when "__fpga_alloc" then int(alloc(args[0][1]))
-          when "__fpga_mcache_fill" then (@cache[[args[0][1], args[1][1]]] = [args[2][1], args[3][1]]; NIL) # (cls, sym, 値, 見つかったクラス)
+          when "__fpga_mcache_fill" then (@cache[mkey(args[0][1], args[1][1])] = [args[2][1], args[3][1]]; NIL) # (cls, sym, 値, 見つかったクラス)
           when "__fpga_mcache_clear" then (@cache.clear; NIL)
           when "__fpga_mid" then [TAG_SYM, trapped[0].mid] # 罠を起こしたフレームのメソッドの名前 (mruby の ci->mid)
           when "__fpga_proc" then int(trapped[0].proc) # 罠を起こしたフレームの Proc (定数の字句の鎖、super、def の upper)
@@ -796,7 +842,7 @@ module FpgaV2
           when "__fpga_xor" then int(s64(args[0][1] ^ args[1][1]))
           when "__fpga_shl" then int(s64(args[0][1] << args[1][1]))
           when "__fpga_shr" then int(args[0][1] >> args[1][1])
-          when "__fpga_copy" then (@m[args[0][1], args[2][1]] = @m.byteslice(args[1][1], args[2][1]); NIL) # 記憶の写し (dst, src, n)
+          when "__fpga_copy" then (put_bytes(args[0][1], bytes_at(args[1][1], args[2][1])); NIL) # 記憶の写し (dst, src, n)
           when "__fpga_core" then obj(r32(@core + args[0][1] * WORD)) # 組み込みのクラスの表
           when "__fpga_rem" then int(args[0][1].remainder(args[1][1])) # 0 に向けて切った剰余 (C の %、除算器の余り)。0 で割るのは呼ぶ側が調べる
           when "__fpga_halt" then raise Halt
@@ -976,7 +1022,7 @@ module FpgaV2
         w32(u + E_STACK, 0)
       else
         buf = alloc(len * VALUE)
-        @m[buf, len * VALUE] = @m.byteslice(r32(u + E_STACK), len * VALUE)
+        put_bytes(buf, bytes_at(r32(u + E_STACK), len * VALUE))
         w32(u + E_STACK, buf)
       end
       w32(u + E_CXT, 0)
@@ -1008,7 +1054,7 @@ module FpgaV2
         capa = [capa, 4].max
         capa *= 2 while capa < need
         buf = alloc(capa * VALUE)
-        @m[buf, len * VALUE] = @m.byteslice(r32(ary + A_PTR), len * VALUE)
+        put_bytes(buf, bytes_at(r32(ary + A_PTR), len * VALUE))
         w32(ary + A_PTR, buf)
         w32(ary + A_CAPA, capa)
       end
