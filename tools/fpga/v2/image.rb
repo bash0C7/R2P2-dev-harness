@@ -34,7 +34,9 @@ module FpgaV2
       ["FloatDomainError", "RangeError", :class], ["RegexpError", "StandardError", :class], ["TypeError", "StandardError", :class],
       ["ZeroDivisionError", "StandardError", :class], ["SyntaxError", "ScriptError", :class], ["IndexError", "StandardError", :class],
       ["KeyError", "IndexError", :class], ["NoMatchingPatternError", "StandardError", :class],
-      ["SystemStackError", "Exception", :class], ["NoMemoryError", "Exception", :class]
+      ["SystemStackError", "Exception", :class], ["NoMemoryError", "Exception", :class],
+      # gem の C が起動で定義するクラス (picoruby-gpio の mrb_picoruby_gpio_gem_init の mrb_define_class_id)
+      ["GPIO", "Object", :class]
     ].freeze
     # インスタンスの tt (boot_defclass と MRB_SET_INSTANCE_TT をする所: class.c、error.c、string.c、array.c、hash.c、range.c、proc.c、symbol.c、numeric.c、object.c)。
     # ほかのクラスは親から継ぐ (class.c の boot_defclass)
