@@ -861,7 +861,7 @@ class BasicObject
 
   # C: src/class.c mrb_f_send
   def __send__(name, *args, &blk)
-    __fpga_sendv(self, name, args, blk, true)
+    __fpga_sendv(self, __fpga_mkval(4, __fpga_obj_to_sym(name)), args, blk, true) # L:TAG_SYM send_method の mrb_obj_to_sym
   end
 end
 
@@ -879,12 +879,12 @@ module Kernel
 
   # C: mrbgems/mruby-metaprog/src/metaprog.c mrb_f_send
   def send(name, *args, &blk)
-    __fpga_sendv(self, name, args, blk, true)
+    __fpga_sendv(self, __fpga_mkval(4, __fpga_obj_to_sym(name)), args, blk, true) # L:TAG_SYM send_method の mrb_obj_to_sym
   end
 
   # C: mrbgems/mruby-metaprog/src/metaprog.c mrb_f_public_send
   def public_send(name, *args, &blk)
-    __fpga_sendv(self, name, args, blk, false)
+    __fpga_sendv(self, __fpga_mkval(4, __fpga_obj_to_sym(name)), args, blk, false) # L:TAG_SYM send_method の mrb_obj_to_sym
   end
 
   # C: src/kernel.c obj_respond_to
