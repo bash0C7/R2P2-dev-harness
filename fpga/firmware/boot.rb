@@ -9,6 +9,8 @@ class Object
     __fpga_init_main # mrb_init_class の top_self の inspect / to_s
     __fpga_init_numeric # mrb_init_core の mrb_init_numeric
     __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
+    __fpga_init_task # mruby-task の mrb_mruby_task_gem_init (gem の C の init)
+    __fpga_init_gpio # picoruby-gpio の mrb_picoruby_gpio_gem_init (gem の C の init)
     lib = __fpga_image(42) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0
       __fpga_run(__fpga_load(lib), self)
@@ -20,7 +22,10 @@ class Object
     i = 0
     while i < n
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
+      t = __fpga_task_create # main task (picoruby-bin-picoruby の mrc_create_task、D103)
+      __fpga_execute_task(t)
       __fpga_run(ir, self)
+      __fpga_task_stopped(t)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD 捕まらなかった例外 (mrb_load_exec)
       i += 1
     end
