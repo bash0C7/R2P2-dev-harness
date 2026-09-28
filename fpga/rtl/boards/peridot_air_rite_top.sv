@@ -1,4 +1,4 @@
-// PERIDOT-Air (Cyclone IV EP4CE6E22C8) の top: mruby のバイトコードを直接実行する rite_core (最初の反復、Lチカの命令だけ)。
+// PERIDOT-Air (Cyclone IV EP4CE6E22C8) の top: mruby のバイトコードを直接実行する rite_core (反復 R2: Lチカと、ROM の先頭の mruby の mrblib)。
 // ピン名は osafune/peridot_air の fpga/air_blank_top (MIT) に合わせる (fpga/boards/peridot_air/)。
 //
 //   ROM         <- .mrb (host の mrbc で作ったもの、rake fpga:rite:build が rom.hex にする)
@@ -9,7 +9,7 @@
 // CLOCK_50 で 1 ms は 50,000 cycle。点灯の極性 (LED_ACTIVE_LOW) は実機で未確認
 `timescale 1ns / 1ps
 module peridot_air_rite_top #(
-  parameter int ROM_BYTES      = 1024,
+  parameter int ROM_BYTES      = 2048,
   parameter     ROM_FILE       = "",   // string。型を付けると Icarus が渡せない
   parameter int MS_CYCLES      = 50_000,
   parameter int LED_PIN        = 28,

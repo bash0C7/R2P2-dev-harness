@@ -856,10 +856,10 @@ def fpga_quartus_compile(dir)
   puts "svf: #{FpgaQuartus.svf_path(dir).sub("#{HARNESS_ROOT}/", '')}"
 end
 
-# mruby のバイトコードを直接実行する回路 (fpga/rtl/rite_core.sv、最初の反復: Lチカの命令だけ)
+# mruby のバイトコードを直接実行する回路 (fpga/rtl/rite_core.sv、反復 R2: Lチカと mrblib の Kernel#loop)
 namespace :fpga do
   namespace :rite do
-    desc "Write fpga/rite/*.hex (the .mrb as ROM) and *.pins (host PicoRuby's pin changes up to 2000 ms) for rite_core_tb"
+    desc "Write fpga/rite/*.hex (mrblib kernel.rb and the .rb as .mrb, the ROM) and *.pins (host PicoRuby's pin changes up to 2000 ms) for rite_core_tb"
     task hex: "fpga:picoruby" do
       require_relative "../tools/fpga/rite_rtl"
       FpgaRite.programs.each do |rb|

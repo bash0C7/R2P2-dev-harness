@@ -58,7 +58,7 @@ module FpgaSynth
   TARGETS = {
     "counter8" => { files: %w[fpga/rtl/counter8.sv], top: "counter8", budget: { le: 64, m9k: 0, depth: DEPTH_100MHZ } },
     # mruby のバイトコードを直接実行する回路の最初の反復 (Lチカの命令だけ、ROM 1 KB)。予算は PERIDOT-Air の半分まで
-    "rite_core" => { files: %w[fpga/rtl/rite_core.sv fpga/rtl/rite_rom.sv], top: "rite_core", blackbox: %w[rite_rom], budget: { le: 3136, m9k: 0, depth: DEPTH_100MHZ } }
+    "rite_core" => { files: %w[fpga/rtl/rite_core.sv fpga/rtl/rite_rom.sv], top: "rite_core", blackbox: %w[rite_rom], budget: { le: 3136, m9k: 2, depth: DEPTH_100MHZ } }
   }.freeze
 
   class Error < StandardError; end
