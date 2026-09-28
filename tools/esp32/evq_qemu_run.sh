@@ -36,9 +36,14 @@ export PICORB_TASK_STACK_SIZE="${EVQ_TASK_STACK_SIZE:-16384}"
 # buffers share dram0; the rig disables the controller, so take the
 # room back — compiling rigapp.rb on-device needs it (NoMemoryError at
 # 172 KiB under the mruby VM).
-# 220 KiB overflows dram0_0_seg by ~4 KB on IDF v5.5.4; 212 KiB links
-# with headroom.
-export HEAP_SIZE="${EVQ_HEAP_SIZE:-217088}"
+# Per-VM ceiling on IDF v5.5.4: mruby overflows dram0_0_seg at 220 KiB
+# (by ~4 KB) and links at 212 KiB; the femtoruby image is bigger still
+# and overflows at 212 KiB (by ~1.2 KB), so it gets 200 KiB.
+if [ "$VM" = "mruby" ]; then
+  export HEAP_SIZE="${EVQ_HEAP_SIZE:-217088}"
+else
+  export HEAP_SIZE="${EVQ_HEAP_SIZE:-204800}"
+fi
 
 echo "== Configuring ${BUILD_DIR} (PICORB_VM=${VM}) =="
 idf.py -B "$BUILD_DIR" \
