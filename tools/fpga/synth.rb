@@ -5,8 +5,9 @@
 #   ならず flip-flop と mux になる (ASYNC_OK_BITS より大きければ関所で落とす)
 # - 論理: synth_intel -family cycloneiv の cycloneiv_lcell_comb (LUT) と dffeas (FF)。LE はおおよそ max(LUT, FF)。
 #   yosys は乗算を DSP に割り当てないので、乗算の module は blackbox にし、呼ぶ側が DSP の数を足す (MULT_DSP)
-# - 段数: ltp -noff の最長の組み合わせの段数。yosys は carry chain を使わず 32bit の加算が 23 段になる (実測)。
-#   100 MHz の目安は「32bit の加算 1 本 + LUT 6 段」(DEPTH_100MHZ)。Quartus のタイミング解析が取れたらそちらを正にする
+# - 段数: 汎用の synth -lut 4 (FF は yosys の $_DFF_ で、ltp -noff が区切る) の最長の組み合わせの段数。
+#   synth_intel の dffeas は ltp -noff が FF と見なさず、FF を通り抜けて数える (非同期リセットと enable 付きの FF で輪になる) ので使わない。
+#   32bit の加算は 7 段 (実測)。100 MHz の目安は「32bit の加算 1 本 + LUT 6 段」(DEPTH_100MHZ)。Quartus のタイミング解析が取れたらそちらを正にする
 require "json"
 require "open3"
 require "tmpdir"
@@ -21,7 +22,7 @@ module FpgaSynth
   # 組み合わせ読みでも flip-flop で構わない記憶の大きさ (bit)
   ASYNC_OK_BITS = 512
   # 32bit の加算 (yosys で 23 段) + LUT 6 段 (C8 で LUT と配線 1 段 1 ns 前後、加算は carry chain で 3 ns 前後と見た目安)
-  DEPTH_100MHZ = 29
+  DEPTH_100MHZ = 13
   # 32×32 の乗算 1 本が使う 18×18 の乗算器
   MULT_DSP = 4
 
@@ -55,7 +56,9 @@ module FpgaSynth
 
   # rake fpga:synth で数える部品と予算。v2 の部品は段ごとにここへ足す (計画の「予算」の表)
   TARGETS = {
-    "counter8" => { files: %w[fpga/rtl/counter8.sv], top: "counter8", budget: { le: 64, m9k: 0, depth: DEPTH_100MHZ } }
+    "counter8" => { files: %w[fpga/rtl/counter8.sv], top: "counter8", budget: { le: 64, m9k: 0, depth: DEPTH_100MHZ } },
+    # mruby のバイトコードを直接実行する回路の最初の反復 (Lチカの命令だけ、ROM 1 KB)。予算は PERIDOT-Air の半分まで
+    "rite_core" => { files: %w[fpga/rtl/rite_core.sv fpga/rtl/rite_rom.sv], top: "rite_core", blackbox: %w[rite_rom], budget: { le: 3136, m9k: 0, depth: DEPTH_100MHZ } }
   }.freeze
 
   class Error < StandardError; end
@@ -87,7 +90,8 @@ module FpgaSynth
       memories = parse_memories(JSON.parse(File.read(mem_json)))
       stat = File.join(dir, "stat.txt")
       ltp = File.join(dir, "ltp.txt")
-      yosys!(dir, "#{read}synth_intel -family cycloneiv -top #{top}; tee -o #{stat} stat; tee -o #{ltp} ltp -noff", timeout)
+      yosys!(dir, "#{read}synth_intel -family cycloneiv -top #{top}; tee -o #{stat} stat", timeout)
+      yosys!(dir, "#{read}synth -top #{top} -lut 4; tee -o #{ltp} ltp -noff", timeout)
       s = File.read(stat)
       Result.new(top: top, lcells: s[/cycloneiv_lcell_comb\s+(\d+)/, 1].to_i, ffs: s[/dffeas\s+(\d+)/, 1].to_i,
                  depth: File.read(ltp)[/length=(\d+)/, 1].to_i, memories: memories, blackboxes: blackbox)
