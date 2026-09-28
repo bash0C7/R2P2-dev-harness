@@ -13,7 +13,7 @@ class Object
     __fpga_init_gpio # picoruby-gpio の mrb_picoruby_gpio_gem_init (gem の C の init)
     lib = __fpga_image(1092) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0
-      __fpga_run(__fpga_load(lib), self)
+      __fpga_run(__fpga_proc_new(__fpga_load(lib), __fpga_image(5), 0), self) # L:IMG_object_class load.c の mrb_proc_new (target は Object)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD
     end
     __fpga_builtin_op_init # mrb_open_core の bootstrapping の後
@@ -24,7 +24,7 @@ class Object
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
       t = __fpga_task_create # main task (picoruby-bin-picoruby の mrc_create_task、D103)
       __fpga_execute_task(t)
-      __fpga_run(ir, self)
+      __fpga_run(__fpga_proc_new(ir, __fpga_image(5), 0), self) # L:IMG_object_class load.c の mrb_proc_new
       __fpga_task_stopped(t)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD 捕まらなかった例外 (mrb_load_exec)
       i += 1
@@ -53,7 +53,7 @@ class Object
   # --- .mrb の読み込み (load.c の read_irep_record_1)。blob は RITE0400 の先頭の番地。一番外の irep の番地を返す
   # C: src/load.c read_irep
   def __fpga_load(blob)
-    cur = __fpga_alloc(8)
+    cur = __fpga_temp_alloc(8) # C の局所変数 bin を指す番地の代わり (D84)
     __fpga_st32(cur, blob + 32) # 見出し 20 + IREP の section の見出し 12
     irep = __fpga_read_irep(cur)
     __fpga_load_sections(blob, irep)
@@ -84,7 +84,7 @@ class Object
     p = catch + 13 * clen
     plen = __fpga_u16(p)
     p += 2
-    pool = __fpga_alloc((plen > 0 ? plen : 1) * 16) # L:VALUE
+    pool = __fpga_malloc((plen > 0 ? plen : 1) * 16) # L:VALUE
     k = 0
     while k < plen
       tt = __fpga_ld8(p)
@@ -113,7 +113,7 @@ class Object
     end
     slen = __fpga_u16(p)
     p += 2
-    syms = __fpga_alloc((slen > 0 ? slen : 1) * 4)
+    syms = __fpga_malloc((slen > 0 ? slen : 1) * 4)
     k = 0
     while k < slen
       len = __fpga_u16(p)
@@ -126,7 +126,8 @@ class Object
       end
       k += 1
     end
-    ir = __fpga_alloc(52) # L:IREP
+    ir = __fpga_calloc(1, 52) # L:IREP mrb_add_irep
+    __fpga_st8(ir + 48 + 1, 1) # L:I_REFCNT (u16 の下のバイト) irep->refcnt = 1
     __fpga_st32(ir + 0, nlocals * 65536 + nregs) # L:I_NLOCALS (u16 nlocals、u16 nregs)
     __fpga_st32(ir + 4, ilen) # L:I_ILEN
     __fpga_st32(ir + 8, iseq) # L:I_ISEQ
@@ -134,7 +135,7 @@ class Object
     __fpga_st32(ir + 16, plen) # L:I_PLEN
     __fpga_st32(ir + 20, syms) # L:I_SYMS
     __fpga_st32(ir + 24, slen) # L:I_SLEN
-    reps = __fpga_alloc((rlen > 0 ? rlen : 1) * 4)
+    reps = __fpga_malloc((rlen > 0 ? rlen : 1) * 4)
     __fpga_st32(ir + 28, reps) # L:I_REPS
     __fpga_st32(ir + 32, rlen) # L:I_RLEN
     __fpga_st32(ir + 36, catch) # L:I_CATCH
@@ -184,7 +185,7 @@ class Object
 def __fpga_intern_str(s)
   a = __fpga_addr(s)
   len = __fpga_ld32(a + 8) # L:S_LEN
-  buf = __fpga_alloc(len + 1)
+  buf = __fpga_malloc(len + 1)
   __fpga_copy(buf, __fpga_ld32(a + 16), len) # L:S_PTR
   __fpga_intern(buf, len)
 end
@@ -277,7 +278,7 @@ end
   def __fpga_mt_grow(t, capa)
     old = __fpga_ld32(t + 8)
     ocapa = __fpga_ld32(t + 4)
-    rows = __fpga_alloc(capa * 8)
+    rows = __fpga_malloc(capa * 8)
     k = 0
     while k < capa
       __fpga_st32(rows + k * 8, 4294967295)
@@ -292,14 +293,13 @@ end
       __fpga_mt_set(t, e, __fpga_ld32(old + k * 8 + 4)) if e < 4294967295
       k += 1
     end
+    __fpga_free(old)
   end
 
   # --- オブジェクトを作る
   # C: src/proc.c mrb_proc_new
   def __fpga_proc_new(irep, target, flags)
-    pr = __fpga_alloc(64) # L:SLOT
-    __fpga_st32(pr, __fpga_addr(__fpga_core(10))) # L:CORE_PROC
-    __fpga_st32(pr + 4, 16) # L:TT_PROC
+    pr = __fpga_slot(__fpga_addr(__fpga_core(10)), 16) # L:CORE_PROC L:TT_PROC
     __fpga_st32(pr + 8, irep) # L:P_BODY
     __fpga_st32(pr + 12, 0)
     __fpga_st32(pr + 16, 0)
@@ -311,12 +311,10 @@ end
   # 記憶の ptr から len バイトの String (string.c の mrb_str_new)
   # C: src/string.c mrb_str_new
   def __fpga_str_new(ptr, len)
-    s = __fpga_alloc(64) # L:SLOT
-    buf = __fpga_alloc(len + 1)
+    s = __fpga_slot(__fpga_addr(__fpga_core(9)), 18) # L:CORE_STRING L:TT_STRING
+    buf = __fpga_malloc(len + 1)
     __fpga_copy(buf, ptr, len)
     __fpga_st8(buf + len, 0)
-    __fpga_st32(s, __fpga_addr(__fpga_core(9))) # L:CORE_STRING
-    __fpga_st32(s + 4, 18) # L:TT_STRING
     __fpga_st32(s + 8, len) # L:S_LEN
     __fpga_st32(s + 12, len) # L:S_CAPA
     __fpga_st32(s + 16, buf) # L:S_PTR

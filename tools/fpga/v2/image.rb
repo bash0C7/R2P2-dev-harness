@@ -7,6 +7,7 @@
 # - シンボル表 (presym) と特権の primitive の表
 require_relative "layout"
 require_relative "ops"
+require_relative "est_host"
 
 module FpgaV2
   class Image
@@ -17,6 +18,8 @@ module FpgaV2
     SYM_CAPA = 65_536
     STACK_VALUES = 65_536 # VM のスタック (値の並び)
     CI_FRAMES = 4096 # mrb_context の ci の並びの数 (1 つは layout.rb の CI_SIZE バイト)
+    # estalloc の pool の頭 (heap_start、D86)。像の ROM (シンボル表、スタック、.mrb) はこの前、書き換わる物 (heap page、表) は後ろ
+    POOL_BASE = 8 * 1024 * 1024
 
     # コアのクラス: [名前, 親, :class / :module]。mruby の C が定義するもの (class.c の mrb_init_class、object.c、numeric.c、error.c の
     # mrb_init_exception ...) と同じ親。mrblib が定義するもの (Comparable、NameError、NoMethodError、StopIteration) と include は mrblib がする
@@ -55,10 +58,10 @@ module FpgaV2
     # 特権の primitive (回路が symbol で引く、設計 §14)。番号は ref.rb の PRIM と同じ並び
     PRIMS = %w[
       __fpga_ld8 __fpga_st8 __fpga_ld32 __fpga_st32 __fpga_ldv __fpga_stv __fpga_addr __fpga_obj __fpga_tag __fpga_mkval
-      __fpga_putc __fpga_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
+      __fpga_putc __fpga_obj_alloc __fpga_mcache_fill __fpga_mcache_clear __fpga_invoke __fpga_run __fpga_mid __fpga_halt
       __fpga_int __fpga_hi __fpga_lo __fpga_image __fpga_reg __fpga_setreg __fpga_irep __fpga_tclass __fpga_and __fpga_or
       __fpga_xor __fpga_shl __fpga_shr __fpga_copy __fpga_core __fpga_rem __fpga_proc
-      __fpga_class_of __fpga_sendv __fpga_ci __fpga_unwind __fpga_unwind_ret
+      __fpga_class_of __fpga_sendv __fpga_ci __fpga_unwind __fpga_unwind_ret __fpga_mcache_clear_id
     ].freeze
 
     # 回路が名前で送るシンボル (演算の落ち先と method_missing。mruby の MRB_OPSYM と同じく presym)
@@ -66,8 +69,10 @@ module FpgaV2
 
     attr_reader :mem, :syms, :classes, :top
 
-    def initialize(firmware:, mrblib: nil, programs: [])
+    # heap_size: estalloc の pool の大きさ (小さいヒープの像、計画 S6 §9.3)。既定は記憶の残り全部
+    def initialize(firmware:, mrblib: nil, programs: [], heap_size: nil)
       @fw_bin = firmware
+      @heap_end = heap_size ? POOL_BASE + heap_size : MEM_SIZE
       @mrblib = mrblib
       @programs = programs
       @mem = "\0".b * MEM_SIZE
@@ -82,6 +87,56 @@ module FpgaV2
       @brk += n
       raise Error, "image too large" if @brk > MEM_SIZE
       a
+    end
+
+    # --- estalloc の pool (picoruby-machine の heap.c の picorb_heap_init、firmware の estalloc.rb を est_host で)
+    def init_pool
+      @est = EstHost.new(@mem)
+      raise Error, "pool init failed" unless @est.call(:__fpga_picorb_heap_init, POOL_BASE, @heap_end - POOL_BASE).zero?
+    end
+
+    # 書き換わる物の確保 (mrb_open の中の mrb_malloc、負債は数えない D85)
+    def palloc(n)
+      p = @est.call(:__fpga_est_malloc, POOL_BASE, n)
+      raise Error, "pool exhausted" if p.zero?
+      p
+    end
+
+    def gc_w(k, v) = w32(IMG.fetch(k) * WORD, v)
+    def gc_r(k) = r32(IMG.fetch(k) * WORD)
+
+    # gc.c の add_heap (mrb_calloc) と init_heap_page と link_heap_page
+    # C: src/gc.c add_heap
+    def add_heap
+      page = palloc(HEAP_PAGE)
+      @mem[page, HEAP_PAGE] = "\0".b * HEAP_PAGE
+      prev = 0
+      MRB_HEAP_PAGE_SIZE.times do |k|
+        p = page + HP_OBJECTS + k * SLOT
+        w32(p + H_FLAGS, TT[:FREE])
+        w32(p + FREE_NEXT, prev)
+        prev = p
+      end
+      w32(page + HP_FREELIST, prev)
+      w32(page + HP_NEXT, gc_r(:gc_heaps))
+      gc_w(:gc_heaps, page)
+      w32(page + HP_FREE_NEXT, gc_r(:gc_free_heaps))
+      gc_w(:gc_free_heaps, page)
+    end
+
+    # 枠を 1 つ (gc.c の mrb_obj_alloc_core の freelist から外す所。像の物は負債と arena に数えない、D85)
+    # C: src/gc.c mrb_obj_alloc_core
+    def slot(klass, tt)
+      add_heap if gc_r(:gc_free_heaps).zero?
+      page = gc_r(:gc_free_heaps)
+      p = r32(page + HP_FREELIST)
+      w32(page + HP_FREELIST, r32(p + FREE_NEXT))
+      gc_w(:gc_free_heaps, r32(page + HP_FREE_NEXT)) if r32(page + HP_FREELIST).zero?
+      gc_w(:gc_live, gc_r(:gc_live) + 1)
+      @mem[p, SLOT] = "\0".b * SLOT
+      w32(p + H_CLASS, klass || 0)
+      w32(p + H_FLAGS, TT.fetch(tt) | (GC_WHITE_A << H_COLOR_SHIFT))
+      p
     end
 
     def w32(a, v) = @mem.setbyte(a, (v >> 24) & 0xFF).then { @mem.setbyte(a + 1, (v >> 16) & 0xFF); @mem.setbyte(a + 2, (v >> 8) & 0xFF); @mem.setbyte(a + 3, v & 0xFF) }
@@ -121,16 +176,20 @@ module FpgaV2
     end
 
     # --- オブジェクト
-    def obj(klass, tt)
+    # 物の枠。rom は像の中の RED の物 (firmware の Proc、D80)、ほかは heap page の枠
+    def obj(klass, tt, rom: false)
+      return slot(klass, tt) unless rom
+
       a = alloc(SLOT)
       w32(a + H_CLASS, klass || 0)
-      w32(a + H_FLAGS, TT.fetch(tt))
+      w32(a + H_FLAGS, TT.fetch(tt) | (GC_RED << H_COLOR_SHIFT))
       a
     end
 
-    def mtable(capa = 16)
-      head = alloc(MT_HEAD, 4)
-      rows = alloc(capa * MT_ENTRY, 4)
+    # pool: 実行時に書き換わる表 (クラスの実行時のメソッド表) は estalloc の pool に。ROM の層と primitive の表は像の中
+    def mtable(capa = 16, pool: false)
+      head = pool ? palloc(MT_HEAD) : alloc(MT_HEAD, 4)
+      rows = pool ? palloc(capa * MT_ENTRY) : alloc(capa * MT_ENTRY, 4)
       capa.times { |i| w32(rows + i * MT_ENTRY, MT_EMPTY) }
       w32(head + MT_COUNT, 0)
       w32(head + MT_CAPA, capa)
@@ -139,9 +198,10 @@ module FpgaV2
     end
 
 # iv の表 (インスタンス変数と定数、layout.rb の IV)。行は {シンボル, 値 16 バイト}
+# iv の表は実行時に書き換わるので pool に
 def ivtable(capa = 16)
-  head = alloc(MT_HEAD, 4)
-  rows = alloc(capa * IV_ENTRY, 4)
+  head = palloc(MT_HEAD)
+  rows = palloc(capa * IV_ENTRY)
   capa.times { |i| w32(rows + i * IV_ENTRY, MT_EMPTY) }
   w32(head + MT_COUNT, 0)
   w32(head + MT_CAPA, capa)
@@ -211,7 +271,7 @@ end
       CORE.each do |name, sup, kind|
         c = obj(nil, kind == :module ? :MODULE : :CLASS)
         w32(c + C_SUPER, sup ? @classes.fetch(sup) : 0)
-        w32(c + C_MT, mtable)
+        w32(c + C_MT, mtable(pool: true))
         w32(c + C_ROM, mtable)
         w32(c + C_NAME, intern(name))
         w32(c + C_IV, ivtable(name == "Object" ? 128 : 16))
@@ -233,7 +293,7 @@ end
           meta = obj(klass, :SCLASS)
           sup_meta = sup ? r32(@classes[sup] + H_CLASS) : klass
           w32(meta + C_SUPER, sup_meta)
-          w32(meta + C_MT, mtable)
+          w32(meta + C_MT, mtable(pool: true))
           w32(meta + C_ROM, mtable)
           w32(meta + C_IV, ivtable)
           w32(meta + C_OUTER, c) # 付いているクラス (__attached__)
@@ -256,7 +316,7 @@ end
       return cls if (r32(cls + H_FLAGS) & 0xFF) == TT[:SCLASS]
       meta = obj(@classes["Class"], :SCLASS) # module の特異クラス
       w32(meta + C_SUPER, cls)
-      w32(meta + C_MT, mtable)
+      w32(meta + C_MT, mtable(pool: true))
       w32(meta + C_ROM, mtable)
       w32(meta + C_IV, ivtable)
       w32(meta + C_OUTER, c)
@@ -351,7 +411,7 @@ end
     # --- firmware の読み (クラスの本体の def を ROM の表に)
     # firmware のメソッドの Proc (vm.c の vm_define_method と同じく STRICT | SCOPE | CREF)
     def new_proc(ir, target, flags = PROC_METHOD_FLAGS)
-      pr = obj(@classes["Proc"], :PROC)
+      pr = obj(@classes["Proc"], :PROC, rom: true)
       w32(pr + P_BODY, ir)
       w32(pr + P_TCLASS, target)
       w32(pr + P_FLAGS, PROC_IREP | flags)
@@ -436,9 +496,25 @@ end
       end
     end
 
+    # gc.c の mrb_gc_init (arena、heap page 1 枚、ratio)。GC の本体は S6-4 なので disabled で起動 (D88)、generational は無し (D21)
+    # C: src/gc.c mrb_gc_init
+    def gc_init
+      gc_w(:gc_arena, palloc(MRB_GC_ARENA_SIZE * WORD))
+      gc_w(:gc_arena_capa, MRB_GC_ARENA_SIZE)
+      gc_w(:gc_current_white_part, GC_WHITE_A)
+      add_heap
+      gc_w(:gc_interval_ratio, DEFAULT_GC_INTERVAL_RATIO)
+      gc_w(:gc_step_ratio, DEFAULT_GC_STEP_RATIO)
+      gc_w(:gc_malloc_threshold, MRB_GC_MALLOC_THRESHOLD)
+      gc_w(:gc_auto_step, 1)
+      gc_w(:gc_disabled, 1)
+    end
+
     # --- 全体
     def build
       w32(IMG[:magic] * WORD, IMG_MAGIC.unpack1("N"))
+      init_pool
+      gc_init
       @sym_table = alloc(SYM_CAPA * 8, 8)
       prims = mtable(64)
       PRIMS.each_with_index { |n, k| mt_set(prims, intern(n), k) }
@@ -467,14 +543,14 @@ end
       w32(ctx + CTX_CI, cis)
       w32(ctx + CTX_CIEND, cis + CI_FRAMES * CI_SIZE)
       globals = ivtable(64) # mrb_state.globals (大域変数の表、D06 の形)
-      heap = (@brk + 63) & -64
+      raise Error, "image too large for the pool at #{POOL_BASE}" if @brk > POOL_BASE
       state = {
         c: ctx, root_c: ctx, globals: globals, exc: 0, top_self: main,
         object_class: "Object", class_class: "Class", module_class: "Module", proc_class: "Proc", string_class: "String",
         array_class: "Array", hash_class: "Hash", range_class: "Range", float_class: "Float", integer_class: "Integer",
         true_class: "TrueClass", false_class: "FalseClass", nil_class: "NilClass", symbol_class: "Symbol", kernel_module: "Kernel",
         symidx: @syms.size, symtbl: @sym_table, symcapa: SYM_CAPA, eException_class: "Exception", eStandardError_class: "StandardError",
-        heap_start: heap, heap_end: MEM_SIZE, core_classes: core, fw_entry: boot, programs: progs, nprograms: @programs.size,
+        heap_start: POOL_BASE, heap_end: @heap_end, core_classes: core, fw_entry: boot, programs: progs, nprograms: @programs.size,
         prims: prims, mrblib: mrblib, version: IMG_VERSION
       }
       state.each { |k, v| w32(IMG.fetch(k) * WORD, v.is_a?(String) ? @classes.fetch(v) : v) }

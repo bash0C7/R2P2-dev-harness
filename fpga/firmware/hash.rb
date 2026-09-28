@@ -78,31 +78,13 @@ class Object
     __fpga_h_ht_p(h) ? __fpga_ld32(__fpga_ld32(h + 12) + 4) : __fpga_ar_ea_capa(h) # L:HS_HSH L:HT_EA_CAPA
   end
 
-  # --- mrb_malloc / mrb_realloc (gc.c)。大きさの語を前に置く (realloc が写す長さを知るため。estalloc の見出しの代わりで、S6 で写す)
-  # C: src/gc.c mrb_malloc
-  def __fpga_malloc(len)
-    p = __fpga_alloc(len + 8)
-    __fpga_st32(p, len)
-    p + 8
-  end
-
-  # C: src/gc.c mrb_realloc
-  def __fpga_realloc(p, len)
-    p2 = __fpga_malloc(len)
-    if p > 0
-      old = __fpga_ld32(p - 8)
-      __fpga_copy(p2, p, old < len ? old : len)
-    end
-    p2
-  end
-
   # --- H_CHECK_MODIFIED: 呼び出しの前後で表が替わったら RuntimeError。表が無ければ (tbl が NULL) 中身を実行しない。
   # 32bit の MRB_NO_BOXING は ar の ht_ea と ht_ea_capa を見ない (H_CHECK_MODIFIED_USE_HT_EA_FOR_AR が FALSE)
   # C: src/hash.c h_check_modified_init
   def __fpga_h_check_modified_init(h)
     tbl = __fpga_ld32(h + 12) # L:HS_HSH
     return 0 if tbl == 0
-    c = __fpga_alloc(16) # L:HCM_SIZE
+    c = __fpga_temp_alloc(16) # L:HCM_SIZE struct h_check_modified (D84)
     __fpga_st32(c + 0, __fpga_and(__fpga_h_flags(h), 4127)) # L:HCM_FLAGS L:H_CHECK_MODIFIED_FLAGS_MASK
     __fpga_st32(c + 4, tbl) # L:HCM_TBL
     ht = __fpga_h_ht_p(h)
@@ -397,7 +379,7 @@ class Object
   # --- ib (Index Buckets)。it は index_buckets_iter の記憶 (layout.rb の IT_*)
   # C: src/hash.c ib_it_init
   def __fpga_ib_it_init(h, key)
-    it = __fpga_alloc(40) # L:IT_SIZE
+    it = __fpga_temp_alloc(40) # L:IT_SIZE index_buckets_iter (D84)
     bit = __fpga_ib_bit(h)
     mask = __fpga_shl(1, bit) - 1 # ib_bit_to_capa
     __fpga_st32(it + 0, h) # L:IT_H

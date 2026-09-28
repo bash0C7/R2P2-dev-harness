@@ -21,7 +21,7 @@ class Object
     bin = start + 8 # rite_section_debug_header
     filenames_len = __fpga_u16(bin)
     bin += 2
-    filenames = __fpga_alloc((filenames_len > 0 ? filenames_len : 1) * 4)
+    filenames = __fpga_temp_alloc((filenames_len > 0 ? filenames_len : 1) * 4) # mrb_str_new の中身 (C も String に置く)
     i = 0
     while i < filenames_len
       f_len = __fpga_u16(bin)
@@ -30,7 +30,7 @@ class Object
       bin += f_len
       i += 1
     end
-    cur = __fpga_alloc(8)
+    cur = __fpga_temp_alloc(8) # C の局所変数 bin を指す番地の代わり (D84)
     __fpga_st32(cur, bin)
     __fpga_read_debug_record(cur, irep, filenames, filenames_len)
     __fpga_halt unless __fpga_ld32(cur) - start == __fpga_u32(start + 4) # MRB_DUMP_GENERAL_FAILURE
@@ -42,7 +42,7 @@ class Object
     start = __fpga_ld32(cur)
     bin = start
     __fpga_halt unless __fpga_ld32(irep + 44) == 0 # L:I_DEBUG MRB_DUMP_INVALID_IREP
-    debug = __fpga_alloc(12) # L:DI_SIZE
+    debug = __fpga_calloc(1, 12) # L:DI_SIZE
     __fpga_st32(irep + 44, debug) # L:I_DEBUG
     __fpga_st32(debug + 0, __fpga_ld32(irep + 4)) # L:DI_PC_COUNT L:I_ILEN
     record_size = __fpga_u32(bin)
@@ -50,11 +50,11 @@ class Object
     flen = __fpga_u16(bin)
     bin += 2
     __fpga_st32(debug + 4, flen) # L:DI_FLEN
-    files = __fpga_alloc((flen > 0 ? flen : 1) * 4)
+    files = __fpga_calloc(flen > 0 ? flen : 1, 4)
     __fpga_st32(debug + 8, files) # L:DI_FILES
     f_idx = 0
     while f_idx < flen
-      file = __fpga_alloc(20) # L:DF_SIZE
+      file = __fpga_calloc(1, 20) # L:DF_SIZE
       __fpga_st32(files + f_idx * 4, file)
       __fpga_st32(file + 0, __fpga_u32(bin)) # L:DF_START_POS
       bin += 4
@@ -69,7 +69,7 @@ class Object
       bin += 1
       __fpga_st32(file + 12, type) # L:DF_TYPE
       if type == 0 # mrb_debug_line_ary
-        ary = __fpga_alloc((count > 0 ? count : 1) * 2)
+        ary = __fpga_malloc((count > 0 ? count : 1) * 2)
         l = 0
         while l < count
           v = __fpga_u16(bin)
@@ -80,7 +80,7 @@ class Object
         end
         __fpga_st32(file + 16, ary) # L:DF_LINES
       elsif type == 1 # mrb_debug_line_flat_map
-        flat_map = __fpga_alloc((count > 0 ? count : 1) * 8) # mrb_irep_debug_info_line {start_pos, line}
+        flat_map = __fpga_calloc(count > 0 ? count : 1, 8) # mrb_irep_debug_info_line {start_pos, line}
         l = 0
         while l < count
           __fpga_st32(flat_map + l * 8, __fpga_u32(bin))
@@ -147,7 +147,7 @@ class Object
   def __fpga_debug_get_line(f, pc)
     return -1 if f == 0
     return -1 unless __fpga_ld32(f + 12) == 2 # L:DF_TYPE mrb_debug_line_packed_map のほかは -1
-    cur = __fpga_alloc(8)
+    cur = __fpga_temp_alloc(8) # C の局所変数 p を指す番地の代わり (D84)
     p = __fpga_ld32(f + 16) # L:DF_LINES
     pend = p + __fpga_ld32(f + 8) # L:DF_COUNT
     __fpga_st32(cur, p)
@@ -243,7 +243,7 @@ class Object
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI
     len = (ci - __fpga_cibase) / 64 + 1 # L:CI_SIZE
     bt = __fpga_slot(0, 28) # L:TT_BACKTRACE MRB_OBJ_ALLOC(mrb, MRB_TT_BACKTRACE, NULL)
-    ptr = __fpga_alloc(len * 12) # L:LOC_SIZE
+    ptr = __fpga_malloc(len * 12) # L:LOC_SIZE
     __fpga_st32(bt + 12, ptr) # L:BT_LOCATIONS
     __fpga_st32(bt + 8, __fpga_pack_backtrace(ci, ptr)) # L:BT_LEN
     bt

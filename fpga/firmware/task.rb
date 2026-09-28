@@ -126,7 +126,7 @@ class Object
   # 構造体の所だけで、context と Task の物は作らない、D103)
   # C: mrbgems/mruby-task/src/task.c task_create_common (D103)
   def __fpga_task_create
-    t = __fpga_alloc(16) # L:TK_SIZE
+    t = __fpga_malloc(16) # L:TK_SIZE
     __fpga_st32(t + 0, 0) # L:TK_NEXT
     __fpga_st8(t + 4, 128) # L:TK_PRIORITY L:TASK_PRIORITY_DEFAULT
     __fpga_st8(t + 5, 2) # L:TK_STATUS L:TASK_STATUS_READY

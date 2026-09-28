@@ -29,10 +29,13 @@ class String
     b = __fpga_addr(other)
     la = __fpga_ld32(a + 8) # L:S_LEN
     lb = __fpga_ld32(b + 8)
-    buf = __fpga_alloc(la + lb + 1)
+    t = __fpga_str_new_capa(la + lb) # str_new(mrb, 0, len) の後に写す
+    buf = __fpga_ld32(__fpga_addr(t) + 16) # L:S_PTR
     __fpga_copy(buf, __fpga_ld32(a + 16), la) # L:S_PTR
     __fpga_copy(buf + la, __fpga_ld32(b + 16), lb)
-    __fpga_str_new(buf, la + lb)
+    __fpga_st32(__fpga_addr(t) + 8, la + lb) # L:S_LEN
+    __fpga_st8(buf + la + lb, 0)
+    t
   end
 
   # C: src/string.c mrb_str_equal_m
@@ -1022,11 +1025,11 @@ class Object
   # 容量を capacity バイトにする (mrb_realloc と同じく、前の中身は収まるだけ写す)
   # C: src/string.c resize_capa
   def __fpga_str_resize_capa(s, capacity)
-    buf = __fpga_alloc(capacity + 1)
+    buf = __fpga_realloc(__fpga_ld32(s + 16), capacity + 1) # L:S_PTR
     len = __fpga_ld32(s + 8) # L:S_LEN
     len = capacity if len > capacity
-    __fpga_copy(buf, __fpga_ld32(s + 16), len) # L:S_PTR
     __fpga_st8(buf + len, 0)
+    __fpga_st32(s + 8, len) # L:S_LEN
     __fpga_st32(s + 16, buf) # L:S_PTR
     __fpga_st32(s + 12, capacity) # L:S_CAPA
   end
@@ -1063,9 +1066,10 @@ class Object
     __fpga_check_frozen(a)
     return str1 if a == __fpga_addr(str2)
     len = __fpga_ld32(__fpga_addr(str2) + 8) # L:S_LEN
-    buf = __fpga_alloc(len + 1)
+    buf = __fpga_malloc(len + 1)
     __fpga_copy(buf, __fpga_ld32(__fpga_addr(str2) + 16), len) # L:S_PTR
     __fpga_st8(buf + len, 0)
+    __fpga_free(__fpga_ld32(a + 16)) # L:S_PTR
     __fpga_st32(a + 16, buf) # L:S_PTR
     __fpga_st32(a + 8, len) # L:S_LEN
     __fpga_st32(a + 12, len) # L:S_CAPA
@@ -1607,7 +1611,7 @@ class Object
   def __fpga_str_concat(s, obj)
     if __fpga_tag(obj) == 3 || __fpga_tag(obj) == 5 # L:TAG_INT L:TAG_FLOAT int_chr_utf8
       cp = __fpga_as_int(obj)
-      buf = __fpga_alloc(4)
+      buf = __fpga_temp_alloc(4) # char buf[4] (D84)
       len = __fpga_utf8_to_buf(buf, cp)
       __fpga_raisef(RangeError, "%v out of char range", [obj]) if len == 0 || (55296 <= cp && cp <= 57343) # 0xD800..0xDFFF
       return __fpga_str_cat(s, buf, len)
@@ -1649,7 +1653,7 @@ class Object
     p = __fpga_ld32(__fpga_addr(str) + 16) # L:S_PTR
     pend = p + __fpga_ld32(__fpga_addr(str) + 8) # L:S_LEN
     hex = __fpga_ld32(__fpga_addr("0123456789ABCDEF") + 16) # L:S_PTR escape_hexmap
-    buf = __fpga_alloc(4)
+    buf = __fpga_temp_alloc(4) # char buf[4] (D84)
     while p < pend
       clen = __fpga_utf8len(p, pend)
       if clen > 1
@@ -1708,7 +1712,7 @@ class Object
     if ptr >= str_addr && ptr - str_addr <= n
       off = ptr - str_addr
       if len > n - off
-        tmp = __fpga_alloc(len)
+        tmp = __fpga_temp_alloc(len) # 自分の中身を足す時の写し (C は ptr の位置を覚えて realloc の後に指し直す、D84)
         __fpga_copy(tmp, ptr, len)
         ptr = tmp
         off = -1
