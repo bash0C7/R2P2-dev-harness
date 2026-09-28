@@ -1,396 +1,592 @@
 # GC の関所 (計画 S6 §3.5、rake fpga:v2:inventory が作る。手で書かない)。写し元の C の関数が辿って使う GC の API
 # (arena_save arena_restore protect register barrier free realloc) を firmware の def も使うか。最後の列が足りない種類
 # def<TAB>写し元<TAB>C<TAB>firmware<TAB>足りない
-array.rb Array#&	mrbgems/mruby-array-ext/src/array.c ary_intersection	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#*	src/array.c mrb_ary_times	barrier free realloc		barrier free realloc
-array.rb Array#+	src/array.c mrb_ary_plus	barrier free protect realloc		barrier free protect realloc
-array.rb Array#-	mrbgems/mruby-array-ext/src/array.c ary_sub	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#<<	src/array.c mrb_ary_push_m	barrier free realloc		barrier free realloc
-array.rb Array#<=>	src/array.c mrb_ary_cmp	barrier free realloc		barrier free realloc
-array.rb Array#==	src/array.c mrb_ary_eq	arena_restore arena_save		arena_restore arena_save
-array.rb Array#[]	src/array.c mrb_ary_aget	barrier free protect realloc		barrier free protect realloc
-array.rb Array#[]=	src/array.c mrb_ary_aset	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__combination_init	mrbgems/mruby-array-ext/src/array.c ary_combination_init	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__combination_next	mrbgems/mruby-array-ext/src/array.c ary_combination_next	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__fetch	mrbgems/mruby-array-ext/src/array.c ary_fetch	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__fill_exec	mrbgems/mruby-array-ext/src/array.c ary_fill_exec	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__fill_parse_arg	mrbgems/mruby-array-ext/src/array.c ary_fill_parse_arg	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__fpga_push1	src/array.c mrb_ary_push	barrier free realloc		barrier free realloc
-array.rb Array#__max	mrbgems/mruby-array-ext/src/array.c ary_max	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#__min	mrbgems/mruby-array-ext/src/array.c ary_min	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#__normalize_index	mrbgems/mruby-array-ext/src/array.c ary_normalize_index	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__product_generate	mrbgems/mruby-array-ext/src/array.c ary_product_generate	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__product_next	mrbgems/mruby-array-ext/src/array.c ary_product_next	barrier free protect realloc		barrier free protect realloc
-array.rb Array#__uniq	mrbgems/mruby-array-ext/src/array.c ary_uniq	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#__uniq!	mrbgems/mruby-array-ext/src/array.c ary_uniq_bang	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#assoc	mrbgems/mruby-array-ext/src/array.c ary_assoc	arena_restore arena_save protect		arena_restore arena_save protect
-array.rb Array#clear	src/array.c mrb_ary_clear	free		free
-array.rb Array#compact	mrbgems/mruby-array-ext/src/array.c ary_compact	barrier free realloc		barrier free realloc
-array.rb Array#compact!	mrbgems/mruby-array-ext/src/array.c ary_compact_bang	barrier free		barrier free
-array.rb Array#concat	src/array.c mrb_ary_concat_m	barrier free protect realloc		barrier free protect realloc
-array.rb Array#delete	src/array.c mrb_ary_delete	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#delete_at	src/array.c mrb_ary_delete_at	free realloc		free realloc
-array.rb Array#difference	mrbgems/mruby-array-ext/src/array.c ary_difference	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#eql?	src/array.c mrb_ary_eql	arena_restore arena_save		arena_restore arena_save
-array.rb Array#first	src/array.c mrb_ary_first	barrier free protect realloc		barrier free protect realloc
-array.rb Array#flatten	mrbgems/mruby-array-ext/src/array.c ary_flatten	barrier free protect realloc		barrier free protect realloc
-array.rb Array#flatten!	mrbgems/mruby-array-ext/src/array.c ary_flatten_bang	barrier free protect realloc		barrier free protect realloc
-array.rb Array#index	src/array.c mrb_ary_index_m	barrier free protect realloc		barrier free protect realloc
-array.rb Array#initialize	src/array.c mrb_ary_init	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#insert	mrbgems/mruby-array-ext/src/array.c ary_insert	barrier free protect realloc		barrier free protect realloc
-array.rb Array#intersect?	mrbgems/mruby-array-ext/src/array.c ary_intersect_p	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#intersection	mrbgems/mruby-array-ext/src/array.c ary_intersection_multi	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#join	src/array.c mrb_ary_join_m	barrier free protect realloc		barrier free protect realloc
-array.rb Array#last	src/array.c mrb_ary_last	realloc		realloc
-array.rb Array#push	src/array.c mrb_ary_push_m	barrier free realloc		barrier free realloc
-array.rb Array#rassoc	mrbgems/mruby-array-ext/src/array.c ary_rassoc	arena_restore arena_save protect		arena_restore arena_save protect
-array.rb Array#replace	src/array.c mrb_ary_replace_m	barrier free protect realloc		barrier free protect realloc
-array.rb Array#reverse!	src/array.c mrb_ary_reverse_bang	free		free
-array.rb Array#rindex	src/array.c mrb_ary_rindex_m	barrier free protect realloc		barrier free protect realloc
-array.rb Array#rotate	mrbgems/mruby-array-ext/src/array.c ary_rotate	barrier free protect realloc		barrier free protect realloc
-array.rb Array#rotate!	mrbgems/mruby-array-ext/src/array.c ary_rotate_bang	barrier free protect realloc		barrier free protect realloc
-array.rb Array#shift	src/array.c mrb_ary_shift_m	realloc		realloc
-array.rb Array#slice!	mrbgems/mruby-array-ext/src/array.c ary_slice_bang	barrier free protect realloc		barrier free protect realloc
-array.rb Array#sort!	src/array.c mrb_ary_sort_bang	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#to_a	src/array.c mrb_ary_to_a	barrier free realloc		barrier free realloc
-array.rb Array#to_s	src/array.c mrb_ary_to_s	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-array.rb Array#union	mrbgems/mruby-array-ext/src/array.c ary_union_multi	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array#unshift	src/array.c mrb_ary_unshift_m	barrier free realloc		barrier free realloc
-array.rb Array#values_at	mrbgems/mruby-array-ext/src/array.c ary_values_at	barrier free realloc		barrier free realloc
-array.rb Array#|	mrbgems/mruby-array-ext/src/array.c ary_union	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Array.[]	src/array.c mrb_ary_s_create	barrier free protect realloc		barrier free protect realloc
-array.rb Object#__fpga_ary_cmp_ordered	mrbgems/mruby-array-ext/src/array.c ary_cmp_ordered	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_compact_bang	mrbgems/mruby-array-ext/src/array.c ary_compact_bang	barrier free		barrier free
-array.rb Object#__fpga_ary_concat	src/array.c ary_concat	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_delete_at	src/array.c mrb_ary_delete_at	free realloc		free realloc
-array.rb Object#__fpga_ary_expand_capa	src/array.c ary_expand_capa	realloc		realloc
-array.rb Object#__fpga_ary_index	src/array.c aget_index	barrier free protect realloc		barrier free protect realloc
-array.rb Object#__fpga_ary_intersection_internal	mrbgems/mruby-array-ext/src/array.c ary_intersection_internal	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_ary_max_min	mrbgems/mruby-array-ext/src/array.c ary_max_min	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
+array.rb Array#&	mrbgems/mruby-array-ext/src/array.c ary_intersection	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#*	src/array.c mrb_ary_times	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#+	src/array.c mrb_ary_plus		arena_restore arena_save realloc	
+array.rb Array#-	mrbgems/mruby-array-ext/src/array.c ary_sub	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#<<	src/array.c mrb_ary_push_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#<=>	src/array.c mrb_ary_cmp	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#==	src/array.c mrb_ary_eq	arena_restore arena_save	arena_restore arena_save	
+array.rb Array#[]	src/array.c mrb_ary_aget	realloc	arena_restore arena_save realloc	
+array.rb Array#[]=	src/array.c mrb_ary_aset	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__combination_init	mrbgems/mruby-array-ext/src/array.c ary_combination_init		arena_restore arena_save realloc	
+array.rb Array#__combination_next	mrbgems/mruby-array-ext/src/array.c ary_combination_next	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__fetch	mrbgems/mruby-array-ext/src/array.c ary_fetch		arena_restore arena_save realloc	
+array.rb Array#__fill_exec	mrbgems/mruby-array-ext/src/array.c ary_fill_exec	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__fill_parse_arg	mrbgems/mruby-array-ext/src/array.c ary_fill_parse_arg	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__fpga_push1	src/array.c mrb_ary_push	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__max	mrbgems/mruby-array-ext/src/array.c ary_max	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#__min	mrbgems/mruby-array-ext/src/array.c ary_min	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#__normalize_index	mrbgems/mruby-array-ext/src/array.c ary_normalize_index		arena_restore arena_save realloc	
+array.rb Array#__product_generate	mrbgems/mruby-array-ext/src/array.c ary_product_generate	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__product_next	mrbgems/mruby-array-ext/src/array.c ary_product_next	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#__uniq	mrbgems/mruby-array-ext/src/array.c ary_uniq	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#__uniq!	mrbgems/mruby-array-ext/src/array.c ary_uniq_bang	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#assoc	mrbgems/mruby-array-ext/src/array.c ary_assoc	arena_restore arena_save protect	arena_restore arena_save protect	
+array.rb Array#at	mrbgems/mruby-array-ext/src/array.c ary_at		arena_restore arena_save realloc	
+array.rb Array#clear	src/array.c mrb_ary_clear	free	arena_restore arena_save realloc	free
+array.rb Array#compact	mrbgems/mruby-array-ext/src/array.c ary_compact	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#compact!	mrbgems/mruby-array-ext/src/array.c ary_compact_bang	barrier free	arena_restore arena_save realloc	barrier free
+array.rb Array#concat	src/array.c mrb_ary_concat_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#delete	src/array.c mrb_ary_delete	arena_restore arena_save free protect	arena_restore arena_save protect realloc	free
+array.rb Array#delete_at	src/array.c mrb_ary_delete_at	free realloc	arena_restore arena_save realloc	free
+array.rb Array#difference	mrbgems/mruby-array-ext/src/array.c ary_difference	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#eql?	src/array.c mrb_ary_eql	arena_restore arena_save	arena_restore arena_save	
+array.rb Array#first	src/array.c mrb_ary_first	realloc	arena_restore arena_save realloc	
+array.rb Array#flatten	mrbgems/mruby-array-ext/src/array.c ary_flatten	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#flatten!	mrbgems/mruby-array-ext/src/array.c ary_flatten_bang	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#index	src/array.c mrb_ary_index_m		arena_restore arena_save realloc	
+array.rb Array#initialize	src/array.c mrb_ary_init	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#insert	mrbgems/mruby-array-ext/src/array.c ary_insert	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#intersect?	mrbgems/mruby-array-ext/src/array.c ary_intersect_p	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#intersection	mrbgems/mruby-array-ext/src/array.c ary_intersection_multi	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#join	src/array.c mrb_ary_join_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#last	src/array.c mrb_ary_last	realloc	arena_restore arena_save realloc	
+array.rb Array#pop	src/array.c mrb_ary_pop		arena_restore arena_save realloc	
+array.rb Array#push	src/array.c mrb_ary_push_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#rassoc	mrbgems/mruby-array-ext/src/array.c ary_rassoc	arena_restore arena_save protect	arena_restore arena_save protect	
+array.rb Array#replace	src/array.c mrb_ary_replace_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#reverse	src/array.c mrb_ary_reverse		realloc	
+array.rb Array#reverse!	src/array.c mrb_ary_reverse_bang	free	arena_restore arena_save realloc	free
+array.rb Array#rindex	src/array.c mrb_ary_rindex_m		arena_restore arena_save realloc	
+array.rb Array#rotate	mrbgems/mruby-array-ext/src/array.c ary_rotate	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#rotate!	mrbgems/mruby-array-ext/src/array.c ary_rotate_bang	barrier free	arena_restore arena_save realloc	barrier free
+array.rb Array#shift	src/array.c mrb_ary_shift_m	realloc	arena_restore arena_save realloc	
+array.rb Array#slice!	mrbgems/mruby-array-ext/src/array.c ary_slice_bang	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#sort!	src/array.c mrb_ary_sort_bang	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#to_a	src/array.c mrb_ary_to_a	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#to_s	src/array.c mrb_ary_to_s	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#union	mrbgems/mruby-array-ext/src/array.c ary_union_multi	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array#unshift	src/array.c mrb_ary_unshift_m	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#values_at	mrbgems/mruby-array-ext/src/array.c ary_values_at	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Array#|	mrbgems/mruby-array-ext/src/array.c ary_union	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Array.[]	src/array.c mrb_ary_s_create		arena_restore arena_save realloc	
+array.rb Object#__fpga_adjust_next_permutation_index	mrbgems/mruby-array-ext/src/array.c adjust_next_permutation_index		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_cmp_ordered	mrbgems/mruby-array-ext/src/array.c ary_cmp_ordered	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_compact_bang	mrbgems/mruby-array-ext/src/array.c ary_compact_bang	barrier free	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_concat	src/array.c ary_concat	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_delete_at	src/array.c mrb_ary_delete_at	free realloc	arena_restore arena_save realloc	free
+array.rb Object#__fpga_ary_expand_capa	src/array.c ary_expand_capa	realloc	realloc	
+array.rb Object#__fpga_ary_get_array_args	mrbgems/mruby-array-ext/src/array.c ary_get_array_args		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_index	src/array.c aget_index		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_intersection_internal	mrbgems/mruby-array-ext/src/array.c ary_intersection_internal	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_ary_max_min	mrbgems/mruby-array-ext/src/array.c ary_max_min	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
 array.rb Object#__fpga_ary_memb_first	mrbgems/mruby-array-ext/src/array.c ary_memb_first (D42)	free		free
-array.rb Object#__fpga_ary_product_fetch	mrbgems/mruby-array-ext/src/array.c ary_product_fetch	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_replace	src/array.c ary_replace	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_replace_v	src/array.c mrb_ary_replace	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_resize	src/array.c mrb_ary_resize	free realloc		free realloc
-array.rb Object#__fpga_ary_shift	src/array.c mrb_ary_shift	realloc		realloc
-array.rb Object#__fpga_ary_splice	src/array.c mrb_ary_splice	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_ary_subseq	src/array.c ary_subseq	realloc		realloc
-array.rb Object#__fpga_ary_subtract_internal	mrbgems/mruby-array-ext/src/array.c ary_subtract_internal	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_ary_union_add	mrbgems/mruby-array-ext/src/array.c ary_union_add	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_ary_union_internal	mrbgems/mruby-array-ext/src/array.c ary_union_internal	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_ary_uniq_bang	mrbgems/mruby-array-ext/src/array.c ary_uniq_bang	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_ary_unshift1	src/array.c mrb_ary_unshift	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_check_type_array	src/object.c mrb_check_type	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_flatten_internal	mrbgems/mruby-array-ext/src/array.c flatten_internal	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_get_values_at	src/range.c mrb_get_values_at	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_heap_delete_root	src/array.c heap_delete_root	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_heapify	src/array.c heapify	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_insertion_sort	src/array.c insertion_sort	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-array.rb Object#__fpga_join_ary	src/array.c join_ary	barrier free realloc		barrier free realloc
-array.rb Object#__fpga_sort_cmp	src/array.c sort_cmp	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-backtrace.rb Object#__fpga_bt_line	src/backtrace.c print_backtrace	free realloc		free realloc
-backtrace.rb Object#__fpga_decode_location	src/backtrace.c decode_location	free realloc		free realloc
-backtrace.rb Object#__fpga_keep_backtrace	src/backtrace.c mrb_keep_backtrace	arena_restore arena_save barrier		arena_restore arena_save barrier
-backtrace.rb Object#__fpga_load_sections	src/load.c read_irep	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-backtrace.rb Object#__fpga_print_error	src/backtrace.c print_backtrace	free realloc		free realloc
+array.rb Object#__fpga_ary_new_capa	src/array.c ary_new_capa		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_new_from_regs	src/vm.c ary_new_from_regs		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_pop	src/array.c mrb_ary_pop		arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_product_fetch	mrbgems/mruby-array-ext/src/array.c ary_product_fetch	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_replace	src/array.c ary_replace	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_replace_v	src/array.c mrb_ary_replace	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_resize	src/array.c mrb_ary_resize	free realloc	arena_restore arena_save realloc	free
+array.rb Object#__fpga_ary_shift	src/array.c mrb_ary_shift	realloc	arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_splice	src/array.c mrb_ary_splice	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_ary_subseq	src/array.c ary_subseq	realloc	arena_restore arena_save realloc	
+array.rb Object#__fpga_ary_subtract_internal	mrbgems/mruby-array-ext/src/array.c ary_subtract_internal	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_ary_union_add	mrbgems/mruby-array-ext/src/array.c ary_union_add	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_ary_union_internal	mrbgems/mruby-array-ext/src/array.c ary_union_internal	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_ary_uniq_bang	mrbgems/mruby-array-ext/src/array.c ary_uniq_bang	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_ary_unshift1	src/array.c mrb_ary_unshift	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_check_argc	src/vm.c check_argument_count		arena_restore arena_save realloc	
+array.rb Object#__fpga_check_type_array	src/object.c mrb_check_type	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_cmpint	src/array.c cmpint		arena_restore arena_save realloc	
+array.rb Object#__fpga_flatten_internal	mrbgems/mruby-array-ext/src/array.c flatten_internal	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_get_values_at	src/range.c mrb_get_values_at	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_heap_delete_root	src/array.c heap_delete_root	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_heapify	src/array.c heapify	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_insertion_sort	src/array.c insertion_sort	arena_restore arena_save barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+array.rb Object#__fpga_join_ary	src/array.c join_ary	barrier free realloc	arena_restore arena_save realloc	barrier free
+array.rb Object#__fpga_op_ARRAY	src/vm.c OP_ARRAY		arena_restore arena_save realloc	
+array.rb Object#__fpga_op_ARRAY2	src/vm.c OP_ARRAY2		arena_restore arena_save realloc	
+array.rb Object#__fpga_raise_argnum	src/error.c mrb_argnum_error		arena_restore arena_save realloc	
+array.rb Object#__fpga_sort_cmp	src/array.c sort_cmp	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+backtrace.rb Object#__fpga_bt_idx	src/backtrace.c pack_backtrace		arena_restore arena_save	
+backtrace.rb Object#__fpga_bt_line	src/backtrace.c print_backtrace	free realloc	arena_restore arena_save realloc	free
+backtrace.rb Object#__fpga_debug_position	src/debug.c mrb_debug_get_position		arena_restore arena_save realloc	
+backtrace.rb Object#__fpga_decode_location	src/backtrace.c decode_location	free realloc	arena_restore arena_save realloc	free
+backtrace.rb Object#__fpga_keep_backtrace	src/backtrace.c mrb_keep_backtrace	arena_restore arena_save barrier	arena_restore arena_save	barrier
+backtrace.rb Object#__fpga_load_sections	src/load.c read_irep	arena_restore arena_save free realloc	arena_restore arena_save	free realloc
+backtrace.rb Object#__fpga_pack_backtrace	src/backtrace.c pack_backtrace		arena_restore arena_save	
+backtrace.rb Object#__fpga_packed_backtrace	src/backtrace.c packed_backtrace		arena_restore arena_save	
+backtrace.rb Object#__fpga_print_error	src/backtrace.c print_backtrace	free realloc	arena_restore arena_save realloc	free
 backtrace.rb Object#__fpga_read_section_debug	src/load.c read_section_debug	free realloc		free realloc
-backtrace.rb Object#__fpga_unpack_backtrace	src/backtrace.c mrb_unpack_backtrace	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-boot.rb Object#__fpga_ary_splat	src/array.c mrb_ary_splat	barrier free realloc		barrier free realloc
-boot.rb Object#__fpga_boot	src/load.c mrb_load_irep	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-boot.rb Object#__fpga_init_version	src/version.c mrb_init_version	barrier free realloc		barrier free realloc
+backtrace.rb Object#__fpga_unpack_backtrace	src/backtrace.c mrb_unpack_backtrace	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+boot.rb Object#__fpga_ary_splat	src/array.c mrb_ary_splat	barrier free realloc	arena_restore arena_save realloc	barrier free
+boot.rb Object#__fpga_boot	src/load.c mrb_load_irep	arena_restore arena_save free realloc	arena_restore arena_save free realloc	
+boot.rb Object#__fpga_init_version	src/version.c mrb_init_version	barrier free realloc	free	barrier realloc
 boot.rb Object#__fpga_intern	src/symbol.c mrb_intern (D07)	free realloc		free realloc
 boot.rb Object#__fpga_intern_str	src/symbol.c mrb_intern_str	free realloc		free realloc
-boot.rb Object#__fpga_load	src/load.c read_irep	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-boot.rb Object#__fpga_mt_grow	src/class.c mt_grow (D05)	realloc		realloc
-boot.rb Object#__fpga_mt_set	src/class.c mt_put (D05)	realloc		realloc
-boot.rb Object#__fpga_op_SETGV	src/variable.c mrb_gv_set	realloc		realloc
-boot.rb Object#__fpga_read_irep	src/load.c read_irep_record_1	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-boot.rb Object#__fpga_s64	src/load.c read_irep_record_1	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-class.rb BasicObject#__send__	src/class.c mrb_f_send	barrier free protect realloc		barrier free protect realloc
-class.rb Class#initialize	src/class.c mrb_class_initialize	barrier free protect realloc		barrier free protect realloc
-class.rb Class.new	src/class.c mrb_class_new_class	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#extend	src/class.c mrb_obj_extend	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#is_a?	src/kernel.c mrb_obj_is_kind_of_m	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#public_send	mrbgems/mruby-metaprog/src/metaprog.c mrb_f_public_send	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#respond_to?	src/kernel.c obj_respond_to	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#send	mrbgems/mruby-metaprog/src/metaprog.c mrb_f_send	barrier free protect realloc		barrier free protect realloc
-class.rb Kernel#singleton_class	mrbgems/mruby-metaprog/src/metaprog.c mrb_singleton_class	barrier free realloc		barrier free realloc
-class.rb Module#__fpga_attr_define	src/class.c mod_attr_define (D15)	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-class.rb Module#__fpga_mod_visibility	src/class.c mrb_mod_visibility	barrier free protect realloc		barrier free protect realloc
-class.rb Module#__fpga_prepare_name	src/class.c prepare_name_common	free realloc		free realloc
-class.rb Module#attr_accessor	src/class.c mrb_mod_attr_accessor	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-class.rb Module#attr_reader	src/class.c mrb_mod_attr_reader	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-class.rb Module#attr_writer	src/class.c mrb_mod_attr_writer	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-class.rb Module#const_defined?	src/class.c mrb_mod_const_defined	barrier free protect realloc		barrier free protect realloc
-class.rb Module#dup	src/class.c mrb_mod_dup	barrier free realloc		barrier free realloc
-class.rb Module#include	src/class.c mrb_mod_include	barrier free protect realloc		barrier free protect realloc
-class.rb Module#module_function	src/class.c mrb_mod_module_function	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-class.rb Module#prepend	src/class.c mrb_mod_prepend	barrier free protect realloc		barrier free protect realloc
-class.rb Module#private	src/class.c mrb_mod_private	barrier free protect realloc		barrier free protect realloc
-class.rb Module#protected	src/class.c mrb_mod_protected	barrier free protect realloc		barrier free protect realloc
-class.rb Module#public	src/class.c mrb_mod_public	barrier free protect realloc		barrier free protect realloc
-class.rb Object#__fpga_check_type_module	src/object.c mrb_check_type	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_check_type_symbol	src/object.c mrb_check_type	barrier free realloc		barrier free realloc
+boot.rb Object#__fpga_load	src/load.c read_irep	arena_restore arena_save free realloc	arena_restore arena_save	free realloc
+boot.rb Object#__fpga_mt_grow	src/class.c mt_grow (D05)	realloc	free	realloc
+boot.rb Object#__fpga_mt_set	src/class.c mt_put (D05)	realloc	free	realloc
+boot.rb Object#__fpga_op_ARYCAT	src/vm.c OP_ARYCAT		arena_restore arena_save realloc	
+boot.rb Object#__fpga_op_SETGV	src/variable.c mrb_gv_set	realloc	free	realloc
+boot.rb Object#__fpga_op_STRCAT	src/vm.c OP_STRCAT		arena_restore arena_save realloc	
+boot.rb Object#__fpga_op_TDEF	src/vm.c OP_TDEF		arena_restore arena_save free realloc	
+boot.rb Object#__fpga_read_irep	src/load.c read_irep_record_1	arena_restore arena_save free realloc	arena_restore arena_save	free realloc
+boot.rb Object#__fpga_s64	src/load.c read_irep_record_1	arena_restore arena_save free realloc	arena_restore arena_save	free realloc
+class.rb BasicObject#__send__	src/class.c mrb_f_send	free realloc	arena_restore arena_save realloc	free
+class.rb Class#allocate	src/class.c mrb_instance_alloc		arena_restore arena_save realloc	
+class.rb Class#initialize	src/class.c mrb_class_initialize		arena_restore arena_save realloc	
+class.rb Class.new	src/class.c mrb_class_new_class	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Kernel#extend	src/class.c mrb_obj_extend	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Kernel#is_a?	src/kernel.c mrb_obj_is_kind_of_m		arena_restore arena_save realloc	
+class.rb Kernel#nil?	src/kernel.c mrb_false		arena_restore arena_save realloc	
+class.rb Kernel#public_send	mrbgems/mruby-metaprog/src/metaprog.c mrb_f_public_send	free realloc	arena_restore arena_save realloc	free
+class.rb Kernel#respond_to?	src/kernel.c obj_respond_to		arena_restore arena_save realloc	
+class.rb Kernel#respond_to_missing?	src/kernel.c mrb_false		arena_restore arena_save realloc	
+class.rb Kernel#send	mrbgems/mruby-metaprog/src/metaprog.c mrb_f_send	free realloc	arena_restore arena_save realloc	free
+class.rb Kernel#singleton_class	mrbgems/mruby-metaprog/src/metaprog.c mrb_singleton_class	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Module#__fpga_attr_define	src/class.c mod_attr_define (D15)	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#__fpga_mod_visibility	src/class.c mrb_mod_visibility	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#__fpga_prepare_name	src/class.c prepare_name_common	free realloc	arena_restore arena_save realloc	free
+class.rb Module#attr_accessor	src/class.c mrb_mod_attr_accessor	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#attr_reader	src/class.c mrb_mod_attr_reader	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#attr_writer	src/class.c mrb_mod_attr_writer	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#const_defined?	src/class.c mrb_mod_const_defined		arena_restore arena_save free realloc	
+class.rb Module#dup	src/class.c mrb_mod_dup	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#include	src/class.c mrb_mod_include	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Module#module_function	src/class.c mrb_mod_module_function	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#prepend	src/class.c mrb_mod_prepend	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Module#private	src/class.c mrb_mod_private	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#protected	src/class.c mrb_mod_protected	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Module#public	src/class.c mrb_mod_public	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Object#__fpga_check_const_name_sym	src/class.c check_const_name_sym		arena_restore arena_save free realloc	
+class.rb Object#__fpga_check_if_class_or_module	src/class.c check_if_class_or_module		arena_restore arena_save realloc	
+class.rb Object#__fpga_check_type_module	src/object.c mrb_check_type	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Object#__fpga_check_type_symbol	src/object.c mrb_check_type	barrier free realloc	arena_restore arena_save realloc	barrier free
 class.rb Object#__fpga_class_new	src/class.c boot_defclass	barrier		barrier
-class.rb Object#__fpga_const_set	src/variable.c mrb_const_set	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_define	src/class.c mrb_define_method_raw	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_include_module	src/class.c mrb_include_module	barrier		barrier
+class.rb Object#__fpga_const_defined	src/variable.c const_defined_0		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_get	src/variable.c mrb_const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_hook	src/variable.c const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_missing	src/class.c mrb_const_missing		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_row	src/variable.c const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_sclass_base	src/variable.c mrb_vm_const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_const_set	src/variable.c mrb_const_set	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Object#__fpga_const_walk	src/variable.c mrb_vm_const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_define	src/class.c mrb_define_method_raw	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Object#__fpga_include_module	src/class.c mrb_include_module	barrier	arena_restore arena_save realloc	barrier
 class.rb Object#__fpga_include_module_at	src/class.c include_module_at	barrier		barrier
-class.rb Object#__fpga_iv_remove	src/variable.c mrb_iv_remove (D06)	free realloc		free realloc
-class.rb Object#__fpga_iv_set	src/variable.c mrb_iv_set	barrier free realloc		barrier free realloc
+class.rb Object#__fpga_instance_alloc	src/class.c mrb_instance_alloc		arena_restore arena_save realloc	
+class.rb Object#__fpga_iv_remove	src/variable.c mrb_iv_remove (D06)	free realloc	arena_restore arena_save free realloc	
+class.rb Object#__fpga_iv_set	src/variable.c mrb_iv_set	barrier free realloc	arena_restore arena_save free realloc	barrier
 class.rb Object#__fpga_iv_tbl	src/variable.c mrb_obj_iv_set (D06)	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_method_raw	src/class.c mrb_define_method_raw	barrier free realloc		barrier free realloc
+class.rb Object#__fpga_method_raw	src/class.c mrb_define_method_raw	barrier free realloc	arena_restore arena_save free realloc	barrier
 class.rb Object#__fpga_name_class	src/class.c mrb_class_name_class (D04)	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_obj_to_sym	src/etc.c mrb_obj_to_sym	free realloc		free realloc
-class.rb Object#__fpga_op_SUPER	src/vm.c OP_SUPER		realloc	
+class.rb Object#__fpga_obj_to_sym	src/etc.c mrb_obj_to_sym	free realloc	arena_restore arena_save realloc	free
+class.rb Object#__fpga_op_ALIAS	src/vm.c OP_ALIAS		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_CLASS	src/vm.c OP_CLASS		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_GETCONST	src/vm.c OP_GETCONST		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_GETMCNST	src/vm.c OP_GETMCNST		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_MODULE	src/vm.c OP_MODULE		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_SCLASS	src/vm.c OP_SCLASS		arena_restore arena_save realloc	
+class.rb Object#__fpga_op_SDEF	src/vm.c OP_SDEF		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_SETCONST	src/vm.c OP_SETCONST		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_SETIV	src/vm.c OP_SETIV		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_SETMCNST	src/vm.c OP_SETMCNST		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_SUPER	src/vm.c OP_SUPER		arena_restore arena_save free realloc	
+class.rb Object#__fpga_op_UNDEF	src/vm.c OP_UNDEF		arena_restore arena_save free realloc	
 class.rb Object#__fpga_op_ivget	src/class.c mrb_attr_reader (D15)	free realloc		free realloc
-class.rb Object#__fpga_op_ivset	src/class.c mrb_attr_writer (D15)	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_prepend_module	src/class.c mrb_prepend_module	barrier		barrier
-class.rb Object#__fpga_singleton	src/class.c prepare_singleton_class	barrier free realloc		barrier free realloc
-class.rb Object#__fpga_tbl_set	src/variable.c iv_put (D06)	realloc		realloc
-class.rb Object#__fpga_vm_define_method	src/vm.c vm_define_method	barrier free realloc		barrier free realloc
-enum.rb Enumerable#__update_hash	src/enum.c enum_update_hash	barrier free protect realloc		barrier free protect realloc
-enum.rb Enumerable.__update_hash	src/enum.c enum_update_hash	barrier free protect realloc		barrier free protect realloc
-error.rb Exception#backtrace	src/backtrace.c mrb_exc_backtrace	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-error.rb Exception#exception	src/error.c exc_exception	barrier free protect realloc		barrier free protect realloc
-error.rb Exception#initialize	src/error.c exc_initialize	barrier free protect realloc		barrier free protect realloc
-error.rb Exception#inspect	src/error.c mrb_exc_inspect	barrier free realloc		barrier free realloc
-error.rb Exception#set_backtrace	src/error.c exc_set_backtrace	barrier		barrier
-error.rb Exception#to_s	src/error.c exc_to_s	barrier free realloc		barrier free realloc
-error.rb Exception.exception	src/class.c mrb_instance_new	barrier free protect realloc		barrier free protect realloc
-error.rb Kernel#raise	src/kernel.c mrb_f_raise	barrier free protect realloc		barrier free protect realloc
-error.rb Module#to_s	src/class.c mrb_mod_to_s	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_class_name_str	src/class.c class_name_str	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_class_path	src/class.c mrb_class_path (D04)	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_exc_get_output	src/error.c mrb_exc_get_output	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_exc_mesg_set	src/error.c mrb_exc_mesg_set	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_exc_set	src/error.c mrb_exc_set	arena_restore arena_save barrier		arena_restore arena_save barrier
-error.rb Object#__fpga_f_raise	src/kernel.c mrb_f_raise	barrier free protect realloc		barrier free protect realloc
-error.rb Object#__fpga_format	src/error.c mrb_vformat	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-error.rb Object#__fpga_init_exception	src/error.c mrb_init_exception	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-error.rb Object#__fpga_inspect	src/object.c mrb_inspect	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_make_exception	src/error.c mrb_make_exception	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_mod_to_s	src/class.c mrb_mod_to_s	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_name_error	src/error.c mrb_name_error	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-error.rb Object#__fpga_no_method_error	src/error.c mrb_no_method_error	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-error.rb Object#__fpga_obj_as_string	src/string.c mrb_obj_as_string	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_op_ensure_block	src/vm.c ensure_block	barrier free realloc		barrier free realloc
-error.rb Object#__fpga_raisef	src/error.c mrb_raisef	arena_restore arena_save free realloc		arena_restore arena_save free realloc
-error.rb Object#__fpga_type_convert_proc	src/object.c mrb_type_convert	barrier free realloc		barrier free realloc
-float.rb Float#<	src/numeric.c num_lt	barrier free realloc		barrier free realloc
-float.rb Float#<=	src/numeric.c num_le	barrier free realloc		barrier free realloc
-float.rb Float#<=>	src/numeric.c num_cmp	barrier free realloc		barrier free realloc
-float.rb Float#>	src/numeric.c num_gt	barrier free realloc		barrier free realloc
-float.rb Float#>=	src/numeric.c num_ge	barrier free realloc		barrier free realloc
-float.rb Float#ceil	src/numeric.c flo_ceil	barrier free protect realloc		barrier free protect realloc
-float.rb Float#floor	src/numeric.c flo_floor	barrier free protect realloc		barrier free protect realloc
-float.rb Float#round	src/numeric.c flo_round	barrier free protect realloc		barrier free protect realloc
-float.rb Float#truncate	src/numeric.c flo_truncate	barrier free protect realloc		barrier free protect realloc
-float.rb Object#__fpga_cmpnum	src/numeric.c cmpnum	barrier free realloc		barrier free realloc
-float.rb Object#__fpga_cmpnum_total	src/numeric.c cmpnum_total	barrier free realloc		barrier free realloc
-float.rb Object#__fpga_flo_rounding	src/numeric.c flo_rounding	barrier free protect realloc		barrier free protect realloc
-float.rb Object#__fpga_init_numeric	src/numeric.c mrb_init_numeric	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-gpio.rb GPIO#_init	picoruby-gpio/src/mruby/gpio.c mrb__init	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO#write	picoruby-gpio/src/mruby/gpio.c mrb_write	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.high_at?	picoruby-gpio/src/mruby/gpio.c mrb_s_high_at_p	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.low_at?	picoruby-gpio/src/mruby/gpio.c mrb_s_low_at_p	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.open_drain_at	picoruby-gpio/src/mruby/gpio.c mrb_s_open_drain_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.pull_down_at	picoruby-gpio/src/mruby/gpio.c mrb_s_pull_down_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.pull_up_at	picoruby-gpio/src/mruby/gpio.c mrb_s_pull_up_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.read_at	picoruby-gpio/src/mruby/gpio.c mrb_s_read_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.set_dir_at	picoruby-gpio/src/mruby/gpio.c mrb_s_set_dir_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.set_function_at	picoruby-gpio/src/mruby/gpio.c mrb_s_set_function_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb GPIO.write_at	picoruby-gpio/src/mruby/gpio.c mrb_s_write_at	barrier free protect realloc		barrier free protect realloc
-gpio.rb Object#__fpga_gpio_pin_num	picoruby-gpio/src/mruby/gpio.c pin_num	barrier free protect realloc		barrier free protect realloc
-gpio.rb Object#__fpga_init_gpio	picoruby-gpio/src/mruby/gpio.c mrb_picoruby_gpio_gem_init	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-hash.rb Hash#[]=	src/hash.c mrb_hash_aset	barrier	realloc	barrier
-hash.rb Hash#__except	src/hash.c mrb_hash_except_keys	arena_restore arena_save barrier free protect realloc	realloc	arena_restore arena_save barrier free protect
-hash.rb Hash#__merge	mrbgems/mruby-hash-ext/src/hash_ext.c hash_merge	barrier free protect realloc	realloc	barrier free protect
-hash.rb Hash#__pat_values	src/hash.c mrb_hash_pat_values	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-hash.rb Hash#__value_eq	mrbgems/mruby-hash-ext/src/hash_ext.c hash_value_eq	barrier free protect realloc		barrier free protect realloc
-hash.rb Hash#default	src/hash.c mrb_hash_default	barrier free protect realloc		barrier free protect realloc
-hash.rb Hash#default=	src/hash.c mrb_hash_set_default	barrier free realloc		barrier free realloc
-hash.rb Hash#default_proc=	src/hash.c mrb_hash_set_default_proc	barrier free realloc		barrier free realloc
-hash.rb Hash#except	mrbgems/mruby-hash-ext/src/hash_ext.c hash_except	barrier free protect realloc	realloc	barrier free protect
-hash.rb Hash#initialize	src/hash.c mrb_hash_init	barrier free protect realloc		barrier free protect realloc
-hash.rb Hash#initialize_copy	src/hash.c mrb_hash_init_copy	barrier free protect realloc		barrier free protect realloc
-hash.rb Hash#key	mrbgems/mruby-hash-ext/src/hash_ext.c hash_key	barrier free protect realloc		barrier free protect realloc
-hash.rb Hash#keys	src/hash.c mrb_hash_keys	barrier free realloc		barrier free realloc
-hash.rb Hash#rehash	src/hash.c mrb_hash_rehash		realloc	
-hash.rb Hash#shift	src/hash.c mrb_hash_shift	protect		protect
-hash.rb Hash#slice	mrbgems/mruby-hash-ext/src/hash_ext.c hash_slice	barrier free protect realloc	realloc	barrier free protect
-hash.rb Hash#slice!	mrbgems/mruby-hash-ext/src/hash_ext.c hash_slice_bang	barrier free protect realloc	realloc	barrier free protect
-hash.rb Hash#to_s	src/hash.c mrb_hash_to_s	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-hash.rb Hash#values	src/hash.c mrb_hash_values	barrier free realloc		barrier free realloc
-hash.rb Hash#values_at	mrbgems/mruby-hash-ext/src/hash_ext.c hash_values_at	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-hash.rb Hash.[]	mrbgems/mruby-hash-ext/src/hash_ext.c hash_s_create	barrier free protect realloc	realloc	barrier free protect
+class.rb Object#__fpga_op_ivset	src/class.c mrb_attr_writer (D15)	barrier free realloc	arena_restore arena_save free realloc	barrier
+class.rb Object#__fpga_prepend_module	src/class.c mrb_prepend_module	barrier	arena_restore arena_save realloc	barrier
+class.rb Object#__fpga_singleton	src/class.c prepare_singleton_class	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Object#__fpga_slot	src/gc.c mrb_obj_alloc_core	barrier free realloc	arena_restore arena_save realloc	barrier free
+class.rb Object#__fpga_tbl_delete	src/variable.c iv_del (D06)		free	
+class.rb Object#__fpga_tbl_set	src/variable.c iv_put (D06)	realloc	free	realloc
+class.rb Object#__fpga_vm_const_base	src/variable.c mrb_vm_const_get		arena_restore arena_save free realloc	
+class.rb Object#__fpga_vm_const_get_noraise	src/variable.c mrb_vm_const_get_noraise		arena_restore arena_save free realloc	
+class.rb Object#__fpga_vm_define_method	src/vm.c vm_define_method	barrier free realloc	arena_restore arena_save free realloc	barrier
+enum.rb Enumerable#__update_hash	src/enum.c enum_update_hash		arena_restore arena_save realloc	
+enum.rb Enumerable.__update_hash	src/enum.c enum_update_hash		arena_restore arena_save realloc	
+error.rb Exception#backtrace	src/backtrace.c mrb_exc_backtrace	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Exception#exception	src/error.c exc_exception	barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Exception#initialize	src/error.c exc_initialize		arena_restore arena_save realloc	
+error.rb Exception#inspect	src/error.c mrb_exc_inspect	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Exception#set_backtrace	src/error.c exc_set_backtrace	barrier	arena_restore arena_save realloc	barrier
+error.rb Exception#to_s	src/error.c exc_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Exception.exception	src/class.c mrb_instance_new		arena_restore arena_save realloc	
+error.rb Kernel#raise	src/kernel.c mrb_f_raise	barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Module#to_s	src/class.c mrb_mod_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_break_dispatch	src/vm.c L_BREAK		arena_restore arena_save	
+error.rb Object#__fpga_break_new	src/vm.c break_new		arena_restore arena_save	
+error.rb Object#__fpga_cibase	src/vm.c OP_RAISEIF		arena_restore arena_save	
+error.rb Object#__fpga_class_name_str	src/class.c class_name_str	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_class_path	src/class.c mrb_class_path (D04)	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_ensure_array_type	src/object.c mrb_ensure_array_type		arena_restore arena_save realloc	
+error.rb Object#__fpga_ensure_string_type	src/object.c mrb_ensure_string_type		arena_restore arena_save realloc	
+error.rb Object#__fpga_exc_get_output	src/error.c mrb_exc_get_output	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_exc_mesg_set	src/error.c mrb_exc_mesg_set	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_exc_new_str	src/error.c mrb_exc_new_str		arena_restore arena_save realloc	
+error.rb Object#__fpga_exc_raise	src/error.c mrb_exc_raise		arena_restore arena_save realloc	
+error.rb Object#__fpga_exc_set	src/error.c mrb_exc_set	arena_restore arena_save barrier	arena_restore arena_save	barrier
+error.rb Object#__fpga_f_raise	src/kernel.c mrb_f_raise	barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Object#__fpga_format	src/error.c mrb_vformat	arena_restore arena_save free realloc	arena_restore arena_save realloc	free
+error.rb Object#__fpga_init_exception	src/error.c mrb_init_exception	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_inspect	src/object.c mrb_inspect	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_jump_checkpoint	src/vm.c OP_JMPUW		arena_restore arena_save	
+error.rb Object#__fpga_kind_of	src/object.c mrb_obj_is_kind_of		arena_restore arena_save realloc	
+error.rb Object#__fpga_make_exception	src/error.c mrb_make_exception	barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Object#__fpga_method_search_error	src/class.c mrb_method_search		arena_restore arena_save free realloc	
+error.rb Object#__fpga_mod_to_s	src/class.c mrb_mod_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_name_error	src/error.c mrb_name_error	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Object#__fpga_no_method_error	src/error.c mrb_no_method_error	arena_restore arena_save barrier free realloc	arena_restore arena_save free realloc	barrier
+error.rb Object#__fpga_obj_as_string	src/string.c mrb_obj_as_string	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_op_ARYPUSH	src/vm.c OP_ARYPUSH		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_BLKPUSH	src/vm.c vm_op_blkpush		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_BREAK	src/vm.c OP_BREAK		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_JMPUW	src/vm.c OP_JMPUW		arena_restore arena_save	
+error.rb Object#__fpga_op_RAISEIF	src/vm.c OP_RAISEIF		arena_restore arena_save	
+error.rb Object#__fpga_op_RESCUE	src/vm.c OP_RESCUE		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_RETURN_BLK	src/vm.c OP_RETURN_BLK		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_argc	src/vm.c argnum_error		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_ensure_block	src/vm.c ensure_block	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_op_overflow	src/vm.c L_INT_OVERFLOW		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_return	src/vm.c OP_RETURN		arena_restore arena_save	
+error.rb Object#__fpga_op_stack_err	src/vm.c cipush		arena_restore arena_save realloc	
+error.rb Object#__fpga_op_stop	src/vm.c OP_STOP		arena_restore arena_save	
+error.rb Object#__fpga_op_zerodiv	src/numeric.c mrb_int_zerodiv		arena_restore arena_save realloc	
+error.rb Object#__fpga_prepare_tagged_break	src/vm.c prepare_tagged_break		arena_restore arena_save	
+error.rb Object#__fpga_raise	src/error.c mrb_raise		arena_restore arena_save realloc	
+error.rb Object#__fpga_raise_alloc_overflow	src/gc.c mrb_calloc		arena_restore arena_save realloc	
+error.rb Object#__fpga_raisef	src/error.c mrb_raisef	arena_restore arena_save free realloc	arena_restore arena_save realloc	free
+error.rb Object#__fpga_throw	src/vm.c L_RAISE		arena_restore arena_save	
+error.rb Object#__fpga_type_convert_proc	src/object.c mrb_type_convert	barrier free realloc	arena_restore arena_save realloc	barrier free
+error.rb Object#__fpga_unwinding	src/vm.c L_RETURN		arena_restore arena_save	
+error.rb Object#__fpga_vis_error	src/vm.c vis_error		arena_restore arena_save free realloc	
+float.rb Float#%	src/numeric.c flo_mod		arena_restore arena_save realloc	
+float.rb Float#*	src/numeric.c flo_mul		arena_restore arena_save realloc	
+float.rb Float#**	src/numeric.c flo_pow		arena_restore arena_save realloc	
+float.rb Float#+	src/numeric.c flo_add		arena_restore arena_save realloc	
+float.rb Float#-	src/numeric.c flo_sub		arena_restore arena_save realloc	
+float.rb Float#/	src/numeric.c flo_div		arena_restore arena_save realloc	
+float.rb Float#<	src/numeric.c num_lt	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Float#<=	src/numeric.c num_le	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Float#<=>	src/numeric.c num_cmp	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Float#>	src/numeric.c num_gt	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Float#>=	src/numeric.c num_ge	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Float#ceil	src/numeric.c flo_ceil		arena_restore arena_save realloc	
+float.rb Float#div	src/numeric.c flo_idiv		arena_restore arena_save realloc	
+float.rb Float#divmod	src/numeric.c flo_divmod		arena_restore arena_save realloc	
+float.rb Float#floor	src/numeric.c flo_floor		arena_restore arena_save realloc	
+float.rb Float#round	src/numeric.c flo_round		arena_restore arena_save realloc	
+float.rb Float#to_i	src/numeric.c flo_to_i		arena_restore arena_save realloc	
+float.rb Float#truncate	src/numeric.c flo_truncate		arena_restore arena_save realloc	
+float.rb Numeric#fdiv	src/numeric.c num_fdiv		arena_restore arena_save realloc	
+float.rb Object#__fpga_as_float	src/object.c mrb_ensure_float_type		arena_restore arena_save realloc	
+float.rb Object#__fpga_check_num_exact	src/numeric.c mrb_check_num_exact		arena_restore arena_save realloc	
+float.rb Object#__fpga_cmpnum	src/numeric.c cmpnum	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Object#__fpga_cmpnum_total	src/numeric.c cmpnum_total	barrier free realloc	arena_restore arena_save realloc	barrier free
+float.rb Object#__fpga_flo_rounding	src/numeric.c flo_rounding		arena_restore arena_save realloc	
+float.rb Object#__fpga_flo_rounding_int	src/numeric.c flo_rounding_int		arena_restore arena_save realloc	
+float.rb Object#__fpga_flo_to_i	src/numeric.c flo_to_i		arena_restore arena_save realloc	
+float.rb Object#__fpga_flodivmod	src/numeric.c flodivmod		arena_restore arena_save realloc	
+float.rb Object#__fpga_init_numeric	src/numeric.c mrb_init_numeric	barrier free realloc	free	barrier realloc
+gc.rb Object#__fpga_calloc	src/gc.c mrb_calloc		arena_restore arena_save realloc	
+gc.rb Object#__fpga_full_gc	src/gc.c mrb_full_gc	barrier free		barrier free
+gc.rb Object#__fpga_gc_arena_keep	src/gc.c gc_arena_keep (D91)	realloc	realloc	
+gc.rb Object#__fpga_gc_debt	include/mruby/gc.h mrb_gc		arena_restore arena_save	
+gc.rb Object#__fpga_gc_protect_value	src/gc.c mrb_gc_protect	realloc	realloc	
+gc.rb Object#__fpga_incremental_gc	src/gc.c mrb_incremental_gc	barrier free		barrier free
+gc.rb Object#__fpga_malloc	src/gc.c mrb_malloc	realloc	realloc	
+gc.rb Object#__fpga_obj_alloc_core	src/gc.c mrb_obj_alloc_core	barrier free realloc	arena_restore arena_save realloc	barrier free
+gc.rb Object#__fpga_raise_nomemory	src/error.c mrb_raise_nomemory		arena_restore arena_save realloc	
+gc.rb Object#__fpga_realloc	src/gc.c mrb_realloc		arena_restore arena_save	
+gc.rb Object#__fpga_realloc_simple	src/gc.c mrb_realloc_simple	barrier free		barrier free
+gpio.rb GPIO#_init	picoruby-gpio/src/mruby/gpio.c mrb__init	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO#write	picoruby-gpio/src/mruby/gpio.c mrb_write		arena_restore arena_save realloc	
+gpio.rb GPIO.high_at?	picoruby-gpio/src/mruby/gpio.c mrb_s_high_at_p		arena_restore arena_save realloc	
+gpio.rb GPIO.low_at?	picoruby-gpio/src/mruby/gpio.c mrb_s_low_at_p		arena_restore arena_save realloc	
+gpio.rb GPIO.open_drain_at	picoruby-gpio/src/mruby/gpio.c mrb_s_open_drain_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.pull_down_at	picoruby-gpio/src/mruby/gpio.c mrb_s_pull_down_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.pull_up_at	picoruby-gpio/src/mruby/gpio.c mrb_s_pull_up_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.read_at	picoruby-gpio/src/mruby/gpio.c mrb_s_read_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.set_dir_at	picoruby-gpio/src/mruby/gpio.c mrb_s_set_dir_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.set_function_at	picoruby-gpio/src/mruby/gpio.c mrb_s_set_function_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb GPIO.write_at	picoruby-gpio/src/mruby/gpio.c mrb_s_write_at	free realloc	arena_restore arena_save realloc	free
+gpio.rb Object#__fpga_gpio_pin_num	picoruby-gpio/src/mruby/gpio.c pin_num	free realloc	arena_restore arena_save realloc	free
+gpio.rb Object#__fpga_init_gpio	picoruby-gpio/src/mruby/gpio.c mrb_picoruby_gpio_gem_init	barrier free realloc	free	barrier realloc
+hash.rb Hash#==	src/hash.c mrb_hash_equal		arena_restore arena_save realloc	
+hash.rb Hash#[]	src/hash.c mrb_hash_aget		arena_restore arena_save realloc	
+hash.rb Hash#[]=	src/hash.c mrb_hash_aset	barrier	arena_restore arena_save realloc	barrier
+hash.rb Hash#__compact	src/hash.c mrb_hash_compact		arena_restore arena_save realloc	
+hash.rb Hash#__delete	src/hash.c mrb_hash_delete		arena_restore arena_save realloc	
+hash.rb Hash#__except	src/hash.c mrb_hash_except_keys	arena_restore arena_save barrier	arena_restore arena_save realloc	barrier
+hash.rb Hash#__merge	mrbgems/mruby-hash-ext/src/hash_ext.c hash_merge	barrier	arena_restore arena_save realloc	barrier
+hash.rb Hash#__pat_values	src/hash.c mrb_hash_pat_values	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Hash#__value_eq	mrbgems/mruby-hash-ext/src/hash_ext.c hash_value_eq		arena_restore arena_save realloc	
+hash.rb Hash#assoc	src/hash.c mrb_hash_assoc		arena_restore arena_save realloc	
+hash.rb Hash#clear	src/hash.c mrb_hash_clear		arena_restore arena_save realloc	
+hash.rb Hash#default	src/hash.c mrb_hash_default		arena_restore arena_save realloc	
+hash.rb Hash#default=	src/hash.c mrb_hash_set_default	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Hash#default_proc=	src/hash.c mrb_hash_set_default_proc	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Hash#eql?	src/hash.c mrb_hash_eql		arena_restore arena_save realloc	
+hash.rb Hash#except	mrbgems/mruby-hash-ext/src/hash_ext.c hash_except	barrier realloc	arena_restore arena_save realloc	barrier
+hash.rb Hash#has_key?	src/hash.c mrb_hash_has_key		arena_restore arena_save realloc	
+hash.rb Hash#has_value?	src/hash.c mrb_hash_has_value		arena_restore arena_save realloc	
+hash.rb Hash#initialize	src/hash.c mrb_hash_init	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Hash#initialize_copy	src/hash.c mrb_hash_init_copy	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Hash#key	mrbgems/mruby-hash-ext/src/hash_ext.c hash_key		arena_restore arena_save realloc	
+hash.rb Hash#keys	src/hash.c mrb_hash_keys	barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Hash#rassoc	src/hash.c mrb_hash_rassoc		arena_restore arena_save realloc	
+hash.rb Hash#rehash	src/hash.c mrb_hash_rehash		arena_restore arena_save realloc	
+hash.rb Hash#shift	src/hash.c mrb_hash_shift	protect	arena_restore arena_save protect realloc	
+hash.rb Hash#slice	mrbgems/mruby-hash-ext/src/hash_ext.c hash_slice	barrier realloc	arena_restore arena_save realloc	barrier
+hash.rb Hash#slice!	mrbgems/mruby-hash-ext/src/hash_ext.c hash_slice_bang	barrier realloc	arena_restore arena_save realloc	barrier
+hash.rb Hash#to_s	src/hash.c mrb_hash_to_s	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Hash#values	src/hash.c mrb_hash_values	barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Hash#values_at	mrbgems/mruby-hash-ext/src/hash_ext.c hash_values_at	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Hash.[]	mrbgems/mruby-hash-ext/src/hash_ext.c hash_s_create	barrier realloc	arena_restore arena_save realloc	barrier
 hash.rb Object#__fpga_ar_adjust_ea	src/hash.c ar_adjust_ea	realloc	realloc	
 hash.rb Object#__fpga_ar_compress	src/hash.c ar_compress	realloc	realloc	
-hash.rb Object#__fpga_ar_rehash	src/hash.c ar_rehash	realloc	realloc	
-hash.rb Object#__fpga_ar_set	src/hash.c ar_set	barrier free realloc	realloc	barrier free
+hash.rb Object#__fpga_ar_delete	src/hash.c ar_delete		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ar_get	src/hash.c ar_get		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ar_rehash	src/hash.c ar_rehash	realloc	arena_restore arena_save realloc	
+hash.rb Object#__fpga_ar_set	src/hash.c ar_set	barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Object#__fpga_ea_get_by_key	src/hash.c ea_get_by_key		arena_restore arena_save realloc	
 hash.rb Object#__fpga_ea_resize	src/hash.c ea_resize	realloc	realloc	
+hash.rb Object#__fpga_ensure_hash_type	src/object.c mrb_ensure_hash_type		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_check_modified_validate	src/hash.c h_check_modified_validate		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_delete	src/hash.c h_delete		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_get	src/hash.c h_get		arena_restore arena_save realloc	
 hash.rb Object#__fpga_h_key_for	src/hash.c h_key_for	barrier free		barrier free
-hash.rb Object#__fpga_h_rehash	src/hash.c h_rehash		realloc	
-hash.rb Object#__fpga_h_set	src/hash.c h_set		realloc	
-hash.rb Object#__fpga_hash_dup	src/hash.c mrb_hash_dup	barrier free realloc		barrier free realloc
-hash.rb Object#__fpga_hash_merge	src/hash.c mrb_hash_merge	barrier	realloc	barrier
-hash.rb Object#__fpga_hash_new_capa	src/hash.c mrb_hash_new_capa	realloc	realloc	
-hash.rb Object#__fpga_hash_replace	src/hash.c hash_replace	barrier free realloc		barrier free realloc
-hash.rb Object#__fpga_hash_set	src/hash.c mrb_hash_set	barrier	realloc	barrier
-hash.rb Object#__fpga_hash_set_default_proc	src/hash.c hash_set_default_proc	barrier free realloc		barrier free realloc
+hash.rb Object#__fpga_h_obj_hash_code	src/hash.c obj_hash_code		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_rehash	src/hash.c h_rehash		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_set	src/hash.c h_set		arena_restore arena_save realloc	
+hash.rb Object#__fpga_h_shift	src/hash.c h_shift		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_delete_key	src/hash.c mrb_hash_delete_key		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_dup	src/hash.c mrb_hash_dup	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Object#__fpga_hash_fetch	src/hash.c mrb_hash_fetch		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_get	src/hash.c mrb_hash_get		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_key_p	src/hash.c mrb_hash_key_p		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_merge	src/hash.c mrb_hash_merge	barrier	arena_restore arena_save realloc	barrier
+hash.rb Object#__fpga_hash_modify	src/hash.c hash_modify		arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_new_capa	src/hash.c mrb_hash_new_capa	realloc	arena_restore arena_save realloc	
+hash.rb Object#__fpga_hash_replace	src/hash.c hash_replace	barrier free realloc	arena_restore arena_save free realloc	barrier
+hash.rb Object#__fpga_hash_set	src/hash.c mrb_hash_set	barrier	arena_restore arena_save realloc	barrier
+hash.rb Object#__fpga_hash_set_default_proc	src/hash.c hash_set_default_proc	barrier free realloc	arena_restore arena_save free realloc	barrier
 hash.rb Object#__fpga_ht_adjust_ea	src/hash.c ht_adjust_ea	realloc	realloc	
-hash.rb Object#__fpga_ht_init	src/hash.c ht_init	realloc	realloc	
-hash.rb Object#__fpga_ht_rehash	src/hash.c ht_rehash	free realloc	realloc	free
-hash.rb Object#__fpga_ht_set	src/hash.c ht_set	barrier free realloc	realloc	barrier free
-hash.rb Object#__fpga_ht_set_as_ar	src/hash.c ht_set_as_ar	barrier free realloc	realloc	barrier free
+hash.rb Object#__fpga_ht_delete	src/hash.c ht_delete		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ht_get	src/hash.c ht_get		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ht_init	src/hash.c ht_init	realloc	arena_restore arena_save realloc	
+hash.rb Object#__fpga_ht_rehash	src/hash.c ht_rehash	free realloc	arena_restore arena_save realloc	free
+hash.rb Object#__fpga_ht_set	src/hash.c ht_set	barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Object#__fpga_ht_set_as_ar	src/hash.c ht_set_as_ar	barrier free realloc	arena_restore arena_save realloc	barrier free
+hash.rb Object#__fpga_ht_shift	src/hash.c ht_shift		arena_restore arena_save realloc	
 hash.rb Object#__fpga_ht_to_ar	src/hash.c ht_to_ar	free realloc	realloc	free
-hash.rb Object#__fpga_malloc	src/gc.c mrb_malloc	realloc		realloc
-hash.rb Object#__fpga_op_HASH	src/vm.c OP_HASH		realloc	
-hash.rb Object#__fpga_op_HASHADD	src/vm.c OP_HASHADD		realloc	
-hash.rb Object#__fpga_op_HASHCAT	src/vm.c OP_HASHCAT		realloc	
-kernel.rb BasicObject#method_missing	src/class.c mrb_obj_missing	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#!~	src/kernel.c mrb_obj_not_match	arena_restore arena_save		arena_restore arena_save
-kernel.rb Kernel#__ENCODING__	src/string.c mrb_encoding	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_const?	src/kernel.c mrb_f_defined_const	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_const_path?	src/kernel.c mrb_f_defined_const_path	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_cvar?	src/kernel.c mrb_f_defined_cvar	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_gvar?	src/kernel.c mrb_f_defined_gvar	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_ivar?	src/kernel.c mrb_f_defined_ivar	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_method?	src/kernel.c mrb_f_defined_method	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__defined_method_on?	src/kernel.c mrb_f_defined_method_on	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#__method_recursive?	src/kernel.c mrb_obj_method_recursive_p	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#clone	src/class.c mrb_obj_clone	barrier free realloc		barrier free realloc
-kernel.rb Kernel#instance_of?	src/kernel.c obj_is_instance_of	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#print	src/kernel.c mrb_print_m	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel#remove_instance_variable	src/kernel.c mrb_obj_remove_instance_variable	barrier free protect realloc		barrier free protect realloc
-kernel.rb Kernel.raise	src/kernel.c mrb_f_raise	barrier free protect realloc		barrier free protect realloc
-kernel.rb Object#__fpga_copy_class	src/class.c copy_class	barrier free realloc		barrier free realloc
-kernel.rb Object#__fpga_mt_copy	src/class.c mt_copy (D05)	realloc		realloc
-kernel.rb Object#__fpga_obj_clone	src/class.c mrb_obj_clone	barrier free realloc		barrier free realloc
-kernel.rb Object#__fpga_singleton_class_clone	src/class.c mrb_singleton_class_clone	barrier free realloc		barrier free realloc
-kwargs.rb Object#__fpga_op_enter_kw	src/vm.c vm_op_enter	barrier free protect realloc	realloc	barrier free protect
-kwargs.rb Object#__fpga_op_kwpack	src/vm.c hash_new_from_regs	barrier realloc	realloc	barrier
-module.rb BasicObject#instance_eval	src/vm.c mrb_obj_instance_eval	barrier free protect realloc		barrier free protect realloc
-module.rb Kernel#lambda	src/proc.c proc_lambda	barrier free protect realloc		barrier free protect realloc
-module.rb Module#alias_method	src/class.c mrb_mod_alias	barrier free protect realloc		barrier free protect realloc
-module.rb Module#ancestors	src/class.c mrb_mod_ancestors	barrier free realloc		barrier free realloc
-module.rb Module#const_get	src/class.c mrb_mod_const_get	free realloc		free realloc
-module.rb Module#const_missing	src/class.c mrb_mod_const_missing	barrier free protect realloc		barrier free protect realloc
-module.rb Module#const_set	src/class.c mrb_mod_const_set	barrier free protect realloc		barrier free protect realloc
-module.rb Module#define_method	src/class.c mod_define_method	barrier free protect realloc		barrier free protect realloc
-module.rb Module#initialize	src/class.c mrb_mod_initialize	barrier free protect realloc		barrier free protect realloc
-module.rb Module#method_defined?	src/class.c mrb_mod_method_defined	barrier free protect realloc		barrier free protect realloc
-module.rb Module#module_eval	src/vm.c mrb_mod_module_eval	barrier free protect realloc		barrier free protect realloc
-module.rb Module#remove_const	src/class.c mrb_mod_remove_const	barrier free protect realloc		barrier free protect realloc
-module.rb Module#undef_method	src/class.c mrb_mod_undef	barrier free protect realloc		barrier free protect realloc
-module.rb Object#__fpga_cv_set	src/variable.c mrb_mod_cv_set	barrier realloc		barrier realloc
-module.rb Object#__fpga_scope_vis	src/class.c mrb_define_method_raw	barrier free realloc		barrier free realloc
+hash.rb Object#__fpga_ib_init	src/hash.c ib_init		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ib_it_find_by_key	src/hash.c ib_it_find_by_key		arena_restore arena_save realloc	
+hash.rb Object#__fpga_ib_it_init	src/hash.c ib_it_init		arena_restore arena_save realloc	
+hash.rb Object#__fpga_obj_eql	src/hash.c obj_eql		arena_restore arena_save realloc	
+hash.rb Object#__fpga_op_HASH	src/vm.c OP_HASH		arena_restore arena_save realloc	
+hash.rb Object#__fpga_op_HASHADD	src/vm.c OP_HASHADD		arena_restore arena_save realloc	
+hash.rb Object#__fpga_op_HASHCAT	src/vm.c OP_HASHCAT		arena_restore arena_save realloc	
+kernel.rb BasicObject#method_missing	src/class.c mrb_obj_missing		arena_restore arena_save free realloc	
+kernel.rb Kernel#!~	src/kernel.c mrb_obj_not_match	arena_restore arena_save	arena_restore arena_save	
+kernel.rb Kernel#<=>	src/kernel.c mrb_cmp_m		arena_restore arena_save	
+kernel.rb Kernel#__defined_const?	src/kernel.c mrb_f_defined_const		arena_restore arena_save free realloc	
+kernel.rb Kernel#__defined_const_path?	src/kernel.c mrb_f_defined_const_path		arena_restore arena_save free realloc	
+kernel.rb Kernel#__defined_cvar?	src/kernel.c mrb_f_defined_cvar		arena_restore arena_save free realloc	
+kernel.rb Kernel#__defined_gvar?	src/kernel.c mrb_f_defined_gvar		arena_restore arena_save realloc	
+kernel.rb Kernel#__defined_ivar?	src/kernel.c mrb_f_defined_ivar		arena_restore arena_save free realloc	
+kernel.rb Kernel#__defined_method?	src/kernel.c mrb_f_defined_method		arena_restore arena_save realloc	
+kernel.rb Kernel#__defined_method_on?	src/kernel.c mrb_f_defined_method_on		arena_restore arena_save realloc	
+kernel.rb Kernel#__defined_super?	src/kernel.c mrb_f_defined_super		arena_restore arena_save	
+kernel.rb Kernel#__defined_yield?	src/kernel.c mrb_f_defined_yield		arena_restore arena_save	
+kernel.rb Kernel#__method_recursive?	src/kernel.c mrb_obj_method_recursive_p		arena_restore arena_save realloc	
+kernel.rb Kernel#block_given?	src/kernel.c mrb_f_block_given_p_m		arena_restore arena_save	
+kernel.rb Kernel#clone	src/class.c mrb_obj_clone	barrier free realloc	arena_restore arena_save free realloc	barrier
+kernel.rb Kernel#instance_of?	src/kernel.c obj_is_instance_of		arena_restore arena_save realloc	
+kernel.rb Kernel#print	src/kernel.c mrb_print_m	barrier free realloc		barrier free realloc
+kernel.rb Kernel#remove_instance_variable	src/kernel.c mrb_obj_remove_instance_variable	free realloc	arena_restore arena_save free realloc	
+kernel.rb Kernel.block_given?	src/kernel.c mrb_f_block_given_p_m		arena_restore arena_save	
+kernel.rb Kernel.iterator?	src/kernel.c mrb_f_block_given_p_m		arena_restore arena_save	
+kernel.rb Kernel.raise	src/kernel.c mrb_f_raise	barrier free realloc	arena_restore arena_save free realloc	barrier
+kernel.rb Object#__fpga_block_given	src/kernel.c mrb_f_block_given_p_m		arena_restore arena_save	
+kernel.rb Object#__fpga_copy_class	src/class.c copy_class	barrier free realloc	free	barrier realloc
+kernel.rb Object#__fpga_iv_name_sym_check	src/variable.c mrb_iv_name_sym_check		arena_restore arena_save free realloc	
+kernel.rb Object#__fpga_mt_copy	src/class.c mt_copy (D05)	realloc	free	realloc
+kernel.rb Object#__fpga_obj_clone	src/class.c mrb_obj_clone	barrier free realloc	arena_restore arena_save free realloc	barrier
+kernel.rb Object#__fpga_singleton_class_clone	src/class.c mrb_singleton_class_clone	barrier free realloc	free	barrier realloc
+kwargs.rb Object#__fpga_op_KARG	src/vm.c OP_KARG		arena_restore arena_save realloc	
+kwargs.rb Object#__fpga_op_KEYEND	src/vm.c OP_KEYEND		arena_restore arena_save realloc	
+kwargs.rb Object#__fpga_op_KEY_P	src/vm.c OP_KEY_P		arena_restore arena_save realloc	
+kwargs.rb Object#__fpga_op_enter_kw	src/vm.c vm_op_enter	barrier free protect realloc	arena_restore arena_save protect realloc	barrier free
+kwargs.rb Object#__fpga_op_kwpack	src/vm.c hash_new_from_regs	barrier realloc	arena_restore arena_save realloc	barrier
+module.rb BasicObject#instance_eval	src/vm.c mrb_obj_instance_eval	barrier free realloc	arena_restore arena_save realloc	barrier free
+module.rb Kernel#lambda	src/proc.c proc_lambda		arena_restore arena_save realloc	
+module.rb Module#alias_method	src/class.c mrb_mod_alias	barrier free realloc	arena_restore arena_save free realloc	barrier
+module.rb Module#ancestors	src/class.c mrb_mod_ancestors	barrier free realloc	arena_restore arena_save realloc	barrier free
+module.rb Module#const_get	src/class.c mrb_mod_const_get	free realloc	arena_restore arena_save free realloc	
+module.rb Module#const_missing	src/class.c mrb_mod_const_missing		arena_restore arena_save free realloc	
+module.rb Module#const_set	src/class.c mrb_mod_const_set	barrier free realloc	arena_restore arena_save free realloc	barrier
+module.rb Module#define_method	src/class.c mod_define_method	barrier free realloc	arena_restore arena_save free realloc	barrier
+module.rb Module#method_defined?	src/class.c mrb_mod_method_defined		arena_restore arena_save realloc	
+module.rb Module#module_eval	src/vm.c mrb_mod_module_eval		arena_restore arena_save realloc	
+module.rb Module#remove_const	src/class.c mrb_mod_remove_const	free realloc	arena_restore arena_save free realloc	
+module.rb Module#undef_method	src/class.c mrb_mod_undef	barrier free realloc	arena_restore arena_save free realloc	barrier
+module.rb Object#__fpga_caller_scope_vis	src/class.c caller_scope_visibility (D19)		arena_restore arena_save free realloc	
+module.rb Object#__fpga_cv_get	src/variable.c mrb_mod_cv_get		arena_restore arena_save free realloc	
+module.rb Object#__fpga_cv_set	src/variable.c mrb_mod_cv_set	barrier realloc	arena_restore arena_save free realloc	barrier
+module.rb Object#__fpga_eval_under	src/vm.c eval_under		arena_restore arena_save realloc	
+module.rb Object#__fpga_op_GETCV	src/vm.c OP_GETCV		arena_restore arena_save free realloc	
+module.rb Object#__fpga_op_SETCV	src/vm.c OP_SETCV		arena_restore arena_save free realloc	
+module.rb Object#__fpga_scope_vis	src/class.c mrb_define_method_raw	barrier free realloc	arena_restore arena_save free realloc	barrier
 module.rb Object#__fpga_set_scope_vis	src/class.c vis_scope_persist	barrier		barrier
-numeric.rb Integer#<	src/numeric.c num_lt	barrier free realloc		barrier free realloc
-numeric.rb Integer#<=	src/numeric.c num_le	barrier free realloc		barrier free realloc
-numeric.rb Integer#<=>	src/numeric.c num_cmp	barrier free realloc		barrier free realloc
-numeric.rb Integer#>	src/numeric.c num_gt	barrier free realloc		barrier free realloc
-numeric.rb Integer#>=	src/numeric.c num_ge	barrier free realloc		barrier free realloc
-numeric.rb Integer#ceil	src/numeric.c int_ceil	barrier free protect realloc		barrier free protect realloc
-numeric.rb Integer#floor	src/numeric.c int_floor	barrier free protect realloc		barrier free protect realloc
-numeric.rb Integer#round	src/numeric.c int_round	barrier free protect realloc		barrier free protect realloc
-numeric.rb Integer#truncate	src/numeric.c int_truncate	barrier free protect realloc		barrier free protect realloc
-numeric.rb Integer.__ensure	src/numeric.c int_s_ensure	barrier free protect realloc		barrier free protect realloc
-numeric.rb Object#__fpga_prepare_int_rounding	src/numeric.c prepare_int_rounding	barrier free protect realloc		barrier free protect realloc
-object.rb FalseClass#^	src/object.c false_xor	barrier free protect realloc		barrier free protect realloc
-object.rb FalseClass#|	src/object.c false_or	barrier free protect realloc		barrier free protect realloc
-object.rb Kernel#dup	src/class.c mrb_obj_dup	barrier free realloc		barrier free realloc
-object.rb Kernel#inspect	src/kernel.c mrb_obj_inspect	barrier free realloc		barrier free realloc
-object.rb Kernel#to_s	src/object.c mrb_any_to_s	barrier free realloc		barrier free realloc
-object.rb Module#include?	src/class.c mrb_mod_include_p	barrier free protect realloc		barrier free protect realloc
-object.rb Module#inspect	src/class.c mrb_mod_to_s	barrier free realloc		barrier free realloc
-object.rb NilClass#^	src/object.c false_xor	barrier free protect realloc		barrier free protect realloc
-object.rb NilClass#|	src/object.c false_or	barrier free protect realloc		barrier free protect realloc
-object.rb Object#__fpga_any_to_s	src/object.c mrb_any_to_s	barrier free realloc		barrier free realloc
-object.rb Object#__fpga_init_copy	src/class.c init_copy	barrier free realloc		barrier free realloc
-object.rb Object#__fpga_init_main	src/class.c mrb_init_class	arena_restore arena_save barrier free realloc		arena_restore arena_save barrier free realloc
-object.rb Object#__fpga_inspect_ivs	src/kernel.c inspect_i (D06)	barrier free realloc		barrier free realloc
-object.rb Object#__fpga_iv_copy	src/variable.c mrb_iv_copy (D06)	barrier free realloc		barrier free realloc
-object.rb TrueClass#&	src/object.c true_and	barrier free protect realloc		barrier free protect realloc
-object.rb TrueClass#^	src/object.c true_xor	barrier free protect realloc		barrier free protect realloc
+numeric.rb Integer#%	src/numeric.c int_mod		arena_restore arena_save realloc	
+numeric.rb Integer#&	src/numeric.c int_and		arena_restore arena_save realloc	
+numeric.rb Integer#*	src/numeric.c int_mul		arena_restore arena_save realloc	
+numeric.rb Integer#**	src/numeric.c int_pow		arena_restore arena_save realloc	
+numeric.rb Integer#+	src/numeric.c int_add		arena_restore arena_save realloc	
+numeric.rb Integer#-	src/numeric.c int_sub		arena_restore arena_save realloc	
+numeric.rb Integer#/	src/numeric.c int_div		arena_restore arena_save realloc	
+numeric.rb Integer#<	src/numeric.c num_lt	barrier free realloc	arena_restore arena_save realloc	barrier free
+numeric.rb Integer#<<	src/numeric.c int_lshift		arena_restore arena_save realloc	
+numeric.rb Integer#<=	src/numeric.c num_le	barrier free realloc	arena_restore arena_save realloc	barrier free
+numeric.rb Integer#<=>	src/numeric.c num_cmp	barrier free realloc	arena_restore arena_save realloc	barrier free
+numeric.rb Integer#>	src/numeric.c num_gt	barrier free realloc	arena_restore arena_save realloc	barrier free
+numeric.rb Integer#>=	src/numeric.c num_ge	barrier free realloc	arena_restore arena_save realloc	barrier free
+numeric.rb Integer#>>	src/numeric.c int_rshift		arena_restore arena_save realloc	
+numeric.rb Integer#^	src/numeric.c int_xor		arena_restore arena_save realloc	
+numeric.rb Integer#__coerce_step_counter	src/numeric.c coerce_step_counter		arena_restore arena_save realloc	
+numeric.rb Integer#__fpga_num_shift	src/numeric.c mrb_num_shift		arena_restore arena_save realloc	
+numeric.rb Integer#__fpga_shr_s	src/numeric.c mrb_num_shift		arena_restore arena_save realloc	
+numeric.rb Integer#ceil	src/numeric.c int_ceil		arena_restore arena_save realloc	
+numeric.rb Integer#div	src/numeric.c int_idiv		arena_restore arena_save realloc	
+numeric.rb Integer#divmod	src/numeric.c int_divmod		arena_restore arena_save realloc	
+numeric.rb Integer#fdiv	src/numeric.c int_fdiv		arena_restore arena_save realloc	
+numeric.rb Integer#floor	src/numeric.c int_floor		arena_restore arena_save realloc	
+numeric.rb Integer#quo	src/numeric.c int_quo		arena_restore arena_save realloc	
+numeric.rb Integer#round	src/numeric.c int_round		arena_restore arena_save realloc	
+numeric.rb Integer#to_s	src/numeric.c int_to_s		arena_restore arena_save realloc	
+numeric.rb Integer#truncate	src/numeric.c int_truncate		arena_restore arena_save realloc	
+numeric.rb Integer#|	src/numeric.c int_or		arena_restore arena_save realloc	
+numeric.rb Integer.__ensure	src/numeric.c int_s_ensure		arena_restore arena_save realloc	
+numeric.rb Object#__fpga_div_int_value	src/numeric.c mrb_div_int_value		arena_restore arena_save realloc	
+numeric.rb Object#__fpga_int_noconv	src/numeric.c mrb_int_noconv		arena_restore arena_save realloc	
+numeric.rb Object#__fpga_int_pow	src/numeric.c mrb_int_pow		arena_restore arena_save realloc	
+numeric.rb Object#__fpga_intdivmod	src/numeric.c intdivmod		arena_restore arena_save realloc	
+numeric.rb Object#__fpga_prepare_int_rounding	src/numeric.c prepare_int_rounding		arena_restore arena_save realloc	
+object.rb Kernel#__case_eqq	src/kernel.c mrb_obj_ceqq		arena_restore arena_save realloc	
+object.rb Kernel#dup	src/class.c mrb_obj_dup	barrier free realloc	arena_restore arena_save free realloc	barrier
+object.rb Kernel#initialize_copy	src/kernel.c mrb_obj_init_copy		arena_restore arena_save realloc	
+object.rb Kernel#inspect	src/kernel.c mrb_obj_inspect	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Kernel#to_s	src/object.c mrb_any_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Module#===	src/class.c mrb_mod_eqq		arena_restore arena_save realloc	
+object.rb Module#include?	src/class.c mrb_mod_include_p	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Module#inspect	src/class.c mrb_mod_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Object#__fpga_any_to_s	src/object.c mrb_any_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Object#__fpga_check_frozen	src/error.c mrb_check_frozen		arena_restore arena_save realloc	
+object.rb Object#__fpga_init_copy	src/class.c init_copy	barrier free realloc	free	barrier realloc
+object.rb Object#__fpga_init_main	src/class.c mrb_init_class	barrier free realloc	arena_restore arena_save free realloc	barrier
+object.rb Object#__fpga_inspect_ivs	src/kernel.c inspect_i (D06)	barrier free realloc	arena_restore arena_save realloc	barrier free
+object.rb Object#__fpga_iv_copy	src/variable.c mrb_iv_copy (D06)	barrier free realloc	free	barrier realloc
+object.rb Object#__fpga_ptr_to_str	src/string.c mrb_ptr_to_str		arena_restore arena_save realloc	
+proc.rb Object#__fpga_check_target_class	src/vm.c check_target_class		arena_restore arena_save realloc	
 proc.rb Object#__fpga_closure_new	src/proc.c mrb_closure_new	barrier		barrier
 proc.rb Object#__fpga_closure_setup	src/proc.c closure_setup	barrier		barrier
+proc.rb Object#__fpga_env_unshare	src/vm.c mrb_env_unshare	barrier free	arena_restore arena_save free realloc	barrier
+proc.rb Object#__fpga_unwind_close	src/vm.c cipop	barrier free realloc	arena_restore arena_save free realloc	barrier
 proc.rb Object#__fpga_yield_with_class	src/vm.c yield_with_attr	barrier free realloc		barrier free realloc
-proc.rb Proc.new	src/proc.c mrb_proc_s_new	barrier free protect realloc		barrier free protect realloc
-range.rb Object#__fpga_cmp	src/numeric.c mrb_cmp	barrier free realloc		barrier free realloc
-range.rb Object#__fpga_range_check	src/range.c r_check	barrier free realloc		barrier free realloc
-range.rb Object#__fpga_range_new	src/range.c mrb_range_new	barrier free realloc		barrier free realloc
-range.rb Object#__fpga_range_ptr_init	src/range.c range_ptr_init	barrier free realloc		barrier free realloc
-range.rb Range#include?	src/range.c range_include	barrier free realloc		barrier free realloc
-range.rb Range#initialize	src/range.c range_initialize	barrier free protect realloc		barrier free protect realloc
-range.rb Range#initialize_copy	src/range.c range_initialize_copy	barrier free realloc		barrier free realloc
-range.rb Range#inspect	src/range.c range_inspect	barrier free realloc		barrier free realloc
-range.rb Range#to_s	src/range.c range_to_s	barrier free realloc		barrier free realloc
-string.rb Object#__fpga_case_out_room	src/string.c case_out_room	realloc		realloc
-string.rb Object#__fpga_str_aref	src/string.c mrb_str_aref	free		free
-string.rb Object#__fpga_str_aset	src/string.c mrb_str_aset	free realloc		free realloc
-string.rb Object#__fpga_str_byterindex_m	src/string.c mrb_str_byterindex_m	barrier free protect realloc		barrier free protect realloc
-string.rb Object#__fpga_str_bytesplice	src/string.c str_bytesplice	free realloc		free realloc
-string.rb Object#__fpga_str_capitalize_bang	src/string.c mrb_str_capitalize_bang	free realloc		free realloc
-string.rb Object#__fpga_str_case_convert_unicode	src/string.c mrb_str_case_convert_unicode	free realloc		free realloc
-string.rb Object#__fpga_str_case_convert_utf8	src/string.c str_case_convert_utf8	free realloc		free realloc
-string.rb Object#__fpga_str_cat	src/string.c mrb_str_cat	free realloc		free realloc
-string.rb Object#__fpga_str_cat_str	src/string.c mrb_str_cat_str	free realloc		free realloc
-string.rb Object#__fpga_str_chomp_bang	src/string.c mrb_str_chomp_bang	barrier free protect realloc		barrier free protect realloc
-string.rb Object#__fpga_str_chop_bang	src/string.c mrb_str_chop_bang	free		free
-string.rb Object#__fpga_str_concat	mrbgems/mruby-string-ext/src/string.c str_concat	free realloc		free realloc
-string.rb Object#__fpga_str_downcase_bang	src/string.c mrb_str_downcase_bang	free realloc		free realloc
+proc.rb Proc#initialize_copy	src/proc.c mrb_proc_init_copy		arena_restore arena_save realloc	
+proc.rb Proc.new	src/proc.c mrb_proc_s_new		arena_restore arena_save realloc	
+range.rb Object#__fpga_as_int	include/mruby.h mrb_as_int		arena_restore arena_save realloc	
+range.rb Object#__fpga_cmp	src/numeric.c mrb_cmp	barrier free realloc	arena_restore arena_save realloc	barrier free
+range.rb Object#__fpga_float_to_integer	src/numeric.c mrb_float_to_integer		arena_restore arena_save realloc	
+range.rb Object#__fpga_op_RANGE_EXC	src/vm.c OP_RANGE_EXC		arena_restore arena_save free realloc	
+range.rb Object#__fpga_op_RANGE_INC	src/vm.c OP_RANGE_INC		arena_restore arena_save free realloc	
+range.rb Object#__fpga_range_beg_len	src/range.c mrb_range_beg_len		arena_restore arena_save realloc	
+range.rb Object#__fpga_range_check	src/range.c r_check	barrier free realloc	arena_restore arena_save realloc	barrier free
+range.rb Object#__fpga_range_new	src/range.c mrb_range_new	barrier free realloc	arena_restore arena_save free realloc	barrier
+range.rb Object#__fpga_range_ptr_init	src/range.c range_ptr_init	barrier free realloc	arena_restore arena_save free realloc	barrier
+range.rb Range#__num_to_a	src/range.c range_num_to_a		arena_restore arena_save realloc	
+range.rb Range#include?	src/range.c range_include	barrier free realloc	arena_restore arena_save realloc	barrier free
+range.rb Range#initialize	src/range.c range_initialize	barrier free realloc	arena_restore arena_save free realloc	barrier
+range.rb Range#initialize_copy	src/range.c range_initialize_copy	barrier free realloc	arena_restore arena_save free realloc	barrier
+range.rb Range#inspect	src/range.c range_inspect	barrier free realloc	arena_restore arena_save realloc	barrier free
+range.rb Range#to_s	src/range.c range_to_s	barrier free realloc	arena_restore arena_save realloc	barrier free
+string.rb Object#__fpga_case_out_room	src/string.c case_out_room	realloc	arena_restore arena_save realloc	
+string.rb Object#__fpga_str_aref	src/string.c mrb_str_aref	free	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_aset	src/string.c mrb_str_aset	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_byterindex_m	src/string.c mrb_str_byterindex_m		arena_restore arena_save realloc	
+string.rb Object#__fpga_str_bytesplice	src/string.c str_bytesplice	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_capitalize_bang	src/string.c mrb_str_capitalize_bang	free realloc	arena_restore arena_save free realloc	
+string.rb Object#__fpga_str_case_convert_unicode	src/string.c mrb_str_case_convert_unicode	free realloc	arena_restore arena_save free realloc	
+string.rb Object#__fpga_str_case_convert_utf8	src/string.c str_case_convert_utf8	free realloc	arena_restore arena_save free realloc	
+string.rb Object#__fpga_str_cat	src/string.c mrb_str_cat	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_cat_str	src/string.c mrb_str_cat_str	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_check_byte_pos	src/string.c mrb_str_check_byte_pos		arena_restore arena_save realloc	
+string.rb Object#__fpga_str_chomp_bang	src/string.c mrb_str_chomp_bang	free	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_chop_bang	src/string.c mrb_str_chop_bang	free	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_concat	mrbgems/mruby-string-ext/src/string.c str_concat	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_convert_range	src/string.c str_convert_range		arena_restore arena_save realloc	
+string.rb Object#__fpga_str_downcase_bang	src/string.c mrb_str_downcase_bang	free realloc	arena_restore arena_save free realloc	
 string.rb Object#__fpga_str_dup	src/string.c mrb_str_dup	free		free
-string.rb Object#__fpga_str_escape	src/string.c str_escape	free realloc		free realloc
-string.rb Object#__fpga_str_modify	src/string.c mrb_str_modify	free		free
-string.rb Object#__fpga_str_replace	src/string.c str_replace	free		free
-string.rb Object#__fpga_str_replace_partial	src/string.c str_replace_partial	free realloc		free realloc
-string.rb Object#__fpga_str_resize	src/string.c mrb_str_resize	free realloc		free realloc
-string.rb Object#__fpga_str_resize_capa	src/string.c resize_capa	realloc		realloc
-string.rb Object#__fpga_str_reverse_bang	src/string.c mrb_str_reverse_bang	free		free
-string.rb Object#__fpga_str_upcase_bang	src/string.c mrb_str_upcase_bang	free realloc		free realloc
-string.rb String#*	src/string.c mrb_str_times	barrier free protect realloc		barrier free protect realloc
-string.rb String#+	src/string.c mrb_str_plus_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#<<	mrbgems/mruby-string-ext/src/string.c str_concat_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#[]	src/string.c mrb_str_aref_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#[]=	src/string.c mrb_str_aset_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#__sub_replace	src/string.c sub_replace	barrier free protect realloc		barrier free protect realloc
-string.rb String#byteindex	src/string.c mrb_str_byteindex_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#byterindex	src/string.c mrb_str_byterindex_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#bytes	src/string.c mrb_str_bytes	barrier free realloc		barrier free realloc
-string.rb String#byteslice	src/string.c mrb_str_byteslice	barrier free protect realloc		barrier free protect realloc
-string.rb String#bytesplice	src/string.c mrb_str_bytesplice	barrier free protect realloc		barrier free protect realloc
-string.rb String#capitalize	src/string.c mrb_str_capitalize	free realloc		free realloc
-string.rb String#capitalize!	src/string.c mrb_str_capitalize_bang	free realloc		free realloc
-string.rb String#chomp	src/string.c mrb_str_chomp	barrier free protect realloc		barrier free protect realloc
-string.rb String#chomp!	src/string.c mrb_str_chomp_bang	barrier free protect realloc		barrier free protect realloc
-string.rb String#chop	src/string.c mrb_str_chop	free		free
-string.rb String#chop!	src/string.c mrb_str_chop_bang	free		free
-string.rb String#concat	mrbgems/mruby-string-ext/src/string.c str_concat_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#downcase	src/string.c mrb_str_downcase	free realloc		free realloc
-string.rb String#downcase!	src/string.c mrb_str_downcase_bang	free realloc		free realloc
-string.rb String#getbyte	src/string.c mrb_str_getbyte	barrier free protect realloc		barrier free protect realloc
-string.rb String#include?	src/string.c mrb_str_include	barrier free protect realloc		barrier free protect realloc
-string.rb String#index	src/string.c mrb_str_index_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#initialize	src/string.c mrb_str_init	barrier free protect realloc		barrier free protect realloc
-string.rb String#inspect	src/string.c mrb_str_inspect	free realloc		free realloc
-string.rb String#replace	src/string.c mrb_str_replace	barrier free protect realloc		barrier free protect realloc
-string.rb String#reverse	src/string.c mrb_str_reverse	free		free
-string.rb String#reverse!	src/string.c mrb_str_reverse_bang	free		free
-string.rb String#rindex	src/string.c mrb_str_rindex_m	barrier free protect realloc		barrier free protect realloc
-string.rb String#setbyte	src/string.c mrb_str_setbyte	barrier free protect realloc		barrier free protect realloc
-string.rb String#split	src/string.c mrb_str_split_m	arena_restore arena_save barrier free protect realloc		arena_restore arena_save barrier free protect realloc
-string.rb String#to_i	src/string.c mrb_str_to_i	barrier free protect realloc		barrier free protect realloc
+string.rb Object#__fpga_str_escape	src/string.c str_escape	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_len_to_integer	src/string.c mrb_str_len_to_integer		arena_restore arena_save realloc	
+string.rb Object#__fpga_str_modify	src/string.c mrb_str_modify	free	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_new_capa	src/string.c mrb_str_new_capa		realloc	
+string.rb Object#__fpga_str_out_of_index	src/string.c str_out_of_index		arena_restore arena_save realloc	
+string.rb Object#__fpga_str_replace	src/string.c str_replace	free	arena_restore arena_save free realloc	
+string.rb Object#__fpga_str_replace_partial	src/string.c str_replace_partial	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_resize	src/string.c mrb_str_resize	free realloc	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_resize_capa	src/string.c resize_capa	realloc	realloc	
+string.rb Object#__fpga_str_reverse_bang	src/string.c mrb_str_reverse_bang	free	arena_restore arena_save realloc	free
+string.rb Object#__fpga_str_upcase_bang	src/string.c mrb_str_upcase_bang	free realloc	arena_restore arena_save free realloc	
+string.rb String#*	src/string.c mrb_str_times		arena_restore arena_save realloc	
+string.rb String#+	src/string.c mrb_str_plus_m		arena_restore arena_save realloc	
+string.rb String#<<	mrbgems/mruby-string-ext/src/string.c str_concat_m	free realloc	arena_restore arena_save realloc	free
+string.rb String#[]	src/string.c mrb_str_aref_m	free	arena_restore arena_save realloc	free
+string.rb String#[]=	src/string.c mrb_str_aset_m	free realloc	arena_restore arena_save realloc	free
+string.rb String#__sub_replace	src/string.c sub_replace	free realloc	arena_restore arena_save realloc	free
+string.rb String#byteindex	src/string.c mrb_str_byteindex_m		arena_restore arena_save realloc	
+string.rb String#byterindex	src/string.c mrb_str_byterindex_m		arena_restore arena_save realloc	
+string.rb String#bytes	src/string.c mrb_str_bytes	barrier free realloc	arena_restore arena_save realloc	barrier free
+string.rb String#byteslice	src/string.c mrb_str_byteslice		arena_restore arena_save realloc	
+string.rb String#bytesplice	src/string.c mrb_str_bytesplice	free realloc	arena_restore arena_save realloc	free
+string.rb String#capitalize	src/string.c mrb_str_capitalize	free realloc	arena_restore arena_save free realloc	
+string.rb String#capitalize!	src/string.c mrb_str_capitalize_bang	free realloc	arena_restore arena_save free realloc	
+string.rb String#chomp	src/string.c mrb_str_chomp	free	arena_restore arena_save realloc	free
+string.rb String#chomp!	src/string.c mrb_str_chomp_bang	free	arena_restore arena_save realloc	free
+string.rb String#chop	src/string.c mrb_str_chop	free	arena_restore arena_save realloc	free
+string.rb String#chop!	src/string.c mrb_str_chop_bang	free	arena_restore arena_save realloc	free
+string.rb String#concat	mrbgems/mruby-string-ext/src/string.c str_concat_m	free realloc	arena_restore arena_save realloc	free
+string.rb String#downcase	src/string.c mrb_str_downcase	free realloc	arena_restore arena_save free realloc	
+string.rb String#downcase!	src/string.c mrb_str_downcase_bang	free realloc	arena_restore arena_save free realloc	
+string.rb String#getbyte	src/string.c mrb_str_getbyte		arena_restore arena_save realloc	
+string.rb String#include?	src/string.c mrb_str_include		arena_restore arena_save realloc	
+string.rb String#index	src/string.c mrb_str_index_m		arena_restore arena_save realloc	
+string.rb String#initialize	src/string.c mrb_str_init	free	arena_restore arena_save free realloc	
+string.rb String#inspect	src/string.c mrb_str_inspect	free realloc	arena_restore arena_save realloc	free
+string.rb String#replace	src/string.c mrb_str_replace	free	arena_restore arena_save free realloc	
+string.rb String#reverse	src/string.c mrb_str_reverse	free	arena_restore arena_save realloc	free
+string.rb String#reverse!	src/string.c mrb_str_reverse_bang	free	arena_restore arena_save realloc	free
+string.rb String#rindex	src/string.c mrb_str_rindex_m		arena_restore arena_save realloc	
+string.rb String#setbyte	src/string.c mrb_str_setbyte	free	arena_restore arena_save realloc	free
+string.rb String#split	src/string.c mrb_str_split_m	arena_restore arena_save barrier free realloc	arena_restore arena_save realloc	barrier free
+string.rb String#to_i	src/string.c mrb_str_to_i		arena_restore arena_save realloc	
 string.rb String#to_s	src/string.c mrb_str_to_s	free		free
 string.rb String#to_sym	src/string.c mrb_str_intern	free realloc		free realloc
-string.rb String#upcase	src/string.c mrb_str_upcase	free realloc		free realloc
-string.rb String#upcase!	src/string.c mrb_str_upcase_bang	free realloc		free realloc
-string.rb Symbol#inspect	src/symbol.c sym_inspect	free realloc		free realloc
-task.rb Kernel#sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms	barrier free protect realloc		barrier free protect realloc
-task.rb Kernel.sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms	barrier free protect realloc		barrier free protect realloc
-task.rb Object#__fpga_execute_task	mrbgems/mruby-task/src/task.c execute_task (D103)	arena_restore arena_save		arena_restore arena_save
-task.rb Object#__fpga_f_sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms	barrier free protect realloc		barrier free protect realloc
+string.rb String#upcase	src/string.c mrb_str_upcase	free realloc	arena_restore arena_save free realloc	
+string.rb String#upcase!	src/string.c mrb_str_upcase_bang	free realloc	arena_restore arena_save free realloc	
+string.rb Symbol#inspect	src/symbol.c sym_inspect	free realloc	arena_restore arena_save realloc	free
+task.rb Kernel#sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms		arena_restore arena_save realloc	
+task.rb Kernel.sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms		arena_restore arena_save realloc	
+task.rb Object#__fpga_execute_task	mrbgems/mruby-task/src/task.c execute_task (D103)	arena_restore arena_save	arena_restore arena_save	
+task.rb Object#__fpga_f_sleep_ms	mrbgems/mruby-task/src/task.c mrb_f_sleep_ms		arena_restore arena_save realloc	
+task.rb Object#__fpga_sleep_ms_impl	mrbgems/mruby-task/src/task.c sleep_ms_impl		arena_restore arena_save	
+task.rb Object#__fpga_sleep_us_impl	mrbgems/mruby-task/src/task.c sleep_us_impl (D103)		arena_restore arena_save	
 task.rb Object#__fpga_task_create	mrbgems/mruby-task/src/task.c task_create_common (D103)	barrier free realloc register		barrier free realloc register
-task.rb Object#__fpga_task_run_body	mrbgems/mruby-task/src/task.c task_run_body (D103)	arena_restore arena_save		arena_restore arena_save
-task.rb Object#__fpga_task_stopped	mrbgems/mruby-task/src/task.c execute_task (D103)	arena_restore arena_save		arena_restore arena_save
-vm.rb Object#__fpga_ary_set	src/array.c mrb_ary_set	barrier free realloc		barrier free realloc
+task.rb Object#__fpga_task_in_cfunc	mrbgems/mruby-task/src/task.c sleep_us_impl (D105)		arena_restore arena_save	
+task.rb Object#__fpga_task_run_body	mrbgems/mruby-task/src/task.c task_run_body (D103)	arena_restore arena_save	arena_restore arena_save	
+task.rb Object#__fpga_task_stopped	mrbgems/mruby-task/src/task.c execute_task (D103)	arena_restore arena_save	arena_restore arena_save	
+vm.rb Object#__fpga_ary_set	src/array.c mrb_ary_set	barrier free realloc	arena_restore arena_save realloc	barrier free
+vm.rb Object#__fpga_op_APOST	src/vm.c OP_APOST		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_ARGARY	src/vm.c vm_op_argary		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_ARYSPLAT	src/vm.c OP_ARYSPLAT		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_ASET	src/vm.c OP_ASET		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_DEF	src/vm.c OP_DEF		arena_restore arena_save free realloc	
+vm.rb Object#__fpga_op_ERR	src/vm.c OP_ERR		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_INTERN	src/vm.c OP_INTERN		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_MATCHERR	src/vm.c OP_MATCHERR		arena_restore arena_save realloc	
+vm.rb Object#__fpga_op_TCLASS	src/vm.c OP_TCLASS		arena_restore arena_save realloc	

@@ -126,7 +126,7 @@ class Object
   # 構造体の所だけで、context と Task の物は作らない、D103)
   # C: mrbgems/mruby-task/src/task.c task_create_common (D103)
   def __fpga_task_create
-    t = __fpga_alloc(16) # L:TK_SIZE
+    t = __fpga_malloc(16) # L:TK_SIZE
     __fpga_st32(t + 0, 0) # L:TK_NEXT
     __fpga_st8(t + 4, 128) # L:TK_PRIORITY L:TASK_PRIORITY_DEFAULT
     __fpga_st8(t + 5, 2) # L:TK_STATUS L:TASK_STATUS_READY
@@ -137,18 +137,21 @@ class Object
     t
   end
 
-  # task を走らせる所 (context の切り替えの代わりに、走っている task を置く、D103)
+  # task を走らせる所 (context の切り替えの代わりに、走っている task を置く、D103)。mrb_protect_error の前の arena の ai を返す
   # C: mrbgems/mruby-task/src/task.c execute_task (D103)
   def __fpga_execute_task(t)
     __fpga_st8(t + 7, 3) # L:TK_TIMESLICE L:TASK_TIMESLICE
     __fpga_st8(t + 5, 3) # L:TK_STATUS L:TASK_STATUS_RUNNING
     __fpga_st32(1104 * 4, t) # L:IMG_task_running L:WORD
     __fpga_st32(1103 * 4, 0) # L:IMG_task_switching L:WORD
+    __fpga_gc_arena_save
   end
 
-  # task の終わり (execute_task の Handle task termination。プログラムの __fpga_run が戻った所)
+  # task の終わり (execute_task の mrb_protect_error の後と Handle task termination。プログラムの __fpga_run が戻った所)。
+  # ai は __fpga_execute_task が返したもの
   # C: mrbgems/mruby-task/src/task.c execute_task (D103)
-  def __fpga_task_stopped(t)
+  def __fpga_task_stopped(t, ai)
+    __fpga_gc_arena_restore(ai)
     __fpga_st32(1103 * 4, 0) # L:IMG_task_switching L:WORD
     __fpga_task_q_delete(t)
     __fpga_st8(t + 5, 0) # L:TK_STATUS L:TASK_STATUS_DORMANT

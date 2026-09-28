@@ -79,7 +79,10 @@ end
 module Kernel
   # C: src/kernel.c mrb_obj_not_match
   def !~(arg)
-    (self =~ arg) ? false : true
+    ai = __fpga_gc_arena_save
+    matched = (self =~ arg) ? true : false # mrb_funcall_argv
+    __fpga_gc_arena_restore(ai)
+    matched ? false : true
   end
 
   # <=>: 呼び出しの鎖に同じ self と引数の <=> があれば nil (再帰の印)、== なら 0
@@ -437,6 +440,6 @@ class Object
     __fpga_st32(dc + 16, __fpga_ld32(sc + 16)) # L:C_ROM
     __fpga_st32(dc + 8, __fpga_ld32(sc + 8)) # L:C_SUPER
     f = __fpga_ld32(sc + 4) # L:H_FLAGS
-    __fpga_st32(dc + 4, f - __fpga_and(f, 2048)) # flags、frozen は 0
+    __fpga_st32(dc + 4, __fpga_or(f - __fpga_and(f, 3840), __fpga_and(__fpga_ld32(dc + 4), 1792))) # flags、frozen は 0、gc の色は dc のまま (L:H_FLAGS)
   end
 end

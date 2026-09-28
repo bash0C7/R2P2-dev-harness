@@ -837,7 +837,7 @@ class Object
       p = __fpga_aref(dp, 1)
       nd = __fpga_count_digits(d)
       exp = p + nd - 1
-      digs = __fpga_alloc(20)
+      digs = __fpga_temp_alloc(20) # char digs[17] (D84)
       __fpga_format_base10(digs, nd, d)
       if exp < -4 || exp >= 15
         __fpga_st8(s, __fpga_ld8(digs)) # e の形
@@ -1169,7 +1169,7 @@ class Object
 
   # C: src/numeric.c mrb_float_to_str
   def __fpga_float_to_str(flo)
-    buf = __fpga_alloc(25)
+    buf = __fpga_temp_alloc(25) # char buf[25] (D84)
     n = __fpga_format_float(__fpga_int(flo), buf, 25, 103, -2, 0) # 'g'
     p = buf
     while p < buf + n
@@ -1211,7 +1211,7 @@ class Object
     __fpga_halt if badcheck # badcheck の道 (Kernel#Float、mruby-kernel-ext) は写していない
     p = s
     pend = p + len
-    buf = __fpga_alloc(80) # DBL_DIG * 4 + 20
+    buf = __fpga_temp_alloc(80) # char buf[DBL_DIG * 4 + 20] (D84)
     prev = 0
     dot = false
     p += 1 while p < pend && __fpga_isspace(__fpga_ld8(p))

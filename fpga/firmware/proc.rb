@@ -128,7 +128,7 @@ class Object
       given = __fpga_and(__fpga_ld8(ci + 2), 16) > 0 || (__fpga_and(__fpga_ld32(pr + 24), 16384) == 0 && __fpga_given_class_env_p(pr)) # L:CI_VIS L:CI_GIVEN_CLASS_BIT L:PROC_CREF
       flags += 16384 if given # MRB_ENV_SET_GIVEN_CLASS (flags の bit 14)
     end
-    __fpga_st32(e + 4, __fpga_shl(flags, 12) + 20) # L:H_FLAGS L:H_FLAGS_SHIFT L:TT_ENV
+    __fpga_st32(e + 4, __fpga_or(__fpga_and(__fpga_ld32(e + 4), 1792), __fpga_shl(flags, 12) + 20)) # L:H_FLAGS L:H_FLAGS_SHIFT L:TT_ENV (gc の色は残す)
     __fpga_st32(e + 8, stack) # L:E_STACK
     __fpga_st32(e + 12, __fpga_image(0)) # L:E_CXT mrb_state.c
     __fpga_st32(e + 16, __fpga_ld32(ci + 4)) # L:E_MID L:CI_MID
@@ -188,6 +188,48 @@ class Object
     u = __fpga_ld32(ci + 24) # L:CI_U
     return 0 if u == 0
     __fpga_tt(u) == 20 ? u : 0 # L:TT_ENV
+  end
+
+  # スタックを指している env を閉じる: 中身を確保して写す (長さ 0 なら中身無し)。noraise の道 (確保できない時) は写し元どおり
+  # C: src/vm.c mrb_env_unshare
+  def __fpga_env_unshare(e, noraise)
+    len = __fpga_and(__fpga_shr(__fpga_ld32(e + 4), 12), 255) # L:H_FLAGS L:H_FLAGS_SHIFT MRB_ENV_LEN
+    if len == 0
+      __fpga_st32(e + 8, 0) # L:E_STACK
+      __fpga_st32(e + 12, 0) # L:E_CXT MRB_ENV_CLOSE
+      return true
+    end
+    live = __fpga_image(1051) # L:IMG_gc_live
+    p = __fpga_malloc_simple(len * 16) # L:VALUE
+    if (live == __fpga_image(1051)) == false && __fpga_object_dead_p(e) # L:IMG_gc_live
+      __fpga_free(p)
+      return true
+    elsif p > 0
+      __fpga_copy(p, __fpga_ld32(e + 8), len * 16) # L:E_STACK L:VALUE stack_copy
+      __fpga_st32(e + 8, p) # L:E_STACK
+      __fpga_st32(e + 12, 0) # L:E_CXT MRB_ENV_CLOSE
+      return true
+    end
+    __fpga_st32(e + 8, 0) # L:E_STACK
+    __fpga_st32(e + 12, 0) # L:E_CXT
+    __fpga_st32(e + 4, __fpga_and(__fpga_ld32(e + 4), __fpga_xor(__fpga_shl(16383, 12), -1))) # L:H_FLAGS MRB_ENV_SET_LEN(e, 0) と MRB_ENV_SET_BIDX(e, 0)
+    __fpga_raise_nomemory unless noraise
+    false
+  end
+
+  # 巻き戻しの前に、捨てる ci (上から ci の 1 つ上まで、ret なら ci 自身も) の env を閉じてから、巻き戻しの primitive を呼び直す。
+  # 回路の cipop は確保しない (計画 S6 §3.4 R5)。回路は閉じる env があると primitive をこの罠にする
+  # C: src/vm.c cipop
+  def __fpga_unwind_close(ci, x, ret)
+    k = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI
+    last = ret ? ci : ci + 64 # L:CI_SIZE
+    while k >= last
+      e = __fpga_ci_env(k)
+      __fpga_env_unshare(e, false) if e > 0 && __fpga_ld32(e + 12) > 0 # L:E_CXT MRB_ENV_ONSTACK_P
+      k -= 64 # L:CI_SIZE
+    end
+    return __fpga_unwind_ret(ci, x) if ret
+    __fpga_unwind(ci, x)
   end
 
   # ci の target class (env があれば env の見出しのクラス)

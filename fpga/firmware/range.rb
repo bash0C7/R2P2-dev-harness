@@ -27,7 +27,7 @@ class Object
     else
       r = __fpga_slot(__fpga_image(12), 19) # L:IMG_range_class L:TT_RANGE
     end
-    e = __fpga_alloc(32) # range_ptr_alloc_edges (VALUE 2 つ)
+    e = __fpga_malloc(32) # range_ptr_alloc_edges (VALUE 2 つ)
     __fpga_st32(r + 8, e) # L:RG_EDGES
     __fpga_stv(e, beg)
     __fpga_stv(e + 16, en) # L:VALUE
