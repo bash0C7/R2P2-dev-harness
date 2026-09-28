@@ -57,6 +57,12 @@ class Object
     __fpga_exc_raise(__fpga_exc_new_str(c, msg))
   end
 
+  # mrb_calloc の大きさの桁あふれ (gc.c の中の mrb_raise。gc.rb は物を作らないのでここで)
+  # C: src/gc.c mrb_calloc
+  def __fpga_raise_alloc_overflow
+    __fpga_raise(ArgumentError, "memory allocation overflow")
+  end
+
   # C: src/error.c mrb_raisef
   def __fpga_raisef(c, fmt, args)
     __fpga_exc_raise(__fpga_exc_new_str(c, __fpga_format(fmt, args)))
@@ -478,10 +484,15 @@ class Object
     __fpga_raise(LocalJumpError, "unexpected return")
   end
 
-  # OP_ARYPUSH の遅い道: R[a] が Array でない
+  # OP_ARYPUSH の遅い道 (回路は Array の容量の中だけ): R[a] が Array でなければ TypeError、ほかは mrb_ary_push (容量を広げる)
   # C: src/vm.c OP_ARYPUSH
   def __fpga_op_ARYPUSH(a, b, c)
-    __fpga_ensure_array_type(__fpga_reg(a))
+    ary = __fpga_ensure_array_type(__fpga_reg(a))
+    k = 1
+    while k <= b
+      ary.__fpga_push1(__fpga_reg(a + k))
+      k += 1
+    end
   end
 
   # C: src/object.c mrb_ensure_array_type

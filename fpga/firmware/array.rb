@@ -374,7 +374,7 @@ class Array
     b
   end
 
-  # 引数が無ければ先頭の 1 つ、あれば先頭の n 個を抜く。長い配列は先頭の番地を進める (C の共有の配列の L_SHIFT と同じ)
+  # 引数が無ければ先頭の 1 つ、あれば先頭の n 個を抜く。残りは前へ詰める (ary_make_shared を写さない、D63)
   # C: src/array.c mrb_ary_shift_m
   def shift(*args)
     __fpga_check_argc(args, 0, 1) # MRB_ARGS_OPT(1)
@@ -387,11 +387,7 @@ class Array
     __fpga_raise(ArgumentError, "negative array shift") if n < 0
     n = len if n > len
     val = __fpga_ary_subseq(self, 0, n) # mrb_ary_new_from_values
-    if len > 10 # ARY_SHIFT_SHARED_MIN
-      __fpga_st32(a + 16, __fpga_ld32(a + 16) + n * 16) # L:A_PTR L:VALUE a->as.heap.ptr += n
-      __fpga_st32(a + 12, __fpga_ld32(a + 12) - n) # L:A_CAPA 先頭を進めた分だけ容量も減る
-      __fpga_st32(a + 8, len - n) # L:A_LEN
-    elsif len == n
+    if len == n
       __fpga_st32(a + 8, 0) # L:A_LEN
     else
       ptr = __fpga_ld32(a + 16) # L:A_PTR
@@ -1121,10 +1117,46 @@ class Object
     capa = __fpga_ld32(a + 12) # L:A_CAPA
     capa = 4 if capa < 4 # L:ARY_DEFAULT_LEN
     capa *= 2 while capa < len
-    buf = __fpga_alloc(capa * 16) # L:VALUE
-    __fpga_copy(buf, __fpga_ld32(a + 16), __fpga_ld32(a + 8) * 16) # L:A_PTR L:A_LEN L:VALUE
+    buf = __fpga_realloc(__fpga_ld32(a + 16), capa * 16) # L:A_PTR L:VALUE
     __fpga_st32(a + 16, buf) # L:A_PTR
     __fpga_st32(a + 12, capa) # L:A_CAPA
+  end
+
+  # C: src/array.c ary_new_capa
+  def __fpga_ary_new_capa(capa)
+    __fpga_raise(ArgumentError, "array size too big") if capa > 134217727 # ARY_MAX_SIZE (32bit: SIZE_MAX / sizeof(mrb_value) の 2 の冪)
+    a = __fpga_slot(__fpga_addr(__fpga_core(8)), 17) # L:CORE_ARRAY L:TT_ARRAY
+    if capa > 0 # MRB_ARY_EMBED は無い (D04)
+      __fpga_st32(a + 16, __fpga_malloc(capa * 16)) # L:A_PTR L:VALUE
+      __fpga_st32(a + 12, capa) # L:A_CAPA
+    end
+    a
+  end
+
+  # R[idx..idx+argc-1] の配列 (vm.c の ary_new_from_regs)
+  # C: src/vm.c ary_new_from_regs
+  def __fpga_ary_new_from_regs(argc, idx)
+    a = __fpga_ary_new_capa(argc)
+    p = __fpga_ld32(a + 16) # L:A_PTR
+    k = 0
+    while k < argc
+      __fpga_stv(p + k * 16, __fpga_reg(idx + k)) # L:VALUE
+      k += 1
+    end
+    __fpga_st32(a + 8, argc) # L:A_LEN
+    __fpga_obj(a)
+  end
+
+  # OP_ARRAY: R[a] = ary_new(R[a],R[a+1]..R[a+b]) (回路は要素 0 個だけ)
+  # C: src/vm.c OP_ARRAY
+  def __fpga_op_ARRAY(a, b, c)
+    __fpga_setreg(a, __fpga_ary_new_from_regs(b, a))
+  end
+
+  # OP_ARRAY2: R[a] = ary_new(R[b],R[b+1]..R[b+c])
+  # C: src/vm.c OP_ARRAY2
+  def __fpga_op_ARRAY2(a, b, c)
+    __fpga_setreg(a, __fpga_ary_new_from_regs(c, b))
   end
 
   # C: src/array.c ary_subseq
@@ -1201,12 +1233,10 @@ class Object
     ary
   end
 
-  # 重なってよい写し (memmove)
+  # 重なってよい写し (memmove。回路の __fpga_copy は重なってよい)
   # C: none (D17)
   def __fpga_move(dst, src, n)
-    tmp = __fpga_alloc(n > 0 ? n : 1)
-    __fpga_copy(tmp, src, n)
-    __fpga_copy(dst, tmp, n)
+    __fpga_copy(dst, src, n)
   end
 
   # 入れ子の配列は中へ入って続ける (再帰した配列は ArgumentError)
@@ -1587,17 +1617,7 @@ class Object
     return nil if len == 0
     ptr = __fpga_ld32(a + 16) # L:A_PTR
     val = __fpga_ldv(ptr)
-    if len > 10 # ARY_SHIFT_SHARED_MIN (ary_make_shared の後の L_SHIFT: 先頭の番地を進める)
-      __fpga_st32(a + 16, ptr + 16) # L:A_PTR L:VALUE
-      __fpga_st32(a + 12, __fpga_ld32(a + 12) - 1) # L:A_CAPA
-    else
-      size = len - 1
-      while size > 0
-        __fpga_stv(ptr, __fpga_ldv(ptr + 16)) # L:VALUE
-        ptr += 16 # L:VALUE
-        size -= 1
-      end
-    end
+    __fpga_move(ptr, ptr + 16, (len - 1) * 16) # L:VALUE ARY_SHIFT_SHARED_MIN の共有 (ary_make_shared) は写さず、いつも前へ詰める (D63)
     __fpga_st32(a + 8, len - 1) # L:A_LEN
     val
   end

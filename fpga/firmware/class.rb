@@ -25,8 +25,8 @@ class Object
   # --- iv の表 (layout.rb の IV: 見出し {数, 容量, 行}、行 {シンボル, 値 16 バイト})
   # C: src/variable.c iv_new (D06)
   def __fpga_tbl_new(capa)
-    t = __fpga_alloc(12) # L:MT_HEAD
-    rows = __fpga_alloc(capa * 20) # L:IV_ENTRY
+    t = __fpga_malloc(12) # L:MT_HEAD
+    rows = __fpga_malloc(capa * 20) # L:IV_ENTRY
     k = 0
     while k < capa
       __fpga_st32(rows + k * 20, 4294967295) # L:MT_EMPTY
@@ -62,7 +62,7 @@ class Object
     capa = __fpga_ld32(t + 4)
     if (count + 1) * 4 > capa * 3
       old = __fpga_ld32(t + 8)
-      rows = __fpga_alloc(capa * 2 * 20)
+      rows = __fpga_malloc(capa * 2 * 20)
       k = 0
       while k < capa * 2
         __fpga_st32(rows + k * 20, 4294967295)
@@ -77,6 +77,7 @@ class Object
         __fpga_tbl_set(t, e, __fpga_ldv(old + k * 20 + 4)) if e < 4294967295
         k += 1
       end
+      __fpga_free(old)
       count = __fpga_ld32(t + 0)
       capa *= 2
     end
@@ -132,7 +133,7 @@ class Object
     val = __fpga_ldv(row + 4)
     capa = __fpga_ld32(t + 4) # L:MT_CAPA
     old = __fpga_ld32(t + 8) # L:MT_ROWS
-    rows = __fpga_alloc(capa * 20) # L:IV_ENTRY
+    rows = __fpga_malloc(capa * 20) # L:IV_ENTRY
     k = 0
     while k < capa
       __fpga_st32(rows + k * 20, 4294967295) # L:IV_ENTRY L:MT_EMPTY
@@ -146,6 +147,7 @@ class Object
       __fpga_tbl_set(t, e, __fpga_ldv(old + k * 20 + 4)) if e < 4294967295 && (e == sym) == false # L:IV_ENTRY L:MT_EMPTY
       k += 1
     end
+    __fpga_free(old)
     val
   end
 
@@ -342,7 +344,7 @@ class Object
   def __fpga_tbl_delete(t, sym)
     capa = __fpga_ld32(t + 4) # L:MT_CAPA
     old = __fpga_ld32(t + 8) # L:MT_ROWS
-    rows = __fpga_alloc(capa * 20) # L:IV_ENTRY
+    rows = __fpga_malloc(capa * 20) # L:IV_ENTRY
     k = 0
     while k < capa
       __fpga_st32(rows + k * 20, 4294967295) # L:MT_EMPTY
@@ -356,6 +358,7 @@ class Object
       __fpga_tbl_set(t, e, __fpga_ldv(old + k * 20 + 4)) if e < 4294967295 && (e == sym) == false
       k += 1
     end
+    __fpga_free(old)
   end
 
   # OP_SETCONST: 定数 Syms[b] = R[a] (今のクラスに)
@@ -412,16 +415,11 @@ class Object
   end
 
   # --- クラスを作る (class.c の mrb_define_class_id と make_metaclass)
-  # C: src/gc.c mrb_obj_alloc
+  # 枠を作る。tt の語は見出しの語の tt と flags (色は mrb_obj_alloc_core が付ける)。回路の速い道 (primitive) か、落ちたら gc.rb
+  # C: src/gc.c mrb_obj_alloc_core
   def __fpga_slot(klass, tt)
-    o = __fpga_alloc(64) # L:SLOT
-    k = 0
-    while k < 64
-      __fpga_st32(o + k, 0)
-      k += 4
-    end
-    __fpga_st32(o + 0, klass) # L:H_CLASS
-    __fpga_st32(o + 4, tt) # L:H_FLAGS
+    o = __fpga_obj_alloc(__fpga_and(tt, 255), klass)
+    __fpga_st32(o + 4, __fpga_or(__fpga_ld32(o + 4), __fpga_and(tt, -256))) if tt > 255 # L:H_FLAGS
     o
   end
 
@@ -439,8 +437,8 @@ class Object
 
   # C: src/class.c mt_new (D05)
   def __fpga_mt_new
-    t = __fpga_alloc(12) # L:MT_HEAD
-    rows = __fpga_alloc(64)
+    t = __fpga_malloc(12) # L:MT_HEAD
+    rows = __fpga_malloc(64)
     k = 0
     while k < 8
       __fpga_st32(rows + k * 8, 4294967295) # L:MT_EMPTY
@@ -461,6 +459,10 @@ class Object
     __fpga_st32(meta + 60, __fpga_tbl_new(8)) # L:C_IV
     itt = sup > 0 ? __fpga_and(__fpga_shr(__fpga_ld32(sup + 4), 12), 31) : 0 # L:H_FLAGS L:H_FLAGS_SHIFT L:INSTANCE_TT_MASK 親の MRB_INSTANCE_TT
     c = __fpga_slot(meta, __fpga_or(9, __fpga_shl(itt, 12))) # L:TT_CLASS L:H_FLAGS_SHIFT
+    if sup > 0
+      __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), __fpga_and(__fpga_ld32(sup + 4), 268435456))) # L:H_FLAGS L:CLASS_EQ_DEFINED
+      __fpga_st32(sup + 4, __fpga_or(__fpga_ld32(sup + 4), 536870912)) # L:H_FLAGS L:CLASS_IS_INHERITED mrb_class_inherited
+    end
     __fpga_st32(meta + 28, c) # L:C_OUTER (付いているクラス)
     __fpga_st32(c + 8, sup)
     __fpga_st32(c + 12, __fpga_mt_new)
@@ -569,6 +571,7 @@ class Object
     __fpga_st32(sc + 60, __fpga_tbl_new(8))
     __fpga_st32(sc + 28, o)
     __fpga_st32(sc + 4, __fpga_or(__fpga_ld32(sc + 4), __fpga_and(__fpga_ld32(o + 4), 2048))) # L:H_FLAGS L:H_FROZEN prepare_singleton_class の sc->frozen = o->frozen
+    __fpga_st32(sc + 4, __fpga_or(__fpga_ld32(sc + 4), 536870912 + __fpga_and(__fpga_ld32(k + 4), 268435456))) # L:H_FLAGS L:CLASS_IS_INHERITED L:CLASS_EQ_DEFINED
     __fpga_st32(o + 0, sc)
     __fpga_mcache_clear
     sc
@@ -647,7 +650,7 @@ class Object
 
   # C: src/class.c mrb_builtin_op_init
   def __fpga_builtin_op_init
-    tbl = __fpga_alloc(19 * 4) # L:WORD MRB_BOP_SLOT_COUNT
+    tbl = __fpga_malloc(19 * 4) # L:WORD MRB_BOP_SLOT_COUNT (C は mrb_state の中の並び、D18)
     k = 0
     while k < 19
       __fpga_st32(tbl + k * 4, 0) # L:WORD
@@ -672,27 +675,36 @@ class Object
     end
   end
 
-  # c に == を定義した印 (MRB_FL_CLASS_EQ_DEFINED)。nil / true / false のクラスに届いたら bop の bit にも。
-  # 子のクラスへの印 (eq_defined_walk の heap の走査) は、回路が読む nil / true / false のクラスだけ祖先を辿って付ける (D61)
-  # C: src/class.c eq_defined_mark (D61)
-  def __fpga_eq_defined_mark(c)
-    __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
-    k = 15 # L:IMG_true_class
-    while k < 18 # L:IMG_symbol_class (true / false / nil の 3 つ)
-      nc = __fpga_image(k)
-      a = nc
-      while a > 0
-        if a == c || __fpga_ld32(a + 12) == __fpga_ld32(c + 12) # L:C_MT iclass は module の表を共有する
-          __fpga_st32(nc + 4, __fpga_or(__fpga_ld32(nc + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
-          a = 0
-        else
-          a = __fpga_ld32(a + 8) # L:C_SUPER
+  # heap の走査の callback: まだ印の無いクラスで、祖先 (iclass は module) のどれかに印があれば付ける
+  # C: src/class.c eq_defined_walk
+  def __fpga_eq_defined_walk(obj, data)
+    t = __fpga_tt(obj)
+    if t == 9 || t == 11 || t == 10 # L:TT_CLASS L:TT_SCLASS L:TT_MODULE
+      unless __fpga_and(__fpga_ld32(obj + 4), 268435456) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED
+        s = __fpga_ld32(obj + 8) # L:C_SUPER
+        while s > 0
+          r = __fpga_tt(s) == 15 ? __fpga_ld32(s + 0) : s # L:TT_ICLASS L:H_CLASS s->c
+          if __fpga_and(__fpga_ld32(r + 4), 268435456) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED
+            __fpga_st32(obj + 4, __fpga_or(__fpga_ld32(obj + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
+            break
+          end
+          s = __fpga_ld32(s + 8) # L:C_SUPER
         end
       end
-      k += 1
+    end
+    0 # MRB_EACH_OBJ_OK
+  end
+
+  # c が自分の == を持った: 印を付け、子のクラス (と include した物) へは heap を走査して付ける。nil / true / false は bop の bit へ
+  # C: src/class.c eq_defined_mark
+  def __fpga_eq_defined_mark(c)
+    return if __fpga_and(__fpga_ld32(c + 4), 268435456) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED
+    __fpga_st32(c + 4, __fpga_or(__fpga_ld32(c + 4), 268435456)) # L:H_FLAGS L:CLASS_EQ_DEFINED
+    if __fpga_and(__fpga_ld32(c + 4), 536870912) > 0 || __fpga_tt(c) == 10 # L:H_FLAGS L:CLASS_IS_INHERITED L:TT_MODULE
+      __fpga_gc_each_live_object(:__fpga_eq_defined_walk, 0)
     end
     if __fpga_and(__fpga_or(__fpga_or(__fpga_ld32(__fpga_image(17) + 4), __fpga_ld32(__fpga_image(15) + 4)), __fpga_ld32(__fpga_image(16) + 4)), 268435456) > 0 # L:IMG_nil_class L:IMG_true_class L:IMG_false_class L:H_FLAGS L:CLASS_EQ_DEFINED
-      __fpga_st32(1095 * 4, __fpga_or(__fpga_ld32(45 * 4), 524288)) # L:IMG_bop_redefined L:WORD L:BOP_NIL_TRUE_FALSE_EQ
+      __fpga_st32(1095 * 4, __fpga_or(__fpga_ld32(1095 * 4), 524288)) # L:IMG_bop_redefined L:WORD L:BOP_NIL_TRUE_FALSE_EQ
     end
   end
 
@@ -706,7 +718,7 @@ class Object
     __fpga_check_frozen(named) # mt_writable
     __fpga_st32(c + 12, __fpga_mt_new) if __fpga_ld32(c + 12) == 0 # L:C_MT mt_writable の mt_new
     __fpga_mt_set(__fpga_ld32(c + 12), sym, val) # L:C_MT
-    __fpga_mcache_clear
+    __fpga_mcache_clear_id(sym) # mc_clear_by_id
     __fpga_builtin_op_update(sym)
     __fpga_eq_defined_mark(named) if sym == __fpga_addr(:==) && __fpga_image(1096) > 0 # L:IMG_bop_builtin mrb->bootstrapping でない
   end

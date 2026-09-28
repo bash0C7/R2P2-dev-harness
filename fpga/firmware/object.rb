@@ -5,7 +5,7 @@ class Object
   # C: src/string.c mrb_ptr_to_str
   def __fpga_ptr_to_str(n)
     digits = "0123456789abcdef"
-    buf = __fpga_alloc(16)
+    buf = __fpga_temp_alloc(16) # C の自動変数の char の並び (D84)
     len = 0
     while true # 下の桁から
       __fpga_st8(buf + len, __fpga_ld8(__fpga_ld32(__fpga_addr(digits) + 16) + __fpga_and(n, 15))) # L:S_PTR
