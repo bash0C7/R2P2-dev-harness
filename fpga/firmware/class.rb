@@ -226,7 +226,7 @@ class Object
   # 大文字で始まり、後ろは英数字と _ (と 0x80 以上) だけ (mrb_ident_p)
   # C: src/class.c mrb_const_name_p
   def __fpga_const_name_p(id)
-    tab = __fpga_image(26) # L:IMG_symtbl
+    tab = __fpga_image(1076) # L:IMG_symtbl
     p = __fpga_ld32(tab + id * 8)
     len = __fpga_ld32(tab + id * 8 + 4)
     return false unless len > 0 && __fpga_ld8(p) >= 65 && __fpga_ld8(p) <= 90 # ISUPPER
@@ -628,21 +628,21 @@ class Object
   # 今の値が C の関数 (像の中の firmware の def) なら記録して bit を下ろす
   # C: src/class.c bop_arm
   def __fpga_bop_arm(slot)
-    __fpga_st32(45 * 4, __fpga_or(__fpga_ld32(45 * 4), __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
+    __fpga_st32(1095 * 4, __fpga_or(__fpga_ld32(45 * 4), __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
     e = __fpga_search(__fpga_bop_class(slot), __fpga_bop_mid(slot))
-    return if e == 0 || __fpga_and(e, -4) >= __fpga_image(35) # L:IMG_heap_start MRB_METHOD_UNDEF_P、MRB_METHOD_FUNC_P でない
-    __fpga_st32(__fpga_image(46) + slot * 4, e) # L:IMG_bop_builtin L:WORD
-    __fpga_st32(45 * 4, __fpga_and(__fpga_ld32(45 * 4), 4294967295 - __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
+    return if e == 0 || __fpga_and(e, -4) >= __fpga_image(1085) # L:IMG_heap_start MRB_METHOD_UNDEF_P、MRB_METHOD_FUNC_P でない
+    __fpga_st32(__fpga_image(1096) + slot * 4, e) # L:IMG_bop_builtin L:WORD
+    __fpga_st32(1095 * 4, __fpga_and(__fpga_ld32(45 * 4), 4294967295 - __fpga_shl(1, slot))) # L:IMG_bop_redefined L:WORD
   end
 
   # C: src/class.c bop_refresh
   def __fpga_bop_refresh(slot)
-    b = __fpga_ld32(__fpga_image(46) + slot * 4) # L:IMG_bop_builtin L:WORD
+    b = __fpga_ld32(__fpga_image(1096) + slot * 4) # L:IMG_bop_builtin L:WORD
     return if b == 0
     bit = __fpga_shl(1, slot)
-    w = __fpga_ld32(45 * 4) # L:IMG_bop_redefined L:WORD
+    w = __fpga_ld32(1095 * 4) # L:IMG_bop_redefined L:WORD
     w = __fpga_search(__fpga_bop_class(slot), __fpga_bop_mid(slot)) == b ? __fpga_and(w, 4294967295 - bit) : __fpga_or(w, bit)
-    __fpga_st32(45 * 4, w) # L:IMG_bop_redefined L:WORD
+    __fpga_st32(1095 * 4, w) # L:IMG_bop_redefined L:WORD
   end
 
   # C: src/class.c mrb_builtin_op_init
@@ -653,7 +653,7 @@ class Object
       __fpga_st32(tbl + k * 4, 0) # L:WORD
       k += 1
     end
-    __fpga_st32(46 * 4, tbl) # L:IMG_bop_builtin L:WORD
+    __fpga_st32(1096 * 4, tbl) # L:IMG_bop_builtin L:WORD
     k = 0
     while k < 19
       __fpga_bop_arm(k)
@@ -664,7 +664,7 @@ class Object
   # 起動の途中 (bop_builtin が 0) は何もしない。mid が 0 なら全部の slot
   # C: src/class.c mrb_builtin_op_update
   def __fpga_builtin_op_update(mid)
-    return if __fpga_image(46) == 0 # L:IMG_bop_builtin mrb->bootstrapping
+    return if __fpga_image(1096) == 0 # L:IMG_bop_builtin mrb->bootstrapping
     k = 0
     while k < 19
       __fpga_bop_refresh(k) if mid == 0 || mid == __fpga_bop_mid(k)
@@ -692,7 +692,7 @@ class Object
       k += 1
     end
     if __fpga_and(__fpga_or(__fpga_or(__fpga_ld32(__fpga_image(17) + 4), __fpga_ld32(__fpga_image(15) + 4)), __fpga_ld32(__fpga_image(16) + 4)), 268435456) > 0 # L:IMG_nil_class L:IMG_true_class L:IMG_false_class L:H_FLAGS L:CLASS_EQ_DEFINED
-      __fpga_st32(45 * 4, __fpga_or(__fpga_ld32(45 * 4), 524288)) # L:IMG_bop_redefined L:WORD L:BOP_NIL_TRUE_FALSE_EQ
+      __fpga_st32(1095 * 4, __fpga_or(__fpga_ld32(45 * 4), 524288)) # L:IMG_bop_redefined L:WORD L:BOP_NIL_TRUE_FALSE_EQ
     end
   end
 
@@ -708,7 +708,7 @@ class Object
     __fpga_mt_set(__fpga_ld32(c + 12), sym, val) # L:C_MT
     __fpga_mcache_clear
     __fpga_builtin_op_update(sym)
-    __fpga_eq_defined_mark(named) if sym == __fpga_addr(:==) && __fpga_image(46) > 0 # L:IMG_bop_builtin mrb->bootstrapping でない
+    __fpga_eq_defined_mark(named) if sym == __fpga_addr(:==) && __fpga_image(1096) > 0 # L:IMG_bop_builtin mrb->bootstrapping でない
   end
 
   # TDEF / SDEF: Irep[c] のメソッドの Proc を作って tc に Syms[b] で置き、method_added を呼ぶ
@@ -1088,7 +1088,7 @@ class Object
     end
     __fpga_mcache_clear
     __fpga_builtin_op_update(0)
-    __fpga_eq_defined_mark(c) if __fpga_and(__fpga_ld32(m0 + 4), 268435456) > 0 && __fpga_image(46) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED L:IMG_bop_builtin
+    __fpga_eq_defined_mark(c) if __fpga_and(__fpga_ld32(m0 + 4), 268435456) > 0 && __fpga_image(1096) > 0 # L:H_FLAGS L:CLASS_EQ_DEFINED L:IMG_bop_builtin
     0
   end
 

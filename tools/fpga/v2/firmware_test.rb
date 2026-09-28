@@ -44,6 +44,18 @@ class FpgaV2FirmwareTest < Minitest::Test
     assert_equal [], FpgaV2::Annotations.check_sends
   end
 
+  # 計画 S6 §3.4 / §3.5: firmware は Proc を作らない (firmware のフレームは irep の番地で判る)、GC の本体は確保しない
+  def test_no_proc_making_and_no_allocation_inside_the_gc
+    require_relative "annotations"
+    assert_equal [], FpgaV2::Annotations.check_alloc_ops
+  end
+
+  # 計画 S6 §3.5: GC の関所の表 (C の関数が辿って使う GC の API を firmware も使うか) は、commit したものが今の firmware と C から作ったものと同じ
+  def test_gc_calls_table_is_current
+    require_relative "annotations"
+    assert_equal File.read(FpgaV2::Annotations::GC_CALLS), FpgaV2::Annotations.gc_calls_tsv, "rake fpga:v2:inventory で作り直す"
+  end
+
   # 引数の数 (計画 S5): C のメソッドの写しの def は C の aspec と同じ範囲を受ける (mruby は呼ぶ前に調べる)
   def test_defs_take_the_c_aspec
     require_relative "annotations"

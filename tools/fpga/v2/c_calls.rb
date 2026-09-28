@@ -14,7 +14,26 @@ module FpgaV2
     # VM に入る所 (mrb_funcall* と mrb_yield* は呼ぶ先をこの表に書く。VM そのものは回路) も辿らない
     STOP = /raise|_error\z|\Amrb_format|\Amrb_exc_|\Amrb_bug\z|\Amrb_warn|\Amrb_funcall|\Amrb_yield|\Amrb_(vm_)?run\z|\Amrb_vm_exec\z|\Amrb_top_run\z/
 
-    Fn = Struct.new(:name, :file, :calls, :dispatch, keyword_init: true)
+    Fn = Struct.new(:name, :file, :calls, :dispatch, :gc, keyword_init: true)
+
+    # GC の関所 (計画 S6 §3.5): C の関数が arena / protect / register / barrier / free / realloc を使うか。
+    # 前処理の後、mrb_gc_arena_save / restore は gc.arena_idx の読み書き、mrb_field_write_barrier_value は mrb_field_write_barrier
+    GC_KINDS = {
+      "arena_save" => /->gc\.arena_idx\)/,
+      "arena_restore" => /->gc\.arena_idx\s*=(?!=)|\bmrb_gc_arena_shrink\s*\(/,
+      "protect" => /\bmrb_gc_protect\s*\(/,
+      "register" => /\bmrb_gc_(?:un)?register\s*\(/,
+      "barrier" => /\bmrb_(?:field_)?write_barrier\s*\(/,
+      "free" => /\bmrb_free\s*\(/,
+      "realloc" => /\bmrb_realloc\s*\(/
+    }.freeze
+    # GC の関所で辿らない所 (確保と GC そのもの。その中の free / realloc は写し元の関数の仕事ではない)
+    GC_LEAF = /\Amrb_(?:obj_alloc\w*|malloc\w*|calloc|realloc\w*|free|full_gc|incremental_gc|garbage_collect|gc_\w+|field_write_barrier|write_barrier|temp_alloc)\z/
+    # C の名前 (firmware の def の `# C:` の名前) → GC の関所の種類
+    GC_API = { "mrb_gc_arena_save" => "arena_save", "mrb_gc_arena_restore" => "arena_restore", "mrb_gc_arena_shrink" => "arena_restore",
+               "mrb_gc_protect" => "protect", "mrb_gc_register" => "register", "mrb_gc_unregister" => "register",
+               "mrb_field_write_barrier" => "barrier", "mrb_write_barrier" => "barrier", "mrb_free" => "free",
+               "mrb_realloc" => "realloc" }.freeze
 
     module_function
 
@@ -46,7 +65,8 @@ module FpgaV2
         end
         dispatch << "(block)" if body.match?(/\bmrb_yield\w*\s*\(/)
         dispatch = [] if f.name.match?(/\A(#{DISPATCH_API})\z/) # 呼ぶメソッドを引数で受ける API の中は、呼ぶ側の所で名前を拾う
-        Fn.new(name: f.name, file: Inventory.rel(path), calls: calls, dispatch: dispatch.uniq)
+        gc = GC_KINDS.select { |_, re| body.match?(re) }.keys
+        Fn.new(name: f.name, file: Inventory.rel(path), calls: calls, dispatch: dispatch.uniq, gc: gc)
       end
       [fns, nil]
     end
@@ -92,9 +112,9 @@ module FpgaV2
       text[pos...(i - 1)]
     end
 
-    Result = Struct.new(:by_src, :problems, keyword_init: true)
+    Result = Struct.new(:by_src, :problems, :gc_by_src, keyword_init: true)
 
-    # 棚卸しの src (c:file:関数) ごとに、辿れる動的な呼び出しの名前
+    # 棚卸しの src (c:file:関数) ごとに、辿れる動的な呼び出しの名前と、GC の関所の種類 (計画 S6 §3.5)
     def build(srcs)
       files = srcs.filter_map { |s| s[/\Ac:([^:]+):/, 1] }.uniq
       index = {} # [file, 名前] → Fn
@@ -111,6 +131,26 @@ module FpgaV2
       end
       resolve = lambda do |file, name|
         index[[file, name]] || (global[name].size == 1 ? global[name].first : nil)
+      end
+      # GC の関所: 例外の道、VM に入る所、確保と GC そのもの (GC_LEAF) は辿らない
+      gc_reach = lambda do |fn|
+        seen = {}
+        queue = [fn]
+        kinds = []
+        until queue.empty?
+          f = queue.shift
+          next if seen[f]
+
+          seen[f] = true
+          kinds.concat(f.gc)
+          f.calls.each do |c|
+            next if c.match?(STOP) || c.match?(GC_LEAF) || c == f.name
+
+            g = resolve.(f.file, c)
+            queue << g if g
+          end
+        end
+        kinds.uniq.sort
       end
       memo = {}
       reach = lambda do |fn|
@@ -142,7 +182,12 @@ module FpgaV2
         f = resolve.(m[1], m[2])
         [s, f ? reach.(f) : nil]
       end
-      Result.new(by_src: by_src, problems: problems)
+      gc_by_src = srcs.uniq.to_h do |s|
+        m = s.match(/\Ac:([^:]+):(\w+)\z/)
+        f = m && resolve.(m[1], m[2])
+        [s, f ? gc_reach.(f) : nil]
+      end
+      Result.new(by_src: by_src, problems: problems, gc_by_src: gc_by_src)
     end
   end
 end

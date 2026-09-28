@@ -557,7 +557,7 @@ class Symbol
   def <=>(s2)
     return nil unless __fpga_tag(s2) == 4 # L:TAG_SYM
     return 0 if __fpga_addr(s2) == __fpga_addr(self)
-    tab = __fpga_image(26) # L:IMG_symtbl
+    tab = __fpga_image(1076) # L:IMG_symtbl
     i1 = __fpga_addr(self)
     i2 = __fpga_addr(s2)
     len1 = __fpga_ld32(tab + i1 * 8 + 4)
@@ -1798,7 +1798,7 @@ class Object
   # シンボル表の名前から新しい String
   # C: src/symbol.c mrb_sym_str
   def __fpga_sym_str(i)
-    tab = __fpga_image(26) # L:IMG_symtbl
+    tab = __fpga_image(1076) # L:IMG_symtbl
     __fpga_str_new(__fpga_ld32(tab + i * 8), __fpga_ld32(tab + i * 8 + 4))
   end
 

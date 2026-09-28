@@ -789,6 +789,10 @@ namespace :fpga do
       require_relative "../tools/fpga/v2/needs"
       File.write(FpgaV2::Needs::ASSERT_NEEDS, FpgaV2::Needs.assert_needs)
       File.write(FpgaV2::Needs::GEMS, FpgaV2::Needs.assert_gems)
+      require_relative "../tools/fpga/v2/annotations"
+      gc_rows = FpgaV2::Annotations.gc_rows
+      File.write(FpgaV2::Annotations::GC_CALLS, FpgaV2::Annotations.gc_calls_tsv(gc_rows))
+      puts "v2 gc calls: #{gc_rows.size} firmware def(s) touch the GC API, #{gc_rows.count { |x| !x[4].empty? }} still miss some (plan S6 §3.5)"
       puts "v2 ops: #{ops.size} opcodes, #{ops.count { |o| o[:arena] != 'none' }} restore the arena, " \
            "#{uncovered.size} restore site(s) outside any opcode"
       board = r.rows.count { |x| x[:board] == "yes" }

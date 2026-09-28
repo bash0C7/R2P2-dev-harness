@@ -10,7 +10,7 @@ class Object
       __fpga_st32(3 * 4, 0) # L:IMG_exc L:WORD
     else
       __fpga_st32(3 * 4, __fpga_addr(v)) # L:IMG_exc L:WORD
-      __fpga_keep_backtrace(v) unless __fpga_addr(v) == __fpga_image(30) || __fpga_and(__fpga_ld32(__fpga_addr(v) + 4), 2048) > 0 # L:IMG_nomem_err L:H_FLAGS L:H_FROZEN
+      __fpga_keep_backtrace(v) unless __fpga_addr(v) == __fpga_image(1080) || __fpga_and(__fpga_ld32(__fpga_addr(v) + 4), 2048) > 0 # L:IMG_nomem_err L:H_FLAGS L:H_FROZEN
     end
   end
 
@@ -86,14 +86,14 @@ class Object
   # mruby が C の関数の前にする check_argument_count の mrb_argnum_error の形 (min..max、min+)
   # C: src/vm.c argnum_error
   def __fpga_op_argc(given, min, max)
-    return __fpga_raise_argnum(given, min, max) if __fpga_proc < __fpga_image(35) # L:IMG_heap_start
+    return __fpga_raise_argnum(given, min, max) if __fpga_proc < __fpga_image(1085) # L:IMG_heap_start
     __fpga_raisef(ArgumentError, "wrong number of arguments (given %i, expected %i)", [given, min])
   end
 
   # 呼び出しの深さが MRB_CALL_LEVEL_MAX に届いた (回路の罠)
   # C: src/vm.c cipush
   def __fpga_op_stack_err
-    __fpga_exc_raise(__fpga_obj(__fpga_image(31))) # L:IMG_stack_err
+    __fpga_exc_raise(__fpga_obj(__fpga_image(1081))) # L:IMG_stack_err
   end
 
   # OP_BLKPUSH の遅い道: ブロックが無い
@@ -137,8 +137,8 @@ class Object
 
   # C: src/error.c mrb_init_exception
   def __fpga_init_exception
-    __fpga_st32(31 * 4, __fpga_addr(__fpga_exc_new_str(SystemStackError, "stack level too deep"))) # L:IMG_stack_err L:WORD
-    __fpga_st32(30 * 4, __fpga_addr(__fpga_exc_new_str(NoMemoryError, "Out of memory"))) # L:IMG_nomem_err L:WORD
+    __fpga_st32(1081 * 4, __fpga_addr(__fpga_exc_new_str(SystemStackError, "stack level too deep"))) # L:IMG_stack_err L:WORD
+    __fpga_st32(1080 * 4, __fpga_addr(__fpga_exc_new_str(NoMemoryError, "Out of memory"))) # L:IMG_nomem_err L:WORD
   end
 
   # C: src/vm.c L_INT_OVERFLOW
@@ -421,7 +421,7 @@ class Object
     pr = __fpga_ld32(ci + 8) # L:CI_PROC
     ir = __fpga_ld32(pr + 8) # L:P_BODY
     a -= 65536 if a >= 32768 # int16_t
-    return __fpga_unwind(ci, __fpga_ld32(ci + 20) - __fpga_ld32(ir + 8) + a) if pr < __fpga_image(35) # L:CI_PC L:I_ISEQ L:IMG_heap_start firmware の while の break (D70)
+    return __fpga_unwind(ci, __fpga_ld32(ci + 20) - __fpga_ld32(ir + 8) + a) if pr < __fpga_image(1085) # L:CI_PC L:I_ISEQ L:IMG_heap_start firmware の while の break (D70)
     __fpga_jump_checkpoint(ci, __fpga_ld32(ci + 20) - __fpga_ld32(ir + 8) + a) # L:CI_PC L:I_ISEQ
   end
 

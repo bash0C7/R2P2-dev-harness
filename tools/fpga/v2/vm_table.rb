@@ -3,6 +3,8 @@
 #   - その区間から goto で行く label の区間と、呼ぶ vm.c の static 関数 (その先の static 関数も) までを辿り、
 #   - arena の restore (mrb_gc_arena_restore / mrb_gc_arena_shrink、前処理の後は gc.arena_idx への代入) の所と、
 #   - 呼ぶ vm.c の外の関数 (mruby の C の API。firmware が写す先)
+#   - restore の時点 (計画 S6 の §5.4): case (CASE の本文、mrb_vm_exec の ai へ)、cfunc (C の関数を呼んだ後の
+#     mrb_gc_arena_shrink)、funcall (static な helper が自分の ai を save した所、mrb_funcall の後)
 # を列にする。どの命令からも辿れない restore の所は、別の一覧に出す (黙って捨てない)
 require "open3"
 require "tmpdir"
@@ -25,6 +27,8 @@ module FpgaV2
 
     RESTORE = /->gc\.arena_idx\s*=(?!=)|\bmrb_gc_arena_shrink\s*\(/
     SAVE = /->gc\.arena_idx\)/
+    # 関数が自分の ai を持つ (int ai = mrb_gc_arena_save(mrb) の前処理の後)
+    OWN_AI = /\bint\s+ai_?\s*=\s*\(\(mrb\)->gc\.arena_idx\)/
     C_KEYWORDS = %w[if while for switch return sizeof case do else goto typeof __typeof__ __builtin_expect __attribute__
                     __extension__ __builtin_offsetof _Static_assert __asm__ defined].freeze
 
@@ -125,9 +129,23 @@ module FpgaV2
       region_end = ->(pos) { (starts.map(&:last).select { |s| s > pos }.min || body.bytesize) }
 
       site_line = ->(abs) { lines.at(abs)[1] }
+      # abs の restore の時点。own_ai はその restore を含む関数が自分の ai を save するか
+      kind_at = lambda do |abs, own_ai|
+        t = text.byteslice(abs, 80)
+        next "cfunc" if t.start_with?("mrb_gc_arena_shrink")
+
+        var = t[/\A->gc\.arena_idx\s*=\s*\(*\s*(\w+)/, 1]
+        var == "ai" && !own_ai ? "case" : "funcall"
+      end
+      kinds = {} # 行 → 時点
       restores_in = lambda do |from, to|
         seg = body.byteslice(from, to - from)
-        seg.to_enum(:scan, RESTORE).map { site_line.(exec.from + from + Regexp.last_match.begin(0)) }
+        seg.to_enum(:scan, RESTORE).map do
+          abs = exec.from + from + Regexp.last_match.begin(0)
+          ln = site_line.(abs)
+          kinds[ln] = kind_at.(abs, false)
+          ln
+        end
       end
 
       # static 関数ごとの restore の所 (その先の static 関数も)
@@ -136,7 +154,13 @@ module FpgaV2
       end
       fn_restores = statics.transform_values do |f|
         t = text.byteslice(f.from, f.to - f.from)
-        t.to_enum(:scan, RESTORE).map { site_line.(f.from + Regexp.last_match.begin(0)) }
+        own = t.match?(OWN_AI)
+        t.to_enum(:scan, RESTORE).map do
+          abs = f.from + Regexp.last_match.begin(0)
+          ln = site_line.(abs)
+          kinds[ln] = kind_at.(abs, own)
+          ln
+        end
       end
       closure = lambda do |names|
         seen = []
@@ -156,7 +180,7 @@ module FpgaV2
 
       covered = []
       rows = ops.map do |name, fmt|
-        s = starts.find { |n, _| n == name } or next { op: name, fmt: fmt, line: "-", arena: "(no CASE)", save: "", calls: "", via: "" }
+        s = starts.find { |n, _| n == name } or next { op: name, fmt: fmt, line: "-", arena: "(no CASE)", save: "", calls: "", via: "", when: "" }
 
         segs = [[s[1], region_end.(s[1]), "own"]]
         i = 0
@@ -181,7 +205,8 @@ module FpgaV2
         all_text = seg_text + callees.map { |c| text.byteslice(statics[c].from, statics[c].to - statics[c].from) }.join("\n")
         { op: name, fmt: fmt, line: site_line.(exec.from + s[1]), arena: sites.empty? ? "none" : sites.uniq.join(" "),
           save: all_text.match?(SAVE) ? "save" : "", calls: external.(all_text).join(" "),
-          via: (segs.map(&:last) - ["own"]).join(" ") }
+          via: (segs.map(&:last) - ["own"]).join(" "),
+          when: sites.empty? ? "none" : sites.map { |x| kinds.fetch(x.split("@").last.to_i) }.uniq.sort.join(" ") }
       end
 
       # どの命令からも辿れない restore の所 (vm.c の中)。exec の外の関数 (mrb_funcall の中など) も含めて出す
@@ -194,8 +219,8 @@ module FpgaV2
     def tsv(rows)
       "# 命令の表 (計画 S2-2、rake fpga:v2:inventory が vm.c から作る。手で書かない)。行番号は今の vm.c の目安 (写し元の名前は CASE)\n" \
         "# op<TAB>operand<TAB>vm.c の行<TAB>arena の restore (行、label@行 は goto の先、関数@行 は呼ぶ static 関数の中)<TAB>save<TAB>" \
-        "goto で行く label<TAB>呼ぶ vm.c の外の関数\n" +
-        rows.map { |r| [r[:op], r[:fmt], r[:line], r[:arena], r[:save], r[:via], r[:calls]].join("\t") }.join("\n") + "\n"
+        "goto で行く label<TAB>呼ぶ vm.c の外の関数<TAB>restore の時点 (case / cfunc / funcall、計画 S6 §5.4)\n" +
+        rows.map { |r| [r[:op], r[:fmt], r[:line], r[:arena], r[:save], r[:via], r[:calls], r[:when]].join("\t") }.join("\n") + "\n"
     end
   end
 end

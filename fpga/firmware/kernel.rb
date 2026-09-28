@@ -358,7 +358,7 @@ class Object
   # '@' と、数字でない 1 文字目と、英数字と _ (と 0x80 以上) だけ
   # C: src/variable.c mrb_iv_name_sym_p
   def __fpga_iv_name_sym_p(id)
-    tab = __fpga_image(26) # L:IMG_symtbl
+    tab = __fpga_image(1076) # L:IMG_symtbl
     p = __fpga_ld32(tab + id * 8)
     len = __fpga_ld32(tab + id * 8 + 4)
     return false if len < 2
