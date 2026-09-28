@@ -106,6 +106,7 @@ class Array
     return false unless __fpga_alen(self) == __fpga_alen(ary2)
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
     return true if __fpga_recursive_func_p(ci, __fpga_addr(:==), self, ary2) # MRB_RECURSIVE_BINARY_FUNC_P
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(self)
       a = __fpga_ary_ref(self, i) # mrb_ary_entry
@@ -113,6 +114,7 @@ class Array
       unless __fpga_tag(a) == __fpga_tag(b) && __fpga_int(a) == __fpga_int(b) # mrb_obj_eq
         return false unless __fpga_sendv(a, :==, [b], nil, true) # mrb_funcall_argv1
       end
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     true
@@ -129,9 +131,11 @@ class Array
     end
     size = __fpga_as_int(ss)
     __fpga_check_frozen(__fpga_addr(self)) # ary_modify_check
+    ai = __fpga_gc_arena_save
     i = 0
     while i < size
       __fpga_ary_set(self, i, __fpga_tag(blk) == 0 ? obj : yield(i)) # L:TAG_NIL mrb_yield
+      __fpga_gc_arena_restore(ai) # for mrb_funcall
       i += 1
     end
     self
@@ -230,6 +234,7 @@ class Array
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
     __fpga_st32(ci + 4, __fpga_addr(:inspect)) # L:CI_MID mrb->c->ci->mid = MRB_SYM(inspect)
     ret = "["
+    ai = __fpga_gc_arena_save
     if __fpga_recursive_method_p(ci, __fpga_addr(:inspect), self, nil) # MRB_RECURSIVE_UNARY_P
       __fpga_str_cat_str(ret, "...]")
       return ret
@@ -238,6 +243,7 @@ class Array
     while i < __fpga_alen(self)
       __fpga_str_cat_str(ret, ", ") if i > 0
       __fpga_str_cat_str(ret, __fpga_inspect(__fpga_aref(self, i)))
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     __fpga_str_cat_str(ret, "]")
@@ -272,9 +278,11 @@ class Array
     return false unless __fpga_alen(self) == __fpga_alen(ary2)
     ci = __fpga_ld32(__fpga_image(0) + 12) # L:IMG_c L:CTX_CI mrb->c->ci
     return true if __fpga_recursive_func_p(ci, __fpga_addr(:eql?), self, ary2)
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(self)
       return false unless __fpga_ary_ref(self, i).eql?(__fpga_ary_ref(ary2, i)) # mrb_ary_entry
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     true
@@ -458,11 +466,14 @@ class Array
   # C: src/array.c mrb_ary_delete
   def delete(obj, &blk)
     ret = obj
+    ai = __fpga_gc_arena_save
     i = 0
     j = 0
     while i < __fpga_alen(self)
       elem = __fpga_aref(self, i)
       if __fpga_equal(elem, obj)
+        __fpga_gc_arena_restore(ai)
+        __fpga_gc_protect_value(elem)
         ret = elem
         i += 1
         next
@@ -562,12 +573,14 @@ class Array
   # --- mruby-array-ext の C
   # C: mrbgems/mruby-array-ext/src/array.c ary_assoc
   def assoc(k)
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(self)
       v = __fpga_aref(self, i)
-      if __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY mrb_check_array_type
-        return v if __fpga_alen(v) > 0 && __fpga_equal(__fpga_aref(v, 0), k)
-      end
+      v = nil unless __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY mrb_check_array_type
+      __fpga_gc_protect_value(v) # v may be removed from ary by mrb_equal()
+      return v if v && __fpga_alen(v) > 0 && __fpga_equal(__fpga_aref(v, 0), k)
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     nil
@@ -575,12 +588,15 @@ class Array
 
   # C: mrbgems/mruby-array-ext/src/array.c ary_rassoc
   def rassoc(value)
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(self)
       v = __fpga_aref(self, i)
+      __fpga_gc_protect_value(v) # v may be removed from ary by mrb_equal()
       if __fpga_tag(v) == 7 && __fpga_tt(__fpga_addr(v)) == 17 # L:TAG_OBJ L:TT_ARRAY
         return v if __fpga_alen(v) > 1 && __fpga_equal(__fpga_aref(v, 1), value)
       end
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     nil
@@ -722,9 +738,14 @@ class Array
     end
     return false if __fpga_alen(shorter_ary) == 0 || __fpga_alen(longer_ary) == 0
     arys = [shorter_ary] # ary_memb_init (D42)
-    i = 0 # ary_intersect_p_body
+    ai = __fpga_gc_arena_save # ary_intersect_p_body
+    i = 0
     while i < __fpga_alen(longer_ary)
-      return true if __fpga_ary_memb_has(arys, __fpga_aref(longer_ary, i))
+      p = __fpga_aref(longer_ary, i)
+      __fpga_gc_protect_value(p) # p may be removed from longer_ary by ary_memb_has()
+      hit = __fpga_ary_memb_has(arys, p)
+      __fpga_gc_arena_restore(ai)
+      return true if hit
       i += 1
     end
     false
@@ -1328,10 +1349,13 @@ class Object
     return __fpga_ary_subseq(ary, 0, __fpga_alen(ary)) if __fpga_alen(argv) == 0 # mrb_ary_dup
     argv = __fpga_ary_get_array_args(argv)
     result = []
-    i = 0 # ary_subtract_body
+    ai = __fpga_gc_arena_save # ary_subtract_body
+    i = 0
     while i < __fpga_alen(ary)
       p = __fpga_aref(ary, i)
+      __fpga_gc_protect_value(p) # p may be removed from self by ary_memb_has()
       result.__fpga_push1(p) unless __fpga_ary_memb_has(argv, p)
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     result
@@ -1339,10 +1363,13 @@ class Object
 
   # C: mrbgems/mruby-array-ext/src/array.c ary_union_add
   def __fpga_ary_union_add(src, result)
+    ai = __fpga_gc_arena_save
     i = 0
     while i < __fpga_alen(src)
       elem = __fpga_aref(src, i)
+      __fpga_gc_protect_value(elem) # elem may be removed from src by ary_memb_first()
       result.__fpga_push1(elem) if __fpga_ary_memb_first(elem, result, __fpga_alen(result))
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
   end
@@ -1386,9 +1413,11 @@ class Object
     while j < __fpga_alen(argv)
       src = j > 0 ? result : ary
       write_pos = 0
+      ai = __fpga_gc_arena_save
       i = 0
       while i < __fpga_alen(src)
         p = __fpga_aref(src, i)
+        __fpga_gc_protect_value(p) # p may be removed from src by ary_memb_take()
         if __fpga_ary_memb_take(argv, j, p, result, j == 0 ? write_pos : 0)
           if j == 0
             result.__fpga_push1(p)
@@ -1397,6 +1426,7 @@ class Object
           end
           write_pos += 1
         end
+        __fpga_gc_arena_restore(ai)
         i += 1
       end
       __fpga_ary_resize(result, write_pos) if j > 0
@@ -1413,15 +1443,18 @@ class Object
     __fpga_check_frozen(a) # len <= 1 は mrb_check_frozen、ほかは mrb_ary_modify
     return nil if len <= 1
     write_pos = 0 # ary_uniq_bang_body (D42)
+    ai = __fpga_gc_arena_save
     read_pos = 0
     while read_pos < __fpga_alen(ary)
       elem = __fpga_aref(ary, read_pos)
+      __fpga_gc_protect_value(elem) # elem may be removed from self by ary_memb_first()
       if __fpga_ary_memb_first(elem, ary, write_pos)
         if (write_pos == read_pos) == false && write_pos < __fpga_alen(ary)
           __fpga_stv(__fpga_ld32(a + 16) + write_pos * 16, elem) # L:A_PTR L:VALUE
         end
         write_pos += 1
       end
+      __fpga_gc_arena_restore(ai)
       read_pos += 1
     end
     return nil if write_pos == len
@@ -1535,10 +1568,13 @@ class Object
   def __fpga_ary_max_min(ary, want)
     return nil if __fpga_alen(ary) == 0
     result = __fpga_aref(ary, 0)
+    ai = __fpga_gc_arena_save
     i = 1
     while i < __fpga_alen(ary)
       val = __fpga_aref(ary, i)
       result = val if __fpga_ary_cmp_ordered(val, result) == want
+      __fpga_gc_arena_restore(ai)
+      __fpga_gc_protect_value(result)
       i += 1
     end
     result
@@ -1801,6 +1837,7 @@ class Object
     ad = __fpga_addr(ary)
     p = __fpga_ld32(ad + 16) # L:A_PTR
     n = __fpga_ld32(ad + 8) # L:A_LEN
+    ai = __fpga_gc_arena_save
     if __fpga_tag(blk) == 0 # L:TAG_NIL
       ta = __fpga_tag(a_val)
       if ta == 3 && __fpga_tag(b_val) == 3 # L:TAG_INT L:TAG_INT
@@ -1815,18 +1852,24 @@ class Object
       else
         cmp = __fpga_cmp(a_val, b_val) # mrb_cmp
       end
-      __fpga_raise(ArgumentError, "comparison failed") if cmp == -2
+      if cmp == -2
+        __fpga_gc_arena_restore(ai)
+        __fpga_raise(ArgumentError, "comparison failed")
+      end
     else
       c = yield(a_val, b_val) # mrb_yield_argv
       cmp = __fpga_cmpint(c, a_val, b_val)
     end
+    __fpga_gc_arena_restore(ai)
     __fpga_raise(RuntimeError, "array modified during sort") unless __fpga_ld32(ad + 16) == p && __fpga_ld32(ad + 8) == n # L:A_PTR L:A_LEN
     cmp > 0
   end
 
   # C: src/array.c heapify
   def __fpga_heapify(ary, a, index, size, &blk)
-    val = __fpga_ldv(a + index * 16) # L:VALUE
+    ai = __fpga_gc_arena_save
+    val = __fpga_ldv(a + index * 16) # L:VALUE save root to hole
+    __fpga_gc_protect_value(val)
     while true
       child = 2 * index + 1
       break if child >= size
@@ -1836,12 +1879,15 @@ class Object
       __fpga_stv(a + index * 16, c) # L:VALUE
       index = child
     end
-    __fpga_stv(a + index * 16, val) # L:VALUE
+    __fpga_stv(a + index * 16, val) # L:VALUE place saved value
+    __fpga_gc_arena_restore(ai)
   end
 
   # C: src/array.c heap_delete_root
   def __fpga_heap_delete_root(ary, a, size, &blk)
+    ai = __fpga_gc_arena_save
     last = __fpga_ldv(a)
+    __fpga_gc_protect_value(last)
     hole = 0
     child = 1
     while child + 1 < size
@@ -1862,14 +1908,17 @@ class Object
       hole = parent
     end
     __fpga_stv(a + hole * 16, last) # L:VALUE
+    __fpga_gc_arena_restore(ai)
   end
 
   # C: src/array.c insertion_sort
   def __fpga_insertion_sort(ary, a, size, &blk)
+    ai = __fpga_gc_arena_save
     i = 1
     while i < size
       key = __fpga_ldv(a + i * 16) # L:VALUE
       j = i - 1
+      __fpga_gc_protect_value(key) # Protect key from GC - it's temporarily out of the array during sort
       while j >= 0
         jv = __fpga_ldv(a + j * 16) # L:VALUE
         break unless __fpga_sort_cmp(ary, jv, key, &blk)
@@ -1877,6 +1926,7 @@ class Object
         j -= 1
       end
       __fpga_stv(a + (j + 1) * 16, key) # L:VALUE
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
   end

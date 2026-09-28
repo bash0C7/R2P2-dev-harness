@@ -252,7 +252,9 @@ class Object
   # C: src/backtrace.c mrb_keep_backtrace
   def __fpga_keep_backtrace(exc)
     return if __fpga_ld32(__fpga_addr(exc) + 12) > 0 # L:EX_BACKTRACE
+    ai = __fpga_gc_arena_save
     __fpga_st32(__fpga_addr(exc) + 12, __fpga_packed_backtrace) # L:EX_BACKTRACE store_backtrace
+    __fpga_gc_arena_restore(ai)
   end
 
   # C: src/backtrace.c decode_location
@@ -276,9 +278,11 @@ class Object
     n = __fpga_ld32(bt + 8) # L:BT_LEN
     loc = __fpga_ld32(bt + 12) # L:BT_LOCATIONS
     ary = []
+    ai = __fpga_gc_arena_save
     i = 0
     while i < n
       ary.__fpga_push1(__fpga_decode_location(loc + i * 12)) # L:LOC_SIZE
+      __fpga_gc_arena_restore(ai)
       i += 1
     end
     ary
