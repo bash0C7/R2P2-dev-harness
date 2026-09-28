@@ -8,6 +8,7 @@
 require_relative "layout"
 require_relative "ops"
 require_relative "image"
+require_relative "board"
 
 module FpgaV2
   class Ref
@@ -109,6 +110,10 @@ module FpgaV2
     CALL_KW = 0x100
 
     attr_reader :console, :stats, :steps, :stbase
+    attr_writer :board
+
+    # 板のモデル (mmio、board.rb)。番地が MMIO_BASE 以上の __fpga_ld32 / __fpga_st32 はここへ
+    def board = @board ||= Board.new
 
     def initialize(image, max_steps: 10_000_000)
       @m = image.dup.force_encoding(Encoding::BINARY)
@@ -135,7 +140,7 @@ module FpgaV2
     # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる
     CRUBY_STATE = %i[
       @m @max @steps @console @stats @cache @heap @heap_end @ctx @stbase @stend @core @prims @main @entry @object @f
-      @sym_ids @iseq_cache @pc_next @jumped
+      @sym_ids @iseq_cache @pc_next @jumped @board
     ].freeze
 
     # 使ったヒープのバイト数 (accept の記録。GC が無い間は確保の合計)
@@ -766,8 +771,8 @@ module FpgaV2
       r = case name
           when "__fpga_ld8" then int(r8(args[0][1]))
           when "__fpga_st8" then (w8(args[0][1], args[1][1]); NIL)
-          when "__fpga_ld32" then int(r32(args[0][1]))
-          when "__fpga_st32" then (w32(args[0][1], args[1][1]); NIL)
+          when "__fpga_ld32" then int(args[0][1] >= MMIO_BASE ? (@stats[:mmio] += 1; board.ld32(args[0][1])) : r32(args[0][1]))
+          when "__fpga_st32" then (args[0][1] >= MMIO_BASE ? (@stats[:mmio] += 1; board.st32(args[0][1], args[1][1])) : w32(args[0][1], args[1][1]); NIL)
           when "__fpga_ldv" then rv(args[0][1])
           when "__fpga_stv" then (wv(args[0][1], args[1]); NIL)
           when "__fpga_addr" then int(args[0][1])
