@@ -7,7 +7,9 @@
 // +TRACE で、実行した命令を `insn <cycle> <ms> <pc> <op>` の行で出す (rake fpga:rite:view)
 `timescale 1ns / 1ps
 module rite_core_tb;
-  localparam int MS_CYCLES = 1000;  // シミュレーションを速くするため 1 ms を 1000 cycle にする (回路の意味は同じ)
+  // シミュレーションを速くするため 1 ms を 2000 cycle にする (回路の意味は同じ)。起動 (mrblib と .rb を読んで実行し最初の write まで、約 1,300 cycle)
+  // が 1 ms に収まり、host の板のモデルと同じ ms にピンが変わる数 (実機の 50 MHz なら 50,000)
+  localparam int MS_CYCLES = 2000;
   logic clk = 1'b0;
   logic rst_n = 1'b0;
   // テストベンチのクロック生成は blocking で書くのが定石なので、ここだけ Verilator の -Wall を黙らせる
@@ -19,7 +21,7 @@ module rite_core_tb;
   logic        halted, error;
   logic [7:0]  error_op;
   logic [15:0] error_pc;
-  rite_core #(.ROM_BYTES(1024), .MS_CYCLES(MS_CYCLES)) dut (
+  rite_core #(.ROM_BYTES(2048), .MS_CYCLES(MS_CYCLES)) dut (
     .clk, .rst_n, .pins, .ms_now, .halted, .error, .error_op, .error_pc
   );
 
@@ -44,7 +46,7 @@ module rite_core_tb;
     while (!(halted || error || ms_now > until_ms)) begin
       @(posedge clk);
       cycle++;
-      if (trace && dut.st == dut.S_EXEC && !dut.rd_wait) $display("insn %0d %0d %0d %0d", cycle, ms_now, dut.op_pc, dut.op);
+      if (trace && dut.in_exec) $display("insn %0d %0d %0d %0d", cycle, ms_now, dut.op_pc, dut.op);
       if (pins !== last) begin
         for (int p = 0; p < 32; p++)
           if (pins[p] !== last[p]) begin
