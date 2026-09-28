@@ -741,6 +741,22 @@ namespace :fpga do
       raise "differ from host: #{bad.join(', ')}" unless bad.empty?
     end
 
+    desc "Run fpga/v2/board/*.rb (blink, endless loops) on host PicoRuby and the v2 reference with the board model, and compare the pin changes up to a virtual time (e.g. rake fpga:v2:pins[3000], ms)"
+    task :pins, [:until_ms] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/pins"
+      until_ms = (args[:until_ms] || FpgaV2::Pins::UNTIL_MS).to_i
+      results = FpgaParallel.map(FpgaV2::Pins.programs) { |path| FpgaV2::Pins.check(path, until_ms: until_ms) }
+      results.each do |r|
+        puts format("%-4s %-16s %4d pin change(s) up to %d ms, %8d insns", r.ok? ? "ok" : "DIFF", r.name, r.ref_pins.size, until_ms, r.steps)
+        next if r.ok?
+
+        puts "  host:", FpgaV2::Pins.format_pins(r.host_pins).map { |l| "    #{l}" }, "  ref:", FpgaV2::Pins.format_pins(r.ref_pins).map { |l| "    #{l}" }
+        puts "  console differs: host #{r.host_out.inspect} ref #{r.ref_out.inspect}" unless r.host_out == r.ref_out
+      end
+      bad = results.reject(&:ok?).map(&:name)
+      raise "differ from host: #{bad.join(', ')}" unless bad.empty?
+    end
+
     desc "Differential fuzzing of v2: random mruby source programs on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:fuzz[100,1])"
     task :fuzz, [:count, :seed] => "fpga:picoruby" do |_, args|
       require_relative "../tools/fpga/v2/fuzz"
