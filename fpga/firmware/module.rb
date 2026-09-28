@@ -89,11 +89,11 @@ class Object
     e > 0 ? __fpga_ld32(e + 0) : __fpga_ld32(p + 20) # L:H_CLASS L:P_TCLASS
   end
 
-  # クラス変数の入れ物: upper の鎖の一番近い cref (特異クラスは飛ばす)。無ければ Object (MRB_PROC_GIVEN は D19)
-  # C: src/variable.c cv_scope_class (D19)
+  # クラス変数の入れ物: upper の鎖の一番近い cref (クラスを与えられた MRB_PROC_GIVEN と特異クラスは飛ばす)。無ければ Object
+  # C: src/variable.c cv_scope_class
   def __fpga_cv_scope_class(p)
     while p > 0 && __fpga_and(__fpga_ld32(p + 24), 3) == 0 # L:P_FLAGS MRB_PROC_CFUNC_P
-      if __fpga_and(__fpga_ld32(p + 24), 16384) > 0 # L:PROC_CREF
+      if __fpga_and(__fpga_ld32(p + 24), 16384) > 0 && __fpga_and(__fpga_ld32(p + 24), 32768) == 0 # L:P_FLAGS L:PROC_CREF MRB_PROC_GIVEN
         c = __fpga_proc_target_class(p)
         return c if c > 0 && (__fpga_tt(c) == 11) == false # L:TT_SCLASS
       end
