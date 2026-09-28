@@ -38,6 +38,8 @@ class Object
       end
       kdict = nil
       kw = false
+    elsif __fpga_tag(kdict) > 0 # L:TAG_NIL
+      __fpga_gc_protect_value(kdict)
     end
     argv = []
     k = 1
@@ -45,14 +47,17 @@ class Object
       argv.__fpga_push1(__fpga_reg(k))
       k += 1
     end
+    moved = false
     pr = __fpga_ld32(ci + 8) # L:CI_PROC
     if __fpga_and(__fpga_ld32(pr + 24), 256) > 0 # L:P_FLAGS L:PROC_STRICT
       if argc < m1 + m2 || (r == 0 && argc > len)
         return __fpga_op_argc(argc, m1 + m2, r == 0 ? m1 + o + m2 : -1) # argnum_error
       end
     elsif len > 1 && argc == 1 && __fpga_tag(__fpga_aref(argv, 0)) == 7 && __fpga_tt(__fpga_addr(__fpga_aref(argv, 0))) == 17 # L:TAG_OBJ L:TT_ARRAY
+      __fpga_gc_protect_value(__fpga_aref(argv, 0))
       argv = __fpga_aref(argv, 0)
       argc = __fpga_alen(argv)
+      moved = true # argv0 != argv
     end
     skip = 0
     regs = []
@@ -74,9 +79,13 @@ class Object
         __fpga_ary_set(regs, len - m2 + k, __fpga_aref(argv, argc - mlen + k))
         k += 1
       end
-      __fpga_ary_set(regs, m1 + o, []) if r > 0
+      if r > 0
+        __fpga_gc_protect_value(blk)
+        __fpga_ary_set(regs, m1 + o, [])
+      end
       skip = argc - m1 - m2 if o > 0 && argc > m1 + m2
     else
+      __fpga_gc_protect_value(blk) if moved
       rnum = r > 0 ? argc - m1 - o - m2 : 0
       k = 0
       while k < m1 + o

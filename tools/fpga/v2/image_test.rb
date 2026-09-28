@@ -14,8 +14,8 @@ class FpgaV2ImageTest < Minitest::Test
   class Capture < FpgaV2::Ref
     attr_reader :loaded
 
-    def run_irep(ir, _self, _a)
-      @loaded = ir
+    def run_irep(pr, _self, _a)
+      @loaded = r32(pr + L::P_BODY) # __fpga_run は firmware が作った Proc を受ける (load.c の mrb_proc_new)
       raise Halt
     end
   end

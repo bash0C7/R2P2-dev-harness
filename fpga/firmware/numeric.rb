@@ -13,7 +13,7 @@ class Integer
     digits = "0123456789abcdefghijklmnopqrstuvwxyz" # mrb_digitmap
     dp = __fpga_ld32(__fpga_addr(digits) + 16) # L:S_PTR
     neg = x < 0
-    buf = __fpga_alloc(66)
+    buf = __fpga_temp_alloc(66) # char buf[MRB_INT_BIT+1] (D84)
     k = 66
     until x == 0
       d = __fpga_rem(x, base) # 負の数なら -(base-1)..0

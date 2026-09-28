@@ -20,6 +20,15 @@ module FpgaV2
     INT_MAX = (1 << 63) - 1
     MASK64 = (1 << 64) - 1
 
+    # R2 (計画 S6 §3.4): 命令を終えた時に arena を ai へ戻す命令。ops.tsv (vm.c から生成) の restore の時点が case で、
+    # CASE の本文に restore の行があるもの。goto の先が別の命令の本文の restore なら数える (BLOCK / METHOD は L_MAKE_LAMBDA)。
+    # RETURN 系と、戻りや送りや例外へ飛ぶ所は ret と巻き戻しの中で戻す。ADD の restore は文字列の枝 (mrb_str_plus) だけで、
+    # ref は String#+ を送り R3 で戻すので数えない。{名前 => true}
+    RESTORE_OPS = File.readlines(File.expand_path("../../../fpga/v2/inventory/ops.tsv", __dir__), chomp: true, encoding: "UTF-8")
+                      .reject { |l| l.start_with?("#") }.map { |l| l.split("\t", -1) }
+                      .select { |r| r[7].to_s.split.include?("case") && r[3].split.any? { |x| !x.include?("@") || (x.start_with?("L_") && !x.match?(/\AL_(OP_\w+_BODY|OP_RETURN|RETURN|CHECKPOINT|SENDB|RAISE)/)) } }
+                      .map(&:first).reject { |n| n.start_with?("RET", "EXT") || n == "BREAK" || n == "ADD" }.to_h { |n| [n, true] }.freeze
+
     # 回路が自分で実行する命令 (ほかは罠)
     HW_OPS = %w[
       NOP MOVE LOADL LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5 LOADI_6 LOADI_7 LOADI16 LOADI32
@@ -35,13 +44,14 @@ module FpgaV2
     # - kind / resume / dst: 罠の続き (延長の語、D11)
     class Ci
       include Layout
-      attr_reader :addr, :proc, :irep, :bp
+      attr_reader :addr, :proc, :irep, :bp, :fw
 
       def initialize(ref, addr)
         @r = ref
         @addr = addr
         @proc = ref.r32(addr + CI_PROC)
         @irep = ref.r32(@proc + P_BODY)
+        @fw = @irep < ref.heap_start # firmware のフレーム (C の関数): irep が像の中 (ROM)
         @bp = (ref.r32(addr + CI_STACK) - ref.stbase) / VALUE
       end
 
@@ -109,7 +119,7 @@ module FpgaV2
     CALL_ARGS = 0xFF
     CALL_KW = 0x100
 
-    attr_reader :console, :stats, :steps, :stbase
+    attr_reader :console, :stats, :steps, :stbase, :heap_start, :ai
     attr_writer :board
 
     # 板のモデル (mmio、board.rb)。番地が MMIO_BASE 以上の __fpga_ld32 / __fpga_st32 はここへ
@@ -124,9 +134,8 @@ module FpgaV2
       @cache = {}
       @dcache = {}
       h = ->(k) { r32(IMG.fetch(k) * WORD) }
-      # 回路のレジスタに当たるもの (mrb_state と mrb_context から起動の時に読む定数の番地と、ヒープの bump の位置)
-      @heap = h.(:heap_start)
-      @heap_end = h.(:heap_end)
+      # 回路のレジスタに当たるもの (mrb_state と mrb_context から起動の時に読む定数の番地)
+      @heap_start = h.(:heap_start)
       @ctx = h.(:c)
       @stbase = r32(@ctx + CTX_STBASE)
       @stend = r32(@ctx + CTX_STEND)
@@ -136,13 +145,14 @@ module FpgaV2
       @entry = h.(:fw_entry)
       @object = h.(:object_class)
       @f = nil
+      @ai = 0 # 今の活性化の ai (mrb_vm_exec の C の局所変数、記憶の正本は SKIP のフレームの CI_AI、D82)
     end
 
     # ref の CRuby 側に持つもの (計画 S2b: 回路のレジスタ・cache・定数の番地だけ。機械の状態は記憶の中)。ref_test が確かめる。
     # @dcache は命令のデコードの cache (回路の命令 cache に当たる記憶の写し。fetch が使う前に記憶のバイト列と比べるので、書き込みで外れる)
     CRUBY_STATE = %i[
-      @m @max @steps @console @stats @cache @heap @heap_end @ctx @stbase @stend @core @prims @main @entry @object @f
-      @sym_ids @dcache @pc_next @jumped @board
+      @m @max @steps @console @stats @cache @heap_start @ctx @stbase @stend @core @prims @main @entry @object @f
+      @sym_ids @dcache @pc_next @jumped @board @ai @fpga_syms
     ].freeze
 
     # 起動の像を写した記憶 (IO::Buffer は CRuby 3.3 で experimental の警告を出すので、作る間だけ黙らせる)
@@ -156,8 +166,20 @@ module FpgaV2
       Warning[:experimental] = warn
     end
 
-    # 使ったヒープのバイト数 (accept の記録。GC が無い間は確保の合計)
-    def heap_used = @heap - r32(IMG.fetch(:heap_start) * WORD)
+    # 使ったヒープのバイト数 (accept の記録): estalloc の pool の used (est_take_statistics と同じ数え方の、使っているブロックの合計)
+    def heap_used
+      pool = r32(IMG.fetch(:est_heap) * WORD)
+      pool_end = pool + r32(pool + MP_SIZE)
+      b = pool + POOL_HEADER_SIZE
+      used = 0
+      while b < pool_end
+        size = r32(b) & ~ALIGNMENT_MASK
+        break if size.zero?
+        used += size if r32(b).anybits?(1)
+        b += size
+      end
+      used
+    end
 
     # --- 記憶
     # 記憶は IO::Buffer (big endian の語を 1 回で読み書きする)。バイト列は bytes_at / put_bytes
@@ -224,21 +246,8 @@ module FpgaV2
     def irep_sym(ir, i) = r32(r32(ir + I_SYMS) + i * WORD)
     def irep_rep(ir, i) = r32(r32(ir + I_REPS) + i * WORD)
 
-    # クラス c の == が起動の後に定義されたものか (MRB_FL_CLASS_EQ_DEFINED の意味: 起動の後に祖先のどれかが == を定義した)。
-    # 回路は探索で答える: 見つかった Proc が bop_builtin の表 (mrb_builtin_op_init が起動の終わりに確保) より前なら起動の中のもの (D61)
-    def eq_defined?(c)
-      sym = sym_id("==")
-      until c.zero?
-        mt = r32(c + C_MT)
-        rom = r32(c + C_ROM)
-        e = mt.zero? ? nil : table_get(mt, sym)
-        e = table_get(rom, sym) if e.nil? && !rom.zero?
-        return (e & ~VIS_MASK) >= r32(IMG.fetch(:bop_builtin) * WORD) if e && !e.zero?
-        return true if e # undef
-        c = r32(c + C_SUPER)
-      end
-      true
-    end
+    # クラス c の MRB_FL_CLASS_EQ_DEFINED (起動の後に c か祖先が == を定義した。firmware の eq_defined_mark が付ける)
+    def eq_defined?(c) = r32(c + H_FLAGS).anybits?(CLASS_EQ_DEFINED)
 
     # 表 (メソッド表の形、layout.rb) を引く
     def table_get(head, sym)
@@ -320,9 +329,13 @@ module FpgaV2
       @stats[:insn] += 1
       if e[4]
         exec(i)
+        arena_restore if !@f.fw && RESTORE_OPS[i.name]
       else
         trap_op(i)
       end
+      idx = arena_idx
+      @stats[:arena_max] = idx if idx > @stats[:arena_max]
+      raise Error, "arena_idx #{idx} < ai #{@ai}" if !@f.fw && idx < @ai # 像の外の命令の切れ目の不変条件 (S6-3)
       if @f && !@jumped # @f.pc = @pc_next を開いたもの
         @m.set_value(:U32, @f.addr + CI_PC, (@m.get_value(:U32, @f.irep + I_ISEQ) + @pc_next) & 0xFFFF_FFFF)
       end
@@ -379,8 +392,8 @@ module FpgaV2
       # GETIDX / GETIDX0 / SETIDX: mruby は Array・Hash・String の近道を持つが、見える意味は [] / []= を送るのと同じ
       # (再定義も効く)。v2 は送る。近道は Array#[] などを回路の primitive にすることで得る
       # ARRAY: R[a] = [R[a] .. R[a+b-1]]、ARRAY2: R[a] = [R[b] .. R[b+c-1]] (配列は回路が作る、vm.c の OP_ARRAY)
-      when "ARRAY" then setreg(a, alloc_array((0...b).map { |k| reg(a + k) }))
-      when "ARRAY2" then setreg(a, alloc_array((0...c).map { |k| reg(b + k) }))
+      when "ARRAY" then b.zero? ? empty_array(i, a) : trap_op(i)
+      when "ARRAY2" then c.zero? ? empty_array(i, a) : trap_op(i)
       # ARYCAT (vm.c): R[a] が nil なら splat(R[a+1])、そうでなければ R[a] にその場で足す。ARYPUSH: R[a] にその場で R[a+1..a+b] を足す。
       # 回路は Array 同士だけ。splat が to_a を送る時 (mrb_ary_splat) と R[a] が Array でない時 (mrb_ensure_array_type) は罠
       when "ARYCAT" then arycat(i, a)
@@ -413,10 +426,9 @@ module FpgaV2
     # mrb_state.bop_redefined の bit (mruby.h の MRB_BOP_*): 演算子を再定義したら、回路の近道をやめて送る (vm.c の OP_ADD / OP_CMP / OP_EQ)
     BOP_SLOT = { "ADD" => 0, "SUB" => 1, "MUL" => 2, "DIV" => 3, "EQ" => 4, "LT" => 5, "LE" => 6, "GT" => 7, "GE" => 8 }.freeze
     # firmware (像の中の Proc、C の関数の写し) の命令は再定義を見ない (C の演算子は Ruby のメソッドを呼ばない)
-    HEAP_START_AT = IMG.fetch(:heap_start) * WORD
     BOP_REDEFINED_AT = IMG.fetch(:bop_redefined) * WORD
     BOP_BIT = BOP_SLOT.transform_values { |k| 1 << k }.freeze
-    def bop = @f.proc < r32(HEAP_START_AT) ? 0 : r32(BOP_REDEFINED_AT)
+    def bop = @f.proc < @heap_start ? 0 : r32(BOP_REDEFINED_AT)
     def bop_int?(name) = (bop & BOP_BIT.fetch(name)).zero?
 
     OPSYM = { "ADD" => "+", "SUB" => "-", "MUL" => "*", "DIV" => "/", "EQ" => "==", "LT" => "<", "LE" => "<=", "GT" => ">", "GE" => ">=" }.freeze
@@ -599,7 +611,7 @@ module FpgaV2
       push_frame(pr, base, args.size, kind: :trap, mid: sym_id(name), ret_pc: @pc_next, resume: resume || [:advance])
     end
 
-    def call_proc(pr, a, n, mid, ret_pc, dst = nil, found = nil)
+    def call_proc(pr, a, n, mid, ret_pc, dst = nil, found = nil, via: :send)
       case r32(pr + P_FLAGS) & 3
       when PROC_PRIM
         raise Error, "primitive procs with dst" if dst
@@ -612,7 +624,7 @@ module FpgaV2
         args = [reg(a), [TAG_SYM, r32(pr + P_BODY)]] + (n == 1 ? [reg(a + 1)] : [])
         trap_call(n == 1 ? "__fpga_op_ivset" : "__fpga_op_ivget", args, resume: [:value, dst || a], above: a + n + 2)
       else
-        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst, tclass: found)
+        push_frame(pr, a, n, kind: :call, mid: mid, ret_pc: ret_pc, dst: dst, tclass: found, via: via)
         b = rv(@stbase + (@f.bp + wlen(n) + 1) * VALUE)
         w32(@f.addr + CI_BLK, b[1]) if b[0] == TAG_OBJ && (r32(b[1] + H_FLAGS) & 0xFF) == TT[:PROC]
       end
@@ -620,17 +632,20 @@ module FpgaV2
 
     # フレームを積む。呼んだ側は ret_pc から続ける。dst は結果を置く呼んだ側のレジスタ (nil は呼ばれた側の R0 = 呼んだ側の R[a])
     # vis は def の既定の可視性 (一番外は private、ほかは public。mruby の MRB_CI_VISIBILITY)
-    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil, tclass: nil)
+    # via: :send (名前で呼んだ、C の mrb_funcall に当たる)、:yield (ブロック、mrb_yield)、:run (mrb_vm_run)。R1 の protect を決める
+    def push_frame(pr, a, n, kind:, mid:, ret_pc:, resume: nil, dst: nil, tclass: nil, via: :send)
       ci = @f.addr + CI_SIZE
       # vm.c の cipush: ci の数が MRB_CALL_LEVEL_MAX に届いたら mrb->stack_err を上げる (罠は上げるための余りの枠を使う)
       # firmware (像の中の Proc) のフレームからの呼び出しは数えない (上げる途中の firmware が同じ罠に入らないため)
-      if kind != :trap && (ci - r32(@ctx + CTX_CIBASE)) / CI_SIZE >= MRB_CALL_LEVEL_MAX && @f.proc >= r32(IMG.fetch(:heap_start) * WORD)
+      if kind != :trap && (ci - r32(@ctx + CTX_CIBASE)) / CI_SIZE >= MRB_CALL_LEVEL_MAX && @f.proc >= @heap_start
         @pc_next = ret_pc
         return trap_call("__fpga_op_stack_err", [], above: a + wlen(n) + 2)
       end
       raise Error, "call depth" if ci + CI_SIZE > r32(@ctx + CTX_CIEND)
       @f.pc = ret_pc
+      below_fw = @f.fw
       write_ci(ci, pr, @stbase + (@f.bp + a) * VALUE, mid, kind, resume, dst, n, tclass)
+      activation_at(ci, below_fw, kind == :run ? :run : via)
       @jumped = true
       @stats[:call] += 1
     end
@@ -646,6 +661,7 @@ module FpgaV2
       cont = { trap: CONT_OF.fetch((resume || [:advance])[0]), boot: CONT_BOOT, run: CONT_RUN }.fetch(kind, CONT_NONE)
       w8(ci + CI_CONT, cont)
       w32(ci + CI_CDST, dst ? dst + 1 : 0)
+      w32(ci + CI_CFCALL, 1) if resume && resume[0] == :advance && resume[1] # 罠から戻ったら arena を戻す命令 (R2)
       if resume && resume[0] != :advance
         _, ca, cn, csym, cret, _, fcall = resume
         w32(ci + CI_CA, ca)
@@ -694,18 +710,22 @@ module FpgaV2
         args = ary_values(args[0][1])
         argc = args.size
       end
+      # rest の配列を作る (確保) のは、空で速い道の条件に合う時だけ回路。始める前に決める (計画 S6 §5.1)
+      if r == 1 && (argc > m1 + o + m2 || !obj_alloc_fast?)
+        return trap_call("__fpga_op_enter_kw", [int(aspec), int(@f.argc)], above: above)
+      end
       regs = Array.new(len, NIL)
       if argc < len
         mlen = m2
         mlen = m1 < argc ? argc - m1 : 0 if argc < m1 + m2
         args[0, argc - mlen].each_with_index { |v, k| regs[k] = v } # m1 と o の前から
         args[argc - mlen, mlen].each_with_index { |v, k| regs[len - m2 + k] = v } # 後ろの必須
-        regs[m1 + o] = alloc_array([]) if r == 1
+        regs[m1 + o] = new_array_fast if r == 1
         @pc_next += (argc - m1 - m2) * 3 if o.positive? && argc > m1 + m2 # 渡された省略可能の数だけ初期値の JMP の表を飛ばす
       else
         rnum = r == 1 ? argc - m1 - o - m2 : 0 # 残りが無ければ余りの引数は捨てる (strict でないブロック)
         args[0, m1 + o].each_with_index { |v, k| regs[k] = v }
-        regs[m1 + o] = alloc_array(args[m1 + o, rnum]) if r == 1
+        regs[m1 + o] = new_array_fast if r == 1 # rnum は 0 (上で決めた)
         args[m1 + o + rnum, m2].each_with_index { |v, k| regs[m1 + o + r + k] = v } if m2.positive? && argc - m2 > m1
         @pc_next += o * 3
       end
@@ -717,18 +737,114 @@ module FpgaV2
       @f.argc = len
     end
 
-    # 回路が作る配列 (RArray、layout.rb)。枠と中身の領域を1つずつ
-    def alloc_array(values)
-      ary = alloc(SLOT)
-      buf = alloc([values.size, 1].max * VALUE)
-      w32(ary + H_CLASS, r32(@core + CORE_ARRAY * WORD))
-      w32(ary + H_FLAGS, TT[:ARRAY])
-      w32(ary + A_LEN, values.size)
-      w32(ary + A_CAPA, [values.size, 1].max)
-      w32(ary + A_PTR, buf)
-      values.each_with_index { |v, k| wv(buf + k * VALUE, v) }
+    # --- arena (計画 S6 §3.4 の R1〜R5)
+    ARENA_IDX_AT = IMG.fetch(:gc_arena_idx) * WORD
+    def arena_idx = r32(ARENA_IDX_AT)
+    # vm.c の mrb_gc_arena_restore(mrb, ai)
+    def arena_restore(ai = @ai) = w32(ARENA_IDX_AT, ai)
+
+    # 活性化の ai: ci から下で一番近い CINFO_SKIP のフレームの CI_AI (無ければ起動の 0)
+    def activation_ai(ci)
+      base = r32(@ctx + CTX_CIBASE)
+      while ci >= base
+        return (r32(ci + CI_AI) & ~CI_AI_PROTECT) - 1 if r8(ci + CI_CCI) == CINFO_SKIP
+
+        ci -= CI_SIZE
+      end
+      0
+    end
+
+    # gc.c の mrb_gc_protect: 即値と RED の物は積まない。arena はいつも 1 つ空いている (D91) ので確保は要らない
+    def arena_protect(v)
+      return unless v[0] == TAG_OBJ
+      return if ((r32(v[1] + H_FLAGS) >> H_COLOR_SHIFT) & GC_COLOR_MASK) == GC_RED
+
+      idx = arena_idx
+      raise Error, "arena has no room for the protect" if idx >= r32(GC_AT[:gc_arena_capa])
+
+      w32(r32(GC_AT[:gc_arena]) + idx * WORD, v[1])
+      w32(ARENA_IDX_AT, idx + 1)
+    end
+
+    # firmware の helper の名前 (__fpga_ で始まる。C の関数の直接の呼び出し、D14)
+    def fpga_sym?(sym)
+      @fpga_syms ||= {}
+      @fpga_syms.fetch(sym) { @fpga_syms[sym] = sym_name(sym).start_with?("__fpga_") }
+    end
+
+    # R1 / R1': ci (今積んだフレーム) の proc を置いた所で、下のフレームが firmware なら C から VM を点けた (SKIP) か、C から名前で
+    # C の関数を呼んだ (DIRECT)。protect は戻りで値を arena に積むか (mrb_funcall は積む、yield は積まない)
+    def activation_at(ci, below_fw, via)
+      return unless below_fw
+
+      pr = r32(ci + CI_PROC)
+      callee_fw = r32(pr + P_BODY) < @heap_start
+      if callee_fw
+        return unless via == :send && !fpga_sym?(r32(ci + CI_MID)) # R1': firmware の def を名前で (mrb_funcall の cfunc の道)
+
+        return if r8(ci + CI_CONT) != CONT_NONE # 罠のフレームは D11 のまま
+
+        w8(ci + CI_CCI, CINFO_DIRECT)
+        save_ai(ci, CI_AI_PROTECT)
+        return
+      end
+      return if r8(ci + CI_CCI) == CINFO_SKIP # BLKCALL は write_ci と vm_call_proc の両方で当たる。2 回目は何もしない
+
+      w8(ci + CI_CCI, CINFO_SKIP)
+      # protect は mrb_funcall だけ (yield_with_attr も mrb_vm_run の cipush も積まない)。R1' が先に置いたら上書きしない
+      save_ai(ci, via == :send ? CI_AI_PROTECT : 0) if r32(ci + CI_AI).zero?
+      @ai = (r32(ci + CI_AI) & ~CI_AI_PROTECT) - 1
+    end
+
+    # CI_AI に ai + 1 と protect の bit を置く。保存した ai はどれも arena_capa より小さい (D91、S6-3 の不変条件)
+    def save_ai(ci, protect)
+      ai = arena_idx
+      raise Error, "saved ai #{ai} is not below arena_capa (D91)" unless ai < r32(GC_AT[:gc_arena_capa])
+
+      w32(ci + CI_AI, (ai + 1) | protect)
+    end
+
+    # --- 確保の速い道 (gc.c の mrb_obj_alloc_core の freelist から外す所、計画 S6 §5.1)。記憶の中の mrb_gc を読み書きする
+    GC_AT = %i[gc_debt gc_debt_lo gc_free_heaps gc_live gc_arena gc_arena_capa gc_arena_idx gc_current_white_part].to_h { |k| [k, IMG.fetch(k) * WORD] }.freeze
+
+    def gc_debt = s64((r32(GC_AT[:gc_debt]) << 32) | r32(GC_AT[:gc_debt_lo]))
+
+    # 枠を 1 つ、罠に落ちずに作れるか (負債が正にならない、free_heaps が空でない、arena に積んでも 1 つ空く D91)
+    def obj_alloc_fast?
+      gc_debt + 1 <= 0 && !r32(GC_AT[:gc_free_heaps]).zero? && r32(GC_AT[:gc_arena_idx]) + 2 <= r32(GC_AT[:gc_arena_capa])
+    end
+
+    # 枠を 1 つ (obj_alloc_fast? を確かめてから)。回路は負債を数え、freelist から外し、live を数え、arena に積み、0 で埋めて見出しを書く
+    def obj_alloc(tt, cls)
+      d = gc_debt + 1
+      w32(GC_AT[:gc_debt], d >> 32)
+      w32(GC_AT[:gc_debt_lo], d)
+      page = r32(GC_AT[:gc_free_heaps])
+      p = r32(page + HP_FREELIST)
+      w32(page + HP_FREELIST, r32(p + FREE_NEXT))
+      w32(GC_AT[:gc_free_heaps], r32(page + HP_FREE_NEXT)) if r32(page + HP_FREELIST).zero?
+      w32(GC_AT[:gc_live], r32(GC_AT[:gc_live]) + 1)
+      idx = r32(GC_AT[:gc_arena_idx])
+      w32(r32(GC_AT[:gc_arena]) + idx * WORD, p)
+      w32(GC_AT[:gc_arena_idx], idx + 1)
+      @m.clear(0, p, SLOT)
+      w32(p + H_CLASS, cls)
+      w32(p + H_FLAGS, tt | (r32(GC_AT[:gc_current_white_part]) << H_COLOR_SHIFT))
+      @stats[:obj_alloc_fast] += 1
+      p
+    end
+
+    # 空の配列 (ary_new_capa(0): 枠だけ、中身の番地 0、容量 0)。速い道の条件を確かめてから
+    def new_array_fast
       @stats[:array_alloc] += 1
-      obj(ary)
+      obj(obj_alloc(TT[:ARRAY], r32(@core + CORE_ARRAY * WORD)))
+    end
+
+    # ARRAY / ARRAY2 の要素 0 個: 速い道に乗れば回路、乗らなければ命令ごと罠
+    def empty_array(i, a)
+      return trap_op(i) unless obj_alloc_fast?
+
+      setreg(a, new_array_fast)
     end
 
     # irep に catch handler があるか (vm.c の irep->clen > 0)
@@ -736,7 +852,7 @@ module FpgaV2
 
     # RETURN 系 (vm.c の L_RETURN): catch があれば ensure を見るので罠 __fpga_op_return(v)、無ければ回路で戻る
     def return_op(v)
-      return trap_call("__fpga_op_return", [v]) if catch?
+      return trap_call("__fpga_op_return", [v]) if catch? || env_to_close?(@f.addr)
 
       ret(v)
     end
@@ -754,10 +870,18 @@ module FpgaV2
       end
     end
 
+    # ci の env がスタックを指していて、閉じると中身の確保が要るか (vm.c の cipop の mrb_env_unshare)
+    def env_to_close?(ci)
+      u = r32(ci + CI_U)
+      env?(u) && !r32(u + E_CXT).zero? && env_len(u).positive?
+    end
+
     def ret(v)
       done = @f
       cipop(done.addr)
       raise Halt if done.addr == r32(@ctx + CTX_CIBASE)
+      saved = r32(done.addr + CI_AI)
+      skip = r8(done.addr + CI_CCI) == CINFO_SKIP
       w32(@ctx + CTX_CI, done.addr - CI_SIZE)
       @f = Ci.new(self, done.addr - CI_SIZE)
       @jumped = true
@@ -768,12 +892,21 @@ module FpgaV2
       else
         wv(@stbase + done.bp * VALUE, v) # 呼んだ側の R[a] は呼ばれた側の R0 (同じ場所)
       end
+      if !saved.zero? # R4: 活性化 (SKIP) か、名前で呼んだ C の関数 (DIRECT) の終わり。mrb_funcall_with_block の restore と protect
+        arena_restore((saved & ~CI_AI_PROTECT) - 1)
+        arena_protect(v) if saved.anybits?(CI_AI_PROTECT)
+        @ai = activation_ai(@f.addr) if skip
+      elsif done.kind != :trap && !@f.fw # R3 (C の関数の後、shrink は D94) と、Ruby から Ruby への戻り (L_RETURN の restore)
+        arena_restore
+      end
     end
 
     # 罠から戻った: resume のとおり続ける (呼んだ側の pc は push_frame で ret_pc にしてある)
     def resume_trap(done, v)
       what, a, n, sym, ret_pc, dst, fcall = done.resume || [:advance]
       case what
+      when :advance # R2: 罠で終えた命令の restore
+        arena_restore if r32(done.addr + CI_CFCALL) == 1 && !@f.fw
       when :value # 罠の結果を R[a] へ (attr)
         setreg(a, v)
       when :blksend # ブロックを Proc にした後の SEND
@@ -799,7 +932,7 @@ module FpgaV2
     end
 
     def stop
-      return trap_call("__fpga_op_stop", [NIL]) if @f.kind == :run && catch?
+      return trap_call("__fpga_op_stop", [NIL]) if @f.kind == :run && (catch? || env_to_close?(@f.addr))
       return ret(NIL) if @f.kind == :run
       raise Halt
     end
@@ -807,7 +940,7 @@ module FpgaV2
     # --- 回路が持たない命令: __fpga_op_<名前>(a, b, c)
     def trap_op(i)
       @stats[:"op_#{i.name}"] += 1
-      trap_call("__fpga_op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)])
+      trap_call("__fpga_op_#{i.name}", [int(i.a || 0), int(i.b || 0), int(i.c || 0)], resume: [:advance, RESTORE_OPS[i.name]])
     end
 
     # --- 特権の primitive (Image::PRIMS の並び)
@@ -829,9 +962,9 @@ module FpgaV2
           when "__fpga_hi" then int((args[0][1] >> 32) & 0xFFFF_FFFF)
           when "__fpga_lo" then int(args[0][1] & 0xFFFF_FFFF)
           when "__fpga_putc" then (@console << (args[0][1] & 0xFF).chr; NIL)
-          when "__fpga_alloc" then int(alloc(args[0][1]))
           when "__fpga_mcache_fill" then (@cache[mkey(args[0][1], args[1][1])] = [args[2][1], args[3][1]]; NIL) # (cls, sym, 値, 見つかったクラス)
           when "__fpga_mcache_clear" then (@cache.clear; NIL)
+          when "__fpga_mcache_clear_id" then (@cache.delete_if { |k, _| (k & 0xFFFF_FFFF) == args[0][1] }; NIL) # class.c の mc_clear_by_id
           when "__fpga_mid" then [TAG_SYM, trapped[0].mid] # 罠を起こしたフレームのメソッドの名前 (mruby の ci->mid)
           when "__fpga_proc" then int(trapped[0].proc) # 罠を起こしたフレームの Proc (定数の字句の鎖、super、def の upper)
           when "__fpga_class_of" then obj(class_of(args[0])) # 回路の class_of (特異クラスと iclass も含む)
@@ -851,9 +984,19 @@ module FpgaV2
           when "__fpga_core" then obj(r32(@core + args[0][1] * WORD)) # 組み込みのクラスの表
           when "__fpga_rem" then int(args[0][1].remainder(args[1][1])) # 0 に向けて切った剰余 (C の %、除算器の余り)。0 で割るのは呼ぶ側が調べる
           when "__fpga_halt" then raise Halt
-          when "__fpga_unwind" then return unwind(args[0][1], args[1][1]) # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
-          when "__fpga_unwind_ret" then return unwind_ret(args[0][1], args[1]) # ci から値を返す (vm.c の L_RETURN)
-          when "__fpga_run" then return run_irep(args[0][1], args[1], a)
+          when "__fpga_unwind" # 例外と break の巻き戻し (vm.c の L_RAISE の cipop と ci->pc)
+            return trap_call("__fpga_unwind_close", [args[0], args[1], FALSE_], above: a + n + 2) if envs_to_close?(args[0][1], false)
+            return unwind(args[0][1], args[1][1])
+          when "__fpga_unwind_ret" # ci から値を返す (vm.c の L_RETURN)
+            return trap_call("__fpga_unwind_close", [args[0], args[1], TRUE_], above: a + n + 2) if envs_to_close?(args[0][1], true)
+            return unwind_ret(args[0][1], args[1])
+          when "__fpga_run" then return run_irep(args[0][1], args[1], a) # (proc, self): Proc は firmware が作る (load.c の mrb_load_exec)
+          when "__fpga_obj_alloc" # (tt, cls): 枠を 1 つ。速い道に乗らなければ primitive ごと firmware の mrb_obj_alloc_core へ
+            unless obj_alloc_fast?
+              @stats[:obj_alloc_trap] += 1
+              return trap_call("__fpga_obj_alloc_core", [args[0], args[1]], resume: [:value, a], above: a + n + 2)
+            end
+            int(obj_alloc(args[0][1], args[1][1]))
           when "__fpga_invoke" then return invoke(args[0], args[1][1], args[2], args[3] || NIL, args[4], a, args[5], args[6], args[7]) # 7 つ目はキーワードの Hash、8 つ目はクラスを与えた印
           else raise Error, "primitive #{name} is not implemented"
           end
@@ -872,11 +1015,13 @@ module FpgaV2
       end
       w32(@ctx + CTX_CI, ci)
       @f = Ci.new(self, ci)
+      @ai = activation_ai(ci) # R5
     end
 
     # __fpga_unwind(ci, pc): ci の上を捨て、ci の pc (iseq の中の位置) から続ける
     def unwind(ci, pc)
       pop_to(ci)
+      arena_restore unless @f.fw # R5: mrb_vm_exec の RETRY_TRY_BLOCK の restore
       jump(pc)
     end
 
@@ -896,20 +1041,19 @@ module FpgaV2
       [Ci.new(self, ci - CI_SIZE), Ci.new(self, ci)]
     end
 
-    def alloc(n)
-      a = (@heap + 7) & -8
-      raise Error, "heap exhausted (GC is S6)" if a + n > @heap_end
-      @heap = a + n
-      a
+    # 巻き戻しで捨てる ci (上から ci の 1 つ上まで、ret なら ci 自身も) に、閉じると確保の要る env があるか
+    def envs_to_close?(ci, ret)
+      k = r32(@ctx + CTX_CI)
+      last = ret ? ci : ci + CI_SIZE
+      while k >= last
+        return true if env_to_close?(k)
+        k -= CI_SIZE
+      end
+      false
     end
 
-    # __fpga_run(irep, self): プログラムの一番外の irep を、firmware のフレームの上で実行する。戻り値は R[a] へ
-    def run_irep(ir, self_, a)
-      pr = alloc(SLOT)
-      w32(pr + H_CLASS, 0)
-      w32(pr + P_BODY, ir)
-      w32(pr + P_FLAGS, PROC_IREP)
-      w32(pr + P_TCLASS, r32(@core + CORE_OBJECT * WORD)) # 一番外の定義の入れ物は Object
+    # __fpga_run(proc, self): プログラムの一番外の Proc (firmware が mrb_proc_new で作った) を、firmware のフレームの上で実行する。戻り値は R[a] へ
+    def run_irep(pr, self_, a)
       base = r16(@f.irep + I_NREGS)
       setreg(base, self_)
       setreg(base + 1, NIL)
@@ -925,7 +1069,7 @@ module FpgaV2
       list = window(base, recv, args, blk, kdict)
       pr &= ~VIS_MASK
       tc = tclass && tclass[0] == TAG_OBJ && (r32(pr + P_FLAGS) & 3) == PROC_IREP ? tclass[1] : nil
-      call_proc(pr, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a, tc)
+      call_proc(pr, base, list, mid && mid[0] == TAG_SYM ? mid[1] : @f.mid, @pc_next, a, tc, via: given && truthy?(given) ? :yield : :send)
       w8(@f.addr + CI_VIS, r8(@f.addr + CI_VIS) | CI_VISIBILITY_BREAK_BIT | CI_GIVEN_CLASS_BIT) if tc && given && truthy?(given) && @f.proc == pr
     end
 
@@ -998,7 +1142,7 @@ module FpgaV2
       v = reg(a)
       return trap_op(i) unless v[0] == TAG_OBJ && (r32(v[1] + H_FLAGS) & 0xFF) == TT[:PROC]
 
-      push_frame(v[1], a, b, kind: :call, mid: 0, ret_pc: @pc_next)
+      push_frame(v[1], a, b, kind: :call, mid: 0, ret_pc: @pc_next, via: :yield)
       vm_call_proc(v[1], b + 1)
     end
 
@@ -1012,6 +1156,7 @@ module FpgaV2
       raise Error, "calling a C function proc is S5" unless (r32(pr + P_FLAGS) & 3) == PROC_IREP
       w32(@f.addr + CI_PROC, pr)
       @f = Ci.new(self, @f.addr)
+      activation_at(@f.addr, @f.addr > r32(@ctx + CTX_CIBASE) && r32(r32(@f.addr - CI_SIZE + CI_PROC) + P_BODY) < @heap_start, :yield) # R1 (Proc#call)
       nregs = r16(@f.irep + I_NREGS)
       (nargs...nregs).each { |k| setreg(k, NIL) }
       setreg(0, rv(r32(env + E_STACK))) if envset
@@ -1026,9 +1171,7 @@ module FpgaV2
       if len.zero?
         w32(u + E_STACK, 0)
       else
-        buf = alloc(len * VALUE)
-        put_bytes(buf, bytes_at(r32(u + E_STACK), len * VALUE))
-        w32(u + E_STACK, buf)
+        raise Error, "env_unshare needs an allocation (the firmware closes it first)"
       end
       w32(u + E_CXT, 0)
     end
@@ -1040,29 +1183,26 @@ module FpgaV2
       v = reg(a + 1)
       return trap_op(i) unless array?(v) && (x[0] == TAG_NIL || array?(x))
 
-      x[0] == TAG_NIL ? setreg(a, alloc_array(ary_values(v[1]))) : ary_append(x[1], ary_values(v[1])) # mrb_ary_splat は複製
+      return trap_op(i) if x[0] == TAG_NIL # mrb_ary_splat は複製 (確保)
+      return trap_op(i) if r32(x[1] + A_LEN) + r32(v[1] + A_LEN) > r32(x[1] + A_CAPA) # ary_expand_capa (確保)
+
+      ary_append(x[1], ary_values(v[1]))
     end
 
     def arypush(i, a, b)
       x = reg(a)
       return trap_op(i) unless array?(x)
+      return trap_op(i) if r32(x[1] + A_LEN) + b > r32(x[1] + A_CAPA) # ary_expand_capa (確保)
 
       ary_append(x[1], (1..b).map { |k| reg(a + k) })
     end
 
-    # 配列の後ろに足す (array.c の mrb_ary_push / mrb_ary_concat)。容量は ary_expand_capa と同じ (4 から倍にする)
+    # 配列の後ろに足す (array.c の mrb_ary_push / mrb_ary_concat の容量の中の所。容量を越えるのは罠)
     def ary_append(ary, values)
       len = r32(ary + A_LEN)
       need = len + values.size
-      capa = r32(ary + A_CAPA)
-      if need > capa
-        capa = [capa, 4].max
-        capa *= 2 while capa < need
-        buf = alloc(capa * VALUE)
-        put_bytes(buf, bytes_at(r32(ary + A_PTR), len * VALUE))
-        w32(ary + A_PTR, buf)
-        w32(ary + A_CAPA, capa)
-      end
+      raise Error, "ary_append over capacity" if need > r32(ary + A_CAPA)
+
       ptr = r32(ary + A_PTR)
       values.each_with_index { |v, k| wv(ptr + (len + k) * VALUE, v) }
       w32(ary + A_LEN, need)

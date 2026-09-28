@@ -10,6 +10,10 @@ class Object
       __fpga_st32(3 * 4, 0) # L:IMG_exc L:WORD
     else
       __fpga_st32(3 * 4, __fpga_addr(v)) # L:IMG_exc L:WORD
+      idx = __fpga_image(1074) # L:IMG_gc_arena_idx
+      if idx > 0 && __fpga_addr(v) == __fpga_ld32(__fpga_image(1072) + (idx - 1) * 4) # L:IMG_gc_arena L:WORD
+        __fpga_st32(1074 * 4, idx - 1) # L:IMG_gc_arena_idx L:WORD
+      end
       __fpga_keep_backtrace(v) unless __fpga_addr(v) == __fpga_image(1080) || __fpga_and(__fpga_ld32(__fpga_addr(v) + 4), 2048) > 0 # L:IMG_nomem_err L:H_FLAGS L:H_FROZEN
     end
   end
@@ -55,6 +59,12 @@ class Object
   # C: src/error.c mrb_raise
   def __fpga_raise(c, msg)
     __fpga_exc_raise(__fpga_exc_new_str(c, msg))
+  end
+
+  # mrb_calloc の大きさの桁あふれ (gc.c の中の mrb_raise。gc.rb は物を作らないのでここで)
+  # C: src/gc.c mrb_calloc
+  def __fpga_raise_alloc_overflow
+    __fpga_raise(ArgumentError, "memory allocation overflow")
   end
 
   # C: src/error.c mrb_raisef
@@ -173,6 +183,7 @@ class Object
     p = __fpga_ld32(__fpga_addr(fmt) + 16) # L:S_PTR
     len = __fpga_ld32(__fpga_addr(fmt) + 8) # L:S_LEN
     result = __fpga_str_new(p, 0)
+    ai = __fpga_gc_arena_save
     b = 0
     k = 0
     n = 0
@@ -206,6 +217,7 @@ class Object
         end
         __fpga_str_cat_str(result, inspect ? __fpga_inspect(obj) : __fpga_obj_as_string(obj))
       end
+      __fpga_gc_arena_restore(ai) # L_cat_plain
       b = k
     end
     __fpga_str_cat(result, p + b, len - b)
@@ -478,10 +490,15 @@ class Object
     __fpga_raise(LocalJumpError, "unexpected return")
   end
 
-  # OP_ARYPUSH の遅い道: R[a] が Array でない
+  # OP_ARYPUSH の遅い道 (回路は Array の容量の中だけ): R[a] が Array でなければ TypeError、ほかは mrb_ary_push (容量を広げる)
   # C: src/vm.c OP_ARYPUSH
   def __fpga_op_ARYPUSH(a, b, c)
-    __fpga_ensure_array_type(__fpga_reg(a))
+    ary = __fpga_ensure_array_type(__fpga_reg(a))
+    k = 1
+    while k <= b
+      ary.__fpga_push1(__fpga_reg(a + k))
+      k += 1
+    end
   end
 
   # C: src/object.c mrb_ensure_array_type

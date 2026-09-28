@@ -29,6 +29,11 @@ module FpgaV2
     }.freeze
     # GC の関所で辿らない所 (確保と GC そのもの。その中の free / realloc は写し元の関数の仕事ではない)
     GC_LEAF = /\Amrb_(?:obj_alloc\w*|malloc\w*|calloc|realloc\w*|free|full_gc|incremental_gc|garbage_collect|gc_\w+|field_write_barrier|write_barrier|temp_alloc)\z/
+    # GC の関所で辿らない C の関数: 引数を C の局所変数へ取り出す mrb_get_args の族 (firmware の def は引数をレジスタで受けるので、
+    # 取り出した値を arena で守る所は無い)
+    # define_method_id も辿らない: 組み込みのクラスとメソッドは起動の像 (image.rb) が作り、mrb_init_* の firmware の写しは
+    # メソッドを定義しない (D95)。その save / restore は firmware に無い
+    GC_SKIP = /\A(?:mrb_get_args\w*|mrb_get_arg1|mrb_get_argc|mrb_get_argv|get_args_v|define_method_id)\z/
     # C の名前 (firmware の def の `# C:` の名前) → GC の関所の種類
     GC_API = { "mrb_gc_arena_save" => "arena_save", "mrb_gc_arena_restore" => "arena_restore", "mrb_gc_arena_shrink" => "arena_restore",
                "mrb_gc_protect" => "protect", "mrb_gc_register" => "register", "mrb_gc_unregister" => "register",
@@ -144,7 +149,7 @@ module FpgaV2
           seen[f] = true
           kinds.concat(f.gc)
           f.calls.each do |c|
-            next if c.match?(STOP) || c.match?(GC_LEAF) || c == f.name
+            next if c.match?(STOP) || c.match?(GC_LEAF) || c.match?(GC_SKIP) || c == f.name
 
             g = resolve.(f.file, c)
             queue << g if g

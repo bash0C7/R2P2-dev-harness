@@ -193,9 +193,14 @@ module FpgaV2
         _, name, = d.ann ? parse(d.ann) : nil
         name
       end
+      c_of = c_targets.to_h { |d, src| [d, src] }
+      # 1 つの C の関数を幾つかの def に分けて写した所 (execute_task の前と後、D103 など) は、分けた def を合わせて 1 つと数える
+      pieces = defs.group_by { |d| c_of[d] }
+      whole = ->(d) { c_of[d] ? pieces[c_of[d]] : [d] }
       fw_reach = lambda do |d0|
+        start = whole.(d0)
         seen = {}
-        queue = [d0]
+        queue = start.dup
         kinds = []
         until queue.empty?
           d = queue.shift
@@ -203,21 +208,20 @@ module FpgaV2
 
           seen[d] = true
           api = api_of.(d)
-          if d != d0 && api && CCalls::GC_API.key?(api)
+          if !start.include?(d) && api && CCalls::GC_API.key?(api)
             kinds << CCalls::GC_API[api]
             next
           end
-          next if d != d0 && api&.match?(CCalls::GC_LEAF)
+          next if !start.include?(d) && api&.match?(CCalls::GC_LEAF)
 
           (ins[[d.owner, d.sing, d.name]]&.first || []).each do |s|
             next unless s.start_with?("__fpga_")
 
-            by_name[s].each { |x| queue << x }
+            by_name[s].each { |x| queue.concat(whole.(x)) }
           end
         end
         kinds.uniq.sort
       end
-      c_of = c_targets.to_h { |d, src| [d, src] }
       rows = defs.filter_map do |d|
         src = c_of[d]
         need = src ? (ccalls.gc_by_src[src] || []) : []
