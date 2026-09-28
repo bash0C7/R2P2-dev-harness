@@ -1,0 +1,41 @@
+diff --git a/components/picoruby-esp32/CMakeLists.txt b/components/picoruby-esp32/CMakeLists.txt
+index 169620b3..b2172418 100644
+--- a/components/picoruby-esp32/CMakeLists.txt
++++ b/components/picoruby-esp32/CMakeLists.txt
+@@ -66,6 +66,12 @@ if(CONFIG_BT_NIMBLE_ENABLED)
+   set(MRUBY_USE_BLE 1)
+ endif()
+ 
++# picoruby PR #427 event-path rig (R2P2-dev-harness overlay; never committed)
++if(DEFINED ENV{PICORUBY_QEMU_EVQ_RIG})
++  list(APPEND ADDITIONAL_DEFINITIONS -DPICORUBY_QEMU_EVQ_RIG)
++  list(APPEND BLE_SRCS ${COMPONENT_DIR}/rig_injector.c)
++endif()
++
+ if(DEFINED ENV{HEAP_SIZE})
+   list(APPEND ADDITIONAL_DEFINITIONS -DHEAP_SIZE=$ENV{HEAP_SIZE})
+ endif()
+diff --git a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
+index 222cdb15..a875e3af 100644
+--- a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
++++ b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
+@@ -22,6 +22,7 @@ MRuby::CrossBuild.new("esp32-femtoruby") do |conf|
+   conf.cc.defines << "NDEBUG"
+   conf.cc.defines << "MRBC_TASK_SCHEDULER_HOOK"  # scheduler-service layer (hal.h); picoruby-ble's event pump rides on it
+   conf.cc.defines << "USE_WIFI" if ENV['USE_WIFI']
++  conf.cc.defines << "PICORUBY_QEMU_EVQ_RIG" if ENV['PICORUBY_QEMU_EVQ_RIG']
+ 
+   conf.femtoruby(alloc_libc: false)
+   conf.gembox 'minimum'
+diff --git a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
+index a3fd7b44..d6598aba 100644
+--- a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
++++ b/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
+@@ -26,6 +26,7 @@ MRuby::CrossBuild.new('esp32-picoruby') do |conf|
+   conf.cc.defines << "PICORB_PLATFORM_ESP32"
+   conf.cc.defines << "MRC_PRISM_ARENA_BLOCK=2048"
+   conf.cc.defines << "USE_WIFI" if ENV['USE_WIFI']
++  conf.cc.defines << "PICORUBY_QEMU_EVQ_RIG" if ENV['PICORUBY_QEMU_EVQ_RIG']
+ 
+   if ENV['PICORB_DEBUG']
+     conf.cc.defines << 'ESTALLOC_DEBUG'

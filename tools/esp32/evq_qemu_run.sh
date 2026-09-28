@@ -23,9 +23,26 @@ DONE_PATTERN="${EVQ_DONE_PATTERN:-\\[rig\\] inject seq=20 }"
 GRACE_SECONDS="${EVQ_GRACE_SECONDS:-10}"
 FAILURE_PATTERN='assert failed|no such vaddr|Guru Meditation|calibration efuse version does not match|Rebooting\.\.\.'
 
+# The rig define must reach both the IDF-compiled port sources and the
+# rake-built libmruby (see firmware-patches/qemu-ble-evq/r2p2-esp32.patch).
+export PICORUBY_QEMU_EVQ_RIG=1
+
+# Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
+# some gem/memory layouts corrupt a TCB right after app_main returns; a
+# 16 KiB VM task stack has made it disappear on QEMU and on the board.
+export PICORB_TASK_STACK_SIZE="${EVQ_TASK_STACK_SIZE:-16384}"
+
+# The NimBLE default heap (172 KiB) assumes the controller's static
+# buffers share dram0; the rig disables the controller, so take the
+# room back — compiling rigapp.rb on-device needs it (NoMemoryError at
+# 172 KiB under the mruby VM).
+# 220 KiB overflows dram0_0_seg by ~4 KB on IDF v5.5.4; 212 KiB links
+# with headroom.
+export HEAP_SIZE="${EVQ_HEAP_SIZE:-217088}"
+
 echo "== Configuring ${BUILD_DIR} (PICORB_VM=${VM}) =="
 idf.py -B "$BUILD_DIR" \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfigs/qemu" \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfigs/qemu_ble_evq;sdkconfigs/qemu" \
   -D SDKCONFIG="$BUILD_DIR/sdkconfig" \
   -D PICORB_VM="$VM" \
   set-target esp32s3
