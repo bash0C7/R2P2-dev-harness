@@ -357,11 +357,13 @@ module FpgaV2
       [:nan_serial, 1], [:nan_serial_lo, 1],
       # mrb_state.bop_redefined (演算子の再定義の印の bit) と bop_builtin (起動の時のメソッド表の値の並び、19 語の番地。0 は起動の途中)
       [:bop_redefined, 1], [:bop_builtin, 1],
-      # mrb_state.task (mrb_task_state、MRB_USE_TASK_SCHEDULER)。計画 S6-0 で取っておき、S7 が使う
+      # mrb_state.task (mruby.h の mrb_task_state、mruby-task): queues[4] (dormant、ready、waiting、suspended)、tick、wakeup_tick、switching。
+      # task_running は走っている task (MRB2TASK の代わり、D103)。S7 と同じ名前と並び (S7 が main の branch で足した語)
       # C: include/mruby.h mrb_task_state
-      [:task_queues, 4], [:task_tick, 1], [:task_wakeup_tick, 1], [:task_switching, 1], [:task_main_task, 1],
-      [:task_scheduler_lock, 1], [:task_irq_nesting, 1], [:task_loop_running, 1], [:task_exception_as_result, 1],
-      [:task_scheduler_hook, 1], [:task_scheduler_hook_ud, 1]
+      [:task_q_dormant, 1], [:task_q_ready, 1], [:task_q_waiting, 1], [:task_q_suspended, 1], [:task_tick, 1],
+      [:task_wakeup_tick, 1], [:task_switching, 1], [:task_running, 1],
+      # picoruby-machine の src/heap.c の static (picorb_heap_estalloc、picorb_heap_start、picorb_heap_end)。像だけの欄 (D18、計画 S6-1)
+      [:est_heap, 1], [:est_heap_start, 1], [:est_heap_end, 1]
     ].freeze
     # C: include/mruby.h mrb_state
     IMG = IMG_FIELDS.each_with_object({}) { |(name, n), h| h[name] = h.sum { |k, _| IMG_FIELDS.assoc(k)[1] } }.freeze
@@ -433,5 +435,41 @@ module FpgaV2
     CONT_BLKSEND = 7 # ブロックを Proc にした罠の続き (vm.c の ensure_block の後の SEND)
     # ci->kw (mrb_callinfo の kw の bit、CI_N の bit 4)
     CI_KW_BIT = 16
+
+    # estalloc (picoruby-machine の lib/estalloc、計画 S6-1)。組み込みの build の形: ESTALLOC_ADDRESS_24BIT、ESTALLOC_ALIGNMENT 8、
+    # ESTALLOC_DEBUG 無し、ポインタ 32bit。ESTALLOC (stat、error_message、enter_critical、exit_critical) の欄
+    # C: picoruby-machine/lib/estalloc/estalloc.h ESTALLOC
+    EST_STAT_TOTAL = 0
+    EST_STAT_USED = 4
+    EST_STAT_FREE = 8
+    EST_STAT_MAX_FREE = 12
+    EST_STAT_FRAG = 16
+    EST_ERROR_MESSAGE = 20
+    # MEMORY_POOL: est、size、free_fli_bitmap (u16)、free_sli_bitmap (u8 × 11)、pad[3]、free_blocks (81 語)。見出しは 376 バイト
+    # C: picoruby-machine/lib/estalloc/estalloc.c MEMORY_POOL
+    MP_SIZE = 32
+    MP_FLI_BITMAP = 36
+    MP_SLI_BITMAP = 38
+    MP_FREE_BLOCKS = 52
+    # C: picoruby-machine/lib/estalloc/estalloc.c POOL_HEADER_SIZE
+    POOL_HEADER_SIZE = 376
+    # USED_BLOCK {size (u32)、pad[2]} は 8 バイト。FREE_BLOCK {size、next_free、prev_free、top_adrs} は 16 バイト
+    # C: picoruby-machine/lib/estalloc/estalloc.c USED_BLOCK
+    USED_BLOCK_SIZE = 8
+    # C: picoruby-machine/lib/estalloc/estalloc.c FREE_BLOCK
+    FB_NEXT_FREE = 4
+    FB_PREV_FREE = 8
+    FREE_BLOCK_SIZE = 16
+    # C: picoruby-machine/lib/estalloc/estalloc.h ESTALLOC_ALIGNMENT
+    ESTALLOC_ALIGNMENT = 8
+    ALIGNMENT_MASK = 7
+    # C: picoruby-machine/lib/estalloc/estalloc.c ESTALLOC_FLI_BIT_WIDTH
+    ESTALLOC_FLI_BIT_WIDTH = 9
+    ESTALLOC_SLI_BIT_WIDTH = 3
+    ESTALLOC_IGNORE_LSBS = 5
+    SIZE_FREE_BLOCKS = 80
+    ESTALLOC_MIN_MEMORY_BLOCK_SIZE = 32
+    MSB_BIT1_FLI = 0x8000
+    MSB_BIT1_SLI = 0x80
   end
 end
