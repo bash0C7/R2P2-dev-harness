@@ -3,7 +3,8 @@
 //
 // +ROM=<file> (1 行 1 バイトの hex、既定 fpga/rite/blink.hex)、+UNTIL_MS=<ms> (既定 2000)。
 // +EXPECT=<file> (既定 fpga/rite/blink.pins、host の picoruby が出したピンの列。rake fpga:rite:hex が作る) があれば、
-// ピンの列がそれと同じで error が立たなければ PASS。+EXPECT=none で比べない (rake fpga:rite:check が host と比べる)
+// ピンの列がそれと同じで error が立たなければ PASS。+EXPECT=none で比べない (rake fpga:rite:check が host と比べる)。
+// +TRACE で、実行した命令を `insn <cycle> <ms> <pc> <op>` の行で出す (rake fpga:rite:view)
 `timescale 1ns / 1ps
 module rite_core_tb;
   localparam int MS_CYCLES = 1000;  // シミュレーションを速くするため 1 ms を 1000 cycle にする (回路の意味は同じ)
@@ -27,17 +28,23 @@ module rite_core_tb;
   logic   bad;
   integer seen_ms [0:255], seen_pin [0:255], seen_lv [0:255];
   logic [31:0] last;
+  logic        trace;
+  longint      cycle;
   initial begin
     if (!$value$plusargs("ROM=%s", rom_file)) rom_file = "fpga/rite/blink.hex";
     if (!$value$plusargs("UNTIL_MS=%d", until_ms)) until_ms = 2000;
     if (!$value$plusargs("EXPECT=%s", expect_file)) expect_file = "fpga/rite/blink.pins";
     $readmemh(rom_file, dut.rom.mem);
     n_seen = 0;
+    trace = $test$plusargs("TRACE");
+    cycle = 0;
     repeat (3) @(posedge clk);
     rst_n = 1'b1;
     last = 32'hFFFF_FFFF;  // 起動の時の水準 (全部入力で pull_down 無し)
     while (!(halted || error || ms_now > until_ms)) begin
       @(posedge clk);
+      cycle++;
+      if (trace && dut.st == dut.S_EXEC && !dut.rd_wait) $display("insn %0d %0d %0d %0d", cycle, ms_now, dut.op_pc, dut.op);
       if (pins !== last) begin
         for (int p = 0; p < 32; p++)
           if (pins[p] !== last[p]) begin
