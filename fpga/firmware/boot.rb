@@ -9,14 +9,14 @@ class Object
     __fpga_init_main # mrb_init_class の top_self の inspect / to_s
     __fpga_init_numeric # mrb_init_core の mrb_init_numeric
     __fpga_init_version # mrb_init_core の mrb_init_version (mrblib の前)
-    lib = __fpga_image(42) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
+    lib = __fpga_image(1092) # L:IMG_mrblib mrb_open の mrb_init_mrblib (init.c、gem の前)
     if lib > 0
       __fpga_run(__fpga_load(lib), self)
       __fpga_print_error if __fpga_ld32(3 * 4) > 0 # L:IMG_exc L:WORD
     end
     __fpga_builtin_op_init # mrb_open_core の bootstrapping の後
-    progs = __fpga_image(39) # L:IMG_programs
-    n = __fpga_image(40) # L:IMG_nprograms
+    progs = __fpga_image(1089) # L:IMG_programs
+    n = __fpga_image(1090) # L:IMG_nprograms
     i = 0
     while i < n
       ir = __fpga_load(__fpga_ld32(progs + i * 8))
@@ -121,7 +121,7 @@ class Object
       end
       k += 1
     end
-    ir = __fpga_alloc(48) # L:IREP
+    ir = __fpga_alloc(52) # L:IREP
     __fpga_st32(ir + 0, nlocals * 65536 + nregs) # L:I_NLOCALS (u16 nlocals、u16 nregs)
     __fpga_st32(ir + 4, ilen) # L:I_ILEN
     __fpga_st32(ir + 8, iseq) # L:I_ISEQ
@@ -159,8 +159,8 @@ class Object
       h = __fpga_and(__fpga_xor(h, __fpga_ld8(ptr + k)) * 16777619, 4294967295)
       k += 1
     end
-    tab = __fpga_image(26) # L:IMG_symtbl
-    mask = __fpga_image(27) - 1 # L:IMG_symcapa
+    tab = __fpga_image(1076) # L:IMG_symtbl
+    mask = __fpga_image(1077) - 1 # L:IMG_symcapa
     i = __fpga_and(h, mask)
     while true
       p = __fpga_ld32(tab + i * 8)

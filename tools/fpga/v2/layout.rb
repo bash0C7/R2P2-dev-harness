@@ -34,6 +34,50 @@ module FpgaV2
     # 固定長の枠 (mruby の RVALUE に当たる)。見出し + 56 バイト
     # C: src/gc.c RVALUE (D03)
     SLOT = 64
+    # 空いた枠 (gc.c の struct free_obj): 見出しの後ろに次の空きの番地
+    # C: src/gc.c free_obj
+    FREE_NEXT = 8
+
+    # gc の色 (見出しの語の bit 8〜10、MRB_OBJECT_HEADER の gc_color:3)。RED は ROM の物 (像の中の firmware の Proc、D80)
+    # C: src/gc.c GC_GRAY
+    GC_GRAY = 0
+    GC_WHITE_A = 1
+    GC_WHITE_B = 2
+    GC_BLACK = 4
+    GC_WHITES = 3
+    GC_COLOR_MASK = 7
+    H_COLOR_SHIFT = 8
+    # C: include/mruby/gc.h MRB_GC_RED
+    GC_RED = 7
+    # C: include/mruby/gc.h MRB_GC_STATE_ROOT
+    MRB_GC_STATE_ROOT = 0
+    MRB_GC_STATE_MARK = 1
+    MRB_GC_STATE_SWEEP = 2
+    # C: include/mruby/gc.h MRB_GC_ARENA_SIZE
+    MRB_GC_ARENA_SIZE = 100
+    MRB_GRAY_STACK_SIZE = 1024
+    # C: src/gc.c GC_STEP_SIZE
+    GC_STEP_SIZE = 1024
+    DEFAULT_GC_INTERVAL_RATIO = 200
+    DEFAULT_GC_STEP_RATIO = 200
+    MAJOR_GC_INC_RATIO = 120
+    MAJOR_GC_TOOMANY = 10_000
+    MRB_GC_MALLOC_THRESHOLD = 16 * 1024 * 1024
+
+    # heap page (gc.c の mrb_heap_page): freelist、next、free_next、{old:1 region:1}、枠の並び。
+    # 枠の数は組み込みの profile の MRB_HEAP_PAGE_SIZE (picoruby-mruby/mrbgem.rake、D26)
+    # C: src/gc.c mrb_heap_page
+    HP_FREELIST = 0
+    HP_NEXT = 4
+    HP_FREE_NEXT = 8
+    HP_FLAGS = 12
+    HP_OBJECTS = 16
+    HP_OLD = 1
+    HP_REGION = 2
+    # C: include/mrbconf.h MRB_HEAP_PAGE_SIZE (D26)
+    MRB_HEAP_PAGE_SIZE = 128
+    # C: src/gc.c mrb_heap_page
+    HEAP_PAGE = HP_OBJECTS + MRB_HEAP_PAGE_SIZE * SLOT
 
     # tt (mruby の enum mrb_vtype と同じ番号、value.h の MRB_VTYPE_FOREACH の並び)
     # C: include/mruby/value.h MRB_VTYPE_FOREACH
@@ -251,7 +295,13 @@ module FpgaV2
     I_CATCH   = 36 # catch handler の並び (.mrb の中を指す、13 バイトずつ)
     I_CLEN    = 40
     I_DEBUG   = 44 # debug 情報 (mrb_irep_debug_info の番地、0 は無し)
-    IREP = 48
+    I_REFCNT  = 48 # u16 参照の数 (state.c の mrb_irep_incref / mrb_irep_decref、計画 S6)
+    I_FLAGS   = 50 # u8 MRB_ISEQ_NO_FREE / MRB_IREP_NO_FREE
+    IREP = 52
+    # C: include/mruby/irep.h MRB_ISEQ_NO_FREE
+    MRB_ISEQ_NO_FREE = 1
+    MRB_IREP_NO_FREE = 2
+    MRB_IREP_STATIC = 3
     # mrb_irep_debug_info (debug.h): pc_count、flen、files (mrb_irep_debug_info_file の番地の並び)
     # C: include/mruby/debug.h mrb_irep_debug_info
     DI_PC_COUNT = 0
@@ -282,23 +332,40 @@ module FpgaV2
 
     # 番地 0 は mrb_state (mruby.h の struct mrb_state の欄を同じ順で。使う欄だけ、jmp は無い)。語の番号 (番地 = 4 × 番号)。
     # gc_* は mrb_state.gc (gc.h の struct mrb_gc) の欄。symtbl / symcapa / symidx はシンボル表 (D07: FNV の開番地法、行 8 バイト {名前の番地, 長さ})
+    # 欄は [名前, 語の数] の並びで書き、番号は並びから数える (欄を足しても手で付け直さない)。mrb_int は上と下の 2 語 (名前と名前_lo)
     # C: include/mruby.h mrb_state
-    IMG = {
-      c: 0, root_c: 1, globals: 2, exc: 3, top_self: 4,
-      object_class: 5, class_class: 6, module_class: 7, proc_class: 8, string_class: 9, array_class: 10, hash_class: 11,
-      range_class: 12, float_class: 13, integer_class: 14, true_class: 15, false_class: 16, nil_class: 17, symbol_class: 18,
-      kernel_module: 19, gc_arena: 20, gc_arena_capa: 21, gc_arena_idx: 22, gc_live: 23, gc_debt: 24,
-      symidx: 25, symtbl: 26, symcapa: 27, eException_class: 28, eStandardError_class: 29, nomem_err: 30, stack_err: 31,
-      arena_err: 32,
+    IMG_FIELDS = [
+      [:c, 1], [:root_c, 1], [:globals, 1], [:exc, 1], [:top_self, 1],
+      [:object_class, 1], [:class_class, 1], [:module_class, 1], [:proc_class, 1], [:string_class, 1], [:array_class, 1],
+      [:hash_class, 1], [:range_class, 1], [:float_class, 1], [:integer_class, 1], [:true_class, 1], [:false_class, 1],
+      [:nil_class, 1], [:symbol_class, 1], [:kernel_module, 1],
+      # mrb_state.gc (struct mrb_gc) の欄を gc.h の順で。bitfield は 1 語ずつ (D02)。MRB_GC_FIXED_ARENA 無し (arena は番地と容量)
+      # C: include/mruby/gc.h mrb_gc
+      [:gc_root, 1], [:gc_heaps, 1], [:gc_free_heaps, 1], [:gc_sweeps, 1], [:gc_regions, 1],
+      [:gc_gray_stack, 1024], [:gc_gray_stack_top, 1], [:gc_gray_overflow, 1], [:gc_live, 1], [:gc_live_after_mark, 1],
+      [:gc_debt, 1], [:gc_debt_lo, 1], [:gc_oldgen_threshold, 1], [:gc_state, 1], [:gc_interval_ratio, 1], [:gc_step_ratio, 1],
+      [:gc_current_white_part, 1], [:gc_iterating, 1], [:gc_disabled, 1], [:gc_generational, 1], [:gc_full, 1],
+      [:gc_collecting, 1], [:gc_auto_step, 1], [:gc_sched_driven, 1], [:gc_step_limit, 1], [:gc_malloc_increase, 1],
+      [:gc_malloc_threshold, 1], [:gc_debt_limit, 1], [:gc_debt_limit_lo, 1], [:gc_arena, 1], [:gc_arena_capa, 1],
+      [:gc_arena_idx, 1],
+      [:symidx, 1], [:symtbl, 1], [:symcapa, 1], [:eException_class, 1], [:eStandardError_class, 1], [:nomem_err, 1],
+      [:stack_err, 1], [:arena_err, 1],
       # 像だけの欄 (D18): 印、ヒープの範囲、組み込みのクラスの表、firmware の入口、programs、primitive の表、mrblib の .mrb (0 は無し)
-      magic: 33, version: 34, heap_start: 35, heap_end: 36, core_classes: 37, fw_entry: 38, programs: 39, nprograms: 40,
-      prims: 41, mrblib: 42,
+      [:magic, 1], [:version, 1], [:heap_start, 1], [:heap_end, 1], [:core_classes, 1], [:fw_entry, 1], [:programs, 1],
+      [:nprograms, 1], [:prims, 1], [:mrblib, 1],
       # mrb_state.nan_serial (NaN の通し番号、uint64_t を上と下の 2 語で。C の並びでは gc の後、D18)
-      nan_serial: 43, nan_serial_lo: 44,
+      [:nan_serial, 1], [:nan_serial_lo, 1],
       # mrb_state.bop_redefined (演算子の再定義の印の bit) と bop_builtin (起動の時のメソッド表の値の並び、19 語の番地。0 は起動の途中)
-      bop_redefined: 45, bop_builtin: 46
-    }.freeze
-    IMG_WORDS = 48
+      [:bop_redefined, 1], [:bop_builtin, 1],
+      # mrb_state.task (mrb_task_state、MRB_USE_TASK_SCHEDULER)。計画 S6-0 で取っておき、S7 が使う
+      # C: include/mruby.h mrb_task_state
+      [:task_queues, 4], [:task_tick, 1], [:task_wakeup_tick, 1], [:task_switching, 1], [:task_main_task, 1],
+      [:task_scheduler_lock, 1], [:task_irq_nesting, 1], [:task_loop_running, 1], [:task_exception_as_result, 1],
+      [:task_scheduler_hook, 1], [:task_scheduler_hook_ud, 1]
+    ].freeze
+    # C: include/mruby.h mrb_state
+    IMG = IMG_FIELDS.each_with_object({}) { |(name, n), h| h[name] = h.sum { |k, _| IMG_FIELDS.assoc(k)[1] } }.freeze
+    IMG_WORDS = IMG_FIELDS.sum { |_, n| n } + 1
     # C: none (D18)
     IMG_MAGIC = "FPV2"
     IMG_VERSION = 2
@@ -348,6 +415,11 @@ module FpgaV2
     CI_CRET   = 44
     CI_CDST   = 48
     CI_CFCALL = 52
+    # mrb_vm_exec / mrb_funcall_with_block の C の局所変数 ai (ai + 1、0 は無し) と、戻りで protect するかの bit (計画 S6-3)
+    # C: none (D82)
+    CI_AI     = 56
+    CI_AI_PROTECT = 1 << 31
+    # C: none (D11)
     CI_SIZE   = 64
     # C: src/vm.c MRB_CALL_LEVEL_MAX
     MRB_CALL_LEVEL_MAX = 512
