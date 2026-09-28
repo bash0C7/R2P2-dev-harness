@@ -31,7 +31,7 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D13 | 特権の primitive (`__fpga_*`) は回路が symbol で引く表で実行する | C の関数の直接の呼び出し | 記憶の生の読み書きなど、C でしかできない所 | 名前 `__fpga_` は予約 | 今ある |
 | D14 | firmware だけの helper は名前を `__fpga_` にし、reflection (`methods`、`respond_to?`) から隠す。C で定義された `__x` (`__svalue` など) は普通のメソッド | C の static 関数 (見えない) | C の static 関数に当たる | 無い (隠せば) | 名前は S2-4 で `__fpga_` にそろえた。reflection (methods ほか) から隠すのは、それらを firmware に写す時 (計画 S5) |
 | D15 | attr_reader / attr_writer は Proc の種類 (IVGET / IVSET) | class.c の attr (cfunc + env) | 回路で速く読み書きする | `Method#source_location` など (範囲外なら scope に書く) | 今ある |
-| D18 | 起動の像の見出し (IMG) と組み込みのクラスの表 (CORE) は、番地の並べ方が自前 | `mrb_state` (include/mruby.h) | 起動の像の道具が作る | 無い | 今ある。**計画 S2b で `mrb_state` の形に置き直す** |
+| D18 | 起動の像の見出し (IMG) と組み込みのクラスの表 (CORE) は、番地の並べ方が自前。picoruby-machine の heap.c の static (picorb_heap_estalloc / start / end) も IMG の欄 (est_heap ほか、計画 S6-1) | `mrb_state` (include/mruby.h) | 起動の像の道具が作る | 無い | 今ある。**計画 S2b で `mrb_state` の形に置き直す** |
 | D19 | Proc の入れ物のクラスは ci の target class だけで決める (mrb_vm_cref_class の cref の鎖と、class_eval などで与えられたクラス (MRB_PROC_GIVEN、MRB_ENV_SET_GIVEN_CLASS) は未写し) | proc.c の mrb_proc_new / mrb_method_proc_new / mrb_env_new | 計画 S4-1 ではブロックとメソッドの定義だけ | class_eval / instance_eval の中の def と定数 | 今ある。**S5 (class_eval、module_eval を写す時) に消す** |
 | D17 | libc の関数 (memcmp など) を firmware の helper で書く | libc | firmware に libc が無い | 無い | 今ある |
 | D16 | メソッドの cache を回路に持つ (組み込みの profile は `MRB_NO_METHOD_CACHE`) | class.c の method cache | 呼び出しの速さ | 無い (cache の消去が正しければ) | 今ある |
@@ -57,7 +57,7 @@ accept の範囲外 (`fpga/v2/accept/scope.tsv`) の理由も、この行に結�
 | D21 | minor GC 無し (host は generational が既定)。像は `generational = FALSE` で起動 | `mrb_gc_init`、`is_minor_gc` | generational は S6 の完了に入れない (S6 計画 §4) | `GC.generational_mode`、`GC.stat[:generational]` | 予定 S6-4。段 S6g で消す |
 | D23 | `step_limit` を無視する (値は持つ) | gc.c `incremental_gc_step` | D20 | `GC.step_limit` | 予定 S6-4。S6-6 で消す |
 | D24 | scheduler の `auto_step` / `debt_limit` | gc.c、mruby-task の src/gc.c | task の scheduler は S7 | `GC.scheduler_driven` | 予定 S7 |
-| D25 | estalloc の firmware の写し (32bit の形) を、64bit の C の .so と Fiddle で比べる。戻りの番地は BPOOL_TOP からの差で比べる (違いは FREE_BLOCK の大きさ、top_adrs の位置、POOL_HEADER_SIZE だけで、calc_index と分割と結合は同じ)。32bit の build そのものは estalloc 自身の make に任せる | estalloc.c (`PLATFORM_64BIT`) | 64bit の CRuby は 32bit の .so を読めず、この環境の gcc に `-m32` が無い | 無い | 予定 S6-1 |
+| D25 | estalloc の firmware の写し (32bit の形) を、64bit の C の .so と Fiddle で比べる。戻りの番地は BPOOL_TOP からの差で比べる (違いは FREE_BLOCK の大きさ、top_adrs の位置、POOL_HEADER_SIZE だけで、calc_index と分割と結合は同じ)。32bit の build そのものは estalloc 自身の make に任せる | estalloc.c (`PLATFORM_64BIT`) | 64bit の CRuby は 32bit の .so を読めず、この環境の gcc に `-m32` が無い | 無い | 今ある (S6-1、`tools/fpga/v2/estalloc_test.rb`) |
 | D26 | profile の違い: FPGA は constrained (heap page 128、`KHASH_INITIAL_SIZE` 16)、基準の host は baseline (1024) | `picoruby-mruby/mrbgem.rake`、mrbconf.h | FPGA は組み込みの build を写す | `GC.stat` の値 | 今ある (host は変えない) |
 | D80 | firmware の Proc は像の中の RED (MRB_GC_RED) の物、irep は `MRB_IREP_STATIC`。ROM のメソッド表の層は辿らない (`mt_readonly_p`) | C の関数 (Proc でない、mrb_method_t の func) | firmware は C の関数を mruby ソースコードの Proc で写す (D10、D41) | 無い | 予定 S6-2 |
 | D81 | VM のスタック (65,536 値) と ci の並び (4,096) は像の固定の領域で、stack_extend / cipush の realloc を写さない。`mark_context_stack` の nil の埋めは stend まで primitive `__fpga_fill` (memset、D17) で | vm.c `stack_extend`、`cipush`、gc.c `mark_context_stack` | スタックを動かすと窓 (回路の cache) と env の番地を付け直すことになる | GC の止まる時間 (埋めが 1 MB) | 予定 S6-4 |
