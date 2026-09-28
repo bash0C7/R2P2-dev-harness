@@ -296,9 +296,13 @@ module FpgaV2
       # mrb_state.nan_serial (NaN の通し番号、uint64_t を上と下の 2 語で。C の並びでは gc の後、D18)
       nan_serial: 43, nan_serial_lo: 44,
       # mrb_state.bop_redefined (演算子の再定義の印の bit) と bop_builtin (起動の時のメソッド表の値の並び、19 語の番地。0 は起動の途中)
-      bop_redefined: 45, bop_builtin: 46
+      bop_redefined: 45, bop_builtin: 46,
+      # mrb_state.task (mruby.h の mrb_task_state、mruby-task): queues[4] (dormant、ready、waiting、suspended)、tick、wakeup_tick、switching。
+      # task_running は走っている task (MRB2TASK の代わり、D103)
+      task_q_dormant: 47, task_q_ready: 48, task_q_waiting: 49, task_q_suspended: 50, task_tick: 51, task_wakeup_tick: 52,
+      task_switching: 53, task_running: 54
     }.freeze
-    IMG_WORDS = 48
+    IMG_WORDS = 56
     # C: none (D18)
     IMG_MAGIC = "FPV2"
     IMG_VERSION = 2
@@ -361,5 +365,47 @@ module FpgaV2
     CONT_BLKSEND = 7 # ブロックを Proc にした罠の続き (vm.c の ensure_block の後の SEND)
     # ci->kw (mrb_callinfo の kw の bit、CI_N の bit 4)
     CI_KW_BIT = 16
+
+    # mrb_task (mruby-task の task.h) の使う欄だけ (D103)。バイトの位置。wait は wait.wakeup_tick
+    # C: mrbgems/mruby-task/include/task.h mrb_task (D103)
+    TK_NEXT      = 0
+    TK_PRIORITY  = 4
+    TK_STATUS    = 5
+    TK_REASON    = 6
+    TK_TIMESLICE = 7
+    TK_WAKEUP    = 8
+    TK_SIZE      = 16
+    # C: mrbgems/mruby-task/include/task.h MRB_TASK_STATUS_DORMANT
+    TASK_STATUS_DORMANT   = 0
+    TASK_STATUS_READY     = 2
+    TASK_STATUS_RUNNING   = 3
+    TASK_STATUS_WAITING   = 4
+    TASK_STATUS_SUSPENDED = 8
+    # C: mrbgems/mruby-task/include/task.h MRB_TASK_REASON_SLEEP
+    TASK_REASON_NONE  = 0
+    TASK_REASON_SLEEP = 1
+    # task_create_common の既定の priority (mrb_create_task の prio)
+    # C: mrbgems/mruby-task/src/task.c mrb_create_task
+    TASK_PRIORITY_DEFAULT = 128
+    # build_config/fpga-tools.rb の MRB_TICK_UNIT と MRB_TIMESLICE_TICK_COUNT (ms と tick の数)
+    # C: mrbgems/mruby-task/include/task.h MRB_TICK_UNIT
+    TASK_TICK_UNIT = 4
+    # C: mrbgems/mruby-task/include/task.h MRB_TIMESLICE_TICK_COUNT
+    TASK_TIMESLICE = 3
+
+    # 板のモデルの mmio (docs/superpowers/plans/2026-09-28-fpga-v2-s7-gems.md)。SDRAM (32 MB) の外。ピンは bit n = pin n
+    # C: none (D102)
+    MMIO_BASE           = 0x0400_0000
+    MMIO_GPIO_OUT       = 0x0400_0000
+    MMIO_GPIO_DIR       = 0x0400_0004
+    MMIO_GPIO_IN        = 0x0400_0008
+    MMIO_GPIO_PULL_UP   = 0x0400_000C
+    MMIO_GPIO_PULL_DOWN = 0x0400_0010
+    MMIO_TIMER_TICKS    = 0x0400_0020
+    MMIO_WFI            = 0x0400_0024
+    MMIO_IRQ            = 0x0400_0028
+    MMIO_IRQ_TICK       = 1
+    # C: none (D101)
+    GPIO_PINS = 32
   end
 end
