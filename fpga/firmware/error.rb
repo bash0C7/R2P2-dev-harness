@@ -418,8 +418,10 @@ class Object
   # C: src/vm.c OP_JMPUW
   def __fpga_op_JMPUW(a, b, c)
     ci = __fpga_ci
-    ir = __fpga_ld32(__fpga_ld32(ci + 8) + 8) # L:CI_PROC L:P_BODY
+    pr = __fpga_ld32(ci + 8) # L:CI_PROC
+    ir = __fpga_ld32(pr + 8) # L:P_BODY
     a -= 65536 if a >= 32768 # int16_t
+    return __fpga_unwind(ci, __fpga_ld32(ci + 20) - __fpga_ld32(ir + 8) + a) if pr < __fpga_image(35) # L:CI_PC L:I_ISEQ L:IMG_heap_start firmware の while の break (D70)
     __fpga_jump_checkpoint(ci, __fpga_ld32(ci + 20) - __fpga_ld32(ir + 8) + a) # L:CI_PC L:I_ISEQ
   end
 
