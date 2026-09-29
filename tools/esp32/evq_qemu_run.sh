@@ -89,8 +89,12 @@ if [ "$elapsed" -ge "$RUN_TIMEOUT" ] && [ "$result" -ne 0 ]; then
   echo "== Timed out after ${RUN_TIMEOUT}s waiting for the injector to finish =="
 fi
 
-pkill -f qemu-system-xtensa 2>/dev/null || true
+# Kill only OUR qemu: the invocation embeds this run's build dir in the
+# flash-image path, so match on that instead of the bare binary name —
+# a bare `pkill -f qemu-system-xtensa` also took down unrelated QEMU
+# gates (and even shells whose command line contained the string).
 kill "$QEMU_JOB_PID" 2>/dev/null || true
+pkill -f "qemu-system-xtensa.*${BUILD_DIR}" 2>/dev/null || true
 wait "$QEMU_JOB_PID" 2>/dev/null || true
 
 exit "$result"
