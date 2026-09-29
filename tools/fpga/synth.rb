@@ -57,8 +57,9 @@ module FpgaSynth
   # rake fpga:synth で数える部品と予算。v2 の部品は段ごとにここへ足す (計画の「予算」の表)
   TARGETS = {
     "counter8" => { files: %w[fpga/rtl/counter8.sv], top: "counter8", budget: { le: 64, m9k: 0, depth: DEPTH_100MHZ } },
-    # mruby のバイトコードを直接実行する回路の最初の反復 (Lチカの命令だけ、ROM 1 KB)。予算は PERIDOT-Air の半分まで
-    "rite_core" => { files: %w[fpga/rtl/rite_core.sv fpga/rtl/rite_rom.sv], top: "rite_core", blackbox: %w[rite_rom], budget: { le: 3136, m9k: 2, depth: DEPTH_100MHZ } }
+    # mruby のバイトコードを直接実行する回路 (反復 R3、ROM は blackbox)。予算は計画の予算の表のコアの割り当て (LE 4,000 前後、
+    # SDRAM の制御とデバイスに残り)。M9K は表とレジスタと枠 (計画の表のレジスタ、コールスタック、メソッドの cache の分)
+    "rite_core" => { files: %w[fpga/rtl/rite_image_pkg.sv fpga/rtl/rite_core.sv fpga/rtl/rite_rom.sv fpga/rtl/rite_ram.sv], top: "rite_core", blackbox: %w[rite_rom], budget: { le: 4000, m9k: 15, depth: DEPTH_100MHZ } }
   }.freeze
 
   class Error < StandardError; end

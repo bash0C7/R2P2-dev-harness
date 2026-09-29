@@ -606,8 +606,8 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:gen` | `fpga/rtl/mrb_pkg.sv` を `tools/fpga/isa.rb` と `io_map.rb` から作り直す |
 | `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
 | `rake fpga:flash` | 最後の `fpga:build` を openFPGALoader で SRAM に書く。**実機では未確認** |
-| `rake fpga:rite:check[ms]` | mruby のバイトコードを直接実行する回路 (`fpga/rtl/rite_core.sv`、反復 R2: Lチカ (loop 版) と mruby の mrblib の Kernel#loop) で `fpga/rite/*.rb` を Icarus で走らせ、host の板のモデル入りの picoruby とピンの変化の列を比べる |
-| `rake fpga:rite:hex` | `fpga/rite/*.hex` (ROM: mruby の mrblib `kernel.rb` と `.rb` を mrbc した `.mrb` を並べたもの) と `*.pins` (host のピンの列、`rite_core_tb` の期待値) を作り直す |
+| `rake fpga:rite:check[ms]` | mruby のバイトコードを直接実行する回路 (`fpga/rtl/rite_core.sv`、反復 R3: Lチカ (loop 版) と mruby の kernel.rb、picoruby-gpio の gpio.rb) で `fpga/rite/*.rb` を Verilator で走らせ、host の板のモデル入りの picoruby とピンの変化の列を比べる |
+| `rake fpga:rite:hex` | `fpga/rtl/rite_image_pkg.sv` (起動の像の番号) と `fpga/rite/*.hex` (ROM: 起動の像、mrblib の `kernel.rb` と `gpio.rb`、`.rb` を mrbc した `.mrb` を並べたもの) と `*.pins` (host のピンの列、`rite_core_tb` の期待値) を作り直す |
 | `rake fpga:rite:build[src]` | `rite_core` を PERIDOT-Air 向けに Quartus で合成する (USER_LED[0] = pin 28、USER_LED[1] = error)。書き込みは `rake fpga:flash`。**実機では未確認** |
 
 **並べて回す (`FPGA_JOBS`)。** `test:fpga` (ファイルごと)、`fpga:corpus` / `corpus:check` (1 本ごとの mrbc と変換器)、`fpga:tb` ((tb, シミュレーター) ごと)、`fpga:check` / `fpga:gap` / `fpga:emu:check` (1 本ごと)、`fpga:fuzz` (1 本ごと。program は親が seed の rng の順に作るので、seed ごとの program の列と要約は1本ずつ回した時と同じ) は CPU の数だけ並べて回す (`tools/fpga/parallel.rb`)。本数は `FPGA_JOBS` (既定は CPU の数、1 ならその場で順に)。出力は1本ずつ回した時と同じ順にまとめて出す。シミュレーションの実行ファイル (mrb_run_tb、board_emu) は並べる前に親が build する。1つの rake の中で並べるので、同じ worktree で rake の check / gap / fuzz を2つ同時に走らせない (build の dir を取り合う) は変わらない

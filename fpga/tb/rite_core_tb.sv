@@ -7,9 +7,9 @@
 // +TRACE で、実行した命令を `insn <cycle> <ms> <pc> <op>` の行で出す (rake fpga:rite:view)
 `timescale 1ns / 1ps
 module rite_core_tb;
-  // シミュレーションを速くするため 1 ms を 2000 cycle にする (回路の意味は同じ)。起動 (mrblib と .rb を読んで実行し最初の write まで、約 1,300 cycle)
+  // シミュレーションを速くするため 1 ms を 20,000 cycle にする (回路の意味は同じ)。起動 (起動の像、mrblib と .rb を読んで実行し最初の write まで、約 15,000 cycle)
   // が 1 ms に収まり、host の板のモデルと同じ ms にピンが変わる数 (実機の 50 MHz なら 50,000)
-  localparam int MS_CYCLES = 2000;
+  localparam int MS_CYCLES = 20_000;
   logic clk = 1'b0;
   logic rst_n = 1'b0;
   // テストベンチのクロック生成は blocking で書くのが定石なので、ここだけ Verilator の -Wall を黙らせる
@@ -21,7 +21,7 @@ module rite_core_tb;
   logic        halted, error;
   logic [7:0]  error_op;
   logic [15:0] error_pc;
-  rite_core #(.ROM_BYTES(2048), .MS_CYCLES(MS_CYCLES)) dut (
+  rite_core #(.ROM_BYTES(4096), .MS_CYCLES(MS_CYCLES)) dut (
     .clk, .rst_n, .pins, .ms_now, .halted, .error, .error_op, .error_pc
   );
 
@@ -58,22 +58,24 @@ module rite_core_tb;
       end
     end
     $display("end halted=%0d error=%0d op=%0d pc=%0d", halted, error, error_op, error_pc);
-    if (expect_file == "none") $finish;
-    bad = error;
-    n_expect = 0;
-    fd = $fopen(expect_file, "r");
-    if (fd == 0) $fatal(1, "no %s", expect_file);
-    while ($fscanf(fd, "pin %d %d %d\n", ems, epin, elv) == 3) begin
-      if (n_expect >= n_seen || seen_ms[n_expect] != ems || seen_pin[n_expect] != epin || seen_lv[n_expect] != elv) begin
-        $display("expected [%0d] pin %0d %0d %0d", n_expect, ems, epin, elv);
-        bad = 1;
+    // $finish の後も続ける simulator (Verilator) があるので、比べる所は if の中に置く
+    if (expect_file != "none") begin
+      bad = error;
+      n_expect = 0;
+      fd = $fopen(expect_file, "r");
+      if (fd == 0) $fatal(1, "no %s", expect_file);
+      while ($fscanf(fd, "pin %d %d %d\n", ems, epin, elv) == 3) begin
+        if (n_expect >= n_seen || seen_ms[n_expect] != ems || seen_pin[n_expect] != epin || seen_lv[n_expect] != elv) begin
+          $display("expected [%0d] pin %0d %0d %0d", n_expect, ems, epin, elv);
+          bad = 1;
+        end
+        n_expect++;
       end
-      n_expect++;
+      $fclose(fd);
+      if (n_expect != n_seen) begin $display("expected %0d pin changes, got %0d", n_expect, n_seen); bad = 1; end
+      if (bad) $fatal(1, "FAIL rite_core_tb");
+      $display("PASS rite_core_tb");
     end
-    $fclose(fd);
-    if (n_expect != n_seen) begin $display("expected %0d pin changes, got %0d", n_expect, n_seen); bad = 1; end
-    if (bad) $fatal(1, "FAIL rite_core_tb");
-    $display("PASS rite_core_tb");
     $finish;
   end
 endmodule

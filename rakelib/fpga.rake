@@ -862,6 +862,8 @@ namespace :fpga do
     desc "Write fpga/rite/*.hex (mrblib kernel.rb and the .rb as .mrb, the ROM) and *.pins (host PicoRuby's pin changes up to 2000 ms) for rite_core_tb"
     task hex: "fpga:picoruby" do
       require_relative "../tools/fpga/rite_rtl"
+      File.write(FpgaRiteImage::PKG, FpgaRiteImage.pkg)
+      puts "wrote #{fpga_rel(FpgaRiteImage::PKG)}"
       FpgaRite.programs.each do |rb|
         base = rb.sub(/\.rb\z/, "")
         File.write("#{base}.hex", FpgaRite.rom_hex(rb))
@@ -870,7 +872,7 @@ namespace :fpga do
       end
     end
 
-    desc "Run fpga/rite/*.rb on rite_core (Icarus) and on host PicoRuby with the board model, and compare the pin changes up to <ms> (default 2000)"
+    desc "Run fpga/rite/*.rb on rite_core (Verilator) and on host PicoRuby with the board model, and compare the pin changes up to <ms> (default 2000)"
     task :check, [:ms] => "fpga:picoruby" do |_t, args|
       require_relative "../tools/fpga/rite_rtl"
       ms = (args[:ms] || FpgaRite::UNTIL_MS).to_i
