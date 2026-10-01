@@ -1271,7 +1271,7 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 
 ### PERIDOT-Air (#10 #11)
 
-**実機・Quartus・USB-Blaster はまだ無い。以下はシミュレーションまでしか確かめていない。**
+**実機は届いた (2026-10-01、user)。Quartus と書き込みの環境は次の session (Mac) で作る。以下はまだシミュレーションまでしか確かめていない。**
 
 - **top は `fpga/rtl/boards/peridot_air_top.sv`。** `$LED`→`USER_LED[0]` (PIN_105)、`$LED2`→`USER_LED[1]` (PIN_119)、
   値が true か 0 以外の Integer なら点灯。`$BUTTON`←`D[0]` (PIN_84、内部 pull-up、GND に落とすと 1)。
