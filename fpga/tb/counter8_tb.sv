@@ -3,7 +3,8 @@
 // rake は exit status と PASS 行の両方を見る (docs/spec.md §10)。
 `timescale 1ns / 1ps
 module counter8_tb;
-  logic       clk = 1'b0;
+  logic       clk;
+  initial clk = 1'b0;
   logic       rst_n = 1'b0;
   logic       en = 1'b0;
   logic [7:0] count;

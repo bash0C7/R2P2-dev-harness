@@ -28,7 +28,8 @@ module board_emu_tb;
   parameter int MS_CYCLES = 125_000; // 回路の時計で 1ms (実機の) が何 cycle か = MHz * 1000 / TIME_SCALE
   localparam int MAX_BTN = 256;
 
-  logic       clk = 1'b0;
+  logic       clk;
+  initial clk = 1'b0;
   logic       reset_n = 1'b0;
   logic [0:0] d = 1'b1;
   wire  [1:0] led;

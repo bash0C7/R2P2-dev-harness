@@ -13,6 +13,13 @@ FPGA_RTL_DIR   = File.join(FPGA_DIR, "rtl")
 FPGA_TB_DIR    = File.join(FPGA_DIR, "tb")
 FPGA_BUILD_DIR = File.join(BUILD_DIR, "fpga")
 
+# Apple Silicon の brew は /opt/homebrew に入り、c++ の既定の探索先に無い。
+# verilator の --trace-fst は lz4.h を要るので、そこを見せる
+if Dir.exist?("/opt/homebrew/include")
+  ENV["CPATH"] ||= "/opt/homebrew/include"
+  ENV["LIBRARY_PATH"] ||= "/opt/homebrew/lib"
+end
+
 # 必須は verilator と iverilog/vvp。surfer は波形を見る時だけ要る。yosys と sv2v は資源の関所 (rake fpga:synth) だけで要る
 # (sv2v は apt に無いので、Linux では fpga:setup が GitHub の release を build/fpga/tools/sv2v に置く)。
 FPGA_TOOLS = {

@@ -10,7 +10,8 @@ module rite_core_tb;
   // シミュレーションを速くするため 1 ms を 20,000 cycle にする (回路の意味は同じ)。起動 (起動の像、mrblib と .rb を読んで実行し最初の write まで、約 15,000 cycle)
   // が 1 ms に収まり、host の板のモデルと同じ ms にピンが変わる数 (実機の 50 MHz なら 50,000)
   localparam int MS_CYCLES = 20_000;
-  logic clk = 1'b0;
+  logic clk;
+  initial clk = 1'b0;
   logic rst_n = 1'b0;
   // テストベンチのクロック生成は blocking で書くのが定石なので、ここだけ Verilator の -Wall を黙らせる
   /* verilator lint_off BLKSEQ */
