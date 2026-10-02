@@ -155,21 +155,71 @@ ESP32 と同じ「委譲」パターンを踏襲する。本 harness(R2P2-dev-ha
 - `picoruby-ble-verify` からの完全な引き剥がし(必要な部分だけ移植し、依存除去は別スコープ)
 - ECDSA 署名検証を使った DFU の運用(v1 は CRC32 検証のみで足りる規模)
 
-## 完了条件(このドキュメントが対象にする最初の一歩)
+## ここまでで終わったこと(Linux sandbox セッション、実機・Xcode 無し)
 
-- `picoruby-dfu` を有効にした Pico 2 W 実機で、`BLE::UART` 経由の `DFU::Updater`
-  (`path:` モード)で `/home/app.rb` を書き換えられ、reboot 後にそのアプリが動く
-  ことを実機で確認する
-- 上記が実機で通った段階で、iOS 側の sibling repo 着手をユーザーと相談する
-  (Xcode/実機 iPhone・iPad が要るため、この harness の Linux セッションでは
-  検証できない — 完了の線引きは実機、という docs/spec.md の規律をここでも守る)
+- `gems/picoruby-ble-dev-bridge`(BLE UART の REPL/DFU フレーマ)を host で実装・
+  検証済み(picotest 21 assertion green)
+- `examples/rp2040/ble_dev_bridge.rb` で `BLE::UART` + `DFU::Updater` + `Sandbox`
+  を配線。mrbc でのコンパイルは確認済み(実行は実機のみ)
+- `picoruby-dfu` を有効にした **実クロスビルドが通ることまで確認済み**
+  (`arm-none-eabi-gcc` をこの sandbox に入れて `rake rp2040:build` を実際に通し、
+  出来た `.elf` に両 gem のシンボルが入っていることを `strings` で確認した。
+  詳細: docs/research/picoruby-ble-dfu-survey.md)
+- `rake test:host` の `build/host/` 差し替わり問題を根本対処(別 PR #19、
+  すでに main に merge 済み)
+- **この sandbox の build 成果物(`.uf2`/`.elf`)はセッション終了で消える。**
+  次の環境では `rake rp2040:build` からやり直しになるが、手順自体は
+  このセッションで実証済みなので同じコマンドで通るはず
+
+## 完成までのロードマップ(どこで・何をすれば完成か)
+
+残りは2つの異なる環境が要り、どちらもこのリポジトリの Linux セッションでは
+検証できない。**完了の線引きは実機**という docs/spec.md の規律をここでも守るので、
+それぞれの環境で以下を実施して初めて完成とする。
+
+### 環境 A: Pico 2 W 実機のあるセッション(想定: bash0C7 の Mac、Claude Code)
+
+1. `rake setup && rake rp2040:setup && rake rp2040:build`
+   (`arm-none-eabi-gcc` はこの環境ならすでに入っている想定。無ければ
+   `brew install arm-none-eabi-gcc` 等で用意する)
+2. `rake rp2040:flash`
+3. `rake rp2040:upload[examples/rp2040/ble_dev_bridge.rb,/home/app.rb]` →
+   `rake rp2040:run[examples/rp2040/ble_dev_bridge.rb,60]` で起動を確認
+4. BLE UART の疎通確認。2枚目の Pico 2 W があれば `picoruby-ble-uart` の
+   `example/ble_uart_central.rb` で pico-to-pico、無ければ Mac や iPhone の
+   BLE スキャナアプリ(nRF Connect 等)で `"R2P2"` の advertising が見えるかを見る
+5. REPL 経路の確認: 接続して `1 + 1` を送り、`=> 2` が返ってくるか
+6. DFU 経路の確認: DFU ヘッダ(docs/research/picoruby-ble-dfu-survey.md に書式
+   あり)で包んだ `.rb` を送り、`/home/app.rb` が差し替わって reboot 後に
+   新しいアプリが動くか
+7. 結果を docs/spec.md に新セクションとして書く(確認できたことと、
+   踏んだ罠の両方。§6/§9 と同じ形)
+
+**この7つが通った時点で、このリポジトリ(R2P2-dev-harness)側の完成。**
+
+### 環境 B: macOS + Xcode + 実機 iPhone/iPad のあるセッション
+
+環境 A が完成してから着手する(firmware 側が実機で動く前提が要るため)。
+着手には bash0C7 の判断が要る(sibling repo を実際に作るかどうか)。
+
+1. sibling repo(`R2P2-ios-workbench` 想定)を作るかどうかをユーザーに確認する
+2. iOS 側 CoreBluetooth クライアント: `BLE::UART` の Nordic UART Service
+   (固定 UUID、docs/research/picoruby-ble-dfu-survey.md 参照)に接続し、
+   環境 A で確認できた REPL/DFU のフレーミングと会話する
+3. Playground: picoruby のホストビルド(このリポジトリの `rake test:host` が
+   使っているのと同じ考え方)を iOS 向けにクロスビルドし、`GPIO`/`LED` を
+   スタブ実装に差し替えて SwiftUI に繋ぐ
+4. `.uf2` の書き込み UI: `UIDocumentPickerViewController` 経由で BOOTSEL 中の
+   RPI-RP2 ドライブへ書き込む経路(USB-C iPad や Lightning+カメラアダプタの
+   iPhone で実機検証が要る)
+5. cloud build: GitHub Actions で `.uf2` と iOS 向け静的ライブラリの2種を作る CI
+
+環境 B の完成条件は sibling repo 側で都度決める(このドキュメントはスコープを
+決め切らない — 決めるのは着手時点のユーザーとの相談)。
 
 ## 未決
 
-- `picoruby-dfu` の依存 gem (`picoruby-yaml`/`picoruby-vfs`/`picoruby-crc`/
-  `picoruby-pack`) が pico2_w の既存 gembox で足りるかは `rake rp2040:build`
-  を実際に通すまで確定しない
 - BLE のスループット(ATT MTU 依存の `notify_chunk_size`)が `.rb`/`.mrb` の
-  実用的な転送時間としてどの程度かは実機計測が要る
-- `picoruby-ble-verify` (private) との重複範囲
-- sibling repo `R2P2-ios-workbench` を実際に作るかどうか、作るタイミング
+  実用的な転送時間としてどの程度かは実機計測が要る(環境 A の宿題)
+- `picoruby-ble-verify` (private) との重複範囲。次にアクセスできるセッションで照合する
+- sibling repo `R2P2-ios-workbench` を実際に作るかどうか、作るタイミング(環境 B の宿題)

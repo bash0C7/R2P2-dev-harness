@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Where this stands:** Tasks 1-2 below are done and merged (host-verified, plus a real
+> `rp2040:build` cross-build — see their per-task status). Task 3 onward need a physical
+> Pico 2 W and can't run in a Linux sandbox. The design spec's "完成までのロードマップ"
+> section (docs/superpowers/specs/2026-09-20-ios-dev-harness-app-design.md) is the
+> up-to-date, environment-by-environment version of what's left — read it first.
+
 **Goal:** Give the Pico 2 W R2P2 firmware a working BLE transport for application-code
 deployment (upload/replace `/home/app.rb`, or a REPL) that does not depend on USB CDC
 serial, so a future iOS companion app has something real to talk to over CoreBluetooth.
