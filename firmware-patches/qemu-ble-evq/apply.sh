@@ -17,10 +17,22 @@ if [ -f "$MARKER" ]; then
   exit 0
 fi
 
+# Optional fault-injection layers on top of the radio stub (mruby glue
+# only). EVQ_OOM=1: BLE_write_data raises NoMemoryError once, expecting
+# the glue to contain it. EVQ_OOM_RED=1: additionally strip that
+# containment, so the same run must go red. revert.sh reads the applied
+# list back from the marker.
+EXTRA_PATCHES=()
+[ "${EVQ_OOM:-0}" = "1" ] && EXTRA_PATCHES+=(oom_fault.patch)
+[ "${EVQ_OOM_RED:-0}" = "1" ] && EXTRA_PATCHES+=(oom_red.patch)
+
 git -C "$SUBMODULE" apply --check "$RIG_DIR/radio_stub.patch"
 git -C "$ESP32_REPO" apply --check "$RIG_DIR/r2p2-esp32.patch"
 git -C "$SUBMODULE" apply "$RIG_DIR/radio_stub.patch"
 git -C "$ESP32_REPO" apply "$RIG_DIR/r2p2-esp32.patch"
+for p in "${EXTRA_PATCHES[@]}"; do
+  git -C "$SUBMODULE" apply "$RIG_DIR/$p"
+done
 
 cp "$RIG_DIR/rig_injector.c" "$ESP32_REPO/components/picoruby-esp32/rig_injector.c"
 cp "$RIG_DIR/sdkconfig.qemu_ble_evq" "$ESP32_REPO/sdkconfigs/qemu_ble_evq"
@@ -31,5 +43,5 @@ cp "$RIG_DIR/rigapp.rb" "$ESP32_REPO/storage/home/app.rb"
 # rig define appeared, so force a clean rake build (idf.py won't).
 rm -rf "$SUBMODULE/build/esp32-picoruby" "$SUBMODULE/build/esp32-femtoruby"
 
-touch "$MARKER"
-echo "[qemu-ble-evq] applied to $ESP32_REPO"
+printf '%s\n' "${EXTRA_PATCHES[@]}" > "$MARKER"
+echo "[qemu-ble-evq] applied to $ESP32_REPO${EXTRA_PATCHES[*]:+ (+ ${EXTRA_PATCHES[*]})}"

@@ -1,0 +1,13 @@
+diff --git a/mrbgems/picoruby-ble/src/mruby/ble.c b/mrbgems/picoruby-ble/src/mruby/ble.c
+index 4f0ed796..97902d38 100644
+--- a/mrbgems/picoruby-ble/src/mruby/ble.c
++++ b/mrbgems/picoruby-ble/src/mruby/ble.c
+@@ -131,7 +131,7 @@ BLE_write_data(uint16_t att_handle, const uint8_t *data, uint16_t size)
+   write_data_args args = { att_handle, data, size };
+   mrb_bool error = FALSE;
+   int ai = mrb_gc_arena_save(_mrb);
+-  mrb_protect_error(_mrb, write_data_body, &args, &error);
++  write_data_body(_mrb, &args);
+   mrb_gc_arena_restore(_mrb, ai);
+   if (error) {
+     write_values_mutex = false;

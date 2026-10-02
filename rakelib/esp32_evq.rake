@@ -51,6 +51,34 @@ namespace :esp32 do
     end
     puts "[esp32:evq_green] PASS: #{result.message}"
   end
+
+  # Fault injection (mruby glue only): oom_fault.patch makes the first
+  # flushed GATT write raise NoMemoryError inside BLE_write_data. Green
+  # expects the glue to contain it (events keep flowing, write B lands);
+  # red strips the containment with oom_red.patch and expects the same
+  # run to fail, proving the hook reaches an unprotected frame.
+  desc "Event-path rig + NoMemoryError inside BLE_write_data, expecting PASS (containment holds)"
+  task :evq_oom_green do
+    ENV["EVQ_OOM"] = "1"
+    result = evq_judge(expect_fault: true)
+    unless result.pass
+      puts "[esp32:evq_oom_green] FAIL: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_oom_green] PASS: #{result.message}"
+  end
+
+  desc "Same fault with the containment stripped, expecting FAIL. Succeeds when the verdict is red"
+  task :evq_oom_red do
+    ENV["EVQ_OOM"] = "1"
+    ENV["EVQ_OOM_RED"] = "1"
+    result = evq_judge(expect_fault: true)
+    if result.pass
+      puts "[esp32:evq_oom_red] UNEXPECTED GREEN: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_oom_red] RED as expected: #{result.message}"
+  end
 end
 
 def evq_vm
@@ -58,11 +86,14 @@ def evq_vm
 end
 
 def evq_log_path
-  File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}.log")
+  suffix = ""
+  suffix << "-oom" if ENV["EVQ_OOM"] == "1"
+  suffix << "-red" if ENV["EVQ_OOM_RED"] == "1"
+  File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}#{suffix}.log")
 end
 
-def evq_judge
+def evq_judge(expect_fault: false)
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
-  EvqVerdict.judge(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS)
+  EvqVerdict.judge(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS, expect_fault: expect_fault)
 end

@@ -1,0 +1,20 @@
+diff --git a/mrbgems/picoruby-ble/src/mruby/ble.c b/mrbgems/picoruby-ble/src/mruby/ble.c
+index 4f0ed796..a7ca5aaf 100644
+--- a/mrbgems/picoruby-ble/src/mruby/ble.c
++++ b/mrbgems/picoruby-ble/src/mruby/ble.c
+@@ -108,6 +108,15 @@ typedef struct {
+ static mrb_value
+ write_data_body(mrb_state *mrb, void *ud)
+ {
++#ifdef PICORUBY_QEMU_EVQ_RIG
++  extern volatile int rig_fault_write;
++  extern void rig_log_fault_write(void);
++  if (rig_fault_write) {
++    rig_fault_write = 0;
++    rig_log_fault_write();
++    mrb_exc_raise(mrb, mrb_obj_value(mrb->nomem_err));
++  }
++#endif
+   write_data_args *args = (write_data_args *)ud;
+   mrb_value key = mrb_fixnum_value(args->att_handle);
+   mrb_value write_value = mrb_str_new(mrb, (const char *)args->data, args->size);
