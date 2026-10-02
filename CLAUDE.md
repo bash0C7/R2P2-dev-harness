@@ -4,12 +4,18 @@ bash0C7 が個人で PicoRuby の装置を作るための知見と rake タス�
 PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`examples/`) は、その上に載せた実例のひとつ。
 対象は Pico 2 W (`rake rp2040:*`、`tools/pico2w/`) と ESP32 の M5Stack Chain DualKey (`rake esp32:*`、`tools/esp32/`)。
 両者が共有するコードは `tools/common/`。
+FPGA (mruby ネイティブ CPU、issue #4) の HDL・テストベンチ・コーパスは `fpga/`、Ruby の道具は `tools/fpga/`、タスクは `rake fpga:*` (docs/spec.md §10)。
+FPGA は当面、実機を使わずシミュレーター (`rake fpga:test`、ボードエミュレーター `rake fpga:emu`) で完全に動かすことが目標 (user の指示)。
+実機 (PERIDOT-Air) で動いたとは、焼いて LED を目視するまで書かない。
 
 - 設計と決定事項は [docs/spec.md](docs/spec.md) が single source of truth。実機の罠は Pico 2 W が §6、ESP32 が §9 にまとめてある
 - 残っている作業は GitHub issues (`gh issue list`)
 
 ## 作業の規律
 
+- **置き換えたら古い版をソースに残さない。** 新旧を並べる、環境変数で切り替える、は作らない。戻すのは git (置き換えを1 commit にして `git revert`)
+- **mruby ソースコードと Ruby コードを呼び分ける。** mruby ソースコードは mruby の文法の `.rb` (mrbc で mruby bytecode にし、PicoRuby の VM か FPGA のコアで走る。host の picoruby で走る変換器も)。
+  Ruby コードは CRuby で走るもの (rake、`tools/` の道具、テスト)。文法がほぼ同じでも「Ruby で書く」とまとめて言わない
 - **完了の線引きは実機。** `rake test` (ホスト) が green でも、実機で走らせるまで「動いた」と書かない
 - **`vendor/picoruby` は生成物。** commit しない。変更は `firmware-patches/` (build 中だけ当てる) か build_config の overlay で行う
 - **Pico 2 W は Claude が触る。** `rake rp2040:build` / `flash` / `upload` / `run` / `reboot` は Bash から直接回せる

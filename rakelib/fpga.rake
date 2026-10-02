@@ -1,0 +1,899 @@
+# FPGA (mruby ネイティブ CPU、issue #4) の HDL シミュレーション。
+#
+# fpga/rtl/**/*.sv が回路、fpga/tb/<name>_tb.sv がテストベンチ (top module 名 = file 名)。
+# テストベンチは自己チェック型: 合格なら "PASS <tb名>" を出して $finish、
+# 食い違えば $fatal で落とす。合否は exit status と PASS 行の両方で見る
+# (PASS を出す前に $finish した tb を合格にしないため)。
+#
+# 合否の主は Verilator (--binary、2値)。Icarus (4値) はリセット漏れの X を見るために回す。
+# vendor/picoruby は要らないので、`rake setup` 無しで回る。詳細は docs/spec.md §10。
+
+FPGA_DIR       = File.join(HARNESS_ROOT, "fpga")
+FPGA_RTL_DIR   = File.join(FPGA_DIR, "rtl")
+FPGA_TB_DIR    = File.join(FPGA_DIR, "tb")
+FPGA_BUILD_DIR = File.join(BUILD_DIR, "fpga")
+
+# 必須は verilator と iverilog/vvp。surfer は波形を見る時だけ要る。yosys と sv2v は資源の関所 (rake fpga:synth) だけで要る
+# (sv2v は apt に無いので、Linux では fpga:setup が GitHub の release を build/fpga/tools/sv2v に置く)。
+FPGA_TOOLS = {
+  "verilator" => { required: true,  brew: "verilator",      apt: "verilator" },
+  "iverilog"  => { required: true,  brew: "icarus-verilog", apt: "iverilog" },
+  "vvp"       => { required: true,  brew: "icarus-verilog", apt: "iverilog" },
+  "surfer"    => { required: false, brew: "surfer",         apt: nil,     why: "waveform viewer" },
+  "yosys"     => { required: false, brew: "yosys",          apt: "yosys", why: "resource gate, rake fpga:synth" },
+  "sv2v"      => { required: false, brew: "sv2v",           apt: nil,     why: "resource gate, rake fpga:synth" }
+}.freeze
+
+def fpga_os
+  case RbConfig::CONFIG["host_os"]
+  when /darwin/ then :mac
+  when /linux/  then :linux
+  else :other
+  end
+end
+
+def fpga_tool?(name)
+  return !FpgaSynth.sv2v.nil? if name == "sv2v" # build/fpga/tools/sv2v も見る
+  ENV["PATH"].to_s.split(File::PATH_SEPARATOR).any? do |dir|
+    path = File.join(dir, name)
+    File.file?(path) && File.executable?(path)
+  end
+end
+
+def fpga_missing_tools(required_only: true)
+  FPGA_TOOLS.reject { |name, t| (required_only && !t[:required]) || fpga_tool?(name) }.keys
+end
+
+# 足りない道具を入れるコマンド。apt は root でなければ sudo を付ける。
+def fpga_install_command(tools)
+  case fpga_os
+  when :mac
+    pkgs = tools.map { |n| FPGA_TOOLS[n][:brew] }.compact.uniq
+    pkgs.empty? ? nil : "brew install #{pkgs.join(' ')}"
+  when :linux
+    pkgs = tools.map { |n| FPGA_TOOLS[n][:apt] }.compact.uniq
+    return nil if pkgs.empty?
+    sudo = Process.uid.zero? ? "" : "sudo "
+    "#{sudo}apt-get install -y #{pkgs.join(' ')}"
+  end
+end
+
+# Linux の surfer は apt に無い。
+FPGA_SURFER_LINUX_HINT = "surfer is not in apt. Get the Linux binary from " \
+                         "https://gitlab.com/surfer-project/surfer/-/releases " \
+                         "or `cargo install --git https://gitlab.com/surfer-project/surfer surfer`".freeze
+
+# sv2v の Linux の release (zachjs/sv2v) を build/fpga/tools/sv2v に置く
+FPGA_SV2V_URL = "https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip".freeze
+
+def fpga_install_sv2v
+  dir = File.join(FPGA_BUILD_DIR, "tools")
+  FileUtils.mkdir_p dir
+  zip = File.join(dir, "sv2v.zip")
+  sh "curl", "-fsSL", "-o", zip, FPGA_SV2V_URL
+  sh "unzip", "-o", "-q", zip, "-d", dir
+  FileUtils.rm_rf File.join(dir, "sv2v")
+  FileUtils.mv File.join(dir, "sv2v-Linux"), File.join(dir, "sv2v")
+end
+
+def require_fpga_tools!
+  missing = fpga_missing_tools
+  return if missing.empty?
+  hint = fpga_install_command(missing)
+  raise "FPGA simulators not found: #{missing.join(', ')}. " +
+        (hint ? "Run `rake fpga:setup` (= `#{hint}`)." : "Install Verilator and Icarus Verilog by hand.")
+end
+
+def fpga_rtl_sources
+  # package は使う側より先にコンパイルに渡す
+  Dir[File.join(FPGA_RTL_DIR, "**", "*.sv")].sort_by { |p| [p.end_with?("_pkg.sv") ? 0 : 1, p] }
+end
+
+def fpga_testbenches
+  Dir[File.join(FPGA_TB_DIR, "*_tb.sv")].sort.map { |p| File.basename(p, ".sv") }
+end
+
+def fpga_testbench_path(tb)
+  tb = tb.to_s.sub(/\.sv\z/, "")
+  path = File.join(FPGA_TB_DIR, "#{tb}.sv")
+  unless File.file?(path)
+    raise "no testbench #{tb.inspect} in fpga/tb/. Known: #{fpga_testbenches.join(', ')}"
+  end
+  [tb, path]
+end
+
+# 走らせて、exit status と PASS 行の両方で判定する。出力はそのまま流す。
+def fpga_run_and_judge(tb, sim, cmd)
+  out = +""
+  IO.popen(cmd, err: [:child, :out]) do |io|
+    io.each_line do |line|
+      print line
+      out << line
+    end
+  end
+  status = $?
+  passed = status.success? && out.lines.any? { |l| l.strip == "PASS #{tb}" }
+  unless passed
+    # Verilator の $fatal は abort() なので exit code ではなく signal で返る
+    why = if status.success? then "no \"PASS #{tb}\" line"
+          elsif status.exitstatus then "exit #{status.exitstatus}"
+          else "signal #{status.termsig}"
+          end
+    raise "FAIL #{tb} (#{sim}): #{why}"
+  end
+  puts "ok #{tb} (#{sim})"
+end
+
+# コンパイラの出力 (make の行、Icarus の "sorry" 等) は log に落とし、失敗した時だけ見せる。
+def fpga_quiet_sh(log, *cmd)
+  ok = system(*cmd, out: log, err: [:child, :out])
+  raise "#{cmd.first} failed (log: #{log.sub("#{HARNESS_ROOT}/", "")}):\n#{File.read(log)}" unless ok
+end
+
+# Verilator --binary。C++ を書かずに SV だけのテストベンチを実行ファイルにする。
+# -Wall の warning は error 扱い (Verilator の既定)。波形は FST。
+def fpga_sim_verilator(tb)
+  tb, path = fpga_testbench_path(tb)
+  mdir = File.join(FPGA_BUILD_DIR, "verilator", tb)
+  FileUtils.rm_rf mdir
+  FileUtils.mkdir_p mdir
+  fpga_quiet_sh(File.join(mdir, "build.log"),
+                "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
+                "-j", "0", "--Mdir", mdir, "--top-module", tb, "-o", tb,
+                *fpga_rtl_sources, path)
+  dump = File.join(FPGA_BUILD_DIR, "#{tb}.fst")
+  fpga_run_and_judge(tb, "verilator", [File.join(mdir, tb), "+dump=#{dump}"])
+  puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
+end
+
+# Icarus Verilog。4値なので、リセットされていない register が X のまま見える。
+def fpga_sim_icarus(tb)
+  tb, path = fpga_testbench_path(tb)
+  dir = File.join(FPGA_BUILD_DIR, "icarus")
+  FileUtils.mkdir_p dir
+  vvp = File.join(dir, "#{tb}.vvp")
+  fpga_quiet_sh(File.join(dir, "#{tb}.build.log"), "iverilog", "-g2012", "-Wall", "-o", vvp, "-s", tb, *fpga_rtl_sources, path)
+  dump = File.join(FPGA_BUILD_DIR, "#{tb}.icarus.fst")
+  fpga_run_and_judge(tb, "icarus", ["vvp", "-n", vvp, "-fst", "+dump=#{dump}"])
+  puts "waveform: #{dump.sub("#{HARNESS_ROOT}/", '')}"
+end
+
+namespace :fpga do
+  desc "Check that the FPGA simulators (Verilator, Icarus Verilog) and Surfer are installed"
+  task :doctor do
+    FPGA_TOOLS.each do |name, t|
+      state = fpga_tool?(name) ? "ok" : (t[:required] ? "MISSING" : "missing (optional, #{t[:why]})")
+      puts format("%-10s %s", name, state)
+    end
+    puts `verilator --version`.strip if fpga_tool?("verilator")
+    puts `iverilog -V 2>&1`.lines.first.to_s.strip if fpga_tool?("iverilog")
+    puts FPGA_SURFER_LINUX_HINT if fpga_os == :linux && !fpga_tool?("surfer")
+    require_fpga_tools!
+  end
+
+  desc "Install the FPGA simulators (brew on macOS, apt-get on Linux)"
+  task :setup do
+    missing = fpga_missing_tools(required_only: false)
+    cmd = fpga_install_command(missing)
+    if cmd
+      sh "#{'sudo ' unless Process.uid.zero?}apt-get update" if fpga_os == :linux
+      sh cmd
+    elsif missing.any? { |n| FPGA_TOOLS[n][:required] }
+      raise "don't know how to install #{missing.join(', ')} on #{RbConfig::CONFIG['host_os']}"
+    end
+    puts FPGA_SURFER_LINUX_HINT if fpga_os == :linux && !fpga_tool?("surfer")
+    fpga_install_sv2v if fpga_os == :linux && FpgaSynth.sv2v.nil?
+    Rake::Task["fpga:doctor"].invoke
+  end
+
+  desc "Run one testbench with Verilator (e.g. rake fpga:sim[counter8_tb])"
+  task :sim, [:tb] do |_t, args|
+    raise "usage: rake fpga:sim[<testbench>]. Known: #{fpga_testbenches.join(', ')}" unless args[:tb]
+    require_fpga_tools!
+    fpga_sim_verilator(args[:tb])
+  end
+
+  namespace :sim do
+    desc "Run one testbench with Icarus Verilog (4-state, shows X from missing resets)"
+    task :icarus, [:tb] do |_t, args|
+      raise "usage: rake fpga:sim:icarus[<testbench>]. Known: #{fpga_testbenches.join(', ')}" unless args[:tb]
+      require_fpga_tools!
+      fpga_sim_icarus(args[:tb])
+    end
+  end
+
+  namespace :tb do
+    desc "Run each mrb_core_tb case's ROM on the reference interpreter and print how it ends (to write expectations)"
+    task :ref do
+      require_fpga_tools!
+      tb, path = fpga_testbench_path("mrb_core_tb")
+      dir = File.join(FPGA_BUILD_DIR, "tbref")
+      FileUtils.rm_rf dir
+      FileUtils.mkdir_p dir
+      vvp = File.join(dir, "#{tb}.vvp")
+      fpga_quiet_sh(File.join(dir, "build.log"), "iverilog", "-g2012", "-o", vvp, "-s", tb, *fpga_rtl_sources, path)
+      system("vvp", "-n", vvp, "+dumprom=#{dir}", out: File::NULL) # 途中のケースで止まっても、そこまでは書いてある
+      nregs = File.read(path)[/localparam int NREGS\s*=\s*(\d+)/, 1].to_i
+      heap_size = File.read(path)[/\.HEAP_WORDS\((\d+)\)/, 1].to_i
+      File.readlines(File.join(dir, "cases.txt"), chomp: true).each do |line|
+        n, name = line.split(" ", 2)
+        words = File.read(File.join(dir, "#{n}.hex")).gsub(%r{//[^\n]*}, "").split.map(&:hex) # $writememh は1行に数語、注釈つき
+        vm = FpgaRefVm.new(words, nregs: nregs, heap_size: heap_size)
+        last = vm.run(100_000).last
+        show = lambda do |(tag, x)|
+          case tag
+          when FpgaIsa::TAG_INT then (x >= 2**63 ? x - 2**64 : x).to_s
+          when FpgaIsa::TAG_TRUE then "true"
+          when FpgaIsa::TAG_FALSE then "false"
+          when FpgaIsa::TAG_SYM then ":#{x}"
+          when FpgaIsa::TAG_CLASS then "C#{x}"
+          else "@#{x}"
+          end
+        end
+        regs = vm.regs.each_with_index.map { |v, i| v == FpgaRefVm::NIL ? nil : "R#{i}=#{show.(v)}" }.compact
+        puts "#{name}: #{last}\n  #{regs.join(' ')}"
+      end
+    end
+  end
+
+  desc "Run every fpga/tb/*_tb.sv with Verilator and Icarus Verilog"
+  task :tb do
+    require_fpga_tools!
+    tbs = fpga_testbenches
+    raise "no testbenches in fpga/tb/" if tbs.empty?
+    # (tb, シミュレーター) ごとに並べる。build の dir は tb ごと・シミュレーターごとに別。出力は組ごとにまとめて出す
+    runs = FpgaParallel.map(tbs.product(%w[verilator icarus])) do |tb, sim|
+      ok, out = fpga_capture do
+        puts "\n=== #{tb} (#{sim}) ==="
+        begin
+          sim == "verilator" ? fpga_sim_verilator(tb) : fpga_sim_icarus(tb)
+          true
+        rescue StandardError => e
+          puts e.message
+          false
+        end
+      end
+      ["#{tb} (#{sim})", ok, out]
+    end
+    runs.each { |_, _, out| print out }
+    failed = runs.reject { |_, ok, _| ok }.map(&:first)
+    raise "fpga testbenches failed: #{failed.join(', ')}" unless failed.empty?
+    puts "\nall #{tbs.size} testbench(es) passed on verilator and icarus"
+  end
+end
+
+# ---- mruby バイトコードを実行する CPU コア (issue #6 #7 #8 #9)
+#
+# fpga/corpus/*.rb が対象のプログラム。.mrb .dump .hex .lst は commit してあり (tools/fpga/corpus.rb)、
+# CI の fpga job は picoruby 無しでそれを使う。
+#
+# .mrb -> ROM の変換器 (tools/fpga/mrb2rom.rb ほか) は mruby ソースコードで、PicoRuby の host VM で走らせる
+# (FpgaConverter.run)。rake は起動と、参照インタプリタ (Ruby コード、CRuby) やシミュレーションとの受け渡しだけをする。
+require_relative "../tools/fpga/converter"
+require_relative "../tools/fpga/ref_vm"
+require_relative "../tools/fpga/compare"
+require_relative "../tools/fpga/corpus"
+require_relative "../tools/fpga/gen_pkg"
+require_relative "../tools/fpga/quartus"
+require_relative "../tools/fpga/emu"
+require_relative "../tools/fpga/fuzz"
+require_relative "../tools/fpga/gap"
+require_relative "../tools/fpga/parallel"
+require_relative "../tools/fpga/synth"
+require_relative "../tools/fpga/oracle"
+require "open3"
+require "stringio"
+
+FPGA_SIM_DIR       = File.join(FPGA_DIR, "sim")
+FPGA_ROM_DIR       = File.join(FPGA_BUILD_DIR, "rom")
+FPGA_CORE_NREGS    = FpgaIsa::RF_SIZE
+FPGA_DEFAULT_STEPS = 200_000
+FPGA_BOARD_BUILD   = File.join(FPGA_BUILD_DIR, "peridot_air")
+
+def fpga_rel(path)
+  path.sub("#{HARNESS_ROOT}/", "")
+end
+
+# .rb (mrbc で compile してから) か .mrb を、PicoRuby の変換器で build/fpga/rom/<name>.hex と .lst にする。
+# 返り値は hex の path。
+def fpga_rom(src)
+  Rake::Task["fpga:picoruby"].invoke # 変換器を走らせる VM
+  name = File.basename(src, ".*")
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  mrb = case File.extname(src)
+        when ".mrb" then src
+        when ".rb"
+          out = File.join(FPGA_ROM_DIR, "#{name}.mrb")
+          File.binwrite(out, FpgaCorpus.compile(src, FpgaCorpus.default_mrbc).first)
+          out
+        else raise "#{src}: expected a .rb or .mrb"
+        end
+  base = File.join(FPGA_ROM_DIR, name)
+  msg = FpgaConverter.run(mrb, "#{base}.hex", "#{base}.lst", max_regs: FPGA_CORE_NREGS)
+  puts "#{fpga_rel(src)}: #{msg} (picoruby)"
+  "#{base}.hex"
+end
+
+# プログラムの入力の刺激: <src と同じ場所>/<name>.stim
+def fpga_stim_path(src)
+  path = File.join(File.dirname(src), "#{File.basename(src, '.*')}.stim")
+  File.file?(path) ? path : nil
+end
+
+# fpga/sim/mrb_run_tb.sv を Verilator で1回だけ build する (ヒープの語数ごと。既定は FpgaIsa::HEAP_SIZE)
+def fpga_runner(heap = nil)
+  @fpga_runner ||= {}
+  @fpga_runner[heap] ||= begin
+    mdir = File.join(FPGA_BUILD_DIR, "verilator", heap ? "mrb_run_tb_heap#{heap}" : "mrb_run_tb")
+    FileUtils.rm_rf mdir
+    FileUtils.mkdir_p mdir
+    fpga_quiet_sh(File.join(mdir, "build.log"),
+                  "verilator", "--binary", "--timing", "--assert", "-Wall", "--trace-fst",
+                  "-j", "0", "--Mdir", mdir, "--top-module", "mrb_run_tb", "-o", "mrb_run_tb",
+                  *(heap ? ["-GHEAP_WORDS=#{heap}"] : []),
+                  *fpga_rtl_sources, File.join(FPGA_SIM_DIR, "mrb_run_tb.sv"))
+    File.join(mdir, "mrb_run_tb")
+  end
+end
+
+# PERIDOT-Air のボードエミュレーターで src を ms だけ走らせ、ピンの変化を表示する。
+# <name>.buttons があればボタンを押す (その時は参照との突き合わせはしない)。返り値は参照と一致したか。
+# CE_DIV と MHz に合う board_emu (build してあればそれ)。[実行ファイル, シミュレーションの CE_DIV, 時刻の倍率]
+def fpga_emu_exe(ce_div, mhz)
+  sim_ce, k = FpgaEmu.scale(ce_div, fast: ENV["FPGA_EMU_EXACT"].nil?)
+  [fpga_board_emu(sim_ce, k, [(mhz * 1000.0 / k).round, 1].max), sim_ce, k]
+end
+
+def fpga_emulate(src, ms:, ce_div:, mhz: FpgaEmu::DEFAULT_MHZ, verbose: true)
+  hex = File.extname(src) == ".hex" ? src : fpga_rom(src)
+  name = File.basename(src, ".*")
+  buttons = File.join(File.dirname(src), "#{name}.buttons")
+  buttons = nil unless File.file?(buttons)
+  exe, sim_ce, k = fpga_emu_exe(ce_div, mhz)
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  log = File.join(FPGA_ROM_DIR, "#{name}.emu.log")
+  cmd = [exe, "+rom=#{hex}", "+ms=#{ms}", "+log=#{log}", "+mhz=#{mhz}"]
+  if buttons
+    plain = File.join(FPGA_ROM_DIR, "#{name}.buttons")
+    File.write(plain, FpgaCompare.read_stim(buttons).map { |r| r.join(" ") + "\n" }.join)
+    cmd << "+button=#{plain}"
+  end
+  out = IO.popen(cmd, err: [:child, :out], &:read)
+  raise "board emulator failed:\n#{out}" unless $?.success? && out.include?("PASS board_emu_tb")
+
+  events = FpgaEmu.read_log(log)
+  if verbose
+    puts "PERIDOT-Air emulation: #{fpga_rel(hex)}, #{ms} ms, #{mhz} MHz, CE_DIV=#{ce_div}" +
+         (k > 1 ? " (run with CE_DIV=#{sim_ce}, time x#{k}; FPGA_EMU_EXACT=1 for 1:1)" : "")
+    puts FpgaEmu.format_events(events)
+    unless buttons
+      FpgaEmu.periods(events).each { |pin, sec| puts format("  %-4s flips every %.4f s on average", pin, sec) if sec }
+    end
+  end
+
+  if buttons
+    puts "  #{name}: buttons in #{fpga_rel(buttons)}, not compared with the reference interpreter"
+    ok = true
+  else
+    window = FpgaEmu.executed_steps(events) || FpgaEmu.window_steps(ms, ce_div, mhz)
+    trace = fpga_ref_trace(hex, stim: nil, max: window + FpgaEmu::STEP_SLACK)
+    results = FpgaEmu.check_against_ref(events, trace, window)
+    results.each { |r_ok, msg| puts "  #{r_ok ? 'ok' : 'FAIL'} #{name} #{msg}" }
+    ok = results.all?(&:first)
+  end
+  puts "log: #{fpga_rel(log)}" if verbose
+  ok
+end
+
+# fpga/sim/board_emu_tb.sv を CE_DIV と時刻の倍率ごとに build する (parameter は build 時に決まる)
+def fpga_board_emu(ce_div, time_scale, ms_cycles)
+  mdir = File.join(FPGA_BUILD_DIR, "verilator", "board_emu_#{ce_div}_x#{time_scale}_ms#{ms_cycles}")
+  exe = File.join(mdir, "board_emu")
+  sources = [*fpga_rtl_sources, File.join(FPGA_SIM_DIR, "board_emu_tb.sv")]
+  return exe if File.executable?(exe) && sources.all? { |s| File.mtime(s) < File.mtime(exe) }
+  FileUtils.rm_rf mdir
+  FileUtils.mkdir_p mdir
+  fpga_quiet_sh(File.join(mdir, "build.log"),
+                "verilator", "--binary", "--timing", "--assert", "-Wall", "-O3", "--trace-fst",
+                "-j", "0", "-GCE_DIV=#{ce_div}", "-GTIME_SCALE=#{time_scale}", "-GMS_CYCLES=#{ms_cycles}",
+                "--Mdir", mdir, "--top-module", "board_emu_tb", "-o", "board_emu", *sources)
+  exe
+end
+
+# fork した子の puts をまとめて親へ返す (並べて回した時に出力が混ざらないように)。[ブロックの値, 出力]
+def fpga_capture
+  old = $stdout
+  $stdout = StringIO.new
+  value = yield
+  [value, $stdout.string]
+ensure
+  $stdout = old
+end
+
+# シミュレーションで走らせてトレースを返す。トレースなどは build/fpga/rom/<name>.* に書く
+def fpga_sim_trace(hex, name:, stim:, max:, dump: nil, heap: nil)
+  FileUtils.mkdir_p FPGA_ROM_DIR
+  base = File.join(FPGA_ROM_DIR, name)
+  trace = "#{base}.sim.trace"
+  cmd = [fpga_runner(heap), "+rom=#{hex}", "+trace=#{trace}", "+max=#{max}"]
+  if stim
+    # テストベンチの $fscanf はコメント行を読めないので、数字だけにしたものを渡す
+    plain = "#{base}.stim"
+    File.write(plain, FpgaCompare.read_stim(stim).map { |r| r.join(" ") + "\n" }.join)
+    cmd << "+stim=#{plain}"
+  end
+  cmd << "+dump=#{dump}" if dump
+  out = IO.popen(cmd, err: [:child, :out], &:read)
+  raise "mrb_run_tb failed on #{hex}:\n#{out}" unless $?.success? && out.include?("PASS mrb_run_tb")
+  File.readlines(trace, chomp: true)
+end
+
+def fpga_ref_trace(hex, stim:, max:)
+  vm = FpgaRefVm.new(FpgaConverter.read_hex(hex), nregs: FPGA_CORE_NREGS, stim: FpgaCompare.read_stim(stim))
+  vm.run(max)
+end
+
+def fpga_show_outputs(trace)
+  names = FpgaIoMap::PORTS.to_h { |p| [p.num, p.name] }
+  FpgaCompare.outputs(trace).each { |port, v| puts "  #{names[port] || port} = #{v.inspect}" }
+  FpgaPsg.format_events(FpgaPsg.from_trace(trace)).each { |l| puts l } # PSG の音 (P 行)
+  puts "  (#{trace.last})"
+end
+
+namespace :fpga do
+  desc "Make a ROM image ($readmemh) from a .rb or .mrb with the PicoRuby converter (e.g. rake fpga:rom[fpga/corpus/blink.mrb])"
+  task :rom, [:src] do |_t, args|
+    raise "usage: rake fpga:rom[<file.rb|file.mrb>]" unless args[:src]
+    hex = fpga_rom(args[:src])
+    print File.read(hex.sub(/\.hex\z/, ".lst"))
+    puts "rom: #{fpga_rel(hex)}"
+  end
+
+  desc "Run a .rb/.mrb on the simulated CPU core and print its I/O (e.g. rake fpga:run[fpga/corpus/counter.mrb])"
+  task :run, [:src, :max] do |_t, args|
+    raise "usage: rake fpga:run[<file.rb|file.mrb>,<max steps>]" unless args[:src]
+    require_fpga_tools!
+    hex = fpga_rom(args[:src])
+    name = File.basename(hex, ".hex")
+    dump = File.join(FPGA_ROM_DIR, "#{name}.fst")
+    trace = fpga_sim_trace(hex, name: name, stim: fpga_stim_path(args[:src]),
+                                max: (args[:max] || FPGA_DEFAULT_STEPS).to_i, dump: dump)
+    fpga_show_outputs(trace)
+    puts "trace: #{fpga_rel(File.join(FPGA_ROM_DIR, "#{name}.sim.trace"))}"
+    puts "waveform: #{fpga_rel(dump)}"
+  end
+
+  desc "Emulate PERIDOT-Air (clock default 125MHz, CE_DIV, pins) running a .rb/.mrb/.hex for <ms> ms (e.g. rake fpga:emu[fpga/corpus/blink.mrb,2000,1000,125])"
+  task :emu, [:src, :ms, :ce_div, :mhz] do |_t, args|
+    raise "usage: rake fpga:emu[<file.rb|file.mrb|file.hex>,<ms>,<CE_DIV>,<MHz>]" unless args[:src]
+    require_fpga_tools!
+    mhz = args[:mhz] ? Float(args[:mhz]) : FpgaEmu::DEFAULT_MHZ
+    raise "MHz must be positive" unless mhz.positive?
+    ok = fpga_emulate(args[:src], ms: (args[:ms] || 2000).to_i, ce_div: (args[:ce_div] || 1000).to_i, mhz: mhz)
+    raise "board emulation differs from the reference interpreter" unless ok
+  end
+
+  namespace :emu do
+    desc "Emulate PERIDOT-Air for every fpga/corpus/*.hex (600 ms, 125MHz, CE_DIV=1000) and compare the LEDs with the reference"
+    task :check do
+      require_fpga_tools!
+      fpga_emu_exe(1000, FpgaEmu::DEFAULT_MHZ) # 並べる前に親で build する
+      hexes = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort
+      runs = FpgaParallel.map(hexes) { |hex| fpga_capture { fpga_emulate(hex, ms: 600, ce_div: 1000, verbose: false) } }
+      runs.each { |_, out| print out }
+      failed = hexes.zip(runs).reject { |_, (ok, _)| ok }.map(&:first)
+      raise "board emulation differs from the reference: #{failed.map { |h| File.basename(h) }.join(', ')}" unless failed.empty?
+    end
+  end
+
+  desc "Run every fpga/corpus/*.hex on the reference interpreter and the simulated core, and compare"
+  task :check do
+    require_fpga_tools!
+    hexes = Dir[File.join(FpgaCorpus::DIR, "*.hex")].sort
+    raise "no fpga/corpus/*.hex. Run `rake fpga:corpus`" if hexes.empty?
+    fpga_runner # 並べる前に親で1回だけ build する
+    rows = FpgaParallel.map(hexes) do |hex|
+      name = File.basename(hex, ".hex")
+      stim = fpga_stim_path(hex)
+      ref = fpga_ref_trace(hex, stim: stim, max: FPGA_DEFAULT_STEPS)
+      FileUtils.mkdir_p FPGA_ROM_DIR
+      File.write(File.join(FPGA_ROM_DIR, "#{name}.ref.trace"), ref.join("\n") + "\n")
+      sim = fpga_sim_trace(hex, name: name, stim: stim, max: FPGA_DEFAULT_STEPS)
+      r = FpgaCompare.compare(ref, sim)
+      [name, r.ok, r.ok ? format("ok %-10s %5d I/O writes, %s", name, r.io_count, r.ending) : "FAIL #{name}\n#{r.message}"]
+    end
+    rows.each { |_, _, line| puts line }
+    failed = rows.reject { |_, ok, _| ok }.map(&:first)
+    raise "reference and simulation differ: #{failed.join(', ')} (traces in build/fpga/rom/)" unless failed.empty?
+  end
+
+  desc "Differential fuzzing: random ROMs on the reference interpreter vs the simulated core, full traces compared (e.g. rake fpga:fuzz[500,1])"
+  task :fuzz, [:count, :seed] do |_t, args|
+    require_fpga_tools!
+    count = (args[:count] || 200).to_i
+    seed = (args[:seed] || Random.new_seed % 100_000).to_i
+    rng = Random.new(seed)
+    dir = File.join(FPGA_BUILD_DIR, "fuzz")
+    FileUtils.mkdir_p dir
+    endings = Hash.new(0)
+    stats = Hash.new(0)
+    gc_progs = 0
+    # program は親で rng の順に作る (seed ごとの program の列は1本ずつ回した時と同じ)。参照とシミュレーションを並べる
+    progs = Array.new(count) do |i|
+      heap = i % 4 == 3 # 4本に1本はヒープ (配列・Proc・GC) を突く形
+      words = heap ? FpgaFuzz.heap_program(rng) : FpgaFuzz.program(rng)
+      [i, heap, words, heap ? FpgaFuzz::HEAP_STEPS : 400, FpgaFuzz.stim(rng)]
+    end
+    fpga_runner
+    fpga_runner(FpgaFuzz::HEAP_WORDS)
+    runs = FpgaParallel.map(progs) do |i, heap, words, max, stim|
+      hex = File.join(dir, "prog#{i}.hex")
+      File.write(hex, FpgaFuzz.hex(words))
+      stim_file = nil
+      unless stim.empty?
+        stim_file = File.join(dir, "prog#{i}.stimsrc")
+        File.write(stim_file, stim.map { |r| r.join(" ") + "\n" }.join)
+      end
+      heap_size = heap ? FpgaFuzz::HEAP_WORDS : FpgaIsa::HEAP_SIZE # ヒープを突く形は小さいヒープで GC を何度も起こす
+      vm = FpgaRefVm.new(words, stim: stim, heap_size: heap_size)
+      ref = vm.run(max)
+      sim = fpga_sim_trace(hex, name: "fuzz#{i}", stim: stim_file, max: max, heap: heap ? FpgaFuzz::HEAP_WORDS : nil)
+      same = ref == sim
+      File.delete(hex) if same
+      File.delete(stim_file) if same && stim_file
+      File.delete(*Dir[File.join(FPGA_ROM_DIR, "fuzz#{i}.*")]) if same
+      [vm.stats, vm.gcs, same ? nil : [ref, sim], ref.last.split.first]
+    end
+    runs.each_with_index do |(vstats, gcs, diff, ending), i|
+      if diff
+        ref, sim = diff
+        stim = progs[i][4]
+        keep = File.join(dir, "fail_seed#{seed}_#{i}")
+        FileUtils.mv File.join(dir, "prog#{i}.hex"), "#{keep}.hex"
+        File.write("#{keep}.ref.trace", ref.join("\n") + "\n")
+        File.write("#{keep}.sim.trace", sim.join("\n") + "\n")
+        File.write("#{keep}.stim", stim.map { |r| r.join(" ") + "\n" }.join)
+        raise "fuzz: program #{i} (seed #{seed}) differs.\n#{FpgaCompare.divergence(ref, sim, nil)}\nkept in #{fpga_rel(keep)}.*"
+      end
+      vstats.each { |k, v| stats[k] += v }
+      gc_progs += 1 if gcs > 0
+      endings[ending] += 1
+    end
+    puts "fuzz: #{count} random programs (seed #{seed}) identical on the reference and the core " \
+         "(ended by halt #{endings['H']}, error #{endings['E']}, step limit #{endings['L']}; #{stats[:gc]} GC in #{gc_progs} program(s))\n" \
+         "  reached: #{stats.sort.map { |k, v| "#{k} #{v}" }.join(', ')}"
+  end
+
+  desc "Run every gap target (corpus, gem examples and tests, examples/) on host PicoRuby and keep the output: the correctness oracle"
+  task oracle: "fpga:picoruby" do
+    dir = File.join(FPGA_BUILD_DIR, "oracle")
+    FileUtils.rm_rf dir
+    FileUtils.mkdir_p dir
+    results = FpgaParallel.threads(FpgaGap.targets) { |path| FpgaOracle.run(path, dir: dir) }
+    File.write(File.join(dir, "oracle.json"), JSON.pretty_generate(results.map(&:to_h).map { |h| h.merge(path: FpgaGap.rel(h[:path])) }))
+    results.group_by(&:status).sort_by { |k, _| k.to_s }.each { |st, rs| puts format("%-13s %d", st, rs.size) }
+    puts "outputs: #{fpga_rel(dir)}"
+  end
+
+  desc "Measure how many real PicoRuby programs (gem examples and tests, examples/, fpga/corpus) convert and run on the core, give the same output as host PicoRuby, and what blocks the rest"
+  task :gap, [:verbose] => "fpga:picoruby" do |_t, args|
+    require_fpga_tools!
+    mrbc = FpgaCorpus.default_mrbc
+    raise "#{mrbc} is not built. Run `rake setup` and `rake test:host`" unless File.executable?(mrbc)
+    dir = File.join(FPGA_BUILD_DIR, "gap")
+    FileUtils.rm_rf dir
+    FileUtils.mkdir_p dir
+    fpga_runner # 並べる前に親で1回だけ build する
+    # 1 本ごとに変換し、変換できたものは参照とコアで走らせて突き合わせ、コアのコンソールの出力を host の PicoRuby (oracle) と比べる
+    results = FpgaParallel.map(FpgaGap.targets) do |path|
+      r = FpgaGap.check(path, mrbc: mrbc, dir: dir)
+      if r[:status] == :converted
+        ref = fpga_ref_trace(r[:hex], stim: nil, max: FPGA_DEFAULT_STEPS)
+        sim = fpga_sim_trace(r[:hex], name: "gap_#{File.basename(r[:hex], '.hex')}", stim: nil, max: FPGA_DEFAULT_STEPS)
+        r[:status] = FpgaCompare.compare(ref, sim).ok ? :matched : :differs
+        host = FpgaOracle.run(path, dir: dir)
+        cut = FpgaCompare.io_lines(sim).last.to_s.match?(/\A[LT] /)
+        r[:host] = FpgaOracle.judge(host, FpgaCompare.console(sim), fpga_cut: cut)
+      end
+      r
+    end
+    lines = []
+    count = ->(st) { results.count { |r| r[:status] == st } }
+    in_scope = results.size - count.(:out_of_scope)
+    lines << "#{results.size} program(s): #{in_scope} in scope, #{count.(:out_of_scope)} out of scope (hardware the board lacks, or host-side tools)"
+    lines << "in scope: #{count.(:matched) + count.(:differs)} convert, #{count.(:matched)} match the reference, " \
+             "#{count.(:differs)} differ, #{count.(:blocked)} blocked"
+    host = ->(v) { results.count { |r| r[:host] == v } }
+    lines << "against host PicoRuby (the oracle): #{host.(:same)} same output, #{host.(:prefix)} same up to a cut (timeout or step limit), " \
+             "#{host.(:differs)} different output, #{host.(:host_error)} not runnable on host (no gem or posix port)"
+    lines << "blocked by (programs):"
+    FpgaGap.histogram(results).each { |reason, n| lines << format("  %4d  %s", n, reason) }
+    lines << "per program:"
+    results.each do |r|
+      host = r[:host] ? " host:#{r[:host]}" : ""
+      lines << format("  %-13s %s%s%s", r[:status], FpgaGap.rel(r[:path]), host, r[:reasons].empty? ? "" : "  (#{r[:reasons].join(', ')})")
+    end
+    report = File.join(FPGA_BUILD_DIR, "gap.txt")
+    File.write(report, lines.join("\n") + "\n")
+    puts(args[:verbose] ? lines : lines.take_while { |l| l != "per program:" }.first(30))
+    puts "full report: #{fpga_rel(report)}"
+  end
+
+  desc "Build the host picoruby that runs the converter and the oracle (build_config/fpga-tools.rb, no PICORB_DEBUG) into build/picoruby-fpga"
+  task :picoruby do
+    # vendor の rake の `all`。build の dir と、bin の symlink を置く dir (INSTALL_DIR) を harness の build/ に向け、
+    # vendor/picoruby/bin (host のテストの VM) には触らない。firmware-patches/ を当てて build する (実機の firmware と同じ直し。
+    # gpio-pin-num-mrb-int.patch が無いと GPIO の gem が MRB_INT64 でスタックを壊す)
+    dir = FpgaConverter::PICORUBY_DIR
+    with_firmware_patches do
+      vendor_rake({ "MRUBY_CONFIG" => File.join(HARNESS_ROOT, "build_config", "fpga-tools.rb"), "MRUBY_BUILD_DIR" => dir,
+                    "INSTALL_DIR" => File.join(dir, "bin"), "PICORB_DEBUG" => nil }, "all")
+    end
+  end
+
+  desc "Regenerate fpga/corpus/*.{mrb,dump,hex,lst} and docs/fpga-opcodes.md (mrbc and the PicoRuby converter)"
+  task corpus: :picoruby do
+    FpgaCorpus.write(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
+    puts "wrote #{FpgaCorpus.names.size} program(s) and #{fpga_rel(FpgaCorpus::TABLE)}"
+  end
+
+  namespace :corpus do
+    desc "Check that fpga/corpus/* and docs/fpga-opcodes.md match mrbc and the PicoRuby converter (needs vendor/picoruby)"
+    task check: "fpga:picoruby" do
+      stale = FpgaCorpus.stale(FpgaCorpus.default_mrbc, FpgaConverter.default_picoruby)
+      raise "out of date (run `rake fpga:corpus`): #{stale.join(', ')}" unless stale.empty?
+      puts "fpga corpus is up to date"
+    end
+  end
+
+  desc "Regenerate fpga/rtl/mrb_pkg.sv from tools/fpga/isa.rb and io_map.rb"
+  task :gen do
+    FpgaGenPkg.write
+    puts "wrote #{FpgaGenPkg::PATH.sub("#{HARNESS_ROOT}/", '')}"
+  end
+
+  namespace :fpconv do
+    desc "Regenerate fpga/tb/mrb_fpconv_vectors.txt (Float <-> decimal answers from tools/fpga/fpconv.rb for mrb_fpconv_tb)"
+    task :vectors do
+      require_relative "../tools/fpga/fpconv_vectors"
+      path = File.join(FPGA_TB_DIR, "mrb_fpconv_vectors.txt")
+      File.write(path, FpgaFpconvVectors.lines.join("\n") + "\n")
+      puts "wrote #{path.sub("#{HARNESS_ROOT}/", '')}"
+    end
+  end
+
+  desc "Everything for the FPGA core without a board: Ruby tools, testbenches, reference vs simulation, board emulation"
+  task test: ["test:fpga", "fpga:tb", "fpga:check", "fpga:emu:check", "fpga:fuzz:ci"]
+
+  namespace :fuzz do
+    desc "fpga:fuzz with a fixed seed and 300 programs (part of fpga:test)"
+    task :ci do
+      Rake::Task["fpga:fuzz"].invoke(300, 1)
+    end
+  end
+
+  # ---- PERIDOT-Air 実機 (issue #10 #11)。合成は Quartus、書き込みは openFPGALoader
+  desc "Synthesize for PERIDOT-Air with Quartus (local quartus_sh, or FPGA_QUARTUS_HOST over ssh). e.g. rake fpga:build[fpga/corpus/blink.mrb]"
+  task :build, [:src, :ce_div] do |_t, args|
+    raise "usage: rake fpga:build[<file.rb|file.mrb>,<CE_DIV>]" unless args[:src]
+    hex = fpga_rom(args[:src])
+    fpga_quartus_compile(FpgaQuartus.write_project(FPGA_BOARD_BUILD, hex, ce_div: (args[:ce_div] || 1000).to_i))
+  end
+
+  desc "Write the last fpga:build into PERIDOT-Air's SRAM over USB-Blaster with openFPGALoader (lost at power off)"
+  task :flash do
+    svf = FpgaQuartus.svf_path(FPGA_BOARD_BUILD)
+    raise "no #{svf.sub("#{HARNESS_ROOT}/", '')}. Run `rake fpga:build[...]` first" unless File.file?(svf)
+    unless fpga_tool?("openFPGALoader")
+      raise "openFPGALoader not found. `brew install openfpgaloader` (macOS) / `apt-get install openfpgaloader` (Linux)"
+    end
+    sh "openFPGALoader", "-c", ENV["FPGA_CABLE"] || "usb-blaster", svf
+  end
+
+  desc "Resource gate: synthesize RTL parts with yosys for Cyclone IV and compare LE / M9K / logic depth with the budget (e.g. rake fpga:synth[counter8])"
+  task :synth, [:name] do |_, args|
+    names = args[:name] ? [args[:name]] : FpgaSynth::TARGETS.keys
+    over = []
+    names.each do |name|
+      t = FpgaSynth::TARGETS.fetch(name) { raise "unknown synth target #{name} (#{FpgaSynth::TARGETS.keys.join(', ')})" }
+      r = FpgaSynth.run(files: t[:files].map { |f| File.join(HARNESS_ROOT, f) }, top: t[:top], params: t[:params] || {},
+                        blackbox: t[:blackbox] || [])
+      puts FpgaSynth.report(r, t[:budget])
+      over << name unless r.over(t[:budget]).empty?
+    end
+    raise "over budget: #{over.join(', ')}" unless over.empty?
+  end
+end
+
+# v2 のコア (docs/superpowers/plans/2026-09-27-fpga-v2.md)。参照 v2 と firmware を host の PicoRuby と比べる
+namespace :fpga do
+  namespace :v2 do
+    desc "Run fpga/v2/programs/*.rb on the v2 reference + firmware and compare the output with host PicoRuby"
+    task check: "fpga:picoruby" do
+      require_relative "../tools/fpga/v2/build"
+      progs = Dir[File.join(FPGA_DIR, "v2", "programs", "*.rb")].sort
+      results = FpgaParallel.map(progs) do |path|
+        host, = Open3.capture2(FpgaConverter.default_picoruby, path)
+        out, ref = FpgaV2::Build.run_source(File.read(path))
+        [File.basename(path, ".rb"), host.b == out, ref.steps, ref.stats[:trap]]
+      end
+      results.each { |name, ok, steps, traps| puts format("%-4s %-16s %8d insns %6d traps", ok ? "ok" : "DIFF", name, steps, traps) }
+      bad = results.reject { |r| r[1] }.map(&:first)
+      raise "differ from host: #{bad.join(', ')}" unless bad.empty?
+    end
+
+    desc "Run fpga/v2/board/*.rb (blink, endless loops) on host PicoRuby and the v2 reference with the board model, and compare the pin changes up to a virtual time (e.g. rake fpga:v2:pins[3000], ms)"
+    task :pins, [:until_ms] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/pins"
+      until_ms = (args[:until_ms] || FpgaV2::Pins::UNTIL_MS).to_i
+      results = FpgaParallel.map(FpgaV2::Pins.programs) { |path| FpgaV2::Pins.check(path, until_ms: until_ms) }
+      results.each do |r|
+        puts format("%-4s %-16s %4d pin change(s) up to %d ms, %8d insns", r.ok? ? "ok" : "DIFF", r.name, r.ref_pins.size, until_ms, r.steps)
+        next if r.ok?
+
+        puts "  host:", FpgaV2::Pins.format_pins(r.host_pins).map { |l| "    #{l}" }, "  ref:", FpgaV2::Pins.format_pins(r.ref_pins).map { |l| "    #{l}" }
+        puts "  console differs: host #{r.host_out.inspect} ref #{r.ref_out.inspect}" unless r.host_out == r.ref_out
+      end
+      bad = results.reject(&:ok?).map(&:name)
+      raise "differ from host: #{bad.join(', ')}" unless bad.empty?
+    end
+
+    desc "Differential fuzzing of v2: random mruby source programs on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:fuzz[100,1])"
+    task :fuzz, [:count, :seed] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/fuzz"
+      count = (args[:count] || 100).to_i
+      seed = (args[:seed] || 1).to_i
+      rng = Random.new(seed)
+      srcs = Array.new(count) { FpgaV2::Fuzz.program(rng) } # 親が seed の順に作る (並べても同じ列)
+      results = FpgaParallel.map(srcs) { |src| FpgaV2::Fuzz.check(src, picoruby: FpgaConverter.default_picoruby) }
+      dir = File.join(FPGA_BUILD_DIR, "v2fuzz")
+      FileUtils.mkdir_p dir
+      bad = results.each_with_index.reject { |r, _| r.ok }
+      bad.each { |r, i| File.write(File.join(dir, "seed#{seed}_#{i}.rb"), r.src) }
+      stats = Hash.new(0)
+      results.each { |r| r.stats.each { |k, v| stats[k] += v } }
+      puts "v2 fuzz: #{count} program(s) (seed #{seed}), #{count - bad.size} same as host, #{bad.size} differ"
+      puts "  reached: " + stats.sort.map { |k, v| "#{k} #{v}" }.join(", ")
+      raise "#{bad.size} program(s) differ (kept in #{fpga_rel(dir)})" unless bad.empty?
+    end
+
+    desc "Inventory: host reflection vs C and mrblib sources, written to fpga/v2/inventory.tsv (plan S2)"
+    task inventory: "fpga:picoruby" do
+      require_relative "../tools/fpga/v2/inventory"
+      inv = FpgaV2::Inventory
+      r = inv.build(picoruby: FpgaConverter.default_picoruby)
+      require_relative "../tools/fpga/v2/vm_table"
+      ops, uncovered = FpgaV2::VmTable.build
+      File.write(FpgaV2::VmTable::OUT, FpgaV2::VmTable.tsv(ops))
+      File.write(inv::OUT, inv.tsv(r))
+      File.write(inv::UNMATCHED, inv.unmatched_tsv(r, arena_outside_ops: uncovered))
+      require_relative "../tools/fpga/v2/needs"
+      File.write(FpgaV2::Needs::ASSERT_NEEDS, FpgaV2::Needs.assert_needs)
+      File.write(FpgaV2::Needs::GEMS, FpgaV2::Needs.assert_gems)
+      require_relative "../tools/fpga/v2/annotations"
+      gc_rows = FpgaV2::Annotations.gc_rows
+      File.write(FpgaV2::Annotations::GC_CALLS, FpgaV2::Annotations.gc_calls_tsv(gc_rows))
+      puts "v2 gc calls: #{gc_rows.size} firmware def(s) touch the GC API, #{gc_rows.count { |x| !x[4].empty? }} still miss some (plan S6 §3.5)"
+      puts "v2 ops: #{ops.size} opcodes, #{ops.count { |o| o[:arena] != 'none' }} restore the arena, " \
+           "#{uncovered.size} restore site(s) outside any opcode"
+      board = r.rows.count { |x| x[:board] == "yes" }
+      found = r.rows.count { |x| x[:board] == "yes" && x[:src] != "-" }
+      puts "v2 inventory: #{r.rows.size} entries on host (#{board} in board gems, #{found} of them with a source), " \
+           "#{r.host_only.size} host only, #{r.source_only.size} source only, #{r.problems.size} unresolved, " \
+           "#{(r.board - r.host).size} board gem(s) not on host"
+      puts "  wrote #{fpga_rel(inv::OUT)} and #{fpga_rel(inv::UNMATCHED)}"
+    end
+
+    desc "Acceptance: mruby test/t per assert on host PicoRuby vs the v2 reference + firmware (e.g. rake fpga:v2:accept or rake fpga:v2:accept[string])"
+    task :accept, [:names] => "fpga:picoruby" do |_, args|
+      require_relative "../tools/fpga/v2/accept"
+      acc = FpgaV2::Accept
+      errors = acc.check_scope
+      raise "scope.tsv is wrong:\n  #{errors.join("\n  ")}" unless errors.empty?
+      names = args[:names] ? args[:names].split(/[ +]/) : acc.names
+      results = FpgaParallel.map(names) { |n| acc.check(n, picoruby: FpgaConverter.default_picoruby) }
+      dir = File.join(FPGA_BUILD_DIR, "v2accept")
+      FileUtils.mkdir_p dir
+      rows = results.map do |r|
+        File.binwrite(File.join(dir, "#{r.file}.host.txt"), r.host_out)
+        File.binwrite(File.join(dir, "#{r.file}.ref.txt"), r.ref_out + (r.ref_error ? "\n[ref stopped: #{r.ref_error}]\n" : ""))
+        st = r.ref_stats
+        [r.file, r.rows.size, r.in_scope.size, r.same, format("%.1f", st[:sec]), st[:insn], st[:trap], st[:heap], r.ref_error.to_s]
+      end
+      head = %w[file asserts in_scope same sec insn trap heap ref_stopped]
+      File.write(File.join(dir, "summary.tsv"), ([head] + rows).map { |x| x.join("\t") }.join("\n") + "\n")
+      rows.each { |x| puts format("%-16s %4d asserts %4d in scope %4d same  %6ss %10d insns %6d traps %9d heap  %s", *x[0..7], x[8][0, 60]) }
+      in_scope = results.sum { |r| r.in_scope.size }
+      same = results.sum(&:same)
+      sec = results.sum { |r| r.ref_stats[:sec] }
+      insn = results.sum { |r| r.ref_stats[:insn] }
+      puts "v2 accept: #{results.size} file(s), #{in_scope} assert(s) in scope, #{same} same as host " \
+           "(ref #{insn} insns in #{format('%.1f', sec)} s, #{sec.positive? ? (insn / sec).round : 0} insns/s). details in #{fpga_rel(dir)}"
+      next if args[:names]
+
+      # 範囲内の assert の数は減らない (scope.tsv で落ちたものを外せないように)
+      min = File.read(acc::IN_SCOPE_MIN).to_i
+      raise "assert(s) in scope went down: #{in_scope} < #{min} (#{fpga_rel(acc::IN_SCOPE_MIN)})" if in_scope < min
+      puts "  in scope went up (#{min} -> #{in_scope}): raise #{fpga_rel(acc::IN_SCOPE_MIN)}" if in_scope > min
+    end
+  end
+end
+
+namespace :test do
+  desc "Run the FPGA Ruby tools' tests (tools/fpga, no simulator needed)"
+  task :fpga do
+    # 変換器を走らせるテスト (rom_test、gen_pkg_test) の VM。vendor/picoruby が無ければ (CI の fpga job) そのテストは skip する
+    Rake::Task["fpga:picoruby"].invoke if vendor_ready?
+    # テストのファイルごとに ruby を並べて回す (FPGA_JOBS)。出力はファイルの名前の順にまとめて出す
+    tests = Dir[File.join(HARNESS_ROOT, "tools", "fpga", "**", "*_test.rb")].sort # v2/ も
+    runs = FpgaParallel.threads(tests) do |test_file|
+      out, st = Open3.capture2e(RbConfig.ruby, test_file)
+      [test_file, out, st.success?]
+    end
+    runs.each { |test_file, out, _| puts "#{RbConfig.ruby} #{test_file}", out }
+    failed = runs.reject { |_, _, ok| ok }.map { |test_file, _, _| File.basename(test_file) }
+    raise "tools/fpga tests failed: #{failed.join(', ')}" unless failed.empty?
+  end
+end
+# Quartus で合成し、書き込み用の .svf を作る (rake fpga:build と fpga:rite:build)
+def fpga_quartus_compile(dir)
+  rel = fpga_rel(dir)
+  puts "project: #{rel}"
+  host = ENV["FPGA_QUARTUS_HOST"]
+  if fpga_tool?("quartus_sh")
+    FileUtils.cd(dir) { sh FpgaQuartus.compile_script }
+  elsif host
+    remote = ENV["FPGA_QUARTUS_DIR"] || "r2p2-fpga-build"
+    sh "rsync", "-a", "--delete", "#{dir}/", "#{host}:#{remote}/"
+    sh "ssh", host, "cd #{remote.shellescape} && #{FpgaQuartus.compile_script}"
+    sh "rsync", "-a", "#{host}:#{remote}/output_files/", File.join(dir, "output_files/")
+  else
+    raise "Quartus is not here. Put quartus_sh on PATH, or set FPGA_QUARTUS_HOST=<ssh host> " \
+          "(a Linux VM with Quartus Lite; docs/spec.md §10). The project is ready in #{rel}"
+  end
+  summary = FpgaQuartus.fit_summary(dir)
+  puts summary ? summary.join("\n") : "no fit summary in #{rel}/output_files"
+  puts "svf: #{FpgaQuartus.svf_path(dir).sub("#{HARNESS_ROOT}/", '')}"
+end
+
+# mruby のバイトコードを直接実行する回路 (fpga/rtl/rite_core.sv、反復 R2: Lチカと mrblib の Kernel#loop)
+namespace :fpga do
+  namespace :rite do
+    desc "Write fpga/rite/*.hex (mrblib kernel.rb and the .rb as .mrb, the ROM) and *.pins (host PicoRuby's pin changes up to 2000 ms) for rite_core_tb"
+    task hex: "fpga:picoruby" do
+      require_relative "../tools/fpga/rite_rtl"
+      File.write(FpgaRiteImage::PKG, FpgaRiteImage.pkg)
+      puts "wrote #{fpga_rel(FpgaRiteImage::PKG)}"
+      FpgaRite.programs.each do |rb|
+        base = rb.sub(/\.rb\z/, "")
+        File.write("#{base}.hex", FpgaRite.rom_hex(rb))
+        File.write("#{base}.pins", FpgaRite.format_pins(FpgaRite.host(rb)).join("\n") + "\n")
+        puts "wrote #{fpga_rel(base)}.{hex,pins}"
+      end
+    end
+
+    desc "Run fpga/rite/*.rb on rite_core (Verilator) and on host PicoRuby with the board model, and compare the pin changes up to <ms> (default 2000)"
+    task :check, [:ms] => "fpga:picoruby" do |_t, args|
+      require_relative "../tools/fpga/rite_rtl"
+      ms = (args[:ms] || FpgaRite::UNTIL_MS).to_i
+      bad = FpgaRite.programs.reject do |rb|
+        r = FpgaRite.check(rb, until_ms: ms)
+        status = r.sim.error ? "error op=#{r.sim.op} pc=#{r.sim.pc}" : "#{r.sim.pins.size} pin change(s)"
+        puts format("%-4s %-12s %s up to %d ms", r.ok? ? "ok" : "DIFF", r.name, status, ms)
+        unless r.ok?
+          puts "  host: #{FpgaRite.format_pins(r.host_pins).join(' / ')}"
+          puts "  rtl:  #{FpgaRite.format_pins(r.sim.pins).join(' / ')}"
+        end
+        r.ok?
+      end
+      raise "differ: #{bad.map { |b| File.basename(b) }.join(' ')}" unless bad.empty?
+    end
+
+    desc "Synthesize rite_core for PERIDOT-Air with Quartus (USER_LED[0] = pin 28, USER_LED[1] = error). e.g. rake fpga:rite:build[fpga/rite/blink.rb]"
+    task :build, [:src] => "fpga:picoruby" do |_t, args|
+      require_relative "../tools/fpga/rite_rtl"
+      src = args[:src] || File.join(FpgaRite::DIR, "blink.rb")
+      fpga_quartus_compile(FpgaQuartus.write_rite_project(FPGA_BOARD_BUILD, FpgaRite.rom_hex(src)))
+    end
+  end
+end

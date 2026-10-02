@@ -1,0 +1,539 @@
+# FPGA mruby コア: PicoRuby のプログラムをシミュレーターで完全に動かす — 実装計画
+
+**目標:** 実在の PicoRuby プログラムを、変換器 → CPU コア (シミュレーション) で最後まで動かす。
+対象はハードウェアが要らない範囲の全部 (下の「範囲」)。user の指示: 「全部やる」が必須条件、途中で尋ねない、実機は後回し。
+
+**設計:** [CPU コアと道具立て](../specs/2026-09-26-fpga-mruby-core-design.md)、[docs/spec.md](../../spec.md) §10
+
+## なぜ計画が要るか (ここまでの反省)
+
+段階 A〜C は「次に足りなそうなもの」を自分で選び、自分で書いたコーパス (14 本) で確かめてきた。
+実在のプログラムで測ると、**PicoRuby の example 89 本のうち、変換を通るものは 0 本**だった (2026-09-26 時点)。
+最初に止まる理由は文字列 (87 本が使う)。ほかに、シンボル (64)、`Foo::Bar` (56)、クラス定義 (17)・`.new` (79)、
+`require` (74)、`puts` (63)、例外 (16)、インスタンス変数 (14)、Hash (10)。
+
+また進め方も場当たりだった:
+
+- RTL を先に書き、テスト (`rom_test` `ref_vm_test` の oracle) を後から合わせた
+- ファズで GC を突く形は、実装が終わってから GC に届いていない (0 回) と気付いて足した
+- ドキュメントは最後にまとめて直した
+- Proc が作ったフレームより長生きする場合を「仕様外」として、黙って間違った値を返す穴を残した
+
+## 範囲
+
+**入れる (ハードウェアが要らないもの全部):** 言語の中核 (文字列、シンボル、クラス・モジュール・インスタンス変数・動的な
+メソッド呼び出し、省略可能・キーワード・残りの引数、Hash、Range、`case`、例外)、`puts` などの出力、`require`、
+ボードのピンに写せるデバイスのライブラリ (GPIO、PWM、ADC、UART は console)、`Task` (協調マルチタスク)。
+
+I2C / SPI の周辺機器 (ssd1306 などの表示器、センサー) と、計算だけの gem (psg、midibase-mml、zlib、pitchdetector) も入れる。
+gem の Ruby 部分はプログラムと一緒に変換し、C の部分は組み込みとして作る。
+
+**入れない:** 無線と通信 (socket、net/*、DRb、cyw43、BLE、セルラー、DFU)、USB デバイス (usb/*、keyboard)、
+TLS と暗号 (openssl、jwt、mbedTLS。C の mbedTLS の上にあり、無線が無ければ使い道も無い)、ファイルシステム、
+コンパイラ (prism、sandbox)、ホストの CLI (optparse)。PERIDOT-Air に無線も USB デバイスも記憶域も無いため。
+一覧は `tools/fpga/gap.rb` の `OUT_OF_SCOPE`。これらを使うプログラムは「範囲外」として数え、失敗には数えない。
+
+## 進み具合の測り方 (最初に作る)
+
+`rake fpga:gap` が、対象のプログラム (`vendor/picoruby/mrbgems/*/example*` の範囲内のものと `fpga/corpus/`) それぞれについて:
+
+1. mrbc で `.mrb` にする
+2. 変換器に通し、止まるなら理由 (命令・メソッド・pool など) を全部数える (最初の1つで止めない)
+3. 通ったものは参照インタプリタとコアで走らせ、トレースが一致するか見る
+
+を行い、「範囲内 N 本のうち、変換を通る本数・一致する本数」と、止まる理由の多い順を出す。
+各段の最初と最後に数字を記録する (この file の「記録」)。**段の完了条件は、その段で名指ししたプログラムが一致すること。**
+
+## 進め方の決まり (場当たりにしない)
+
+1. **順序は 仕様 → 参照インタプリタ → oracle → RTL。** まず `ref_vm.rb` に入れ、CRuby と picoruby host VM の結果と
+   一致させてから RTL を書く。RTL を先に書かない
+2. **テストは機能と同じ commit で。** コーパスのプログラム、`mrb_core_tb` のケース、ファズの生成器の拡張を同時に入れる。
+   ファズは新しい機能に届いていること (回数) を出力で確かめる
+3. **ドキュメント (spec §10) も同じ commit で。**
+4. **段ごとに commit して push、CI が green になってから次へ。**
+5. **「仕様外」で黙って間違えない。** 扱えないものは変換時か実行時にエラーで止める
+6. 段の途中で見つけた別の問題は、この file の「見つけたこと」に書いてから直す
+
+## 段
+
+### P0 土台
+
+- `rake fpga:gap` (上)。範囲内・範囲外の分類と、止まる理由を全部数える解析
+- **Proc の環境を退避する。** メソッドから戻る時、そのフレームを作った Proc が生きていれば、フレームのレジスタをヒープの
+  env オブジェクトへ写し、Proc は env を指す (mruby の REnv と同じ)。今の「仕様外」の穴を塞ぐ
+- **lambda の意味。** 引数の数を調べる、`return` は lambda から戻る
+- ~~`mrb_core.sv` からヒープを `mrb_heap.sv` に分ける~~ → **やめて P1 の最初に「1つの module のまま、関心ごとに
+  include file に分ける」に変えた。** 理由: GC はレジスタファイル・定数・コールスタック・ヒープを全部触り、呼び出しと
+  戻りも env を触るので、module を分けると全部を port で渡し、要求と応答の cycle が増えてトレースの一致を崩す危険だけが増える
+
+### P1 オブジェクトモデル
+
+#### 設計 (P1 以降の土台)
+
+**回路に全部の組み込みメソッドを書かない。** mruby の mrblib と同じく、`Array#each` `String#split` `Hash#each` のような
+メソッドは Ruby で書いた**プレリュード** (`fpga/prelude/*.rb`) に置き、プログラムと一緒に変換してコア自身で走らせる。
+RTL が持つのは、値の型の判定、ヒープのオブジェクトの確保と読み書き (語・バイト)、整数の演算、**メソッド探索**、呼び出しと戻り、
+GC だけにする。こうしないと P2〜P5 のたびに FSM が膨らむ。今の `SEND` の組み込み (番号で呼ぶ 24 個) は基本操作
+(primitive) として残し、メソッド表から呼ぶ。
+
+- **タグを 4bit にする。** nil / false / true / Integer / Symbol / Class (クラス番号の即値) / Object (ヒープの参照、
+  種類は見出しのクラス番号) / 転送 / 見出し。Array と Proc は Object の一種になる (見出しのクラス番号で分かる)。
+  空きは Float などのため
+- **クラス番号。** 組み込み (Object、NilClass、TrueClass、FalseClass、Integer、Symbol、Array、Proc、Class、String、Hash、
+  Range、Exception ...) は固定の番号、ユーザーのクラスとモジュールは 32 から。クラスメソッドは「メタクラス」
+  (番号 | 0x8000) のメソッドとして扱う。ヒープの中だけの塊 (配列の中身、env) は特別な番号
+- **メソッド表は変換器が静的に作り、ROM に置く。** クラスの本体 (`class Foo ... end`) の `def` / `attr_*` / `include` は
+  変換器が読み、継承とモジュールを平らにして、クラスごとに「そのクラスで呼べる全メソッド」を
+  (クラス番号 16bit, シンボル 16bit) → 飛び先 16bit の表 (1語 48bit にちょうど収まる) にする。開番地法のハッシュ表で、
+  コアは 1〜数 cycle で引く。飛び先は「pc」「primitive の番号」「インスタンス変数の読み / 書き (attr_*)」の4種。
+  表に無ければ NoMethodError (P4 までエラー停止)。`super` は「(持ち主のクラス, 名前) の次」を表す合成シンボルを
+  変換器が作り、同じ表で引く。`define_method` などの動的な定義は変換時に止める
+- **インスタンス変数** も同じ表で (クラス, @名前) → 番号を引く (モジュールのメソッドがどのクラスでも動くように)。
+  オブジェクトの大きさはクラスごとに変換器が数える
+- **定数。** `Foo::BAR` は変換器が静的に解決できる所は番号にし、できない所は (クラス, 名前) を表で引く。
+  クラスの本体の中の定数の代入は、その本体を実行時に走らせる (`EXEC` は本体を self = クラスで呼ぶ呼び出し。
+  `def` / `attr_*` / `include` は実行時は何もしない)
+- **`new`。** primitive: オブジェクトを確保して R[a] に置き、同じ引数で `initialize` を呼ぶ。そのフレームには
+  「戻り値で R0 (= オブジェクト) を上書きしない」印を付ける。`initialize` が無ければ Object#initialize (何もしない)
+- **メソッドの先頭は必ず `ENTER`。** mruby が出さない時は変換器が足す。`ENTER` が引数の数を調べ、省略可能な引数の
+  飛び先を選び、nregs までのレジスタを nil で埋める (今は呼ぶ側の S_CLEAR がしている。表から呼ぶと呼ぶ側は nregs を知らない)
+- **ROM の先頭の語** に表の位置と大きさを書く (コアはリセット後に読む)
+- **一番外の self** は Object のインスタンス (変換器が先頭で作る)。一般のグローバル変数は番号にして別の配列に置く
+- **RTL の file 分け** は上の P0 のとおり include file で
+
+#### P1c の設計 (オブジェクト)
+
+- **オブジェクト** = `[見出し (クラス, インスタンス変数の数 n)] [インスタンス変数 × n]`。n は変換器がクラスごとに数える
+  (親クラスの分が先、そのクラスのメソッドと `attr_*` に出る分、`include` したモジュールの分)。一番外の self (main) は
+  Object のインスタンスで、変換器が先頭で作る (Object のインスタンス変数は一番外の `@x`)
+- **`new`** は Class の primitive: (クラス, 0xFFFE) を表で引いて n を得て (無ければ 0)、確保し、R[a] に置いて `initialize` を送る。
+  そのフレームには「戻り値で R0 を上書きしない」印 (ctor) を付ける。Object#initialize はプレリュード (引数 0 個)
+- **インスタンス変数** は (self のクラス, `@x` のシンボル) を表で引く (親クラスへもたどる)。飛び先の種類 2 = 番号。
+  `GETIV` は見つからなければ nil、`SETIV` はエラー。`attr_reader :x` は (クラス, :x) → 種類 2、`attr_writer` は
+  (クラス, :x=) → 種類 3 (R[a+1] を書いて返す)。呼び出しで種類 2 / 3 に当たったら、その場で読む / 書く
+- **`super`** は、今のメソッドが見つかったクラス (フレームごとに持つ mcls) の親から、同じ名前 (変換器が b に入れる) を引く。
+  ブロックの中の `super` は変換時に止める
+- **`include M`** はクラスごとに iclass (新しい番号) を作り、M のメソッドを写し、親の輪を C → iclass → 元の親 にする。
+  M のインスタンス変数は C の番号の並びの後ろに足す
+- **`is_a?` / `kind_of?` / `Module#===`** は、変換器が (0x4000 | クラス, 祖先の番号) → 1 を祖先の分だけ表に入れ、
+  primitive が親をたどらずに1回引く。`respond_to?` は (クラス, シンボル) を親までたどって、あるかだけを見る
+- **クラス変数 (`@@x`)** は、それを最初に代入するクラス (祖先の中で一番上) ごとの定数と同じ番号にする
+
+- シンボル (`LOADSYM`): 変換器が番号を振る。名前の表は ROM に置く (`inspect` / `to_s` 用)
+- クラス・モジュール (`CLASS` `MODULE` `OCLASS` `DEF` `SDEF` `EXEC` `TCLASS` `LOADSELF` `RETSELF`)、`.new` / `initialize`、
+  インスタンス変数 (`GETIV` `SETIV`)、`attr_reader` / `attr_accessor`、`super` (`SUPER`)、`include`、`is_a?` / `class` / `respond_to?`
+- **動的なメソッド呼び出し。** 値に型 (クラス番号) を持たせ、変換器が作るメソッド表 (クラス番号, シンボル) → pc を ROM に置く。
+  コアは表を引く (無ければ親クラス、それでも無ければ NoMethodError)。組み込みのメソッドは組み込みクラスの表に載せる
+- 引数: 省略可能・残り・キーワード・ブロック (`ENTER` 全部、`ARGARY` `KARG` `KEY_P` `KEYEND` `APOST` `ARYCAT` `ARYPUSH`)
+- `Foo::Bar` (`GETMCNST` `SETMCNST`)、`GETGV` の一般のグローバル変数
+- 名指し: `fpga/corpus/` に classes.rb / args.rb、example から範囲内でこの段の機能だけで通るもの
+
+### P2 文字列と出力
+
+- 名指し: hello.rb (puts と式展開)、strings.rb (String のメソッド)、example の文字列を使うもの
+
+#### P2 の設計
+
+- **String は Array と同じ形** (`[見出し String] [長さ] [中身への参照]`、中身は `[見出し] [バイト × 容量]`、**1語に1バイト**
+  (Integer の値として))。計画の「4 byte / 語」はやめた: 配列の確保・伸長・写し (S_AELEM の区間、push) をそのまま使え、
+  RTL がほとんど増えない。ヒープは1バイト1語を食うので、足りなければ HEAP_SIZE を上げる
+- **pool の文字列は ROM のデータ領域** (プログラムとメソッド表の間) に 1語 4バイトで置く (バイト j は bit 8j から)。
+  `STRING a b c`: b = データの語アドレス、c = 長さ。コアは確保してから ROM を1語ずつ読んで写す (1バイト 2 cycle)
+- **シンボルの名前も ROM に置く。** シンボル表 (シンボル番号 → {データの語アドレス, 長さ}) の先頭を `TABLE` の c に入れる。
+  `Symbol#to_s` (primitive SYMSTR) が表を引いて `STRING` と同じに作る
+- **`STRCAT a` は変換器が下げる:** `SEND a+1 :to_s` と `SEND a :<< 1`。式展開は必ず新しい `STRING` から始まるので
+  (mrbc の出力で確かめた) R[a] を伸ばしてよい
+- **String の primitive は最小限** (受け手が String でなければエラー): `bytesize`、`getbyte` (AGET と同じ意味)、
+  `__aset` (setbyte の中身、値は 0..255)、`__push` (<< の中身、1バイト)、`__slice(i, n)` (範囲内の部分を新しい String に)。
+  Array の `size` `length` `empty?` は String も受ける。ほかの String のメソッドはプレリュード (Ruby) で書く
+  (`==` `+` `*` `<<` `size` (UTF-8 の文字数) `[]` `to_s` `inspect` `to_i` `upcase` `downcase` `split` `strip`
+  `start_with?` `include?` `index` `reverse` `chars` `each_char` `bytes` `ord`、Integer の `to_s` `chr` `inspect`、
+  nil / true / false / Symbol / Array の `to_s` `inspect`)。マルチバイトの文字は UTF-8 として数える (バイトで切って黙って違う結果にしない)
+- **出力は console ポート** (`$CONSOLE`、出力ポート 3) に1バイトずつ書く。`puts` `print` `p` はプレリュードで、
+  トレースは今の O 行のまま。参照との突き合わせは、CRuby の標準出力と console ポートに書いたバイト列を比べる
+- **`LOADL`** は 32bit に収まる整数なら `LOADI32` にする。収まらない整数、Float、BIGINT は変換時に止める
+### P3 Hash、Range、case、Array の残り、キーワード引数
+
+- `Hash` (`HASH` `HASHADD` `HASHCAT`、`[]` `[]=` `each` `keys` `fetch` ...)、`Range` (`RANGE_INC` `RANGE_EXC`、`each`、`include?`)
+- `case` / `when` (`===`)、`Array.new` `join` `each_slice` `sort` `select` `reject` `inject` など example に出るもの
+- キーワード引数 (P1d の残り: `ENTER` の key / kdict、`KARG` `KEY_P` `KEYEND`、呼び出しの nk)
+- 名指し: collections.rb (Hash / Range / case / Array)、kwargs.rb
+
+#### P3 の設計
+
+- **Hash・Range はプレリュードの Ruby のクラス** (組み込みの番号 12 / 13 のまま)。Hash は `@keys` `@vals` の2つの配列で、
+  挿入順を保ち、キーは `==` (`eql?`) で線形に探す (小さい Hash しか出ない)。Range は `@first` `@last` `@excl`
+- 回路の変更は、組み込みのクラスのうち Hash・Range・Exception (15) を `new` できてインスタンス変数を持てることだけ
+  (`new_ok` / `iv_ok` / ref の `ivar_addr`)
+- **命令は変換器が下げる:** `HASH a n` → `ARRAY a 2n` + `SEND a :__to_hash`、`HASHADD a n` → `ARRAY a+1 2n` + `SEND a :__add_pairs 1`、
+  `HASHCAT a` → `SEND a :__merge! 1`、`RANGE_INC a` / `RANGE_EXC a` → `SEND a :__range_inc 1` / `:__range_exc 1`
+- **Array の残りはプレリュード。** `Array#[]` は `(i)` だけ primitive で、`(i, n)` と `(range)` はプレリュード (`__aget` を呼ぶ)。
+  `Enumerable` (each を使うもの) を Array・Hash・Range で共有する
+- **`case` / `when`** は `===` を送るだけ (P2 で Object#=== と Module#=== がある)。Range#=== は include?
+- **キーワード引数** (PicoRuby の vm.c の `vm_op_enter` / OP_SEND と同じ意味):
+  - 呼ぶ側: nk 組のキーワードは Hash にしてから呼ぶ。変換器が下げる: `ARRAY k 2nk` + 作業用レジスタ S (組とブロックより上) で
+    `__to_hash` + `MOVE k S` (+ ブロックを k+1 へ)、最後に印 (c の bit 8、KW) 付きの `SEND`。`**h` (nk = 15) は `h.empty?` なら印なしで呼ぶ
+  - フレームは印を持つ (`argkw`)。ブロックの枠はその1つ後ろ。`new` は initialize へ、Proc#call はブロックへ印を渡す。ほかの primitive はエラー
+  - `ENTER` (c の bit 11 = kd: キーワードか **opts を受ける): kd でなく印があれば、Hash を最後の引数として数える
+    (引数 14 個以上なら止める)。kd なら R[len+1] = 渡された Hash (無ければ回路が空の Hash を作る: Hash の形 `@keys @vals @default
+    @default_proc` を変換器が確かめる)、ブロックは R[len+2]
+  - `KARG` / `KEY_P` / `KEYEND` は、作業用レジスタ N = nregs (フレームの上) で `R[len+1].__karg(:k)` / `key?(:k)` / `__keyend` を
+    呼ぶ形に変換器が下げる (KARG は Hash から消す。**opts には残りが入る)
+### P4 例外
+
+- `raise` / `rescue` / `ensure` / `retry` (`EXCEPT` `RESCUE` `RAISEIF` `JMPUW`)。irep の catch handler を ROM の表にする
+- コアの実行時エラー (0 で割る、NoMethodError、型の違い) を例外にし、`rescue` できるようにする。捕まえなければ今と同じく止まる
+- 名指し: exceptions.rb
+
+#### P4 の設計 (PicoRuby の vm.c の L_RAISE / catch_handler_find / OP_EXCEPT / OP_RESCUE / OP_RAISEIF と同じ意味)
+
+段を3つに分ける:
+- **P4a 例外と普通の流れ。** catch handler (種類 rescue / ensure、begin、end、target) を全部の irep から集め、pc (語) に直して
+  ROM の表にする (1語 = {種類, begin, end, target}、irep ごとに後ろから = vm.c の探す順)。表の場所と数は `HTABLE` (FPGA だけの命令、
+  handler がある時だけ pc 1 に置く)。例外はコアのレジスタ `exc` (GC の根)。`raise` はプレリュードで例外を作り、primitive `__raise` で
+  投げる。投げるとコアは今のフレームの pc (呼び出し元のフレームは戻り先 - 1) を覆う handler を表から探し、無ければフレームを畳んで
+  (env は写す) 呼び出し元で探す。見つかれば target へ。一番外まで無ければエラーで止まる。`EXCEPT a` は R[a] = exc (exc は nil に)、
+  `RESCUE a b` は R[b] = R[a].is_a?(R[b]) (ISA の行)、`RAISEIF a` は R[a] が nil でなければ投げ直す。
+  例外のクラスはプレリュード (Exception は組み込みの 15、ほかは Ruby のクラス)。`ensure` は普通の流れ (本体の後に落ちる) と
+  例外の時に動く
+- **P4b return / break / next / JMPUW で ensure を抜ける。** vm.c は RBreak (印の付いた疑似例外) で ensure を走らせてから続ける。
+  最初は「P4a では変換時に止める」つもりだったが、`g { break }` のように ensure を持つメソッドのフレームをブロックの break が
+  畳む所は静的に見つからない (黙って ensure を飛ばす)。止められないので P4a と一緒に作った: 例外と同じ状態機械で、
+  畳むフレームごとに ensure を探し、あれば巻き戻しの塊 (種類、行き先、値) を exc に置いて ensure へ飛び、
+  ensure の最後の RAISEIF が塊を受けて続ける (spec §10「例外 (P4)」)
+- **P4c コアのエラーを例外にする** (NoMethodError、ArgumentError、ZeroDivisionError ...)。例外を作るのは回路でなくプレリュード:
+  コアはフレームの上に [種類, 詳細] を置いて `Integer#__core_error` を呼ぶだけ (例外の表があるプログラムだけ)
+### P5 require とデバイス
+
+- `require` は変換器が解決する。範囲内の gem は組み込み、範囲外は「範囲外」
+- GPIO (`GPIO.new(pin, GPIO::OUT)`、`write` `read` `high?` `low?`)、PWM、ADC (シミュレーションの入力)、UART (console)、
+  `Machine` の範囲内のもの。ボードの top のピンを増やし、エミュレーターに見せる
+
+#### P5 の設計
+
+PicoRuby の gem は「Ruby の mrblib + C の port」でできている。**mrblib はそのまま使い、C の port の関数を FPGA 用に Ruby で書く**
+(`fpga/ports/<gem>.rb`)。port は回路のデバイスのレジスタを読み書きする primitive だけを使う:
+
+- **デバイスのバス。** primitive `__io_read(addr)` / `__io_write(addr, value)` (Object、Integer の番地と値)。番地は 16bit で、
+  0..3 は今のポート (`$LED` ...)、0x100 から上がデバイス。書き込みはトレースの O 行 (ポート番号 = 番地) に出る。
+  外からの入力 (ピン、ADC の値、UART の受信) は、今の入力ポートと同じく「step から値」の刺激で番地ごとに与える
+  (参照インタプリタと RTL が同じ値を読む)
+- **デバイスは参照インタプリタ・RTL・CRuby の3つで同じ形に書く。** CRuby には `__io_read` / `__io_write` を Ruby で定義して
+  同じ port と mrblib を読ませ、console とデバイスへの書き込みの列を比べる
+- **`require "x"`** は compile の前に解く: ソースの静的な `require` をたどり、gem の mrblib と port をプログラムの前に置く
+  (gem の中の require も)。実行時の `require` は何もしない (プレリュード)。知らない gem は「範囲外」で止める
+- **時間は仮想の時計。** `Machine.uptime_us` などは「実行した命令の数 (1命令 1µs) + sleep した時間」を数えるレジスタを読む。
+  参照と RTL で一致させるため (実時間はエミュレーターの表示だけ)
+
+段:
+- **P5a** バス、require、GPIO、Machine (時間・delay)、UART、rng。エミュレーターに GPIO のピンと UART を見せる (済み)。
+  io/console と watchdog は P5c に回した
+- **P5b** Float (PWM・ADC・example が使う。double のヒープの箱と primitive とプレリュード) (済み。docs/spec.md §10「Float (P5b)」)
+- **P5b の設計 (Float)。** PicoRuby の Float は double で、表示は CRuby と同じ最短表記 (`0.30000000000000004`、`1.0e+20`)。
+  値の 32bit には入らないので、**ヒープの箱** `[HDR(Float, 2)] [INT 上位 32bit] [INT 下位 32bit]` にする (変わらない値。
+  演算のたびに新しい箱)。浮動小数点の演算は回路の primitive (RTL は SystemVerilog の `real` で書いた**シミュレーションの
+  モデル**。合成するなら FP の IP に置き換える)、参照は CRuby の Float。Float のリテラルは ROM のデータ (2語) から作る
+  (`LOADF`、FPGA だけの命令)。Integer の演算の primitive は Float の引数も受ける。`to_s` / `format("%.2f")` / `to_f` の文字列との
+  変換も primitive (表示の規則は CRuby / PicoRuby と同じ。変換は多倍長の整数だけで正確に、`mrb_fpconv_pkg.sv`)。`Math` はプレリュード (primitive の上)。NaN・Infinity を Integer にすると
+  FloatDomainError、32bit に入らなければ RangeError (黙って折り返さない)
+- **P5c** PWM、ADC、IRQ (ピンの変化の割り込みを、命令の区切りで Ruby の callback に)、watchdog、io/console
+- **P5c の設計。** どれも mrb_dev のレジスタと、PicoRuby と同じ API の FPGA 版 gem (fpga/gems)。
+  - **命令の区切りで見る (tick)。** デバイスは各命令を始める前 (参照は step の頭、RTL は S_FETCH の終わりの en の cycle) に
+    ピンの値を標本にし、IRQ の事象と watchdog の期限を調べる。その時の仮想の時計は「それまでに始めた命令の数 + sleep」
+  - **IRQ (0x160..0x166)。** RP2040 の port (picoruby-irq/ports/rp2040/irq.c) と同じ: 16 個の枠、事象の列は 32 (31 で満杯、
+    溢れたら捨てる)。0x160 ピン、0x161 事象の mask (LEVEL_LOW 1、LEVEL_HIGH 2、EDGE_FALL 4、EDGE_RISE 8)、0x162 debounce (ms) を
+    書いてから 0x163 を読むと登録 (id 1..16、空きが無ければ -1)。0x164 に id を書くと解除 (0x165 で登録されていたか)。
+    0x166 を読むと列の先頭を取る (id << 8 | 事象、空なら -1)。事象は tick ごとに、前の標本との差 (EDGE) と今の値 (LEVEL) を、
+    そのピンで有効な mask の和で絞ったもの。ピンの最初の枠で mask と重なれば、debounce (同じ事象が debounce ms 以内なら捨てる)
+    の後に列に積む。LEVEL は条件が続く間 tick ごとに積む (RP2040 と同じく列はすぐ埋まる)。
+    `IRQ.process` / `peek_event` / `register` / `unregister` / `GPIO#irq` は Ruby。`IRQ.start` / `stop` は Task が要るので P6
+  - **PWM (0x140..0x143)。** 0x140 にピンを書き、0x141 に周波数 (mHz、0 は止める)、0x142 に duty (1/1000 %) を書く。0x143 は
+    動いているピンの bit。波形は step のトレースには出さない (ピンの LEVEL は GPIO の値のまま)。エミュレーターは設定の変化を書く。
+    `PWM#frequency` `duty` `period_us` `pulse_width_us` は C の binding と同じ計算 (duty は 0..100 に丸める) を Ruby で
+  - **ADC (0x150..0x154)。** 入力 0..3 (ピン 26..29) と 4 (温度、`"temperature"`) の生の値 (12bit)。刺激で与える (番地に値、
+    その step から。無ければ 0)。`read` / `read_voltage` は raw * 3.3 / 4095、`read_raw` は raw
+  - **watchdog (0x170..0x175)。** 0x170 に ms を書くと有効 (期限 = 今 + ms)、0x171 で無効、0x172 で期限をのばす (feed)、
+    0x173 は watchdog で再起動したか、0x174 は残り (µs、無効なら 0)、0x175 に ms を書くとその後に再起動 (`reboot`)。
+    tick で期限を過ぎていれば**再起動**: コアはリセット (レジスタ・ヒープ・定数・仮想の時計が初めから)、デバイスは
+    「watchdog で再起動した」印だけを残して初めから (UART の受けて読んでいないバイトは捨てる)。トレースに `B <step>` を書き、
+    step は数え続ける (刺激は step で与えるので)。参照と RTL で同じ
+  - **io/console。** `STDIN` / `STDOUT` (IO) の `getch` は UART の RX を 1ms ごとに見て1文字、`read_nonblock(n)`、
+    `raw` / `cooked` (何もしない)、`echo=`。console の入力は UART の RX (FPGA の console は UART だとみなす)
+  - **CRuby との突き合わせ。** 刺激・時計・watchdog を使うプログラムは比べない (今と同じ)。IRQ は CRuby では tick が無いので、
+    oracle は __io_read / __io_write のたびに tick する (出力のピンの変化は次のアクセスの前に見える。LEVEL の事象を使う
+    プログラムは比べない)
+- **P5d** I2C、SPI とデバイスのモデル (SSD1306 などをエミュレーターが画面として見せる)、rotary_encoder、hcsr04
+- **P5d の設計。**
+  - **外のチップ (表示器・センサー) は FPGA の外。** コアの側は I2C / SPI の送受信器だけを mrb_dev に持つ。
+    書き込みはトレースの O 行 (番地とバイト) に出るので、表示器 (SSD1306、AQM0802 の LCD、UC8151) はその列を読む
+    デコーダー (Ruby) が画面にする (エミュレーターが表示する)。読み出しの返事は刺激 (UART の RX と同じく届いた順の列。
+    無ければ 0xFF)。応答する I2C の番地は既定で 0x3C (SSD1306) と 0x3E (LCD)、刺激で変えられる
+  - **I2C (0x180..0x188)。** 0x180 に 7bit の番地を書く (始め)、0x181 に1バイト送る、0x182 を読むとその番地が応答するか (1 / 0)、
+    0x183 に書くと終わり (STOP)、0x184 を読むと返事の次のバイト、0x185..0x188 は応答する番地の bit (128 番地、刺激で与える)
+  - **SPI (0x190..0x191)。** 0x190 に1バイト送る、0x191 を読むと返事の次のバイト (刺激。読んだバイトにだけ当てる)。
+    CS は GPIO (PicoRuby の spi gem と同じ)
+  - **gem。** i2c (`write` `read` `scan`。応答しなければ IOError)、spi (`write` `read` `transfer` `select` `deselect`)、
+    Time (`Time.now` は仮想の時計。`usec` `to_i` `to_f` `-`)、vram (C の vram.c を Ruby に)、bdffont (フォントの gem は無い:
+    `draw_text` は PicoRuby でフォントの gem を入れていない時と同じく NoMethodError)。
+    ssd1306 / uc8151 / hcsr04 / rotary_encoder は PicoRuby の mrblib をそのまま使う (変換器が通れば)
+  - **ヒープを 16384 語に。** SSD1306 の画面 (1024 バイト、1語 1バイト) が 2048 語のヒープに入らないため。GC を突く
+    ファズは大きい添字で配列を伸ばす断片で補う
+- **P5e** PSG・MML・MIDI (psg の C の部分を Ruby か回路に)
+- **P5e の設計。** PicoRuby の picoruby-psg (C の ports/common/psg.c と src/mruby/psg.c)、midibase・midibase-mml・uart-midi (Ruby)。
+  - **PSG の音は FPGA の外 (DAC / PWM の先) とみなし、回路はパケットの列 (ring buffer) だけを持つ。** mrb_dev に 256 枠の列
+    (C と同じく 255 まで入る)。番地 0x1A0.. に遅延 (ms)、パケット (op / reg / val / arg / aux) を書いて積み、空きの数と
+    空か (`buffer_empty?`) を読み、flush と deinit (列を捨てて止める) を書く。取り出しは C の psg_process_packets と同じく
+    仮想の時計の 1ms ごと (g_tick_ms を進め、先頭の遅延が来たら引いて取り出す、空になったら 0)。取り出したパケットは
+    トレースに `P <step> <パケット>` を出し (参照と RTL で同じ)、音の組み立て (レジスタ → 音程・音量) はトレースを読む
+    Ruby のデコーダー (表示器と同じ作り) がする。エミュレーターは音の出来事を時刻つきで出す
+  - **gem。** fpga/gems/psg.rb に C の部分 (`PSG.note_to_period` `set_tuning`、Driver の `send_reg` `voice_write` `mute`
+    `set_pan` `set_timbre` `set_legato` `set_lfo` `buffer_empty?` `buffer_flush` `deinit` `select_pwm` `select_mcp4922` ...) を
+    Ruby で書き、PicoRuby の mrblib (driver.rb、synth.rb、sound.rb、midi_controller.rb) と midibase 系の mrblib はそのまま使う
+  - **突き合わせ。** 参照と RTL はトレース (P 行を含む)。MML の example は host の picoruby の PSG (posix port) の出力と
+    比べられるなら比べる
+### P6 Task
+
+- `Task.new { }`、`Task.pass`、`sleep` で切り替わる協調マルチタスク。タスクごとにレジスタ窓とコールスタックを持つ
+- PSG (P5e) の `start` / `join` と `IRQ.start` は Task の上に作られているので、P6 を P5e より先にする
+- **P6 の設計。** PicoRuby の mruby-task (src/task.c、task_queue.c) と同じ意味。詳細は docs/spec.md §10「Task (P6)」
+  - **区画。** レジスタファイルとコールスタックを TASKS (8) 個の区画に分け (タスク i の R0 は i × 128、スタックは区画ごとに 32 段)、
+    切り替えは小さな状態 (pc・bp・cp・env・fn・mcls・argc・exc・xval・スタックの深さ) を区画ごとの表と入れ替えるだけ。GC の根は全区画
+  - **スケジューラーは FPGA 版の gem の Ruby** (`fpga/gems/task.rb`)。task.c を1行ずつ写す (switching_、mrb_tick、task_run_body)。
+    回路の primitive は `__task_init` `__task_switch` `__task_slot` `__task_lock` `__task_on` `__hw_sleep_us` `__halt`
+  - **割り込みはスケジューラーが決めた ms にだけ。** tick (1ms、timeslice 10) は割り込みの時にまとめて進める。
+    割り込みのフレームは今のフレームの上 (bp + fn)。一番外の irep にもいつも ENTER を置く。一番外の終わりは `__task_main_end`
+  - **仮想の時計は 16 命令で 1µs、スケジューラーの命令は 256 個で 1µs** (P6 で決めた。下の「見つけたこと」)
+  - **突き合わせ。** mruby-task の examples 8 本と picoruby-mruby の example/task.rb は参照と RTL が一致。host の picoruby とは
+    tick の単位 (host は 4ms)・番地・UINT32_MAX の表し方の違いだけ。statistics.rb は `workers.each(&:join)` (Symbol#to_proc) が要る → P7
+
+### P7 動的な send と Symbol#to_proc
+
+- `obj.send(:name, ...)` / `__send__` / `public_send` と、`&:sym` のブロック (Symbol#to_proc)。mruby-task の statistics.rb が使う
+- **P7 の設計。**
+  - **`__send` (回路の primitive、Object、引数の数は何でも)。** R[a+1] の Symbol を名前にして、残りの引数を1つ下へずらし
+    (R[a+1..] = R[a+2..]、ブロックとキーワードの Hash の枠も)、引数の数を1つ減らして普通の呼び出しと同じく受け手のクラスから引く。
+    ずらす書き込みはトレースに出さない。名前が Symbol でなければ TypeError (コアのエラー)、引数 0 個はエラー
+  - **`send` / `__send__` / `public_send` はプレリュード** (`def send(name, *args, &blk)`)。引数の数で `__send(name, a0, ...)` に
+    分ける (配列の splat で呼ぶと argc 15 になり、primitive の受け手の検査が通らないため)。キーワード引数は最後の Hash として渡す。
+    String の名前は `Integer#__sym_at` (シンボル表の i 番目) でプログラムのシンボルから探す (`String#to_sym` も)
+  - **`&:sym`。** mruby の OP_SENDB は、ブロックの枠が nil でも Proc でもなければ `to_proc` を送る。回路でこれをすると呼び出しの
+    途中にもう1つ呼び出しが要るので、変換器が「ブロックの枠を LOADSYM で埋めた直後の SENDB」(`&:sym` の形) に
+    `SEND 枠 :to_proc` を足す。`Symbol#to_proc` はプレリュード (`proc { |o, *a| o.__send(sym, *a) }` を引数の数で分けたもの)。
+    LOADSYM 以外の値 (`&obj`) を渡すものは今は止めない (Proc でなければ呼んだ所でエラー)
+
+### P8 64bit の Integer
+
+- R2P2 (Pico 2) の PicoRuby は `MRB_INT64` (build_config/r2p2-picoruby-pico2_w)。コアの Integer は 32bit で、桁があふれると
+  黙って折り返す (MML の Player の `delta_ticks * 60_000_000` で見つけた)。値を {tag 4bit, 64bit} にし、演算・比較・
+  リテラル (LOADL は 64bit を ROM のデータから)・デバイスの 32bit のレジスタ (符号拡張)・Float との変換・トレースを 64bit にする
+- **P8 の設計。** PicoRuby の mruby (MRB_INT64、MRB_NO_BOXING、bigint なし) と同じ意味。
+  - **値は {tag 4bit, 64bit}** (VAL_BITS 68)。レジスタ・ヒープ・定数・ポートの語も 68bit。ヒープの番地・長さ・見出しは下の bit
+  - **桁あふれは RangeError** (mruby は bigint が無いと VM の演算は "integer overflow"、メソッドは "integer overflow in
+    addition" など)。回路は +、-、*、ADDI / SUBI、`-@`、`abs`、`/` と `%` の MIN / -1、`<<`、`**` (プレリュード) で桁あふれを見て
+    コアのエラー (CERR_OVERFLOW、プレリュードが RangeError にする) にする。今の折り返しは黙って違うのでやめる
+  - **リテラル。** LOADI32 は 32bit を符号拡張、pool の 32bit に入らない整数は LOADL64 (ROM のデータの2語、LOADF と同じ形) にする
+  - **デバイスのレジスタは 32bit のまま。** __io_read は 32bit を符号拡張 (-1 は -1 のまま。今の gem の意味を変えない)、
+    __io_write は下の 32bit (範囲の外は RangeError?。devices.rb と同じにする)。TIME_US は 64bit を1回で読めるようにする
+  - **Float との変換** (`to_i` は 64bit に入らなければ RangeError、`to_f` はそのまま)。Integer#to_s / format / inspect はプレリュードの
+    計算がそのまま 64bit で動く
+  - **トレース** の W / O 行の値は 16 桁の16進。tb の期待値、ファズの値の範囲、トレースを読む道具 (compare、displays、emu) を合わせる
+  - 突き合わせ: CRuby は Bignum に上がるので、桁あふれの所は picoruby host (64bit) と比べる。MML の example の待ち時間
+
+## 記録
+
+| 日付 | 段 | 範囲内 | 変換を通る | 一致 | メモ |
+|---|---|---|---|---|---|
+| 2026-09-26 | 開始時 | 46 (全 91、範囲外 45) | 14 (自作のコーパスだけ。example は 0 / 32) | 14 | 止まる理由: 文字列 24、`.new` 19、シンボル 16、`Foo::Bar` 14、`puts` 11 |
+
+| 2026-09-26 | P0 env・lambda | 47 | 15 (example は 0 / 32) | 15 | closures.rb を追加。example はまだ文字列で止まる |
+| 2026-09-26 | P1a タグ・シンボル | 47 | 15 | 15 | |
+| 2026-09-26 | P1b メソッド表・プレリュード | 48 | 16 (example は 0 / 32) | 16 | classes.rb を追加。止まる理由の上位は文字列 30、`.new` 25、`Foo::Bar` 18、`puts` 15 |
+| 2026-09-26 | P1c オブジェクト | 49 | 17 (example は 0 / 32) | 17 | objects.rb を追加。止まる理由の上位は文字列 30、`GETMCNST` 18、`puts` 15 (`.new` は消えた) |
+| 2026-09-26 | P1d 引数 | 50 | 18 (example は 0 / 32) | 18 | args.rb を追加。止まる理由の上位は文字列 30、`GETMCNST` 18、`puts` 15。キーワード引数は P3 の後 |
+| 2026-09-26 | P1e 定数の path・グローバル変数 | 51 | 19 (example は 0 / 32) | 19 | consts.rb を追加。`GETMCNST` は止める理由から消えた (`GPIO::OUT` などは P5 でクラスができれば通る)。上位は文字列 30、`puts` 15 |
+| 2026-09-26 | P2 文字列と出力 | 53 | 23 (example は 2 / 32: picoruby-dfu の app_1 / app_2) | 23 | hello.rb、strings.rb を追加。止める理由の上位はデバイス (`start` 14、`connect` 8、`require psg` 8)、`HASH` 4、Float 3 |
+| 2026-09-26 | P3a Hash・Range・Array | 54 | 25 (example は 3 / 32) | 25 | collections.rb を追加。使わないメソッドを ROM から落とす (live_ireps)。上位はデバイス |
+| 2026-09-26 | P3b キーワード引数 | 55 | 26 (example は 3 / 32) | 26 | kwargs.rb を追加。止める理由はデバイス (P5)、Float 3、`getch` など |
+| 2026-09-26 | P4a+b 例外・ensure の巻き戻し | 56 | 27 (example は 3 / 32) | 27 | exceptions.rb を追加。使わないクラスを表から落とす (live_classes)。止める理由はほぼデバイス (P5)。catch handler は止める理由から消えた |
+| 2026-09-26 | P4c コアのエラーを例外に | 57 | 28 (example は 3 / 32) | 28 | errors.rb を追加。メソッドの生死をクラスでも絞り、blink.rb は 4800 → 1850 語。止める理由はほぼデバイス (P5) |
+| 2026-09-26 | P5a デバイスのバス・GPIO・UART・時計・RNG | 59 | 30 (example は 3 / 32) | 30 | devices.rb、uart_echo.rb (刺激) を追加。FPGA 版の gem (fpga/gems)。止める理由はほぼ device の gem (psg、i2c ...) |
+| 2026-09-26 | P5b Float | 60 | 31 (example は 3 / 32) | 31 | floats.rb を追加。10進との変換は多倍長の整数で正確に (mrb_fpconv_pkg、tb は両シミュレーターで 1174 本)。ROM を 16384 語に。止める理由はほぼ device の gem (psg、i2c、irq ...) |
+| 2026-09-26 | P5c IRQ・PWM・ADC・watchdog・io/console | 63 | 38 (example は 9 / 32) | 38 | peripherals.rb (刺激)、irq_loopback.rb、watchdog.rb を追加。example の irq_gpio_picoruby など IRQ.start を使う3本は、参照と RTL は一致するが NotImplementedError で終わる (P6 で Task ができてから)。止める理由は i2c / spi / psg / Task |
+| 2026-09-26 | P5d I2C・SPI・表示器・Time・hcsr04・rotary_encoder | 65 | 47 (example は 17 / 32) | 47 | buses.rb (刺激)、display.rb を追加。ヒープ 65536 語 (parameter)。表示器はトレースのデコーダーでエミュレーターが描く。止める理由は Task (P6)、psg (P5e)、picotest、pio、pitchdetector |
+| 2026-09-26 | P6 Task | 66 | 50 (example は 19 / 32) | 50 | tasks.rb を追加 (host の picoruby とも比べる)。区画 8 つ、スケジューラーは task.c を写した Ruby。仮想の時計を 16 命令で 1µs に。mruby-task の examples 9 本は参照と RTL が一致、host とは表し方の違いだけ。止める理由は psg (P5e)、picotest、pio、pitchdetector |
+| 2026-09-27 | P7 動的な send と &:sym | 67 | 51 (example は 19 / 32) | 51 | sends.rb を追加 (CRuby と host の picoruby とも比べる)。mruby-task の statistics.rb も通った (host とは tick の単位だけ)。止める理由は psg / midibase-mml / uart-midi (P5e)、picotest、pio、pitchdetector |
+| 2026-09-27 | P5e PSG・MML・MIDI | 69 | 64 (example は 27 / 32) | 64 | psg.rb、singletons.rb を追加。PSG の列 (256 枠) と P 行、psg / midibase / midibase-mml / uart-midi は PicoRuby の mrblib をそのまま使う。`class << self`、クラスのインスタンス変数、`::X`、`defined?(X)`。ROM 32768 語、定数 256。止める理由は picotest、pio、pitchdetector、File (dirname / expand_path) |
+| 2026-09-27 | P8 64bit の Integer | 71 | 66 (example は 27 / 32) | 66 | int64.rb、mml.rb を追加 (int64 は host の picoruby と全行一致)。値は {tag 4bit, 64bit}、桁あふれは RangeError (CERR_OVERFLOW)、LOADI64。fuzz seed 1–4 一致。止める理由は picotest、pio、pitchdetector、File (dirname / expand_path) |
+
+## 見つけたこと
+
+- P0: 多重代入 (`a, b = make_counter(5)`) に `AREF` が要った (P3 の予定を前倒しで入れた)
+- P0: `mrb_core_tb` の期待値を2回間違えた (BLKCALL のフレームが上のレジスタを nil で埋めること、R1 が最後に Proc になること)。
+  どちらも参照インタプリタで同じ ROM を走らせて、RTL ではなくテストの誤りと確かめてから直した。
+  テストベンチのケースは、先に参照インタプリタで期待値を出してから書く
+- P1b: プレリュードの `self[i]` は `GETIDX` ではなく `SSEND :[]`、`self * 2` は `SSEND :*` になる。
+  mruby の演算の命令は型が合わなければ同名のメソッドを送る (vm.c の `OP_MATHI` などで確かめた) ので、その落ち先と、
+  Integer の演算の primitive を入れた。`!=` と `include?` は primitive をやめてプレリュードにした (回路の S_INCL が消えた)
+- P1b: ブロックのフレームの R0 が「呼んだ側の self」になっていた (mruby は Proc を作った時の self)。プレリュードの `times`
+  から呼ぶと self が Integer になるので、Proc に self を持たせた
+- P1b: `Array#[]=` の参照の値を、伸ばす時の GC の前に読んでいた (GC で動いた後の古いアドレスを返す)。RTL は後で読んでいたので
+  ファズより先に読み比べで見つけた
+- P1b: Icarus が `always_comb` の中で2回書いてから読む変数と、`if` の条件の関数の呼び出しで時刻を進めなくなった
+  (Verilator は通る)。spec §10 の「Icarus の癖」に足した
+- P1b: 自分で書いた mrb_core_tb のケース1つの期待値が混乱していた。参照の実行結果を見て書き直した
+- P1c: mrb_core_tb の新しいケースを、参照インタプリタで期待値を出さずに書いて、tb のレジスタが 16 本なのを忘れた
+  (a + 引数 + 1 = 16 が範囲外でエラー)。上の決まりを守らなかった。RTL の誤りではなかった
+- P1c: `fpga:gap` の事前検査 (`gap.rb`) が変換器と別に「定義されたメソッド」を数えていて、`attr_*` の名前と
+  クラスの本体の宣言を知らず、objects.rb を止まると数えた。変換器の noops と同じ名前の一覧を持たせた
+- P1c: 一番外の irep の先頭に main を作る2語を足したので、pc が 2 ずれる。`rom_test` の番号を直し、
+  クラスの本体の `attr_*` / `include` (`SSEND` → `LOADNIL`) とクラス変数 (`GETCV` → `GETCONST`) を置き換えの一覧に足した
+- P1d: キーワード引数は Hash を要する (mruby は kdict を Hash にする) ので、P3 (Hash) の後に回す。変換時に止める
+- P1d: ブロックの `ENTER` を `NOP` にして BLKCALL が引数を埋めていたので、`|a, b|` に配列1つを渡すと展開されていなかった
+  (黙って違う動き)。ブロックも `ENTER` を残し、proc の展開と lambda の検査を `ENTER` に移した。Proc の info から引数の数と nregs を外した
+- P1d: 確保の語数 `need` が HB+1 bit で、splat した大きな配列の残りの長さで折り返し得た。17 bit にし、GC の後も入らなければエラー
+- P1d: Icarus が APOST の書き込みの値 (`always_comb` の `if` の中でヒープを2段たどる三項演算子) で時刻を進めなくなった。wire にした
+- P1d: tb の期待値を参照インタプリタで出す道具 (`rake fpga:tb:ref`、tb の `+dumprom`) を作った。自分の書いたブロックの式の誤りを1つ見つけた
+- P1e: 空の本体のクラス (`class E < StandardError; end`) は mruby が `EXEC` を出さず、変換器が「本体が無い」と止めていた。
+  P4 の例外クラスで必ず要るので直した
+- P1e: 定数の字句の入れ子を名前の path から作っていたので、`class A::B` の中で `A` の定数が見えてしまう (Ruby の cref では見えない)。
+  irep ごとに cref を持たせた
+- P2: 計画の「文字列は 4 byte / 語」をやめ、1語に1バイト (Array と同じ形) にした。配列の回路をそのまま使えるため。
+  ヒープを食うので、足りなくなったら HEAP_SIZE を上げる
+- P2: `while` の中の `break` は mruby が `JMPUW` (ensure を畳むジャンプ) を出す。プレリュードで初めて出た。
+  catch handler の無い irep ではただの `JMP` にした (P4 で ensure を畳む)
+- P2: `String#count` を部分文字列の数と思い込んで書いた。CRuby は文字の集合に入る文字の数。CRuby との突き合わせで見つけた。
+  `Integer#to_i` が無かった (format の中で使った)
+- P2: `fpga:gap` の事前検査が、プレリュードでわざと未定義にして止めるメソッド (`__*_not_supported`) を「止める理由」に数え、
+  全部を止まると数えた。`__` で始まる名前は数えない
+- P2: Icarus がまた時刻を進めなくなった (`always_comb` の中の `val_of(ra1) < ...`)。比べる式を wire にした
+- P2: fuzz の heap_program のメソッド表 (32 語) が項目で満杯になり、with_table が黙って項目を捨てていた (呼ぶとエラーで終わる
+  program が増えて気づいた)。heap_program の表を 64 語にした
+- P2: プレリュードが ROM を 4000 語ほど使う (使わないメソッドも全部入る)。example が入り切らなくなったら、
+  呼ばれないメソッドを落とす (名前のシンボルがどこにも出てこない def を消す)
+- P2: PERIDOT-Air の top には console のピンがまだ無いので、ボードエミュレーターは console を見ない (UART の TX は P5)
+- P3: プレリュードが大きくなり、collections.rb の ROM が 9647 語 (> 8192) になった。呼ばれないメソッドを落とす (live_ireps) を入れた
+  (名前で数えるので、プレリュードが使う名前のメソッドは残る。hello.rb で 4800 語)
+- P3: コーパスの .dump を作る正規表現が、iseq のバイト位置を 3 桁と決めていた。1000 バイトを超える irep の行を黙って落とし、
+  rom_test の突き合わせの数がずれて気づいた
+- P3: PicoRuby の `Hash#inspect` は `{"a" => 1, b: 2}` (Ruby 3.4 の形)、CRuby 3.3 は `{"a"=>1, :b=>2}`。PicoRuby に合わせ、
+  CRuby には同じ形の Hash#inspect を入れてから比べる。PicoRuby の組み込みには `Hash#min_by` `sort_by`、`Array#tally` `zip`
+  `each_slice`、`Range#sum` などが無い (プレリュードは持つ)。collections.rb は picoruby とは比べない
+- P3: `Range#===` を `<` で書いて、`(1..9) === "hi"` が String#< で止まった。CRuby の cover? と同じく <=> で比べ、比べられなければ偽
+- P3: キーワード引数は PicoRuby の vendor の vm.c (`vm_op_enter`、OP_SEND) を読んで合わせた。mruby 3.3 の説明と違い、
+  KARG で Hash から消し (dup しない)、kd のメソッドに Hash が渡されなければ空の Hash を作る。呼ぶ側の Hash 作りと KARG は
+  変換器がプレリュードの呼び出しに下げ、回路は印の受け渡しと空の Hash を作るだけにした
+- P3: tb のキーワード引数のケースで、比べるために取っておいたレジスタが呼び出し先のフレームの中にあり、ENTER が nil にした
+  (参照インタプリタと RTL は一致していて、テストの誤り)
+- P4: 例外のクラスをプレリュードに 15 足したら、`===` がどのプログラムにもあるので is_a? の行が全クラス分増え、メソッド表が
+  1024 語から 2048 語に倍になり、全プログラムが 1200 語ほど増えた (collections.rb は 8134 語で ROM の端)。生きているクラスだけ
+  表に行を置く (live_classes) にして、+150 語ほど (クラスの定義のコードと `$!`) に戻した
+- P4: ensure を通り抜ける break は、ensure を持つメソッド (yield する側) のフレームをブロックが畳む時にも起きる。
+  ブロックを作った所しか静的には見えないので、「P4b は変換時に止める」はできなかった (黙って ensure を飛ばす)。P4a と一緒に作った
+- P4: `retry` は mruby では rescue 節を覆う ensure (`$!` を戻すためのもの) を通る JMPUW で、巻き戻しの塊を作る。
+  retry を止めていたら、よくある書き方が通らなかった
+- P4: PicoRuby の `Exception#inspect` はメッセージが無ければクラスの名前だけ (`TypeError`)、CRuby 3.3 は `#<TypeError: TypeError>`。
+  PicoRuby に合わせ、CRuby には同じ形の inspect を入れてから比べる。`Exception.new(nil).message` は PicoRuby だけ `""` (CRuby に合わせた)
+- P4: ブロックの中の return が new の initialize のフレームを畳む時、RTL は戻り値で R0 を上書きし、参照は上書きしなかった
+  (コードを読んで見つけた。どのテストも通っていない組み合わせ)。巻き戻しを1つの状態機械にまとめた時に、RTL も上書きしないようにそろえた
+- P4: rom.rb に Enumerator の連鎖 (`each_with_index.any?`) と正規表現のキャプチャを書き、変換器が PicoRuby で走らなくなる所だった。
+  CRuby の突き合わせでは見つからないので、書いたら `rake fpga:corpus` (PicoRuby で変換) を回す
+- P4: fpga:fuzz と fpga:gap を同時に回すと、同じ build/fpga/verilator/mrb_run_tb で Verilator のビルドがぶつかって落ちる
+- P4c: `Integer("12x")` が黙って 12 を返していた (プレリュードが `to_i` に任せていた)。例外を入れたので厳しく読んで ArgumentError にした
+- P4c: KeyError などをプレリュードで raise にしたら、collections.rb が 8218 語で ROM (8192) を超えた。blink.rb (5行) でも
+  コードが 3000 語あった: 演算の落ち先 (`+` `==` `[]` ...) がいつも使われるので、String#== や Hash#[] まで全部生きていた。
+  メソッドの生死を「名前が使われる」かつ「そのクラスのオブジェクトができ得る」の不動点にし (blink.rb 4800 → 1850 語)、
+  メソッド表の詰め率を 1/2 から 2/3 にした (collections.rb 7200 語)
+- P4c: is_a? の表の行に、メタクラスの祖先の行を入れていた。メタクラスの番号は値にならない (クラスの class は Class) ので無駄だった。
+  祖先も値として現れ得るクラスだけにした
+- P4c: 置き換えの途中で、書き足した live_classes / const_class を消してしまった (置き換える範囲の目印の間に入れていた)。
+  commit 済みの版から戻した
+- P5a: PicoRuby の gem の mrblib をそのまま使う案は、`Object.const_defined?`、`module Kernel` の private メソッド、`RUBY_PLATFORM`、
+  C の port が前提のエラー処理が多く、変換器を広げる量が大きいのでやめ、同じ API の FPGA 版を Ruby で書いた (fpga/gems)
+- P5a: primitive がデバイスを読む時、テストベンチは命令を始めた cycle (retire) で入力を次の step のものにしていたので、
+  数 cycle 後の S_PRIM では次の step の値が見える。入力を S_FETCH (命令を始める前) で変えるようにした
+  (GETGV は EXEC の cycle で読むので今まで表に出なかった)
+- P5a: `__io_write` の書き込みで、参照は O 行、RTL は W 行が先に出た。ファズで見つけ、参照を RTL の順にした
+- P5a: Icarus が `__io_write` の検査 (always_comb の if の条件の `val_of` / `is_ref`) で止まった (P1b・P1d・P2 と同じ癖)。wire にした
+- P5a: 仮想の時計 (始めた命令の数 + sleep) にしたのは、参照インタプリタに実時間が無いから。実機で実時間の `uptime_us` にするなら、
+  参照との突き合わせは時間を読むプログラムを除く必要がある
+- P5b: Float の文字列との変換を最初は `$sformatf` / `$sscanf` で書いたが、Verilator は書式が定数でないと解釈せず (精度ごとに
+  case を並べた)、Icarus は文字列の添字・`getc`・文字列の三項演算子を受け付けず、最短の桁も「%.{p}e で読み戻す」総当たりだった。
+  C の printf と同じ正確な丸めは参照 (CRuby の `format`) とも一致しない所がある (`%.5g` of 3348.05)。多倍長の整数だけの
+  アルゴリズム (Burger & Dybvig の最短、10^p 倍して偶数丸め、d * 10^e の最近接) を Ruby で作って CRuby と C の printf
+  (cfmt.c) の 20 万通りで確かめてから SystemVerilog に移し、参照もそれを使うようにした
+- P5b: 1100 本のベクタを呼び出しごとに1行ずつ書いたテストは、Verilator が関数をその場に展開して C++ の compile が
+  10 分を超えた。ベクタを file から読むループにして 10 秒ほど
+- P5b: Icarus 12 の多倍長 (1664bit) の `/` が、ある値 (0x70f00ed4b18fc << 78 を 10^23 で) で返らなかった。筆算の割り算にした。
+  vvp は SIGTERM で止まらないので、timeout は `-s KILL` で
+- P5b: 多倍長の strtod の打ち切りを指数だけ (e10 < -400 なら 0) で決めていたので、桁が多いと (10^100 の桁 × 10^-401) 間違える
+  所だった。桁数 nd を数え、nd + e10 で決めるようにした (回路と参照で同じ所)
+- P5b: Float と Integer#** の Float、`format` の精度をプレリュードに入れたら ROM が 8192 語に入らないプログラムが出た。
+  ROM を 16384 語 (PC_BITS 14) にした。実機の FPGA のメモリに収まるかは合成で確かめていない
+- P5b: `f_fmod` の結果を `rem * $pow(2.0, e - 1075)` で作っていたのをやめ、bit を組む形にした (非正規化数で `real` を経ない)
+- P5c: gem を入れるかを「定数の名前がソースにあるか」で見ていたので、gpio.rb の注釈の「(UART、PWM ...)」で GPIO を使う
+  プログラム全部に uart gem が入っていた (ROM が無駄に大きい)。行全体の注釈は数えないようにした
+- P5c: watchdog の再起動は「コアのリセット」にした。コアは rst_n を非同期で見るので、組み合わせの信号で落とすと
+  リセットが fetching を消して自分を解く輪になる。mrb_dev が flop で 1 cycle の reboot を出し、soc がコアとポートに入れる
+- P5c: IRQ の事象を読み出しの時に計算する (参照のデバイスは読む時に値を作る作り) のでは、読む前に2回変わったピンを取りこぼす。
+  命令の区切りの tick を足した (参照は step の頭、RTL は S_FETCH の en の cycle)
+- P5c: ファズの device の断片は番地も値もランダムなので、IRQ の登録 (小さいピンと mask) と watchdog の期限 (数 ms) に
+  まず当たらなかった (irq_event 0、reboot 0)。専用の断片を足して届かせた
+- P5c: PicoRuby の `IRQ.start` は Task (dispatcher) の上に作ってあるので、P6 より前は NotImplementedError にした
+- P5c: ファズ (Integer#[] が Float#> の primitive を指すランダムな表) で、RTL が Float の比較の primitive に Integer の受け手を
+  通していた (参照はエラー)。Integer の primitive が Float の引数を受ける所の条件を、比較だけ Float の primitive まで広げて
+  書いていた。P5b の commit から入っていた
+- P5d: I2C#scan が「wrong number of arguments (given 1, expected 3)」で落ちた。gem の補助メソッド I2C#__write が、プレリュードの
+  Object#__write (puts が使う) を I2C の中で隠していた (puts は self に送る)。gem の補助メソッドは gem の名前を付けた名前にした
+- P5d: `Integer#chr` が 128..255 を UTF-8 の2バイトにしていた (`"" << self`)。SPI で読んだバイトの列が化けて気づいた。
+  CRuby と PicoRuby は1バイト
+- P5d: IOError、`Proc.new { }`、`GC.start`、`alias`、`include A::B` が無く、PicoRuby の gem (i2c、rotary_encoder、ssd1306) が
+  通らなかった。例を1本ずつ走らせて止まる所を順に足した
+- P5d: SSD1306 の画面 (1024 バイト、1語 1バイト) は 2048 語のヒープに入らず、UC8151 (4736 バイト) は 16384 語でも尽きた。
+  65536 語にし、GC を突く tb とファズは parameter で 2048 語のまま回す (大きいヒープではファズの GC がほぼ起きなくなった)
+- P5d: 変換器を走らせる PicoRuby の host VM の既定のヒープ (6.4MB) が、表示器の gem を入れたプログラムで尽きた (NoMemoryError)。
+  build_config/host-test.rb の overlay で 16000000 バイトにした (estalloc は 24bit の番地なので 16MB 未満まで)。`-DHEAP_SIZE=(...)` は shell が括弧でつまずくので数で書く
+- P5d: 外のチップの表示器を RTL のデバイスにすると SV と Ruby に2回書くことになる。書き込みはトレースに出るので、
+  表示はトレースを読むデコーダー (Ruby 1つ) にし、読み出しの返事だけを刺激にした
+- P6: 最初は 1ms ごとに `__task_tick` を割り込ませたが、Ruby のスケジューラーが 1 回ごとに数百命令 (1命令 1µs の時計で数百 µs) を
+  食い、タスクの時間がずれた。次に何か起きる ms にだけ割り込み、tick をまとめて進める形にした
+- P6: 一番外の irep は STOP でなく RETURN で終わることがある (スタックが空の RETURN)。そこも `__task_main_end` にした。
+  STACK_DEPTH 16 では、タスクの中からスケジューラーまでの呼び出しの深さが足りなかった → 区画ごとに 32
+- P6: 最初の Task は task.c の細部を読まずに書き、host の picoruby と 5 本違った。`Task.new` は優先度が高くてもすぐ切り替えない
+  (task.c は列に入れた後の先頭と比べる)、列の先頭でない走っているタスクの timeslice は減らない、`Queue#push` はいつも切り替える、
+  sleep 中に suspend したタスクは resume で WAITING に戻る、など。task.c と task_queue.c を1行ずつ写し直した
+- P6: 残りの違い (同時に起きるタスクの順、timeslice の切れ目) は、スケジューラーの命令が仮想の時計を進め、1命令 1µs が host
+  (C のスケジューラー、速い CPU) より何十倍も遅いことだった。16 命令で 1µs (INSNS_PER_US。125MHz のコアの速さの見当)、
+  割り込みを止めている間の命令は 256 個で 1µs にして、host と tick の単位などの表し方の違いだけになった。
+  最初は割り込みを止めている間の命令を 0 にしたが、`Task.pass` だけで回るタスクがいると時計が進まず step ばかり食った
+- P6: `Task.stat` の Hash で、行の途中に書いた注釈が `dormant:` を注釈の中に入れていた (statistics.rb が NoMethodError で気づいた)
+- P6: Icarus だけ GC のケースが止まらなかった。GC が「止めている区画」のスタックの深さ sv_sp を、まだ __task_init していない
+  区画でも読んでいた (リセットしない配列なので X、Verilator は 0)。sv_valid で囲んだ
+- P6: 区画を 8 にしてレジスタファイルが 1024 語になり、リセットの S_INIT (1語 1 cycle) と GC の根 (全区画のレジスタと
+  スタック) が長くなった。peridot_air_top_tb の待ちと mrb_core_tb の cycle の上限を伸ばした
+- P7: host の picoruby は `send("hello")` (String の名前) も受けた。最初は TypeError にしていたので、シンボル表を引く
+  `Integer#__sym_at` を足して String#to_sym をプレリュードで書いた。回路は新しいシンボルを作れないので無い名前は ArgumentError
+- P7: Icarus だけ tb が止まらなかった (always_comb の式の条件に関数の呼び出し `val_of(ra) < ...` を置いた。P2 で見つけた Icarus の癖と同じ)。wire に出した
+- P5e: PicoRuby の psg と midibase 系の mrblib は `class << self`、モジュールのインスタンス変数 (`@voice_programs`)、`::MIDIBASE`
+  (OCLASS) を使っていて変換で止まった。変換器に足した (クラスのインスタンス変数はクラスごとの定数)
+- P5e: `defined?(Machine)` は PicoRuby の compiler では `self.__defined_const?(:Machine)` の呼び出しになる (命令ではない)。
+  変換器がクラスかどうかで静的に解く
+- P5e: 定数 64、ROM 16384 語では足りなかった (twinkle で 19000 語)。定数 256、ROM 32768 語 (PC 15bit) にし、メソッド表の
+  飛び先の種類を上位 2bit から上位の可変長の bit に変えた (pc を 15bit に)
+- P5e: gap の止める理由の数え方の誤り: `alias` で定義した名前 (RotaryEncoder#cw)、受け手しだいで別の gem のメソッドになる呼び出し
+  (Session の player の `next_event`)、使う側が定義する前提の hook (ADC#init_additional_params) を「無いメソッド」と数えていた
+- P5e: MML の Player は `delta_ticks * 60_000_000 / (ppqn * tempo)` を計算する。32bit の Integer では桁があふれ、待ち時間が
+  負になって全部の音が数 ms に詰まった。R2P2 の PicoRuby は `MRB_INT64`。黙って違う所なので P8 (64bit の Integer) を計画に入れた
+- P8: host の picoruby で調べると、桁あふれのメッセージは呼び方で違う (VM の命令は `integer overflow`、メソッドとして呼ぶと
+  `in addition` など、`/` は命令でも `in division`)。`0 << 64` は 0、`Float#round` は 64bit に入らなければ Float のまま、
+  `Float#to_i` は `in to_f`、`floor` / `truncate` は `in rounding`。全部 host に合わせ、int64.rb で全行を突き合わせた
+- P8: 変換器 (PicoRuby の上で走る) の rite.rb が INT64 の pool を `u32 << 32` で組んでいて、64bit の PicoRuby では桁あふれで
+  止まった (今まで INT64 の pool は変換で止めていたので通らなかった道)。上位を符号付きにしてから掛ける
+- P8: RTL の `LOADI16` (`{{16{b[15]}}, b}`) と `LOADINEG` (`-{24'd0, b}`) は 32bit の式で、64bit に広げると符号が付かない
+  (0 で埋まる)。`{TAG_INT, 32'd8}` のような幅の決まった連結は 68bit の値の上に 0 が付いてタグがずれる (object_id)。
+  どちらも Verilator の幅の警告 (95 件、警告は止める設定) から全部見つけて直した
+- P8: `$itor` / `$rtoi` は 32bit。Integer ⇔ double の変換は bit で組んだ (`f_int` は最も近い値へ偶数丸め、`f_toi` は 0 へ切り捨て)
+- P8: `Task.stat` の wakeup_tick を PicoRuby と同じ UINT32_MAX にできた (32bit では -1 と書いていた)
+- P8: rom_test の `test_later_definition_wins` は P3a (使わないメソッドを ROM から落とす) から `nil == nil` を比べていて、何も確かめていなかった
+  (Minitest の deprecation の警告で気づいた)。f を呼んで ROM に残し、`refute_nil` を足した
+- P8: 重みを上げた後の fuzz seed 2 の abort は、同じ worktree で fuzz と gap を同時に走らせた時だけ出た。順に走らせると seed 1–4 とも一致

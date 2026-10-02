@@ -1,0 +1,318 @@
+# mruby の命令表 (RITE0400) と、FPGA の CPU コアが実行する部分集合。
+#
+# 番号と operand 形式は mruby/mruby の include/mruby/ops.h の並び順そのもの。
+# ハードウェアも mruby の opcode 番号をそのまま使うので、トレースの op は
+# `mrbc -v` の出力と同じ名前に引ける。ops.h との一致は isa_test.rb が確かめる
+# (vendor/picoruby がある時だけ)。
+#
+# 変換器 (mrb2rom.rb) の一部として PicoRuby でも走るので、PicoRuby と CRuby の共通部分だけで書く
+# (Struct・require・Enumerator の連鎖・sort_by・sum・正規表現のキャプチャは使わない。docs/spec.md §10)。
+module FpgaIsa
+  # ops.h の OPCODE(name, fmt) を上から順に。
+  ALL = %w[
+    NOP:Z MOVE:BB LOADL:BB LOADI8:BB LOADINEG:BB LOADI__1:B LOADI_0:B LOADI_1:B
+    LOADI_2:B LOADI_3:B LOADI_4:B LOADI_5:B LOADI_6:B LOADI_7:B LOADI16:BS LOADI32:BSS
+    LOADSYM:BB LOADNIL:B LOADSELF:B LOADTRUE:B LOADFALSE:B GETGV:BB SETGV:BB GETSV:BB
+    SETSV:BB GETIV:BB SETIV:BB GETCV:BB SETCV:BB GETCONST:BB SETCONST:BB GETMCNST:BB
+    SETMCNST:BB GETUPVAR:BBB SETUPVAR:BBB GETIDX:B GETIDX0:BB SETIDX:B JMP:S JMPIF:BS
+    JMPNOT:BS JMPNIL:BS JMPUW:S EXCEPT:B RESCUE:BB RAISEIF:B MATCHERR:B SSEND:BBB
+    SSEND0:BB SSENDB:BBB SEND:BBB SEND0:BB SENDB:BBB CALL:Z BLKCALL:BB SUPER:BB
+    ARGARY:BS ENTER:W KEY_P:BB KEYEND:Z KARG:BB RETURN:B RETURN_BLK:B RETSELF:Z
+    RETNIL:Z RETTRUE:Z RETFALSE:Z BREAK:B BLKPUSH:BS ADD:B ADDI:BB SUB:B
+    SUBI:BB ADDILV:BBB SUBILV:BBB MUL:B DIV:B EQ:B LT:B LE:B
+    GT:B GE:B ARRAY:BB ARRAY2:BBB ARYCAT:B ARYPUSH:BB ARYSPLAT:B AREF:BBB
+    ASET:BBB APOST:BBB INTERN:B SYMBOL:BB STRING:BB STRCAT:B HASH:BB HASHADD:BB
+    HASHCAT:B LAMBDA:BB BLOCK:BB METHOD:BB RANGE_INC:B RANGE_EXC:B OCLASS:B CLASS:BB
+    MODULE:BB EXEC:BB DEF:BB TDEF:BBB SDEF:BBB ALIAS:BB UNDEF:B SCLASS:B
+    TCLASS:B DEBUG:BBB ERR:B EXT1:Z EXT2:Z EXT3:Z STOP:Z
+  ].map { |e| e.split(":") }.freeze
+
+  # opcode の1バイトを除いた operand のバイト数
+  FORMAT_BYTES = { "Z" => 0, "B" => 1, "BB" => 2, "BBB" => 3, "BS" => 3, "BSS" => 5, "S" => 2, "W" => 3 }.freeze
+
+  class Op
+    attr_reader :name, :num, :fmt
+
+    def initialize(name, num, fmt)
+      @name = name
+      @num = num
+      @fmt = fmt
+    end
+
+    def operand_bytes
+      FORMAT_BYTES[fmt]
+    end
+  end
+
+  OPS = []
+  ALL.each_with_index { |(name, fmt), i| OPS << Op.new(name, i, fmt) }
+  # FPGA だけの命令 (mruby の番号の外)。TABLE は ROM の先頭の語: a = メソッド表の大きさの log2、b = 表の先頭の語アドレス
+  # HTABLE は例外の表 (catch handler) の位置と数 (b = 先頭の語アドレス、c = 数)。表がある時だけ pc 1 に置く
+  # LOADF は R[a] = Float (b = ROM のデータの語アドレス、上位 32bit と下位 32bit の2語)
+  # LOADI64 は R[a] = 32bit に入らない整数 (LOADF と同じくデータの2語、上位 32bit と下位 32bit)
+  EXTRA = [["TABLE", 0xF0, "BS"], ["HTABLE", 0xF1, "BS"], ["LOADF", 0xF2, "BS"], ["LOADI64", 0xF3, "BS"]].freeze
+  EXTRA.each { |name, num, fmt| OPS[num] = Op.new(name, num, fmt) }
+  OPS.freeze
+
+  BY_NAME = {}
+  OPS.each { |o| BY_NAME[o.name] = o if o }
+  BY_NAME.freeze
+
+  # CPU コアが実行する命令 (docs/spec.md §10「対応命令」)。
+  # SEND / SEND0 / SSEND / SSEND0 はメソッド表を引く動的な呼び出し (b = シンボルの番号、c = 引数の数 | ブロック << 7)。
+  # CLASS は R[a] = クラス b の即値、EXEC は R[a] を self にしてクラスの本体 (pc b) を呼ぶ。TDEF / SDEF は R[a] = :名前
+  SUPPORTED = %w[
+    NOP MOVE LOADI8 LOADINEG LOADI__1 LOADI_0 LOADI_1 LOADI_2 LOADI_3 LOADI_4 LOADI_5
+    LOADI_6 LOADI_7 LOADI16 LOADI32 LOADNIL LOADTRUE LOADFALSE GETGV SETGV
+    JMP JMPIF JMPNOT JMPNIL ADD ADDI SUB SUBI ADDILV SUBILV EQ LT LE GT GE
+    RETURN RETNIL STOP
+    TDEF SSEND SSEND0 ENTER SEND SEND0 MUL DIV GETCONST SETCONST
+    GETUPVAR SETUPVAR BREAK
+    ARRAY ARRAY2 GETIDX GETIDX0 SETIDX BLOCK BLKPUSH BLKCALL RETURN_BLK AREF LOADSYM
+    CLASS EXEC SDEF TABLE GETIV SETIV SUPER
+    ARYCAT ARYPUSH APOST ARGARY STRING
+    HTABLE EXCEPT RESCUE RAISEIF JMPUW LOADF LOADI64
+  ].freeze
+
+  # .mrb に出てよいが ROM には残らない命令。変換器がほかの命令にする (docs/spec.md §10)
+  #   SENDB SSENDB  ブロックを渡す印 (c の 0x80) を付けた SEND / SSEND
+  #   LAMBDA        -> (x) { } は lambda の印を付けた BLOCK
+  #   MODULE        CLASS と同じ (モジュールもクラスの番号を持つ)
+  #   LOADSELF      MOVE a, R0
+  #   RETSELF       RETURN R0
+  #   RETTRUE / RETFALSE  LOADTRUE / LOADFALSE R0 と RETURN R0 (戻り値は呼び出し先の R0 に入るので同じ)
+  #   GETCV / SETCV クラス変数は定数と同じ番号 (GETCONST / SETCONST)
+  #   GETMCNST / SETMCNST  A::X は変換時に解いて CLASS / GETCONST / SETCONST
+  #   STRCAT        SEND a+1 :to_s と SEND a :<< (式展開は新しい STRING から始まるので R[a] を伸ばしてよい)
+  #   LOADL         32bit に収まる整数は LOADI32 (符号拡張)、収まらない整数は LOADI64
+  #   HASH HASHADD HASHCAT RANGE_INC RANGE_EXC  プレリュードの Hash / Range を作るメソッドの呼び出し (ARRAY と SEND)
+  #   KARG KEY_P KEYEND  キーワード引数の Hash (R[len+1]) のメソッドの呼び出し。キーワード付きの SEND も下げる (rom.rb の kw_lowered)
+  #   ALIAS         クラスの本体の alias は表の行 (静的に足す)。命令は NOP
+  LOWERED = %w[SENDB SSENDB LAMBDA MODULE LOADSELF RETSELF RETTRUE RETFALSE GETCV SETCV GETMCNST SETMCNST STRCAT LOADL HASH HASHADD HASHCAT RANGE_INC RANGE_EXC
+                KARG KEY_P KEYEND ALIAS OCLASS SCLASS].freeze
+
+  # メソッド表 (ROM の後ろ、TABLE の b から 2**a 語)。1語 = {クラス 16bit, シンボル 16bit, 飛び先 16bit}。
+  # 空きは全 bit 1。(クラス, SUPER_SYM) の飛び先は親クラスの番号。探す位置は table_hash から順に (開番地法)
+  SUPER_SYM = 0xFFFF
+  # (クラス, NIVARS_SYM) の飛び先はインスタンス変数の数 (new が使う。無ければ 0)
+  NIVARS_SYM = 0xFFFE
+  # (ISA_BIT | クラス, 祖先の番号) があれば is_a? が真 (親はたどらない)
+  ISA_BIT = 0x4000
+  # (クラス, NAME_SYM) の飛び先はクラスの名前のシンボルの番号 (Module#name)
+  NAME_SYM = 0xFFFD
+  # 飛び先の種類は上位の bit で: 0xxx = メソッドの先頭 pc (15bit)、10xx = primitive の番号 (14bit、下の PRIMS)、
+  # 110x = インスタンス変数の番号 (13bit。GETIV / SETIV、attr_reader)、111x = インスタンス変数の番号 (attr_writer: R[a+1] を書いて返す)
+  TGT_PC    = 0
+  TGT_PRIM  = 1
+  TGT_IVAR  = 2
+  TGT_IVSET = 3
+  TGT_PREFIX = [0x0000, 0x8000, 0xC000, 0xE000].freeze
+
+  # 種類と値から飛び先の 16bit
+  def self.tgt(kind, value)
+    TGT_PREFIX[kind] | value
+  end
+
+  def self.tgt_kind(t)
+    if t < 0x8000 then TGT_PC
+    elsif t < 0xC000 then TGT_PRIM
+    elsif t < 0xE000 then TGT_IVAR
+    else TGT_IVSET
+    end
+  end
+
+  def self.tgt_value(t)
+    t & [0x7FFF, 0x3FFF, 0x1FFF, 0x1FFF][tgt_kind(t)]
+  end
+  # 親クラスをたどる段数の上限 (ランダムな表で輪になっても止まるように)
+  MAX_SUPER_DEPTH = 32
+
+  # 演算の命令 (ADD、EQ、GETIDX ...) が整数や配列でない値に当たった時に送るメソッドの名前。シンボルの番号はこの順で 0 から
+  # initialize は new が送るメソッド、__core_error はコアの実行時エラーを例外にするプレリュードのメソッド (コアが番号を知っている)
+  # __task_tick はタスクの割り込み (docs/spec.md §10「Task (P6)」。仮想の時計の 1ms ごとにコアが呼ぶ)、
+  # __task_main_end はタスクがある時の一番外の STOP (残りのタスクを走らせ終えてから止まる)
+  OP_SYMS = %w[+ - * / == < <= > >= [] []= initialize __core_error __task_tick __task_main_end].freeze
+  # コアの実行時エラーの種類 (Integer#__core_error の受け手)。例外の表があるプログラムでだけ、コアはエラーで止まらずに
+  # フレームの上 (fn、ENTER では nregs から) に [種類, 詳細1, 詳細2] を置いて __core_error を呼ぶ (プレリュードが例外を作って投げる)
+  CERR_ZERODIV  = 1 # 0 で割った
+  CERR_NOMETHOD = 2 # メソッドが無い (詳細: 名前のシンボル、受け手)
+  CERR_ARGNUM   = 3 # 引数の数が違う (詳細: 渡した数、要る数)
+  CERR_TYPE     = 4 # Integer / Float の演算の引数が数でない (詳細: 引数、受け手)
+  CERR_COMPARE  = 5 # Integer / Float の比較の引数が数でない (詳細: 引数、受け手)
+  CERR_FLOATDOMAIN = 6 # NaN や Infinity を Integer にした (詳細: その Float)
+  CERR_RANGE    = 7 # Float が 64bit の Integer に入らない (詳細: その Float)
+  CERR_OVERFLOW = 8 # Integer の演算の桁あふれ (詳細: どこで。下の OVF_*)
+  # 桁あふれのメッセージ ("integer overflow" の後ろ)。PicoRuby の mruby と同じく VM の命令 (+ - * と ADDI / SUBI)、
+  # -@ と abs は何も付けず、メソッドとして呼んだ +、-、*、/ と <<、>> は " in addition" など
+  OVF_PLAIN = 0
+  OVF_ADD   = 1
+  OVF_SUB   = 2
+  OVF_MUL   = 3
+  OVF_DIV   = 4
+  OVF_SHIFT = 5
+  # Float#__math の番号 (Math のメソッド。hypot は __atan2 と同じく引数を2つ取るので別)
+  FMATH = %w[sqrt sin cos tan asin acos atan exp log log2 log10 sinh cosh tanh].freeze
+
+  def self.table_hash(cls, sym, mask)
+    (cls * 5 + sym) & mask
+  end
+
+  # 回路が持つメソッド (primitive): [クラス, 名前, 引数の数 (-1 は何個でも), 定数名]。番号は並び順
+  PRIMS = [
+    ["Integer", "+", 1, "IADD"], ["Integer", "-", 1, "ISUB"], ["Integer", "*", 1, "IMUL"], ["Integer", "/", 1, "IDIV"],
+    ["Integer", "<", 1, "ILT"], ["Integer", "<=", 1, "ILE"], ["Integer", ">", 1, "IGT"], ["Integer", ">=", 1, "IGE"],
+    ["Integer", "==", 1, "IEQ"],
+    ["Integer", "%", 1, "MOD"], ["Integer", "-@", 0, "NEG"], ["Integer", "<<", 1, "SHL"], ["Integer", ">>", 1, "SHR"],
+    ["Integer", "&", 1, "AND"], ["Integer", "|", 1, "OR"], ["Integer", "^", 1, "XOR"], ["Integer", "~", 0, "INV"],
+    ["Integer", "abs", 0, "ABS"], ["Integer", "zero?", 0, "ZERO"], ["Integer", "even?", 0, "EVEN"], ["Integer", "odd?", 0, "ODD"],
+    ["Object", "!", 0, "NOT"], ["Object", "==", 1, "OEQ"], ["Object", "equal?", 1, "SAME"], ["Object", "class", 0, "CLASSOF"],
+    ["Object", "sleep_ms", 1, "SLEEPMS"], ["Object", "sleep", 1, "SLEEP"], ["Object", "lambda", 0, "LAMBDA"],
+    ["Object", "is_a?", 1, "ISA"], ["Object", "kind_of?", 1, "KINDOF"], ["Object", "respond_to?", 1, "RESPOND"],
+    ["Class", "new", -1, "NEW"],
+    ["Array", "size", 0, "SIZE"], ["Array", "length", 0, "LENGTH"], ["Array", "empty?", 0, "EMPTY"],
+    ["Array", "first", 0, "FIRST"], ["Array", "last", 0, "LAST"], ["Array", "pop", 0, "POP"],
+    ["Array", "push", 1, "PUSH"], ["Array", "<<", 1, "APUSH"], ["Array", "__aget", 1, "AGET"], ["Array", "[]=", 2, "ASET"],
+    ["Proc", "call", -1, "CALL"],
+    # String (Array と同じ形で、1語に1バイト)。ほかのメソッドはプレリュード。__ で始まるものはプレリュードの中身
+    ["String", "bytesize", 0, "SBYTES"], ["String", "getbyte", 1, "SGETB"], ["String", "__aset", 2, "SASET"],
+    ["String", "__push", 1, "SPUSH"], ["String", "__slice", 2, "SSLICE"], ["Symbol", "to_s", 0, "SYMSTR"],
+    ["Module", "__name_sym", 0, "NAMESYM"],
+    # 例外を投げる (Kernel#raise はプレリュード。引数は例外のオブジェクト)
+    ["Object", "__raise", 1, "RAISE"],
+    # デバイスのレジスタ (tools/fpga/devices.rb。番地 0..3 は今のポート、0x100 から上がデバイス)
+    ["Object", "__io_read", 1, "IOREAD"], ["Object", "__io_write", 2, "IOWRITE"],
+    # Float (ヒープの箱の double)。二項は Integer の引数も受ける。__ で始まるものはプレリュード (float.rb) の中身
+    ["Float", "+", 1, "FADD"], ["Float", "-", 1, "FSUB"], ["Float", "*", 1, "FMUL"], ["Float", "/", 1, "FDIV"],
+    ["Float", "%", 1, "FMOD"], ["Float", "**", 1, "FPOW"], ["Float", "<", 1, "FLT"], ["Float", "<=", 1, "FLE"],
+    ["Float", ">", 1, "FGT"], ["Float", ">=", 1, "FGE"], ["Float", "==", 1, "FEQ"], ["Float", "<=>", 1, "FCMP"],
+    ["Float", "-@", 0, "FNEG"], ["Float", "to_i", 0, "FTOI"], ["Float", "__floorf", 0, "FFLOOR"],
+    ["Float", "__ceilf", 0, "FCEIL"], ["Float", "__roundf", 0, "FROUND"], ["Float", "nan?", 0, "FNAN"],
+    ["Float", "__infinite", 0, "FINF"], ["Float", "to_s", 0, "FTOS"], ["Float", "__fmt", 2, "FFMT"],
+    ["Float", "__math", 1, "FMATH"], ["Float", "__atan2", 1, "FATAN2"], ["Float", "__hypot", 1, "FHYPOT"], ["Float", "__fmod", 1, "FFMOD"],
+    ["Integer", "to_f", 0, "I2F"],
+    ["String", "__strtod", 0, "STOD"],
+    # タスク (プレリュードの Task のスケジューラーが使う。ref_vm.rb の task_prim)
+    ["Object", "__task_init", 2, "TINIT"], ["Object", "__task_switch", 1, "TSWITCH"], ["Object", "__task_slot", 0, "TSLOT"],
+    ["Object", "__task_lock", 1, "TLOCK"], ["Object", "__task_on", 1, "TON"], ["Object", "__hw_sleep_us", 1, "HWSLEEPUS"],
+    ["Object", "__halt", 0, "HALT"],
+    # 動的な呼び出し (P7): __send(名前, 引数...) は名前の Symbol を外して、残りの引数でそのメソッドを呼ぶ
+    ["Object", "__send", -1, "DSEND"],
+    # シンボル表の i 番目の Symbol (表の外は nil)。String#to_sym がプログラムのシンボルを探すのに使う
+    ["Integer", "__sym_at", 0, "SYMAT"],
+    # object_id の数 (P5e)。即値だけ (Integer 2n+1、nil 8、true 20、false 0、Symbol s<<8|12、クラス c<<8|28)、
+    # ヒープのオブジェクトは nil (コピー GC で動くので決まった数を持てない)
+    ["Object", "__object_id", 0, "OBJID"],
+    # caller (P9): k 番目のフレームの呼び出しの命令の ROM の pc (0 は __frame_pc を呼んだメソッドを呼んだ所。段が無ければ nil)、
+    # ROM のその番地の語のデータの値 {b, c}。プレリュードの caller が、変換器の置いた表 ($__caller_table) を引く
+    ["Object", "__frame_pc", 1, "FRAMEPC"], ["Integer", "__rom_word", 0, "ROMW"],
+    # String#__truncate(n): 長さを n (0..bytesize) にして self (strip! など)
+    ["String", "__truncate", 1, "STRUNC"]
+  ].freeze
+
+  def self.prim(const_name)
+    PRIMS.each_with_index { |pr, i| return i if pr[3] == const_name }
+    raise ArgumentError, "unknown primitive #{const_name}"
+  end
+
+  def self.class_id(name)
+    CLASSES.each { |n, id| return id if n == name }
+    nil
+  end
+
+  JUMPS = %w[JMP JMPIF JMPNOT JMPNIL].freeze
+
+  # レジスタの値の型タグ (4bit)。偽は nil と false だけ。SYM はシンボルの番号、CLASS はクラスの番号の即値。
+  # OBJ はヒープのオブジェクトへの参照 (値 = 語アドレス、クラスは見出しで分かる)。
+  # FWD と HDR はヒープの中だけに出る (GC の転送先、オブジェクトの見出し)。9..15 は空き
+  TAG_BITS  = 4
+  TAG_NIL   = 0
+  TAG_FALSE = 1
+  TAG_TRUE  = 2
+  TAG_INT   = 3
+  TAG_SYM   = 4
+  TAG_CLASS = 5
+  TAG_OBJ   = 6
+  TAG_FWD   = 7
+  TAG_HDR   = 8
+  TAGS = %w[NIL FALSE TRUE INT SYM CLASS OBJ FWD HDR].freeze
+
+  # クラスの番号 (見出しの値 = クラス << 16 | 中身の語数)。組み込みは固定、ユーザーのクラスは FIRST_USER_CLASS から。
+  # クラスメソッドは番号 | META のクラス (メタクラス) のメソッド。DATA と ENV はヒープの中だけの塊で、値にはならない
+  #   Array [HDR(ARRAY,2)] [INT 長さ] [OBJ → 中身]      中身 [HDR(DATA,容量)] [要素 ...]
+  #   Proc  [HDR(PROC,3)] [INT 先頭 pc | 引数の数 << 16 | lambda << 23 | nregs << 24] [env] [外側の Proc か nil]
+  #   env   [HDR(ENV,1+n)] [INT フレームの bp (生きている間) か nil (退避済み)] [レジスタ × n]
+  #         フレームの中で初めて Proc を作った時にでき、フレームから戻る時に n 本 (フレームの nregs) を写し取る
+  CLASSES = [
+    ["Object", 1], ["NilClass", 2], ["TrueClass", 3], ["FalseClass", 4], ["Integer", 5], ["Symbol", 6],
+    ["Array", 7], ["Proc", 8], ["Class", 9], ["Module", 10], ["String", 11], ["Hash", 12], ["Range", 13],
+    ["Float", 14], ["Exception", 15]
+  ].freeze
+  CLS_OBJECT = 1
+  CLS_NIL    = 2
+  CLS_TRUE   = 3
+  CLS_FALSE  = 4
+  CLS_INT    = 5
+  CLS_SYM    = 6
+  CLS_ARRAY  = 7
+  CLS_PROC   = 8
+  CLS_CLASS  = 9
+  CLS_STRING = 11
+  CLS_HASH   = 12
+  CLS_RANGE  = 13
+  CLS_FLOAT  = 14
+  CLS_EXC    = 15
+  # new できてインスタンス変数を持てるクラス: Object、プレリュードが Ruby で書く組み込み (Hash / Range / Exception)、
+  # プログラムのクラス (FIRST_USER_CLASS から CLS_DATA の前まで)
+  def self.instantiable?(cls)
+    cls == CLS_OBJECT || cls == CLS_HASH || cls == CLS_RANGE || cls == CLS_EXC || (cls >= FIRST_USER_CLASS && cls < CLS_DATA)
+  end
+  CLS_DATA   = 0x7FF0
+  CLS_ENV    = 0x7FF1
+  # 巻き戻しの途中 (ensure を走らせてから続ける return / break / JMPUW。mruby の RBreak) を表すヒープの塊。
+  #   [HDR(BRK,2)] [INT 種類 << 16 | 行き先] [値]。行き先は JUMP と BRK0 は pc、RET と BRK はフレームの底
+  CLS_BRK    = 0x7FF2
+  BRK_JUMP = 0 # JMPUW: 同じフレームの行き先 pc へ
+  BRK_RET  = 1 # 底が行き先のフレームから戻る (return、lambda の中の break、ブロックの中の return)
+  BRK_BRK  = 2 # 親の底が行き先のフレームを畳み、その呼び出しの結果にする (Proc を作ったフレームへの break)
+  BRK_BRK0 = 3 # 今のフレームを畳んで行き先 pc へ (iterator に直接渡したブロックの break)
+  # 例外の表 (HTABLE の b から c 語)。1語 = {種類 << 15 | 飛び先 (op と a の 16bit), begin (b), end (c)}。
+  # begin <= pc < end の命令が覆われる。種類は mruby と同じ 0 = rescue、1 = ensure。探す順に並べる (irep ごとに後ろから)
+  CATCH_RESCUE = 0
+  CATCH_ENSURE = 1
+  FIRST_USER_CLASS = 32
+  META = 0x8000
+  # ヒープは HEAP_SIZE 語を半分ずつ使う (コピー GC)
+  HEAP_SIZE = 65536
+
+  # Integer の bit 数 (PicoRuby の MRB_INT64)。値は {タグ 4bit, 64bit}
+  INT_BITS = 64
+
+  # 仮想の時計の速さ: 始めた命令 16 個で 1µs (125MHz のコアの速さの見当)。タスクの割り込みを止めている間 (Task の
+  # スケジューラー。PicoRuby では C) の命令は 256 個で 1µs。どちらも 2 の冪 (docs/spec.md §10「仮想の時計」)
+  INSNS_PER_US = 16
+  LOCKED_INSNS_PER_US = 256
+
+  # CPU コアの大きさ。レジスタファイル (全フレームで共有するレジスタ窓)、コールスタック、定数の数、ROM の語数
+  RF_SIZE     = 128 # タスク1つの区画のレジスタの数
+  TASKS       = 8   # 区画の数 (タスクの数の上限。main を含む)
+  STACK_DEPTH = 32 # コールスタックの段 (区画ごと)
+  NCONST      = 256
+  PC_BITS     = 15
+
+  def self.op(name_or_num)
+    o = name_or_num.is_a?(Integer) ? OPS[name_or_num] : BY_NAME[name_or_num]
+    raise ArgumentError, "unknown op #{name_or_num.inspect}" unless o
+    o
+  end
+
+  # ROM に出て、コアと参照インタプリタが実行する命令か
+  def self.supported?(name)
+    SUPPORTED.include?(name)
+  end
+
+  # 変換器が受け付ける命令か (実行するもの + 下げるもの)
+  def self.convertible?(name)
+    SUPPORTED.include?(name) || LOWERED.include?(name)
+  end
+
+end
