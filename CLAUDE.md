@@ -25,7 +25,7 @@ PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`ex
 - **shell の生存は `tools/pico2w/shell_ok.rb` (ESP32 は `tools/esp32/shell_ok.rb`) で見る。** `$>` プロンプトが返るかで判定し、bytes が返っただけでは生きていない
 - **ESP32 (M5Stack Chain DualKey) も `rake esp32:*` を Bash から回す。** build / flash は `../R2P2-ESP32` の checkout (`R2P2_ESP32_REPO` で上書き) の rake に委ねる。
   ESP32 の罠は [docs/spec.md](docs/spec.md) §9 にあり、次の3つは特に踏みやすい:
-  - **ポートを開くだけでリセットされる。** ポートは `/dev/cu.usbmodem*` の glob でなく `ioreg` の製品名で選ぶ (`tools/esp32/` の各 script がそうしている)
+  - **ポートを開くだけではリセットされない (reset は RTS パルス)。** ポートは `/dev/cu.usbmodem*` の glob でなく `ioreg` の製品名で選ぶ (`tools/esp32/` の各 script がそうしている)
   - **`$>` の2文字は起動時の ESP-IDF boot log に偶然出る。** プロンプト判定は banner の後に受信した bytes だけを見る
   - **短時間に reset を繰り返すと無応答になることがある。** 復旧は USB の抜き差し (物理操作なので人に頼む)
 - firmware の build は数分かかる。長い処理は `nohup ... & disown` で切り離し、ログを scratchpad に書く
