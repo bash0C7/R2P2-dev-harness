@@ -24,9 +24,9 @@ index 222cdb15..a875e3af 100644
    conf.cc.defines << "MRBC_TASK_SCHEDULER_HOOK"  # scheduler-service layer (hal.h); picoruby-ble's event pump rides on it
    conf.cc.defines << "USE_WIFI" if ENV['USE_WIFI']
 +  conf.cc.defines << "PICORUBY_QEMU_EVQ_RIG" if ENV['PICORUBY_QEMU_EVQ_RIG']
- 
-   conf.femtoruby(alloc_libc: false)
-   conf.gembox 'minimum'
+   # Must precede conf.femtoruby, which falls back to 1000: `require 'ble'` alone overflows that.
+   conf.cc.defines << "MAX_SYMBOLS_COUNT=2000" if ENV['USE_BLE']
+
 diff --git a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
 index a3fd7b44..d6598aba 100644
 --- a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
