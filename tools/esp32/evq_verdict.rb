@@ -7,8 +7,8 @@
 module EvqVerdict
   Result = Struct.new(:pass, :message, keyword_init: true)
 
-  INJECT = /\[rig\] inject seq=(\d+) t=(\d+)/
-  RECV = /\[rigapp\] recv seq=(\d+) t=(\d+)/
+  INJECT = /inject seq=(\d+) t=(\d+)/
+  RECV = /recv seq=(\d+) t=(\d+)/
   FOREIGN_PUSH = "[rig] FOREIGN_PUSH".freeze
   WRITE_B = '[rigapp] write h=0x42 v="B"'.freeze
   FAULT = "[rig] FAULT write".freeze
