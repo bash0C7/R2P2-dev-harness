@@ -16,8 +16,8 @@ VM="${1:?Usage: $0 <mrubyc|mruby> <logfile>}"
 LOGFILE="${2:?Usage: $0 <mrubyc|mruby> <logfile>}"
 BUILD_DIR="${EVQ_BUILD_DIR:-build-qemu-evq}"
 RUN_TIMEOUT="${EVQ_RUN_TIMEOUT:-420}"
-# The injector logs this right before its last event (rig_injector.c).
-DONE_PATTERN="${EVQ_DONE_PATTERN:-\\[rig\\] inject seq=20 }"
+# The injector logs this once, after its last insertion (rig_injector.c).
+DONE_PATTERN="${EVQ_DONE_PATTERN:-\\[rig\\] inject done}"
 # Extra seconds after the last inject: covers the worst legitimate RED
 # latency (~1s heartbeat) with margin, so "lost" means lost.
 GRACE_SECONDS="${EVQ_GRACE_SECONDS:-10}"

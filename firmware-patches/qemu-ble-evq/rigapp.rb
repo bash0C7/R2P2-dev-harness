@@ -16,7 +16,9 @@ class RigObserver < BLE
     drain_writes
     name = r.reports[:complete_local_name].to_s
     return unless name[0, 4] == "RIG-"
-    puts "[rigapp] recv seq=#{name[4, 8]} t=#{Machine.board_millis}"
+    seq = name[4, 3].to_i
+    tin = name[8, 8].to_i
+    puts "[rigapp] recv seq=#{seq} tin=#{tin} t=#{Machine.board_millis}"
   end
 
   def heartbeat_callback

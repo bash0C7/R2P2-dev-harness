@@ -7,7 +7,7 @@
  * buffer; tools/esp32/evq_verdict.rb judges the resulting log.
  *
  * Log tokens (exact format matters — the verdict greps them):
- *   [rig] inject seq=<n> t=<ms>   ring insertion, esp_timer clock
+ *   [rig] inject done n=<n>       all events inserted (Ruby logs seq/tin/t)
  *   [rig] FOREIGN_PUSH <who>      Ruby queue touched off the VM thread
  *
  * Two phases:
@@ -67,10 +67,11 @@ rig_check_vm_thread(const char *who)
  * [10]=rssi [11]=data_length [12..]=AD structures. AD carries one
  * complete-local-name entry: "RIG-<seq>". */
 static uint16_t
-rig_build_adv(uint8_t *p, int seq)
+rig_build_adv(uint8_t *p, int seq, uint32_t tin_ms)
 {
-  char name[16];
-  int name_len = snprintf(name, sizeof(name), "RIG-%d", seq);
+  char name[24];
+  int name_len = snprintf(name, sizeof(name), "RIG-%03d-%08lu", seq,
+                           (unsigned long)tin_ms);
   p[0] = 0xda;
   p[2] = 0x00;
   p[3] = 0x00;
@@ -90,9 +91,8 @@ static void
 rig_inject(int seq)
 {
   static uint8_t adv[32];
-  uint16_t len = rig_build_adv(adv, seq);
-  printf("[rig] inject seq=%d t=%lu\n", seq,
-         (unsigned long)(esp_timer_get_time() / 1000));
+  uint32_t tin_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  uint16_t len = rig_build_adv(adv, seq, tin_ms);
   picoruby_nimble_enqueue_event(adv, len, false);
 }
 
@@ -126,6 +126,7 @@ rig_task(void *arg)
     rig_inject(seq);
     vTaskDelay(pdMS_TO_TICKS(10));
   }
+  printf("[rig] inject done n=60\n");
   vTaskDelete(NULL);
 }
 
