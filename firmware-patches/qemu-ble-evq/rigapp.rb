@@ -1,6 +1,5 @@
 # Ruby side of the qemu-ble-evq rig: an autostarting central that logs
-# every injected advertising report the moment it reaches Ruby, and
-# every GATT write the injector pushed through the port's write queue.
+# every injected advertising report the moment it reaches Ruby.
 # Copied to R2P2-ESP32/storage/home/app.rb by apply.sh; r2p2.rb
 # autostarts it at boot (source, so the same file serves both VMs).
 # Keeps to APIs both VMs (mruby / mruby/c) implement.
@@ -24,9 +23,6 @@ class RigObserver < BLE
     drain_writes
   end
 
-  # Writes land in @write_values when the VM thread flushes the port's
-  # write queue; both callbacks drain so the log does not depend on the
-  # heartbeat timer firing under QEMU.
   def drain_writes
     while (v = pop_write_value(WRITE_HANDLE))
       puts "[rigapp] write h=0x42 v=#{v.inspect}"

@@ -2,11 +2,8 @@
 # (firmware-patches/qemu-ble-evq). The rig's injector task logs each ring
 # insertion, the Ruby test app logs each arrival, and the overlay logs
 # FOREIGN_PUSH when the Ruby queue is pushed from outside the VM thread.
-# The injector also pushes two GATT writes through the port's write
-# queue; the second ("B") must reach Ruby (the first is the one a
-# fault-injection run makes raise, see expect_fault).
 # Pass = every injected seq arrived, within max_latency_ms, with no
-# foreign push, and write "B" was delivered.
+# foreign push.
 module EvqVerdict
   Result = Struct.new(:pass, :message, keyword_init: true)
 
@@ -18,9 +15,6 @@ module EvqVerdict
 
   module_function
 
-  # expect_fault: the overlay was applied with the BLE_write_data fault
-  # hook (EVQ_OOM=1), so the log must show the fault firing — otherwise a
-  # pass would only prove the hook never ran.
   def judge(log, max_latency_ms:, expect_fault: false)
     injected = {}
     received = {}

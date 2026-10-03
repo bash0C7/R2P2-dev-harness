@@ -14,11 +14,11 @@ if [ ! -f "$MARKER" ]; then
   exit 0
 fi
 
-# Extra layers come off first, last applied first (the marker lists them
-# in apply order).
 if [ -s "$MARKER" ]; then
   tail -r "$MARKER" | while read -r p; do
-    [ -n "$p" ] && git -C "$SUBMODULE" apply -R "$RIG_DIR/$p"
+    if [ -n "$p" ]; then
+      git -C "$SUBMODULE" apply -R "$RIG_DIR/$p"
+    fi
   done
 fi
 git -C "$SUBMODULE" apply -R "$RIG_DIR/radio_stub.patch"

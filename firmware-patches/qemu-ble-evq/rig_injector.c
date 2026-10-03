@@ -28,10 +28,6 @@
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
 
-/* Read by the oom_fault.patch hook in BLE_write_data's body: the next
- * flushed write raises NoMemoryError inside the VM glue. Set here
- * before the first write when the overlay is applied with EVQ_OOM=1;
- * without that patch the flag is never read and the write just lands. */
 volatile int rig_fault_write = 0;
 
 void
@@ -114,11 +110,6 @@ rig_task(void *arg)
   static const uint8_t state_working[] = { 0x60, 0x01, 0x02 };
   picoruby_nimble_enqueue_event(state_working, sizeof(state_working), false);
 
-  /* Two GATT writes through the port's write queue. They reach Ruby via
-   * flush -> BLE_write_data -> pop_write_value (rigapp logs each). With
-   * EVQ_OOM=1 the first one is made to raise inside BLE_write_data; the
-   * second must still arrive, which also proves write_values_mutex was
-   * not left set. */
   rig_fault_write = 1;
   printf("[rig] write enq A\n");
   picoruby_nimble_enqueue_write(0x42, (const uint8_t *)"A", 1);

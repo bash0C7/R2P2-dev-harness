@@ -17,11 +17,6 @@ if [ -f "$MARKER" ]; then
   exit 0
 fi
 
-# Optional fault-injection layers on top of the radio stub (mruby glue
-# only). EVQ_OOM=1: BLE_write_data raises NoMemoryError once, expecting
-# the glue to contain it. EVQ_OOM_RED=1: additionally strip that
-# containment, so the same run must go red. revert.sh reads the applied
-# list back from the marker.
 EXTRA_PATCHES=()
 [ "${EVQ_OOM:-0}" = "1" ] && EXTRA_PATCHES+=(oom_fault.patch)
 [ "${EVQ_OOM_RED:-0}" = "1" ] && EXTRA_PATCHES+=(oom_red.patch)
@@ -43,5 +38,8 @@ cp "$RIG_DIR/rigapp.rb" "$ESP32_REPO/storage/home/app.rb"
 # rig define appeared, so force a clean rake build (idf.py won't).
 rm -rf "$SUBMODULE/build/esp32-picoruby" "$SUBMODULE/build/esp32-femtoruby"
 
-printf '%s\n' "${EXTRA_PATCHES[@]}" > "$MARKER"
+: > "$MARKER"
+for p in "${EXTRA_PATCHES[@]}"; do
+  echo "$p" >> "$MARKER"
+done
 echo "[qemu-ble-evq] applied to $ESP32_REPO${EXTRA_PATCHES[*]:+ (+ ${EXTRA_PATCHES[*]})}"

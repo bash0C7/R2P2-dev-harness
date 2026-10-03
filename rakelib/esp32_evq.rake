@@ -52,11 +52,6 @@ namespace :esp32 do
     puts "[esp32:evq_green] PASS: #{result.message}"
   end
 
-  # Fault injection (mruby glue only): oom_fault.patch makes the first
-  # flushed GATT write raise NoMemoryError inside BLE_write_data. Green
-  # expects the glue to contain it (events keep flowing, write B lands);
-  # red strips the containment with oom_red.patch and expects the same
-  # run to fail, proving the hook reaches an unprotected frame.
   desc "Event-path rig + NoMemoryError inside BLE_write_data, expecting PASS (containment holds)"
   task :evq_oom_green do
     ENV["EVQ_OOM"] = "1"
