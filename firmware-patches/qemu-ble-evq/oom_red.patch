@@ -1,13 +1,13 @@
 diff --git a/mrbgems/picoruby-ble/src/mruby/ble.c b/mrbgems/picoruby-ble/src/mruby/ble.c
-index 4f0ed796..97902d38 100644
+index b793c2cf..3c53baf4 100644
 --- a/mrbgems/picoruby-ble/src/mruby/ble.c
 +++ b/mrbgems/picoruby-ble/src/mruby/ble.c
-@@ -131,7 +131,7 @@ BLE_write_data(uint16_t att_handle, const uint8_t *data, uint16_t size)
-   write_data_args args = { att_handle, data, size };
+@@ -80,7 +80,7 @@ ble_scheduler_pump(mrb_state *mrb, void *ud)
+   if (mrb != _mrb || mrb_nil_p(event_queue)) return;
    mrb_bool error = FALSE;
-   int ai = mrb_gc_arena_save(_mrb);
--  mrb_protect_error(_mrb, write_data_body, &args, &error);
-+  write_data_body(_mrb, &args);
-   mrb_gc_arena_restore(_mrb, ai);
-   if (error) {
-     write_values_mutex = false;
+   int ai = mrb_gc_arena_save(mrb);
+-  mrb_protect_error(mrb, ble_pump_body, NULL, &error);
++  ble_pump_body(mrb, NULL);
+   mrb_gc_arena_restore(mrb, ai);
+   if (error) write_values_mutex = false;
+ }

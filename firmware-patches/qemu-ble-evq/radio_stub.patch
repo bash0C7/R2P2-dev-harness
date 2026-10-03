@@ -91,10 +91,10 @@ index 2d7028e5..ba4a8ef6 100644
    ble_gap_disc_cancel();
    nimble_port_stop();
 diff --git a/mrbgems/picoruby-ble/src/mruby/ble.c b/mrbgems/picoruby-ble/src/mruby/ble.c
-index 4f0ed796..3e33b8e8 100644
+index 51ca277d..b793c2cf 100644
 --- a/mrbgems/picoruby-ble/src/mruby/ble.c
 +++ b/mrbgems/picoruby-ble/src/mruby/ble.c
-@@ -48,6 +48,10 @@ push_event_body(mrb_state *mrb, void *ud)
+@@ -30,6 +30,10 @@ static uint8_t pending_event_count;
  void
  BLE_push_event(uint8_t *data, uint16_t size)
  {
@@ -104,8 +104,8 @@ index 4f0ed796..3e33b8e8 100644
 +#endif
    if (_mrb == NULL || mrb_nil_p(event_queue) ||
        BLE_MAX_PENDING_EVENTS <= pending_event_count) return;
-   push_event_args args = { data, size };
-@@ -70,6 +74,10 @@ heartbeat_body(mrb_state *mrb, void *ud)
+   int ai = mrb_gc_arena_save(_mrb);
+@@ -43,6 +47,10 @@ BLE_push_event(uint8_t *data, uint16_t size)
  void
  BLE_heartbeat(void)
  {
@@ -115,12 +115,12 @@ index 4f0ed796..3e33b8e8 100644
 +#endif
    if (_mrb == NULL || mrb_nil_p(event_queue) ||
        BLE_MAX_PENDING_EVENTS <= pending_event_count) return;
-   int ai = mrb_gc_arena_save(_mrb);
+   mrb_state *mrb = _mrb;
 diff --git a/mrbgems/picoruby-ble/src/mrubyc/ble.c b/mrbgems/picoruby-ble/src/mrubyc/ble.c
-index a41fc036..549de123 100644
+index 7778b055..0bbeb786 100644
 --- a/mrbgems/picoruby-ble/src/mrubyc/ble.c
 +++ b/mrbgems/picoruby-ble/src/mrubyc/ble.c
-@@ -16,6 +16,10 @@ static uint8_t pending_event_count;
+@@ -14,6 +14,10 @@ static uint8_t pending_event_count;
  void
  BLE_push_event(uint8_t *data, uint16_t size)
  {
@@ -131,7 +131,7 @@ index a41fc036..549de123 100644
    if (event_queue.tt == MRBC_TT_NIL ||
        BLE_MAX_PENDING_EVENTS <= pending_event_count) return;
    mrbc_value event = mrbc_string_new(NULL, (const void *)data, size);
-@@ -28,6 +32,10 @@ BLE_push_event(uint8_t *data, uint16_t size)
+@@ -26,6 +30,10 @@ BLE_push_event(uint8_t *data, uint16_t size)
  void
  BLE_heartbeat(void)
  {
