@@ -1,6 +1,7 @@
 require_relative "evq_verdict"
 
 log = <<~LOG
+  [rigapp] write h=0x42 v="A"
   [rigapp] write h=0x42 v="B"
   [rigapp] recv seq=1 tin=1000 t=1004
   [rig] inject done n=1
@@ -25,6 +26,7 @@ log5 = "[rigapp] write h=0x42 v=\"B\"\n[rigapp] recv seq=1 tin=1000 t=1004\n"
 raise "expect fail (no inject-done line)" if EvqVerdict.judge(log5, max_latency_ms: 50).pass
 
 clipped_prefix_log = <<~LOG
+  write h=0x42 v="A"
   write h=0x42 v="B"
   recv seq=1 tin=1000 t=1004
   rig] inject done n=1
@@ -95,5 +97,22 @@ flood_paced_log = <<~LOG
 LOG
 raise "expect paced pass" unless EvqVerdict.judge_flood(flood_paced_log, max_rejected: 0).pass
 raise "expect paced fail when rejected > max" if EvqVerdict.judge_flood(flood_acct_log, max_rejected: 0).pass
+
+oom_only_b_log = <<~LOG
+  [rig] FAULT write
+  [rigapp] write h=0x42 v="B"
+  [rigapp] recv seq=1 tin=1000 t=1004
+  [rig] inject done n=1
+LOG
+raise "expect fail: faulted write A never arrived" if EvqVerdict.judge(oom_only_b_log, max_latency_ms: 50, expect_fault: true).pass
+
+oom_both_log = <<~LOG
+  [rig] FAULT write
+  [rigapp] write h=0x42 v="A"
+  [rigapp] write h=0x42 v="B"
+  [rigapp] recv seq=1 tin=1000 t=1004
+  [rig] inject done n=1
+LOG
+raise "expect pass: A retried after the fault" unless EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true).pass
 
 puts "evq_verdict_test OK"

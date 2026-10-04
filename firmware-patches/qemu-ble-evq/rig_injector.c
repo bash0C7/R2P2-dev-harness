@@ -140,11 +140,12 @@ rig_task(void *arg)
 #ifdef PICORUBY_QEMU_EVQ_FLOOD
   static uint8_t flood_payload[FLOOD_PAYLOAD_LEN];
   memset(flood_payload, 0x5a, sizeof(flood_payload));
+  int rejected = 0;
   for (int i = 0; i < FLOOD_COUNT; i++) {
-    picoruby_nimble_enqueue_write(FLOOD_HANDLE, flood_payload, sizeof(flood_payload));
+    if (picoruby_nimble_enqueue_write(FLOOD_HANDLE, flood_payload, sizeof(flood_payload)) != 0) rejected++;
     vTaskDelay(pdMS_TO_TICKS(FLOOD_SPACING_MS));
   }
-  printf("[rig] flood done n=%d\n", FLOOD_COUNT);
+  printf("[rig] flood done n=%d rejected=%d\n", FLOOD_COUNT, rejected);
 #endif
 
   vTaskDelete(NULL);

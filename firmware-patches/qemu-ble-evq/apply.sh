@@ -20,7 +20,6 @@ fi
 EXTRA_PATCHES=()
 [ "${EVQ_OOM:-0}" = "1" ] && EXTRA_PATCHES+=(oom_fault.patch)
 [ "${EVQ_OOM_RED:-0}" = "1" ] && EXTRA_PATCHES+=(oom_red.patch)
-[ "${EVQ_FLOOD_FIX:-0}" = "1" ] && EXTRA_PATCHES+=(flood_fix.patch)
 
 git -C "$SUBMODULE" apply --check "$RIG_DIR/radio_stub.patch"
 git -C "$ESP32_REPO" apply --check "$RIG_DIR/r2p2-esp32.patch"

@@ -10,6 +10,7 @@ module EvqVerdict
   INJECT_DONE = /inject done n=(\d+)/
   RECV = /recv seq=(\d+) tin=(\d+) t=(\d+)/
   FOREIGN_PUSH = /FOREIGN_PUSH/
+  WRITE_A = /write h=0x42 v="A"/
   WRITE_B = /write h=0x42 v="B"/
   FAULT = /FAULT write/
   FLOOD_DONE = /flood done n=(\d+) rejected=(\d+)/
@@ -27,6 +28,7 @@ module EvqVerdict
     problems = []
     problems << "no inject-done line in log" if total.nil?
     problems << "FOREIGN_PUSH detected (queue pushed off the VM thread)" if log.match?(FOREIGN_PUSH)
+    problems << "write A never reached Ruby" unless log.match?(WRITE_A)
     problems << "write B never reached Ruby" unless log.match?(WRITE_B)
     problems << "fault hook did not fire" if expect_fault && !log.match?(FAULT)
 
@@ -45,7 +47,7 @@ module EvqVerdict
       worst = received.values.map { |tin, t| t - tin }.max
       Result.new(pass: true,
                  message: "#{received.size} events delivered, worst latency #{worst}ms <= #{max_latency_ms}ms, " \
-                          "no foreign push, write B delivered#{expect_fault ? ' after the injected fault' : ''}")
+                          "no foreign push, writes A and B delivered#{expect_fault ? ' after the injected fault' : ''}")
     else
       Result.new(pass: false, message: problems.join("; "))
     end
