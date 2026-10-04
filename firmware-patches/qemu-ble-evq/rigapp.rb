@@ -62,8 +62,7 @@ class RigObserver < BLE
   end
 
   def heartbeat_callback
-    before = @flood_received
-    mem_report("hb drained=#{@flood_received - before} total_received=#{@flood_received}") if @flood_received > 0
+    mem_report("hb total_received=#{@flood_received}") if @flood_received > 0
   end
 
   def drain_writes
