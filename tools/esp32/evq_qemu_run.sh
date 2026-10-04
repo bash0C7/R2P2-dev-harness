@@ -26,6 +26,7 @@ FAILURE_PATTERN='assert failed|no such vaddr|Guru Meditation|calibration efuse v
 # The rig define must reach both the IDF-compiled port sources and the
 # rake-built libmruby (see firmware-patches/qemu-ble-evq/r2p2-esp32.patch).
 export PICORUBY_QEMU_EVQ_RIG=1
+[ "${EVQ_FLOOD:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_FLOOD=1
 
 # Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
 # some gem/memory layouts corrupt a TCB right after app_main returns; a

@@ -74,6 +74,29 @@ namespace :esp32 do
     end
     puts "[esp32:evq_oom_red] RED as expected: #{result.message}"
   end
+
+  desc "Write-flood rig (500x128B write-without-response bursts), expecting FAIL (pre-fix firmware). Succeeds when the verdict is red"
+  task :evq_flood_red do
+    ENV["EVQ_FLOOD"] = "1"
+    result = evq_flood_judge
+    if result.pass
+      puts "[esp32:evq_flood_red] UNEXPECTED GREEN: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_flood_red] RED as expected: #{result.message}"
+  end
+
+  desc "Write-flood rig + flood_fix.patch (throttle flush_writes to delivery ticks), expecting PASS"
+  task :evq_flood_green do
+    ENV["EVQ_FLOOD"] = "1"
+    ENV["EVQ_FLOOD_FIX"] = "1"
+    result = evq_flood_judge
+    unless result.pass
+      puts "[esp32:evq_flood_green] FAIL: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_flood_green] PASS: #{result.message}"
+  end
 end
 
 def evq_vm
@@ -84,6 +107,8 @@ def evq_log_path
   suffix = ""
   suffix << "-oom" if ENV["EVQ_OOM"] == "1"
   suffix << "-red" if ENV["EVQ_OOM_RED"] == "1"
+  suffix << "-flood" if ENV["EVQ_FLOOD"] == "1"
+  suffix << "-fix" if ENV["EVQ_FLOOD_FIX"] == "1"
   File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}#{suffix}.log")
 end
 
@@ -91,4 +116,16 @@ def evq_judge(expect_fault: false)
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
   EvqVerdict.judge(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS, expect_fault: expect_fault)
+end
+
+def evq_flood_default_heap
+  evq_vm == "mruby" ? "217088" : "102400"
+end
+
+def evq_flood_judge
+  ENV["EVQ_DONE_PATTERN"] = '\[rig\] flood done'
+  ENV["EVQ_HEAP_SIZE"] ||= evq_flood_default_heap
+  Rake::Task["esp32:evq_run"].invoke
+  raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+  EvqVerdict.judge_flood(File.read(evq_log_path))
 end

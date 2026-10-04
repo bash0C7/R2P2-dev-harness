@@ -1,0 +1,28 @@
+diff --git a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
+index 2d7028e5..db1ae107 100644
+--- a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
++++ b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
+@@ -190,11 +190,22 @@ take_heartbeat(void)
+   return true;
+ }
+ 
++static bool
++evq_pending(void)
++{
++  bool pending;
++  taskENTER_CRITICAL(&evq_mux);
++  pending = evq_count > 0;
++  taskEXIT_CRITICAL(&evq_mux);
++  return pending;
++}
++
+ void
+ BLE_poll(int budget)
+ {
+-  flush_writes();
+   picoruby_ble_refresh_read_mirrors();
++  bool deliver = budget > 0 && (evq_pending() || heartbeat_pending);
++  if (deliver) flush_writes();
+   uint8_t buf[EVQ_PKT_MAX];
+   uint16_t n;
+   while (budget > 0 && (n = dequeue_event(buf, sizeof(buf))) > 0) {

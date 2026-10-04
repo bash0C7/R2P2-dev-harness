@@ -12,6 +12,10 @@ module EvqVerdict
   FOREIGN_PUSH = /FOREIGN_PUSH/
   WRITE_B = /write h=0x42 v="B"/
   FAULT = /FAULT write/
+  FLOOD_DONE = /flood done n=(\d+)/
+  FLOOD_RECV = /flood received=(\d+) bytes=(\d+)/
+  FLOOD_CRASH = /Fatal error: Out of memory|NoMemoryError|Guru Meditation|abort\(\) was called|Rebooting/
+  FLOOD_DROP = /write queue full/
 
   module_function
 
@@ -42,6 +46,27 @@ module EvqVerdict
       Result.new(pass: true,
                  message: "#{received.size} events delivered, worst latency #{worst}ms <= #{max_latency_ms}ms, " \
                           "no foreign push, write B delivered#{expect_fault ? ' after the injected fault' : ''}")
+    else
+      Result.new(pass: false, message: problems.join("; "))
+    end
+  end
+
+  def judge_flood(log)
+    problems = []
+    crash = log[FLOOD_CRASH]
+    problems << "crash pattern matched: #{crash}" if crash
+    done_match = FLOOD_DONE.match(log)
+    problems << "no flood-done line in log" if done_match.nil?
+    if done_match
+      after = log[done_match.end(0)..]
+      problems << "no flood received= line after flood done" unless after.match?(FLOOD_RECV)
+    end
+
+    if problems.empty?
+      received, bytes = log.scan(FLOOD_RECV).last
+      drops = log.scan(FLOOD_DROP).size
+      Result.new(pass: true,
+                 message: "flood received=#{received} bytes=#{bytes}, write-queue-full warnings=#{drops}")
     else
       Result.new(pass: false, message: problems.join("; "))
     end

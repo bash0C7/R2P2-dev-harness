@@ -7,9 +7,12 @@ require 'ble'
 
 class RigObserver < BLE
   WRITE_HANDLE = 0x42
+  FLOOD_HANDLE = 0x43
 
   def initialize
     super(:central)
+    @flood_received = 0
+    @flood_bytes = 0
   end
 
   def advertising_report_callback(r)
@@ -23,11 +26,20 @@ class RigObserver < BLE
 
   def heartbeat_callback
     drain_writes
+    drain_flood
   end
 
   def drain_writes
     while (v = pop_write_value(WRITE_HANDLE))
       puts "[rigapp] write h=0x42 v=#{v.inspect}"
+    end
+  end
+
+  def drain_flood
+    while (v = pop_write_value(FLOOD_HANDLE))
+      @flood_received += 1
+      @flood_bytes += v.bytesize
+      puts "[rigapp] flood received=#{@flood_received} bytes=#{@flood_bytes}" if @flood_received % 50 == 0
     end
   end
 end

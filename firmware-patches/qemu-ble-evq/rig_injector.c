@@ -28,6 +28,13 @@
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
 
+#ifdef PICORUBY_QEMU_EVQ_FLOOD
+#define FLOOD_HANDLE 0x43
+#define FLOOD_PAYLOAD_LEN 128
+#define FLOOD_COUNT 500
+#define FLOOD_SPACING_MS 2
+#endif
+
 volatile int rig_fault_write = 0;
 
 void
@@ -127,6 +134,17 @@ rig_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(10));
   }
   printf("[rig] inject done n=60\n");
+
+#ifdef PICORUBY_QEMU_EVQ_FLOOD
+  static uint8_t flood_payload[FLOOD_PAYLOAD_LEN];
+  memset(flood_payload, 0x5a, sizeof(flood_payload));
+  for (int i = 0; i < FLOOD_COUNT; i++) {
+    picoruby_nimble_enqueue_write(FLOOD_HANDLE, flood_payload, sizeof(flood_payload));
+    vTaskDelay(pdMS_TO_TICKS(FLOOD_SPACING_MS));
+  }
+  printf("[rig] flood done n=%d\n", FLOOD_COUNT);
+#endif
+
   vTaskDelete(NULL);
 }
 

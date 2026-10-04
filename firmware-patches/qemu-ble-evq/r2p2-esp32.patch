@@ -1,8 +1,8 @@
 diff --git a/components/picoruby-esp32/CMakeLists.txt b/components/picoruby-esp32/CMakeLists.txt
-index 169620b3..b2172418 100644
+index 169620b3..ba73238b 100644
 --- a/components/picoruby-esp32/CMakeLists.txt
 +++ b/components/picoruby-esp32/CMakeLists.txt
-@@ -66,6 +66,12 @@ if(CONFIG_BT_NIMBLE_ENABLED)
+@@ -66,6 +66,16 @@ if(CONFIG_BT_NIMBLE_ENABLED)
    set(MRUBY_USE_BLE 1)
  endif()
  
@@ -12,22 +12,27 @@ index 169620b3..b2172418 100644
 +  list(APPEND BLE_SRCS ${COMPONENT_DIR}/rig_injector.c)
 +endif()
 +
++if(DEFINED ENV{PICORUBY_QEMU_EVQ_FLOOD})
++  list(APPEND ADDITIONAL_DEFINITIONS -DPICORUBY_QEMU_EVQ_FLOOD)
++endif()
++
  if(DEFINED ENV{HEAP_SIZE})
    list(APPEND ADDITIONAL_DEFINITIONS -DHEAP_SIZE=$ENV{HEAP_SIZE})
  endif()
 diff --git a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
-index 222cdb15..a875e3af 100644
+index dcaadc15..c29d901d 100644
 --- a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
 +++ b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
-@@ -22,6 +22,7 @@ MRuby::CrossBuild.new("esp32-femtoruby") do |conf|
+@@ -22,7 +22,8 @@ MRuby::CrossBuild.new("esp32-femtoruby") do |conf|
    conf.cc.defines << "NDEBUG"
    conf.cc.defines << "MRBC_TASK_SCHEDULER_HOOK"
    conf.cc.defines << "USE_WIFI" if ENV['USE_WIFI']
-+  conf.cc.defines << "PICORUBY_QEMU_EVQ_RIG" if ENV['PICORUBY_QEMU_EVQ_RIG']
 -  conf.cc.defines << "MAX_SYMBOLS_COUNT=2000" if ENV['USE_BLE']
++  conf.cc.defines << "PICORUBY_QEMU_EVQ_RIG" if ENV['PICORUBY_QEMU_EVQ_RIG']
 +  conf.cc.defines << "MAX_SYMBOLS_COUNT=2000" if ENV['USE_BLE'] && !ENV['PICORUBY_QEMU_EVQ_RIG']
-
+ 
    conf.femtoruby(alloc_libc: false)
+   conf.gembox 'minimum'
 diff --git a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
 index a3fd7b44..d6598aba 100644
 --- a/components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb
