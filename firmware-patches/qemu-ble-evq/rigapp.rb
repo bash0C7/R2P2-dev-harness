@@ -8,6 +8,37 @@ require 'ble'
 class RigObserver < BLE
   WRITE_HANDLE = 0x42
   FLOOD_HANDLE = 0x43
+  WLAT_HANDLE = 0x44
+
+  def start(timeout_ms = nil, stop_state = :no_stop)
+    started_at = Machine.board_millis
+    @event_queue.clear
+    _event_queue_cleared
+    hci_power_control(HCI_POWER_ON)
+    while true
+      break if timeout_ms && timeout_ms <= Machine.board_millis - started_at
+      break if @state == stop_state
+      event = @event_queue.pop(timeout_ms: 20)
+      _event_popped if event
+      if event.is_a?(String)
+        packet_callback(event)
+      elsif event
+        heartbeat_callback
+      end
+      drain_writes
+      drain_wlat
+      drain_flood
+    end
+    Machine.board_millis - started_at
+  ensure
+    hci_power_control(HCI_POWER_OFF)
+  end
+
+  def drain_wlat
+    while (v = pop_write_value(WLAT_HANDLE))
+      puts "[rigapp] wlat tin=#{v.to_i} t=#{Machine.board_millis}"
+    end
+  end
 
   def initialize
     super(:central)
@@ -31,9 +62,7 @@ class RigObserver < BLE
   end
 
   def heartbeat_callback
-    drain_writes
     before = @flood_received
-    drain_flood
     mem_report("hb drained=#{@flood_received - before} total_received=#{@flood_received}") if @flood_received > 0
   end
 

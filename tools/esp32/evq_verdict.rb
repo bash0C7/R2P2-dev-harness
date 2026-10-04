@@ -17,10 +17,11 @@ module EvqVerdict
   FLOOD_RECV = /flood received=(\d+) bytes=(\d+)/
   FLOOD_CRASH = /Fatal error: Out of memory|NoMemoryError|Guru Meditation|abort\(\) was called|Rebooting/
   FLOOD_DROP = /write queue full/
+  WLAT = /wlat tin=(\d+) t=(\d+)/
 
   module_function
 
-  def judge(log, max_latency_ms:, expect_fault: false)
+  def judge(log, max_latency_ms:, expect_fault: false, require_wlat: nil)
     total = log[INJECT_DONE, 1]
     received = {}
     log.scan(RECV) { |seq, tin, t| received[seq.to_i] ||= [tin.to_i, t.to_i] }
@@ -43,11 +44,19 @@ module EvqVerdict
     end
     problems << "latency > #{max_latency_ms}ms: #{late.join(', ')}" unless late.empty?
 
+    wlat = log.scan(WLAT).map { |tin, t| t.to_i - tin.to_i }
+    if require_wlat
+      problems << "only #{wlat.size} wlat lines, expected #{require_wlat}" if wlat.size < require_wlat
+      slow = wlat.select { |l| l > max_latency_ms }
+      problems << "write latency > #{max_latency_ms}ms: #{slow.join(', ')}" unless slow.empty?
+    end
+
     if problems.empty?
       worst = received.values.map { |tin, t| t - tin }.max
       Result.new(pass: true,
                  message: "#{received.size} events delivered, worst latency #{worst}ms <= #{max_latency_ms}ms, " \
-                          "no foreign push, writes A and B delivered#{expect_fault ? ' after the injected fault' : ''}")
+                          "no foreign push, writes A and B delivered#{expect_fault ? ' after the injected fault' : ''}" \
+                          "#{require_wlat ? ", write latency worst #{wlat.max}ms" : ''}")
     else
       Result.new(pass: false, message: problems.join("; "))
     end

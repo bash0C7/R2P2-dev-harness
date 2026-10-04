@@ -137,6 +137,14 @@ rig_task(void *arg)
   }
   printf("[rig] inject done n=60\n");
 
+  for (int i = 0; i < 20; i++) {
+    char tin[12];
+    int n = snprintf(tin, sizeof(tin), "%lu", (unsigned long)(esp_timer_get_time() / 1000));
+    picoruby_nimble_enqueue_write(0x44, (const uint8_t *)tin, (uint16_t)n);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  printf("[rig] wlat done n=20\n");
+
 #ifdef PICORUBY_QEMU_EVQ_FLOOD
   static uint8_t flood_payload[FLOOD_PAYLOAD_LEN];
   memset(flood_payload, 0x5a, sizeof(flood_payload));

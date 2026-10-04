@@ -127,7 +127,7 @@ end
 def evq_judge(expect_fault: false)
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
-  EvqVerdict.judge(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS, expect_fault: expect_fault)
+  EvqVerdict.judge(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS, expect_fault: expect_fault, require_wlat: 20)
 end
 
 def evq_flood_default_heap

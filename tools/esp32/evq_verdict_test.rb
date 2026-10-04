@@ -115,4 +115,10 @@ oom_both_log = <<~LOG
 LOG
 raise "expect pass: A retried after the fault" unless EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true).pass
 
+wlat_log = oom_both_log + "[rigapp] wlat tin=5000 t=5012\n" * 20
+raise "expect pass with 20 wlat lines" unless EvqVerdict.judge(wlat_log, max_latency_ms: 50, expect_fault: true, require_wlat: 20).pass
+wlat_slow = oom_both_log + "[rigapp] wlat tin=5000 t=5012\n" * 19 + "[rigapp] wlat tin=6000 t=6900\n"
+raise "expect fail: slow wlat" if EvqVerdict.judge(wlat_slow, max_latency_ms: 50, expect_fault: true, require_wlat: 20).pass
+raise "expect fail: too few wlat" if EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true, require_wlat: 20).pass
+
 puts "evq_verdict_test OK"
