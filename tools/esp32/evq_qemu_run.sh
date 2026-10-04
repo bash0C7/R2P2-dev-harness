@@ -27,6 +27,7 @@ FAILURE_PATTERN='assert failed|no such vaddr|Guru Meditation|calibration efuse v
 # rake-built libmruby (see firmware-patches/qemu-ble-evq/r2p2-esp32.patch).
 export PICORUBY_QEMU_EVQ_RIG=1
 [ "${EVQ_FLOOD:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_FLOOD=1
+[ -n "${EVQ_FLOOD_SPACING_MS:-}" ] && export PICORUBY_QEMU_EVQ_FLOOD_SPACING_MS="$EVQ_FLOOD_SPACING_MS"
 
 # Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
 # some gem/memory layouts corrupt a TCB right after app_main returns; a

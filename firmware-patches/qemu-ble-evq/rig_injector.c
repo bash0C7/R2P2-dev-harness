@@ -32,7 +32,9 @@ extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *da
 #define FLOOD_HANDLE 0x43
 #define FLOOD_PAYLOAD_LEN 128
 #define FLOOD_COUNT 500
+#ifndef FLOOD_SPACING_MS
 #define FLOOD_SPACING_MS 2
+#endif
 #endif
 
 volatile int rig_fault_write = 0;

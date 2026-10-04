@@ -2,10 +2,10 @@ diff --git a/components/picoruby-esp32/CMakeLists.txt b/components/picoruby-esp3
 index 169620b3..ba73238b 100644
 --- a/components/picoruby-esp32/CMakeLists.txt
 +++ b/components/picoruby-esp32/CMakeLists.txt
-@@ -66,6 +66,16 @@ if(CONFIG_BT_NIMBLE_ENABLED)
+@@ -66,6 +66,20 @@ if(CONFIG_BT_NIMBLE_ENABLED)
    set(MRUBY_USE_BLE 1)
  endif()
- 
+
 +# picoruby PR #427 event-path rig (R2P2-dev-harness overlay; never committed)
 +if(DEFINED ENV{PICORUBY_QEMU_EVQ_RIG})
 +  list(APPEND ADDITIONAL_DEFINITIONS -DPICORUBY_QEMU_EVQ_RIG)
@@ -14,6 +14,10 @@ index 169620b3..ba73238b 100644
 +
 +if(DEFINED ENV{PICORUBY_QEMU_EVQ_FLOOD})
 +  list(APPEND ADDITIONAL_DEFINITIONS -DPICORUBY_QEMU_EVQ_FLOOD)
++endif()
++
++if(DEFINED ENV{PICORUBY_QEMU_EVQ_FLOOD_SPACING_MS})
++  list(APPEND ADDITIONAL_DEFINITIONS -DFLOOD_SPACING_MS=$ENV{PICORUBY_QEMU_EVQ_FLOOD_SPACING_MS})
 +endif()
 +
  if(DEFINED ENV{HEAP_SIZE})

@@ -13,6 +13,12 @@ class RigObserver < BLE
     super(:central)
     @flood_received = 0
     @flood_bytes = 0
+    mem_report("init")
+  end
+
+  def mem_report(tag)
+    m = PicoRubyVM.memory_statistics
+    puts "[rigapp] mem #{tag} total=#{m[:total]} used=#{m[:used]} free=#{m[:free]} frag=#{m[:frag]}"
   end
 
   def advertising_report_callback(r)
@@ -26,7 +32,9 @@ class RigObserver < BLE
 
   def heartbeat_callback
     drain_writes
+    before = @flood_received
     drain_flood
+    mem_report("hb drained=#{@flood_received - before} total_received=#{@flood_received}") if @flood_received > 0
   end
 
   def drain_writes
