@@ -75,18 +75,6 @@ namespace :esp32 do
     puts "[esp32:evq_oom_red] RED as expected: #{result.message}"
   end
 
-  desc "Write-flood rig, 2 ms burst, expecting FAIL on pre-fix firmware. Succeeds when the verdict is red"
-  task :evq_flood_red do
-    ENV["EVQ_FLOOD"] = "1"
-    ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
-    result = evq_flood_judge
-    if result.pass
-      puts "[esp32:evq_flood_red] UNEXPECTED GREEN: #{result.message}"
-      exit 1
-    end
-    puts "[esp32:evq_flood_red] RED as expected: #{result.message}"
-  end
-
   desc "Write-flood rig, 2 ms burst, expecting PASS (no abort, received + rejected == sent)"
   task :evq_flood_green do
     ENV["EVQ_FLOOD"] = "1"
@@ -109,6 +97,19 @@ namespace :esp32 do
       exit 1
     end
     puts "[esp32:evq_flood_paced_green] PASS: #{result.message}"
+  end
+
+  desc "Write-flood rig, 2 ms burst, Ruby drains only on the heartbeat, expecting FAIL on pre-fix firmware (abort, or nothing rejected). Succeeds when the verdict is red"
+  task :evq_flood_hb_red do
+    ENV["EVQ_FLOOD"] = "1"
+    ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
+    ENV["EVQ_FLOOD_DRAIN"] = "hb"
+    result = evq_flood_judge(min_rejected: 1)
+    if result.pass
+      puts "[esp32:evq_flood_hb_red] UNEXPECTED GREEN: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_flood_hb_red] RED as expected: #{result.message}"
   end
 
   desc "Write-flood rig, 2 ms burst, Ruby drains only on the heartbeat, expecting PASS with the per-handle bound engaged (rejected >= 1)"

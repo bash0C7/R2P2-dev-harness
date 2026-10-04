@@ -21,7 +21,7 @@ if [ -s "$MARKER" ]; then
     fi
   done
 fi
-git -C "$SUBMODULE" apply -R "$RIG_DIR/radio_stub.patch"
+git -C "$SUBMODULE" apply -R --ignore-whitespace "$RIG_DIR/radio_stub.patch"
 git -C "$ESP32_REPO" apply -R "$RIG_DIR/r2p2-esp32.patch"
 
 rm -f "$ESP32_REPO/components/picoruby-esp32/rig_injector.c"
