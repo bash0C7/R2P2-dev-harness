@@ -41,7 +41,7 @@ flood_pass_log = <<~LOG
 LOG
 flood_pass = EvqVerdict.judge_flood(flood_pass_log)
 raise "expect flood pass, got: #{flood_pass.message}" unless flood_pass.pass
-raise "expect flood message to report counts" unless flood_pass.message.include?("received=500")
+raise "expect flood message to report counts" unless flood_pass.message.include?("received=500") && flood_pass.message.include?("bytes=64000")
 
 flood_crash_log = <<~LOG
   [rigapp] flood received=50 bytes=6400

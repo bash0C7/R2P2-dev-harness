@@ -69,12 +69,14 @@ module EvqVerdict
     done_match = FLOOD_DONE.match(log)
     problems << "no flood-done line with rejected count in log" if done_match.nil?
     received = nil
+    bytes = nil
     if done_match
       after = log[done_match.end(0)..]
       problems << "no flood received= line after flood done" unless after.match?(FLOOD_RECV)
       sent = done_match[1].to_i
       rejected = done_match[2].to_i
-      received = log.scan(FLOOD_RECV).last&.first.to_i
+      received, bytes = log.scan(FLOOD_RECV).last
+      received = received.to_i
       problems << "accounting: received #{received} + rejected #{rejected} != sent #{sent}" if received + rejected != sent
       problems << "rejected #{rejected} > #{max_rejected}" if max_rejected && rejected > max_rejected
     end
@@ -82,7 +84,7 @@ module EvqVerdict
     if problems.empty?
       drops = log.scan(FLOOD_DROP).size
       Result.new(pass: true,
-                 message: "flood received=#{received} rejected=#{done_match[2]} sent=#{done_match[1]}, write-queue-full warnings=#{drops}")
+                 message: "flood received=#{received} bytes=#{bytes} rejected=#{rejected} sent=#{sent}, write-queue-full warnings=#{drops}")
     else
       Result.new(pass: false, message: problems.join("; "))
     end
