@@ -98,6 +98,9 @@ LOG
 raise "expect paced pass" unless EvqVerdict.judge_flood(flood_paced_log, max_rejected: 0).pass
 raise "expect paced fail when rejected > max" if EvqVerdict.judge_flood(flood_acct_log, max_rejected: 0).pass
 
+raise "expect hb pass: 452 rejected satisfies min_rejected 1" unless EvqVerdict.judge_flood(flood_acct_log, min_rejected: 1).pass
+raise "expect hb fail: nothing rejected means the bound never engaged" if EvqVerdict.judge_flood(flood_paced_log, min_rejected: 1).pass
+
 oom_only_b_log = <<~LOG
   [rig] FAULT write
   [rigapp] write h=0x42 v="B"

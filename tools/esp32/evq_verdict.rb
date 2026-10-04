@@ -62,7 +62,7 @@ module EvqVerdict
     end
   end
 
-  def judge_flood(log, max_rejected: nil)
+  def judge_flood(log, max_rejected: nil, min_rejected: nil)
     problems = []
     crash = log[FLOOD_CRASH]
     problems << "crash pattern matched: #{crash}" if crash
@@ -78,6 +78,7 @@ module EvqVerdict
       received = received.to_i
       problems << "accounting: received #{received} + rejected #{rejected} != sent #{sent}" if received + rejected != sent
       problems << "rejected #{rejected} > #{max_rejected}" if max_rejected && rejected > max_rejected
+      problems << "rejected #{rejected} < #{min_rejected}: the bound never engaged" if min_rejected && rejected < min_rejected
     end
 
     if problems.empty?

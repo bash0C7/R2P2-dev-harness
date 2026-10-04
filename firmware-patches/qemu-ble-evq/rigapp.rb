@@ -9,6 +9,7 @@ class RigObserver < BLE
   WRITE_HANDLE = 0x42
   FLOOD_HANDLE = 0x43
   WLAT_HANDLE = 0x44
+  FLOOD_DRAIN_ON_HEARTBEAT_ONLY = false
 
   def start(timeout_ms = nil, stop_state = :no_stop)
     started_at = Machine.board_millis
@@ -27,7 +28,7 @@ class RigObserver < BLE
       end
       drain_writes
       drain_wlat
-      drain_flood
+      drain_flood unless FLOOD_DRAIN_ON_HEARTBEAT_ONLY
     end
     Machine.board_millis - started_at
   ensure
@@ -62,6 +63,7 @@ class RigObserver < BLE
   end
 
   def heartbeat_callback
+    drain_flood if FLOOD_DRAIN_ON_HEARTBEAT_ONLY
     mem_report("hb total_received=#{@flood_received}") if @flood_received > 0
   end
 
@@ -72,11 +74,12 @@ class RigObserver < BLE
   end
 
   def drain_flood
+    before = @flood_received
     while (v = pop_write_value(FLOOD_HANDLE))
       @flood_received += 1
       @flood_bytes += v.bytesize
-      puts "[rigapp] flood received=#{@flood_received} bytes=#{@flood_bytes}" if @flood_received % 50 == 0
     end
+    puts "[rigapp] flood received=#{@flood_received} bytes=#{@flood_bytes}" if @flood_received != before
   end
 end
 
