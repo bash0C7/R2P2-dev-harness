@@ -121,4 +121,18 @@ wlat_slow = oom_both_log + "[rigapp] wlat tin=5000 t=5012\n" * 19 + "[rigapp] wl
 raise "expect fail: slow wlat" if EvqVerdict.judge(wlat_slow, max_latency_ms: 50, expect_fault: true, require_wlat: 20).pass
 raise "expect fail: too few wlat" if EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true, require_wlat: 20).pass
 
+flood_early_last_log = <<~LOG
+  [rigapp] flood received=450 bytes=57600
+  [rigapp] flood received=500 bytes=64000
+  [rig] flood done n=500 rejected=0
+LOG
+early = EvqVerdict.judge_flood(flood_early_last_log, max_rejected: 0)
+raise "expect pass when the consumer finished before the done line, got: #{early.message}" unless early.pass
+
+flood_short_log = <<~LOG
+  [rigapp] flood received=450 bytes=57600
+  [rig] flood done n=500 rejected=0
+LOG
+raise "expect fail: 450 + 0 != 500" if EvqVerdict.judge_flood(flood_short_log).pass
+
 puts "evq_verdict_test OK"

@@ -71,8 +71,7 @@ module EvqVerdict
     received = nil
     bytes = nil
     if done_match
-      after = log[done_match.end(0)..]
-      problems << "no flood received= line after flood done" unless after.match?(FLOOD_RECV)
+      problems << "no flood received= line in log" unless log.match?(FLOOD_RECV)
       sent = done_match[1].to_i
       rejected = done_match[2].to_i
       received, bytes = log.scan(FLOOD_RECV).last
