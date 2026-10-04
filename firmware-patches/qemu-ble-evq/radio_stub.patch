@@ -41,7 +41,7 @@ index 325ad1f5..98fc627d 100644
 +  return; /* rig: no radio; advertising reports come from the injector */
 +#endif
    ble_gap_disc(picoruby_nimble_own_addr_type(), BLE_HS_FOREVER,
-               &scan_params, picoruby_ble_gap_event, NULL);
+                &scan_params, picoruby_ble_gap_event, NULL);
  }
 @@ -43,6 +46,9 @@ BLE_central_start_scan(void)
  void
