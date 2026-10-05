@@ -1,8 +1,8 @@
-diff --git a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-index cbded16b..779072b7 100644
---- a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-+++ b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-@@ -228,7 +228,7 @@ pump_service(mrb_state *mrb, void *ud)
+diff --git a/mrbgems/picoruby-ble/ports/esp32/pump_mruby.c b/mrbgems/picoruby-ble/ports/esp32/pump_mruby.c
+index 2bfe2edb..d5a0dd89 100644
+--- a/mrbgems/picoruby-ble/ports/esp32/pump_mruby.c
++++ b/mrbgems/picoruby-ble/ports/esp32/pump_mruby.c
+@@ -17,7 +17,7 @@ pump_service(mrb_state *mrb, void *ud)
    (void)ud;
    mrb_bool error = FALSE;
    int ai = mrb_gc_arena_save(mrb);

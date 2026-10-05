@@ -54,10 +54,10 @@ index 92081f62..f2d66478 100644
  }
  
 diff --git a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-index cbded16b..444f5a0c 100644
+index 5547b7df..1720f1c0 100644
 --- a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
 +++ b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-@@ -318,6 +318,23 @@ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
+@@ -273,6 +273,21 @@ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
  {
    if (started) return 0;
  
@@ -68,9 +68,7 @@ index cbded16b..444f5a0c 100644
 +  extern void rig_start(void);
 +  (void)setup;
 +  ensure_timers();
-+#if defined(PICORB_VM_MRUBYC)
 +  picoruby_nimble_attach_vm(NULL);
-+#endif
 +  picoruby_nimble_reset_events();
 +  picoruby_nimble_reset_writes();
 +  rig_start();
@@ -81,7 +79,7 @@ index cbded16b..444f5a0c 100644
    esp_err_t err = nvs_flash_init();
    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
      nvs_flash_erase();
-@@ -370,6 +387,11 @@ picoruby_nimble_stop(void)
+@@ -323,6 +338,11 @@ picoruby_nimble_stop(void)
  {
    if (!started) return 0;
    heartbeat_force_stop();
