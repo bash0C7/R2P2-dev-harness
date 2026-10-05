@@ -1,13 +1,13 @@
-diff --git a/mrbgems/picoruby-ble/src/mruby/ble.c b/mrbgems/picoruby-ble/src/mruby/ble.c
-index b793c2cf..3c53baf4 100644
---- a/mrbgems/picoruby-ble/src/mruby/ble.c
-+++ b/mrbgems/picoruby-ble/src/mruby/ble.c
-@@ -80,7 +80,7 @@ ble_scheduler_pump(mrb_state *mrb, void *ud)
-   if (mrb != _mrb || mrb_nil_p(event_queue)) return;
+diff --git a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
+index cbded16b..779072b7 100644
+--- a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
++++ b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
+@@ -228,7 +228,7 @@ pump_service(mrb_state *mrb, void *ud)
+   (void)ud;
    mrb_bool error = FALSE;
    int ai = mrb_gc_arena_save(mrb);
--  mrb_protect_error(mrb, ble_pump_body, NULL, &error);
-+  ble_pump_body(mrb, NULL);
+-  mrb_protect_error(mrb, pump_body, NULL, &error);
++  pump_body(mrb, NULL);
    mrb_gc_arena_restore(mrb, ai);
-   if (error) write_values_mutex = false;
  }
+ 
