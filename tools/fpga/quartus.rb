@@ -25,6 +25,22 @@ module FpgaQuartus
       .sort_by { |p| [p.end_with?("_pkg.sv") ? 0 : 1, p] }
   end
 
+  # rite_core の top が使う RTL だけ (v1 の mrb_* は入れない)
+  RITE_SOURCES = %w[rite_image_pkg.sv rite_rom.sv rite_ram.sv rite_core.sv boards/peridot_air_rite_top.sv].freeze
+
+  def rite_sources
+    RITE_SOURCES.map { |n| File.join(RTL_DIR, n) }
+  end
+
+  # Quartus Lite は module の見出しの中の import (`module m import p::*; #(...)`) を構文エラーにする。
+  # 写す時に import を module の前 (その file の compilation unit) へ出す。読める名前は同じ
+  def hoist_header_imports(src)
+    src.gsub(/^module (\w+)\n((?:[ \t]*import [\w:*]+;\n)+)/) do
+      name, imports = $1, $2
+      "#{imports.gsub(/^[ \t]+/, '')}module #{name}\n"
+    end
+  end
+
   # ROM の全語を埋めた $readmemh。空きは全 bit 1 (op 0xff、コアはエラーで止まる)。
   # hex は PicoRuby の変換器 (mrb2rom.rb) が書いたもの
   def rom_hex(hex, depth: ROM_DEPTH)
@@ -54,15 +70,15 @@ module FpgaQuartus
 
   # mruby のバイトコードを直接実行する回路 (peridot_air_rite_top) のプロジェクト。rom は FpgaRite.rom_hex の中身
   def write_rite_project(dir, rom)
-    write_files(dir, qsf_for: ->(names) { qsf(names, top: "peridot_air_rite_top") }, rom: rom)
+    write_files(dir, qsf_for: ->(names) { qsf(names, top: "peridot_air_rite_top") }, rom: rom, srcs: rite_sources)
   end
 
-  def write_files(dir, qsf_for:, rom:)
+  def write_files(dir, qsf_for:, rom:, srcs: sources)
     FileUtils.rm_rf dir
     FileUtils.mkdir_p File.join(dir, "src")
-    names = sources.map do |src|
+    names = srcs.map do |src|
       name = File.basename(src)
-      FileUtils.cp src, File.join(dir, "src", name)
+      File.write(File.join(dir, "src", name), hoist_header_imports(File.read(src)))
       name
     end
     FileUtils.cp File.join(BOARD_DIR, "peridot_air.sdc"), dir
