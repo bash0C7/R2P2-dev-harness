@@ -89,6 +89,26 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
   別 session が使っていると待つ ([docs/spec.md](docs/spec.md) §6)
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
+FPGA (mruby のバイトコードを直接実行する CPU、issue #4)。`.mrb` を ROM にし、SystemVerilog のコアで走らせ、
+Ruby の参照インタプリタと突き合わせる。クラスとメソッド (実行時にメソッド表を引く)、ブロック (`yield` / `proc` / `each` / `map` ...)、配列 (GC 付き)、
+`sleep_ms` まで動く (シミュレーション上)。`vendor/picoruby` は要らない。
+macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる:
+
+```sh
+rake fpga:setup                        # 足りないシミュレータを入れる (brew / apt-get)。最後に doctor を回す
+rake fpga:test                         # Ruby の道具のテスト + 全テストベンチ (Verilator と Icarus) + 参照との突き合わせ
+rake fpga:emu[fpga/corpus/blink_sleep.mrb] # ボードエミュレーター (既定 125MHz、[src,ms,CE_DIV,MHz] で変更)。LED とボタンの変化を実時間で表示
+rake fpga:run[fpga/corpus/counter.mrb] # 1本をシミュレーション上のコアで走らせ、$LED などへの書き込みを表示
+rake fpga:fuzz[1000,2]                 # 差分ファズ: ランダムな ROM を参照インタプリタとコアで走らせ、トレースを全行比べる
+rake fpga:rom[fpga/corpus/blink.mrb]   # PicoRuby で書いた変換器で ROM イメージと命令一覧を作るだけ
+rake fpga:sim[mrb_core_tb]             # テストベンチ1本を Verilator で。波形は build/fpga/mrb_core_tb.fst
+rake fpga:build[fpga/corpus/blink.mrb] # PERIDOT-Air 向けに Quartus で合成 (quartus_sh か FPGA_QUARTUS_HOST)。実機では未確認
+rake fpga:flash                        # openFPGALoader + USB-Blaster で書く。実機では未確認
+```
+
+`fpga:rom` / `fpga:run` / `fpga:build` は変換器を PicoRuby の host VM で走らせるので、`rake setup` と `rake test:host` が要る。波形は `surfer build/fpga/<tb>.fst` で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)、
+約束事と罠は [docs/spec.md](docs/spec.md) §10。
+
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、
 `rake test:esp32` (`tools/common` と `tools/esp32`)。`rake test` には含まれない。
 

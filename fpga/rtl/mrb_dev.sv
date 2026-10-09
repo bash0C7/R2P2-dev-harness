@@ -1,0 +1,415 @@
+// コアの周りのデバイス (GPIO、時間、UART、RNG、PWM、ADC、IRQ、watchdog、I2C、SPI、PSG の列)。番地と意味は tools/fpga/devices.rb (参照モデル) と同じ。
+// コアは primitive の __io_read / __io_write で読み書きする (16bit の番地、0x100 から上)。
+// 読み出しは組み合わせ。re は読んだ cycle のパルス (UART の RX、RNG、IRQ の登録と事象は読むと進む)。
+// tick は命令を始める前 (コアの S_FETCH の en の cycle) のパルスで、ピンを標本にして IRQ の事象を積み、watchdog の期限を見る。
+// 期限を過ぎていれば reboot を 1 cycle 出し (soc がコアとポートをリセットする)、自分も初めからにする (watchdog の印は残す)。
+//
+// 外からの入力: ext_low / ext_high (GPIO のピンを外から L / H にする)、rx_count / rx_bytes (UART が受けたバイトの数と、
+// 届いた順のバイト列)、adc_val (ADC の入力 0..4 の 12bit)、i2c_rx / spi_rx (外のチップの返事のバイト列)、
+// i2c_present (応答する I2C の番地の bit)。シミュレーションのテストベンチが刺激から作る。実機では 0。
+// I2C / SPI の書き込み (番地と送るバイト) はコアの書き込みとしてトレースに出るだけ (表示器はそれを読むデコーダーが画面にする)。
+// 外への出力: gpio_dir / gpio_out / gpio_level (ピン)、tx_valid / tx_byte (UART の送信)、pwm_running (PWM が動いているピン)。
+`timescale 1ns / 1ps
+// 値のタグ (wdata の上位) と時計の上位は使わない
+/* verilator lint_off UNUSEDSIGNAL */
+module mrb_dev
+  import mrb_pkg::*;
+#(
+  parameter int RX_MAX = 256
+) (
+  input  logic                clk,
+  input  logic                rst_n,
+  input  logic [15:0]         addr,
+  output logic [VAL_BITS-1:0] rdata,
+  input  logic                re,
+  input  logic                we,
+  input  logic [VAL_BITS-1:0] wdata,
+  input  logic [63:0]         vtime,     // 仮想の時計 (µs): 始めた命令の数 + sleep した時間 (コアが数える)
+  input  logic                tick,      // 命令を始める前
+  input  logic [31:0]         ext_low,
+  input  logic [31:0]         ext_high,
+  input  logic [15:0]         rx_count,
+  input  logic [7:0]          rx_bytes [RX_MAX],
+  input  logic [11:0]         adc_val [5],
+  input  logic [15:0]         i2c_rx_count,
+  input  logic [7:0]          i2c_rx_bytes [RX_MAX],
+  input  logic [31:0]         i2c_present [4],
+  input  logic [15:0]         spi_rx_count,
+  input  logic [7:0]          spi_rx_bytes [RX_MAX],
+  output logic [31:0]         gpio_dir,
+  output logic [31:0]         gpio_out,
+  output logic [31:0]         gpio_level,
+  output logic                tx_valid,
+  output logic [7:0]          tx_byte,
+  output logic [31:0]         pwm_running,
+  output logic                reboot
+);
+  localparam logic [VAL_BITS-1:0] V_NIL = {TAG_NIL, {INT_BITS{1'b0}}};
+  localparam logic [15:0] GPIO_DIR = 16'h100, GPIO_OUT = 16'h101, GPIO_PULLUP = 16'h102, GPIO_PULLDOWN = 16'h103,
+                          GPIO_OD = 16'h104, GPIO_LEVEL = 16'h105, GPIO_EXT_LOW = 16'h106, GPIO_EXT_HIGH = 16'h107,
+                          TIME_US = 16'h110, TIME_US_HI = 16'h111, TIME_MS = 16'h112,
+                          UART_TX = 16'h120, UART_RX = 16'h121, UART_AVAIL = 16'h122, RNG = 16'h130,
+                          PWM_SEL = 16'h140, PWM_FREQ = 16'h141, PWM_DUTY = 16'h142, PWM_RUNNING = 16'h143,
+                          ADC_BASE = 16'h150,
+                          IRQ_PIN = 16'h160, IRQ_MASK = 16'h161, IRQ_DEBOUNCE = 16'h162, IRQ_REGISTER = 16'h163,
+                          IRQ_ID = 16'h164, IRQ_UNREG = 16'h165, IRQ_EVENT = 16'h166,
+                          WDT_ENABLE = 16'h170, WDT_DISABLE = 16'h171, WDT_FEED = 16'h172, WDT_CAUSED = 16'h173,
+                          WDT_REMAIN = 16'h174, WDT_REBOOT = 16'h175,
+                          I2C_ADDR = 16'h180, I2C_ACK = 16'h182, I2C_RX = 16'h184, I2C_PRESENT = 16'h185,
+                          SPI_RX = 16'h191,
+                          PSG_DELAY = 16'h1A0, PSG_AUX = 16'h1A1, PSG_PUSH = 16'h1A2, PSG_FREE = 16'h1A3, PSG_EMPTY = 16'h1A4,
+                          PSG_SELECT = 16'h1A5, PSG_DIRECT_REG = 16'h1A6, PSG_DIRECT_MUTE = 16'h1A7;
+  localparam int NSLOT = 16;  // IRQ の枠 (RP2040 の port と同じ)
+  localparam int QLEN  = 32;  // 事象の列 (31 で満杯)
+
+  logic [31:0] pull_up, pull_down, od, rng;
+  logic [15:0] rp; // UART の RX の読んだ数
+
+  // ピンの値: 出力で駆動しているピン (open drain は 0 の時だけ) は出力の値、離しているピンは
+  // 外から L > 外から H > pull up (pull down と両方なら down) > 0
+  logic [31:0] driven, released;
+  assign driven     = gpio_dir & ~(od & gpio_out);
+  assign released   = ~ext_low & (ext_high | (pull_up & ~pull_down));
+  assign gpio_level = (gpio_out & driven) | (released & ~driven);
+
+  logic [15:0] avail;
+  assign avail = rx_count - rp;
+  logic [31:0] rng_next;
+  logic [31:0] x1, x2;
+  assign x1       = rng ^ (rng << 13);
+  assign x2       = x1 ^ (x1 >> 17);
+  assign rng_next = x2 ^ (x2 << 5);
+  logic [63:0] ms;
+  assign ms = vtime / 64'd1000;
+
+  // ---- PWM: ピンごとの周波数 (mHz) と duty (1/1000 %)。配列を always_ff の for で初期化できない (Verilator) ので平らなベクタに
+  logic [31:0]      pwm_sel;
+  logic [32*32-1:0] pwm_freq, pwm_duty;
+  logic             sel_ok;
+  assign sel_ok = pwm_sel < 32'd32;
+  always_comb for (int p = 0; p < 32; p++) pwm_running[p] = pwm_freq[32*p +: 32] != 32'd0;
+
+  // ---- IRQ: 枠 (ピン、mask、debounce、最後の時刻 (ms)、最後の事象) と事象の列 ({id 5bit, 事象 4bit})
+  logic [31:0]          irq_pin, irq_mask, irq_deb, irq_id;
+  logic [NSLOT-1:0]     sv;
+  logic [NSLOT*32-1:0]  sp, sd, sl;
+  logic [NSLOT*4-1:0]   sm, se;
+  logic [QLEN*9-1:0]    q;
+  logic [4:0]           qh, qt;
+  logic                 unreg;
+  logic [31:0]          last;
+  logic                 have_last;
+  // 空いている最初の枠
+  logic [4:0] free_i;
+  always_comb begin
+    free_i = 5'd16;
+    for (int i = NSLOT - 1; i >= 0; i--) if (!sv[i]) free_i = 5'(i);
+  end
+  logic q_empty;
+  assign q_empty = qh == qt;
+
+  // ---- watchdog
+  logic        wdt_en, caused;
+  logic [63:0] wdt_dead;
+  logic [31:0] wdt_ms;
+  logic        wdt_due;
+  assign wdt_due = wdt_en && vtime >= wdt_dead;
+
+  // ---- I2C / SPI: 番地と、返事の読んだ数 (外のチップはリセットされないので watchdog の再起動でも残す)
+  logic [31:0] i2c_addr;
+  logic [15:0] i2c_rp, spi_rp;
+  logic        i2c_ack;
+  assign i2c_ack = i2c_present[i2c_addr[6:5]][i2c_addr[4:0]];
+
+  // ---- PSG のパケットの列 (devices.rb の psg_tick。C の ports/common/psg.c の ring buffer と rp2040 port の
+  //      psg_process_packets)。256 枠で 255 まで入る。PSG そのもの (音) は外。取り出したパケットは psg_ev でテストベンチへ
+  //      (トレースの P 行)。C は 1ms ごとの tick でまとめて取り出すが、ここは命令の区切り (tick) ごとに1つずつ
+  logic [31:0] psg_dl [256];
+  logic [31:0] psg_wd [256];
+  logic [15:0] psg_ax [256];
+  logic [7:0]  psg_h, psg_t;   // 取り出す位置、積む位置
+  logic [31:0] psg_sel, psg_g, psg_delay, psg_aux, psg_ms;
+  logic        psg_due;
+  logic [7:0]  psg_n;
+  assign psg_n = psg_t - psg_h;
+  logic        p_cross, p_due1, p_empty, p_pop, p_empty_after, p_run;
+  logic [31:0] p_g1, p_g2, p_gn;
+  assign p_cross = ms[31:0] > psg_ms;
+  assign p_g1    = psg_g + (p_cross && psg_sel != 32'd0 ? ms[31:0] - psg_ms : 32'd0);
+  assign p_due1  = psg_due || p_cross;
+  assign p_run   = p_due1 && psg_sel != 32'd0;
+  assign p_empty = psg_n == 8'd0;
+  assign p_pop   = p_run && !p_empty && psg_dl[psg_h] <= p_g1;
+  assign p_g2    = p_pop ? p_g1 - psg_dl[psg_h] : p_g1;
+  assign p_empty_after = p_pop ? psg_n == 8'd1 : p_empty;
+  assign p_gn    = p_run && p_empty_after ? 32'd0 : p_g2;
+  // 取り出した (か列を通さずに書いた) パケット: ms、{op, reg, val, arg}、aux。tick は命令を始める前 (P 行の step は次の命令)
+  logic        psg_ev, psg_ev_tick;
+  logic [31:0] psg_ev_ms, psg_ev_word;
+  logic [15:0] psg_ev_aux;
+  logic        psg_direct;
+  assign psg_direct  = we && (addr == PSG_DIRECT_REG || addr == PSG_DIRECT_MUTE);
+  assign psg_ev_tick = tick && p_pop;
+  assign psg_ev      = psg_ev_tick || psg_direct;
+  assign psg_ev_ms   = psg_ev_tick ? ms[31:0] - p_g2 : ms[31:0];
+  assign psg_ev_word = psg_ev_tick ? psg_wd[psg_h] :
+                       {addr == PSG_DIRECT_REG ? 8'h80 : 8'h81, wdata[15:8], 8'd0, wdata[7:0]};
+  assign psg_ev_aux  = psg_ev_tick ? psg_ax[psg_h] : 16'd0;
+
+  logic [31:0] adc_r;
+  always_comb begin
+    adc_r = 32'd0;
+    for (int i = 0; i < 5; i++) if (addr == ADC_BASE + 16'(i)) adc_r = {20'd0, adc_val[i]};
+  end
+
+  // 読む値: レジスタは 32bit で、符号付きに広げて返す (-1 は -1。コアの Integer は 64bit)。
+  // TIME_US と TIME_MS は 64bit の時計そのもの (devices.rb の read と同じ)
+  logic [31:0] rd32;
+  logic        rd_ok;
+  always_comb begin
+    rd_ok = 1'b1;
+    rd32  = 32'd0;
+    case (addr)
+      GPIO_DIR:      rd32 = gpio_dir;
+      GPIO_OUT:      rd32 = gpio_out;
+      GPIO_PULLUP:   rd32 = pull_up;
+      GPIO_PULLDOWN: rd32 = pull_down;
+      GPIO_OD:       rd32 = od;
+      GPIO_LEVEL:    rd32 = gpio_level;
+      GPIO_EXT_LOW:  rd32 = ext_low;
+      GPIO_EXT_HIGH: rd32 = ext_high;
+      TIME_US:       rd32 = vtime[31:0];
+      TIME_US_HI:    rd32 = vtime[63:32];
+      TIME_MS:       rd32 = ms[31:0];
+      UART_RX:       rd32 = avail == 16'd0 ? 32'hFFFF_FFFF : {24'd0, rx_bytes[rp[7:0]]};
+      UART_AVAIL:    rd32 = {16'd0, avail};
+      RNG:           rd32 = rng_next;
+      PWM_SEL:       rd32 = pwm_sel;
+      PWM_FREQ:      rd32 = sel_ok ? pwm_freq[32*pwm_sel[4:0] +: 32] : 32'd0;
+      PWM_DUTY:      rd32 = sel_ok ? pwm_duty[32*pwm_sel[4:0] +: 32] : 32'd0;
+      PWM_RUNNING:   rd32 = pwm_running;
+      ADC_BASE, ADC_BASE + 16'd1, ADC_BASE + 16'd2, ADC_BASE + 16'd3, ADC_BASE + 16'd4: rd32 = adc_r;
+      IRQ_PIN:       rd32 = irq_pin;
+      IRQ_MASK:      rd32 = irq_mask;
+      IRQ_DEBOUNCE:  rd32 = irq_deb;
+      IRQ_ID:        rd32 = irq_id;
+      IRQ_REGISTER:  rd32 = free_i == 5'd16 ? 32'hFFFF_FFFF : 32'(free_i) + 32'd1;
+      IRQ_UNREG:     rd32 = {31'd0, unreg};
+      IRQ_EVENT:     rd32 = q_empty ? 32'hFFFF_FFFF : {19'd0, q[9*qh +: 5], 4'd0, q[9*qh + 5 +: 4]}; // id << 8 | 事象
+      WDT_CAUSED:    rd32 = {31'd0, caused};
+      WDT_REMAIN:    rd32 = wdt_en && wdt_dead > vtime ? 32'(wdt_dead - vtime) : 32'd0;
+      I2C_ADDR:      rd32 = i2c_addr;
+      I2C_ACK:       rd32 = {31'd0, i2c_ack};
+      I2C_RX:        rd32 = i2c_rx_count == i2c_rp ? 32'd255 : {24'd0, i2c_rx_bytes[i2c_rp[7:0]]};
+      I2C_PRESENT, I2C_PRESENT + 16'd1, I2C_PRESENT + 16'd2, I2C_PRESENT + 16'd3:
+                     rd32 = i2c_present[addr[1:0] - 2'd1];
+      SPI_RX:        rd32 = spi_rx_count == spi_rp ? 32'd255 : {24'd0, spi_rx_bytes[spi_rp[7:0]]};
+      PSG_FREE:      rd32 = psg_sel == 32'd0 ? 32'd0 : 32'd255 - 32'(psg_n);
+      PSG_EMPTY:     rd32 = {31'd0, psg_n == 8'd0};
+      PSG_SELECT:    rd32 = psg_sel;
+      default:       rd_ok = 1'b0;
+    endcase
+    if (addr == TIME_US) rdata = {TAG_INT, vtime};
+    else if (addr == TIME_MS) rdata = {TAG_INT, ms};
+    else rdata = rd_ok ? {TAG_INT, {(INT_BITS-32){rd32[31]}}, rd32} : V_NIL;
+  end
+
+  assign tx_valid = we && addr == UART_TX;
+  assign tx_byte  = wdata[7:0];
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      gpio_dir  <= '0;
+      gpio_out  <= '0;
+      pull_up   <= '0;
+      pull_down <= '0;
+      od        <= '0;
+      rng       <= 32'd2463534242;
+      rp        <= '0;
+      pwm_sel   <= '0;
+      pwm_freq  <= '0;
+      pwm_duty  <= '0;
+      irq_pin   <= '0;
+      irq_mask  <= '0;
+      irq_deb   <= '0;
+      irq_id    <= '0;
+      sv        <= '0;
+      sp        <= '0;
+      sd        <= '0;
+      sl        <= '0;
+      sm        <= '0;
+      se        <= '0;
+      q         <= '0;
+      qh        <= '0;
+      qt        <= '0;
+      unreg     <= 1'b0;
+      last      <= '0;
+      have_last <= 1'b0;
+      wdt_en    <= 1'b0;
+      wdt_dead  <= '0;
+      wdt_ms    <= '0;
+      caused    <= 1'b0;
+      reboot    <= 1'b0;
+      i2c_addr  <= '0;
+      i2c_rp    <= '0;
+      spi_rp    <= '0;
+      psg_h     <= '0;
+      psg_t     <= '0;
+      psg_sel   <= '0;
+      psg_g     <= '0;
+      psg_delay <= '0;
+      psg_aux   <= '0;
+      psg_ms    <= '0;
+      psg_due   <= 1'b0;
+    end else begin
+      reboot <= 1'b0;
+      if (tick && wdt_due) begin
+        // watchdog の再起動: watchdog の印を残して初めから。UART の届いていたバイトは捨てる
+        reboot    <= 1'b1;
+        caused    <= 1'b1;
+        gpio_dir  <= '0;
+        gpio_out  <= '0;
+        pull_up   <= '0;
+        pull_down <= '0;
+        od        <= '0;
+        rng       <= 32'd2463534242;
+        rp        <= rx_count;
+        pwm_sel   <= '0;
+        pwm_freq  <= '0;
+        pwm_duty  <= '0;
+        irq_pin   <= '0;
+        irq_mask  <= '0;
+        irq_deb   <= '0;
+        irq_id    <= '0;
+        sv        <= '0;
+        qh        <= '0;
+        qt        <= '0;
+        unreg     <= 1'b0;
+        have_last <= 1'b0;
+        wdt_en    <= 1'b0;
+        i2c_addr  <= '0;
+        // PSG の列も初めから (この tick で取り出したものは psg_ev で出ている)
+        psg_h     <= '0;
+        psg_t     <= '0;
+        psg_sel   <= '0;
+        psg_g     <= '0;
+        psg_delay <= '0;
+        psg_aux   <= '0;
+        psg_ms    <= '0;
+        psg_due   <= 1'b0;
+      end else if (tick) begin
+        // PSG の列: ms の境を越えたら g を進め、先頭の遅延が来ていれば1つ取り出す
+        if (p_cross) psg_ms <= ms[31:0];
+        psg_g   <= p_gn;
+        psg_due <= p_run ? p_pop : p_due1;
+        if (p_pop) psg_h <= psg_h + 8'd1;
+        // ピンの事象 (RP2040 の gpio_irq_callback と同じ): ピンの順に、そのピンの枠の mask の和で絞り、最初に重なる枠へ
+        begin : irq_tick
+          logic [3:0]  en_m, ev;
+          logic [4:0]  t;
+          logic [31:0] now_ms;
+          logic        done;
+          logic [NSLOT*32-1:0] nl;
+          logic [NSLOT*4-1:0]  ne;
+          logic [QLEN*9-1:0]   nq;
+          t      = qt;
+          now_ms = vtime[31:0] / 32'd1000;
+          nl     = sl;
+          ne     = se;
+          nq     = q;
+          if (have_last && sv != '0) begin
+            for (int p = 0; p < 32; p++) begin
+              en_m = 4'd0;
+              for (int i = 0; i < NSLOT; i++) if (sv[i] && sp[32*i +: 32] == 32'(p)) en_m = en_m | sm[4*i +: 4];
+              ev = {!last[p] && gpio_level[p], last[p] && !gpio_level[p], gpio_level[p], !gpio_level[p]} & en_m;
+              done = 1'b0;
+              if (ev != 4'd0) begin
+                for (int i = 0; i < NSLOT; i++) begin
+                  if (!done && sv[i] && sp[32*i +: 32] == 32'(p) && (ev & sm[4*i +: 4]) != 4'd0 &&
+                      !(sd[32*i +: 32] != 32'd0 && (now_ms - nl[32*i +: 32]) < sd[32*i +: 32] && ev == ne[4*i +: 4])) begin
+                    nl[32*i +: 32] = now_ms;
+                    ne[4*i +: 4]   = ev;
+                    if (5'(t + 5'd1) != qh) begin
+                      nq[9*t +: 9] = {ev, 5'(i + 1)};
+                      t = t + 5'd1;
+                    end
+                    done = 1'b1;
+                  end
+                end
+              end
+            end
+          end
+          sl <= nl;
+          se <= ne;
+          q  <= nq;
+          qt <= t;
+        end
+        last      <= gpio_level;
+        have_last <= 1'b1;
+      end else begin
+        if (we) begin
+          case (addr)
+            GPIO_DIR:      gpio_dir  <= wdata[31:0];
+            GPIO_OUT:      gpio_out  <= wdata[31:0];
+            GPIO_PULLUP:   pull_up   <= wdata[31:0];
+            GPIO_PULLDOWN: pull_down <= wdata[31:0];
+            GPIO_OD:       od        <= wdata[31:0];
+            PWM_SEL:       pwm_sel   <= wdata[31:0];
+            PWM_FREQ:      if (sel_ok) pwm_freq[32*pwm_sel[4:0] +: 32] <= wdata[31:0];
+            PWM_DUTY:      if (sel_ok) pwm_duty[32*pwm_sel[4:0] +: 32] <= wdata[31:0];
+            IRQ_PIN:       irq_pin   <= wdata[31:0];
+            IRQ_MASK:      irq_mask  <= wdata[31:0];
+            IRQ_DEBOUNCE:  irq_deb   <= wdata[31:0];
+            IRQ_ID: begin
+              irq_id <= wdata[31:0];
+              // 解除 (登録されていたかを IRQ_UNREG で読む)
+              if (wdata[31:0] >= 32'd1 && wdata[31:0] <= 32'(NSLOT) && sv[wdata[3:0] - 4'd1]) begin
+                sv[wdata[3:0] - 4'd1] <= 1'b0;
+                unreg <= 1'b1;
+              end else unreg <= 1'b0;
+            end
+            WDT_ENABLE, WDT_REBOOT: begin
+              wdt_en   <= 1'b1;
+              wdt_dead <= vtime + 64'(wdata[31:0]) * 64'd1000;
+              wdt_ms   <= wdata[31:0];
+            end
+            WDT_DISABLE:   wdt_en <= 1'b0;
+            I2C_ADDR:      i2c_addr <= wdata[31:0];
+            WDT_FEED:      if (wdt_en) wdt_dead <= vtime + 64'(wdt_ms) * 64'd1000;
+            PSG_DELAY:     psg_delay <= wdata[31:0];
+            PSG_AUX:       psg_aux <= {16'd0, wdata[15:0]};
+            PSG_PUSH: if (psg_sel != 32'd0 && psg_n != 8'd255) begin
+              psg_dl[psg_t] <= psg_delay;
+              psg_wd[psg_t] <= wdata[31:0];
+              psg_ax[psg_t] <= psg_aux[15:0];
+              psg_t         <= psg_t + 8'd1;
+            end
+            PSG_EMPTY:     psg_h <= psg_t; // buffer_flush
+            PSG_SELECT: begin
+              psg_sel   <= wdata[31:0];
+              psg_h     <= psg_t;
+              psg_g     <= '0;
+              psg_due   <= 1'b0;
+              psg_delay <= '0;
+              psg_aux   <= '0;
+            end
+            default: ;
+          endcase
+        end
+        if (re && addr == UART_RX && avail != 16'd0) rp <= rp + 16'd1;
+        if (re && addr == RNG) rng <= rng_next;
+        if (re && addr == IRQ_REGISTER && free_i != 5'd16) begin
+          sv[free_i[3:0]]           <= 1'b1;
+          sp[32*free_i[3:0] +: 32]  <= irq_pin;
+          sm[4*free_i[3:0] +: 4]    <= irq_mask[3:0];
+          sd[32*free_i[3:0] +: 32]  <= irq_deb;
+          sl[32*free_i[3:0] +: 32]  <= 32'd0;
+          se[4*free_i[3:0] +: 4]    <= 4'd0;
+        end
+        if (re && addr == IRQ_EVENT && !q_empty) qh <= qh + 5'd1;
+        if (re && addr == I2C_RX && i2c_rx_count != i2c_rp) i2c_rp <= i2c_rp + 16'd1;
+        if (re && addr == SPI_RX && spi_rx_count != spi_rp) spi_rp <= spi_rp + 16'd1;
+      end
+    end
+  end
+endmodule
