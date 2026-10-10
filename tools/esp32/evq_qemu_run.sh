@@ -17,7 +17,13 @@ LOGFILE="${2:?Usage: $0 <mrubyc|mruby> <logfile>}"
 BUILD_DIR="${EVQ_BUILD_DIR:-build-qemu-evq}"
 RUN_TIMEOUT="${EVQ_RUN_TIMEOUT:-420}"
 # The injector logs this once, after its last insertion (rig_injector.c).
-DONE_PATTERN="${EVQ_DONE_PATTERN:-\\[rig\\] wlat done}"
+# The limits case (EVQ_LIMITS=1) appends a phase, so its own last line counts.
+if [ "${EVQ_LIMITS:-0}" = "1" ]; then
+  DONE_DEFAULT='\[rig\] limits done'
+else
+  DONE_DEFAULT='\[rig\] wlat done'
+fi
+DONE_PATTERN="${EVQ_DONE_PATTERN:-$DONE_DEFAULT}"
 # Extra seconds after the last inject: covers the worst legitimate RED
 # latency (~1s heartbeat) with margin, so "lost" means lost.
 GRACE_SECONDS="${EVQ_GRACE_SECONDS:-10}"
@@ -28,6 +34,7 @@ FAILURE_PATTERN='assert failed|no such vaddr|Guru Meditation|calibration efuse v
 export PICORUBY_QEMU_EVQ_RIG=1
 [ "${EVQ_FLOOD:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_FLOOD=1
 [ -n "${EVQ_FLOOD_SPACING_MS:-}" ] && export PICORUBY_QEMU_EVQ_FLOOD_SPACING_MS="$EVQ_FLOOD_SPACING_MS"
+[ "${EVQ_LIMITS:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_LIMITS=1
 
 # Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
 # some gem/memory layouts corrupt a TCB right after app_main returns; a

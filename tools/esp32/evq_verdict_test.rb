@@ -138,4 +138,86 @@ flood_short_log = <<~LOG
 LOG
 raise "expect fail: 450 + 0 != 500" if EvqVerdict.judge_flood(flood_short_log).pass
 
+def limits_log(received:, overflow_line: nil, notifs: [[93, 92], [200, 92]], truncation_line: nil, prelude: "")
+  lines = [prelude, "[rig] write enq A", "[rigapp] recv seq=7 tin=1000 t=1004"]
+  received.each { |seq| lines << format("[rigapp] recv seq=%d tin=2000 t=2010", seq) }
+  lines << overflow_line if overflow_line
+  lines << "[rig] burst done first=101 last=180"
+  notifs.each do |injected, seen|
+    lines << truncation_line if truncation_line
+    lines << "[rig] notify injected len=#{injected}"
+    lines << "[rigapp] notif len=#{seen} raw=#{seen + 12}" if seen
+  end
+  lines << "[rig] limits done"
+  lines.compact.join("\n") + "\n"
+end
+
+limits_red_log = limits_log(received: (149..180).to_a)
+limits_red = EvqVerdict.judge_limits(limits_red_log)
+raise "expect limits fail on the current firmware" if limits_red.pass
+raise "expect hole reported, got: #{limits_red.message}" unless limits_red.message.include?("stream has a hole") && limits_red.message.include?("101-148")
+raise "expect overflow_logged=false reported, got: #{limits_red.message}" unless limits_red.message.include?("overflow_logged=false") && limits_red.message.include?("no 'event ring full'")
+raise "expect truncation reported, got: #{limits_red.message}" unless limits_red.message.include?("93->92 truncated") && limits_red.message.include?("200->92 truncated") && limits_red.message.include?("truncation_logged=false")
+raise "expect tail_only=false and counts, got: #{limits_red.message}" unless limits_red.message.include?("received 32, lost 48") && limits_red.message.include?("tail_only=false")
+
+limits_green_log = limits_log(received: (101..132).to_a,
+                            overflow_line: "W (20123) prb_ble_evq: event ring full (depth=32), dropping newest; total dropped=48",
+                            truncation_line: "W (22456) prb_ble_evq: notification value truncated to 92 bytes")
+limits_green = EvqVerdict.judge_limits(limits_green_log)
+raise "expect limits pass on the fixed firmware, got: #{limits_green.message}" unless limits_green.pass
+raise "expect tail_only=true in the pass message, got: #{limits_green.message}" unless limits_green.message.include?("tail_only=true") && limits_green.message.include?("133-180") && limits_green.message.include?("overflow_logged=true")
+
+limits_none_lost = EvqVerdict.judge_limits(limits_log(received: (101..180).to_a,
+                                                    overflow_line: "W (1) prb_ble_evq: event ring full",
+                                                    truncation_line: "W (2) prb_ble_evq: truncated"))
+raise "expect limits fail when nothing was lost (rig failure)" if limits_none_lost.pass
+raise "expect rig-did-not-overflow message, got: #{limits_none_lost.message}" unless limits_none_lost.message.include?("the rig did not overflow the ring: all 80")
+
+limits_nothing_received = EvqVerdict.judge_limits(limits_log(received: [], overflow_line: "event ring full", truncation_line: "truncated"))
+raise "expect limits fail when no burst event reached Ruby" if limits_nothing_received.pass
+
+limits_hole_logged = EvqVerdict.judge_limits(limits_log(received: (149..180).to_a,
+                                                      overflow_line: "W (1) prb_ble_evq: event ring full, dropping oldest",
+                                                      truncation_line: "W (2) prb_ble_evq: truncated"))
+raise "expect limits fail: logged but still dropped the oldest" if limits_hole_logged.pass
+
+limits_overflow_unlogged = EvqVerdict.judge_limits(limits_log(received: (101..132).to_a, truncation_line: "W (2) prb_ble_evq: truncated"))
+raise "expect limits fail: tail-only loss without an overflow line" if limits_overflow_unlogged.pass
+
+limits_full_length = EvqVerdict.judge_limits(limits_log(received: (101..132).to_a,
+                                                      overflow_line: "W (1) prb_ble_evq: Event Ring Full (depth=32)",
+                                                      notifs: [[93, 93], [200, 200]]))
+raise "expect limits pass: notifications delivered whole need no truncation line, got: #{limits_full_length.message}" unless limits_full_length.pass
+
+limits_cut_unlogged = EvqVerdict.judge_limits(limits_log(received: (101..132).to_a, overflow_line: "W (1) prb_ble_evq: event ring full"))
+raise "expect limits fail: truncated and not logged" if limits_cut_unlogged.pass
+
+limits_missing_notif = EvqVerdict.judge_limits(limits_log(received: (101..132).to_a,
+                                                        overflow_line: "W (1) prb_ble_evq: event ring full",
+                                                        truncation_line: "W (2) prb_ble_evq: truncated",
+                                                        notifs: [[93, 92], [200, nil]]))
+raise "expect limits fail: a notification never reached Ruby" if limits_missing_notif.pass
+raise "expect missing notification reported, got: #{limits_missing_notif.message}" unless limits_missing_notif.message.include?("200 bytes never reached Ruby")
+
+limits_build_noise = EvqVerdict.judge_limits(limits_log(received: (149..180).to_a, prelude: "[1/9] Building C object truncation_helper.c.obj\nevent ring full in a build log"))
+raise "expect limits fail: text before the rig run does not count as firmware output" if limits_build_noise.pass
+
+raise "expect limits fail without a burst-done line" if EvqVerdict.judge_limits("[rigapp] recv seq=101 tin=1 t=2\n").pass
+
+existing_log_limits = EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true)
+raise "expect the existing judge unchanged by limits lines" unless existing_log_limits.pass
+
+raise "expect rig_ran on the current-firmware shape" unless limits_red.rig_ran == true
+raise "expect rig_ran on the fixed-firmware shape" unless limits_green.rig_ran == true
+raise "expect rig_ran when the firmware only fails" unless limits_hole_logged.rig_ran == true && limits_cut_unlogged.rig_ran == true
+raise "expect rig_ran when nothing was lost (overflow miss is not a missing phase)" unless limits_none_lost.rig_ran == true
+raise "expect rig_ran=false when no burst event reached Ruby" unless limits_nothing_received.rig_ran == false
+no_burst_line = EvqVerdict.judge_limits("[rig] write enq A\n[rigapp] recv seq=101 tin=1 t=2\n[rig] notify injected len=93\n")
+raise "expect rig_ran=false without a burst-done line" unless !no_burst_line.pass && no_burst_line.rig_ran == false
+no_notify_line = EvqVerdict.judge_limits(limits_log(received: (101..132).to_a, overflow_line: "event ring full", notifs: []))
+raise "expect rig_ran=false without a notify-injected line" unless !no_notify_line.pass && no_notify_line.rig_ran == false
+crashed = EvqVerdict.judge_limits("Loading app.rb\nFATAL: NoMemoryError (NoMemoryError)\n")
+raise "expect rig_ran=false when the device program died at load" unless !crashed.pass && crashed.rig_ran == false
+raise "expect the other judges to leave rig_ran unset" unless EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true).rig_ran.nil?
+
 puts "evq_verdict_test OK"

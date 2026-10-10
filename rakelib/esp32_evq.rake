@@ -7,6 +7,12 @@
 # VM thread. evq_red and evq_green run the same rig; they differ only in
 # the expected verdict (red = pre-fix firmware must fail).
 #
+# evq_flood_* add a write flood (EVQ_FLOOD=1). evq_limits_* add the limits
+# phase (EVQ_LIMITS=1): an 80-event burst into the 32-deep ring and
+# notifications of 93 and 200 bytes against the 92-byte value cap; green
+# needs a firmware that logs both conditions and refuses the newest events
+# rather than the oldest.
+#
 # The overlay patches the PR branch's working copy and is never
 # committed there; apply.sh/revert.sh own that lifecycle.
 require_relative "../tools/esp32/evq_verdict"
@@ -124,6 +130,34 @@ namespace :esp32 do
     end
     puts "[esp32:evq_flood_hb_green] PASS: #{result.message}"
   end
+
+  desc "Limits rig (ring overflow + over-long notifications), expecting FAIL on firmware that drops silently. Succeeds when the verdict is red"
+  task :evq_limits_red do
+    result = evq_limits_judge
+    if result.rig_ran == false
+      puts "[esp32:evq_limits_red] RIG DID NOT RUN: #{result.message}"
+      exit 1
+    end
+    if result.pass
+      puts "[esp32:evq_limits_red] UNEXPECTED GREEN: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_limits_red] RED as expected: #{result.message}"
+  end
+
+  desc "Limits rig (ring overflow + over-long notifications), expecting PASS (both conditions logged, newest events refused)"
+  task :evq_limits_green do
+    result = evq_limits_judge
+    if result.rig_ran == false
+      puts "[esp32:evq_limits_green] RIG DID NOT RUN: #{result.message}"
+      exit 1
+    end
+    unless result.pass
+      puts "[esp32:evq_limits_green] FAIL: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_limits_green] PASS: #{result.message}"
+  end
 end
 
 def evq_vm
@@ -136,6 +170,7 @@ def evq_log_path
   suffix << "-red" if ENV["EVQ_OOM_RED"] == "1"
   suffix << "-flood#{ENV['EVQ_FLOOD_SPACING_MS']}ms" if ENV["EVQ_FLOOD"] == "1"
   suffix << "-hb" if ENV["EVQ_FLOOD_DRAIN"] == "hb"
+  suffix << "-limits" if ENV["EVQ_LIMITS"] == "1"
   File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}#{suffix}.log")
 end
 
@@ -155,4 +190,11 @@ def evq_flood_judge(max_rejected: nil, min_rejected: nil)
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
   EvqVerdict.judge_flood(File.read(evq_log_path), max_rejected: max_rejected, min_rejected: min_rejected)
+end
+
+def evq_limits_judge
+  ENV["EVQ_LIMITS"] = "1"
+  Rake::Task["esp32:evq_run"].invoke
+  raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+  EvqVerdict.judge_limits(File.read(evq_log_path))
 end

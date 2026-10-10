@@ -15,6 +15,14 @@
  *   phase 2: seq 21..60 every 10 ms  — ring overflow (EVQ_DEPTH=32)
  *            evidence: pre-fix, a 1 Hz heartbeat-paced drain cannot keep
  *            up, so the ring drops the oldest events (lost seqs)
+ *
+ * Optional phase, PICORUBY_QEMU_EVQ_LIMITS (judged by judge_limits):
+ *   [rig] burst done first=<a> last=<b>   non-adv events a..b enqueued back to back
+ *   [rig] notify injected len=<n>         NOTIFY_RX with an n-byte value handed
+ *                                         to picoruby_ble_gap_event
+ *   [rig] limits done                     end of the limits phase
+ *   L1: seq 101..180 with no delay — overflows the 32-deep ring
+ *   L2: notifications of 93 and 200 bytes — longer than the 92-byte cap
  */
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,6 +35,24 @@
 
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
+
+#ifdef PICORUBY_QEMU_EVQ_LIMITS
+/* Same includes as ports/esp32/ble.c: the notification path is fed with a
+ * struct ble_gap_event carrying an os_mbuf. */
+#include "host/ble_hs.h"
+#include "host/ble_gap.h"
+#include "os/os_mbuf.h"
+#include "ble_common.h"
+
+#define LIMITS_BURST_FIRST 101
+#define LIMITS_BURST_LAST 180
+#define LIMITS_NOTIFY_MAX 200
+#define LIMITS_NOTIFY_CONN 1
+#define LIMITS_NOTIFY_ATTR 0x30
+#define RIG_TASK_STACK 6144
+#else
+#define RIG_TASK_STACK 4096
+#endif
 
 #ifdef PICORUBY_QEMU_EVQ_FLOOD
 #define FLOOD_HANDLE 0x43
@@ -105,6 +131,59 @@ rig_inject(int seq)
   picoruby_nimble_enqueue_event(adv, len, false);
 }
 
+#ifdef PICORUBY_QEMU_EVQ_LIMITS
+/* One os_mbuf as NimBLE hands it to the GAP callback, built by hand: the
+ * host is not running, so no mbuf pool exists. The layout is what
+ * OS_MBUF_PKTHDR / OS_MBUF_PKTLEN / os_mbuf_copydata read: struct os_mbuf,
+ * then struct os_mbuf_pkthdr (OS_MBUF_PKTHDR = &om_data + sizeof(struct
+ * os_mbuf)), then the data (OS_MBUF_USRHDR). A single mbuf: om_next stays
+ * NULL, so omp_len == om_len. */
+static union {
+  struct os_mbuf om;
+  uint8_t raw[sizeof(struct os_mbuf) + sizeof(struct os_mbuf_pkthdr) + LIMITS_NOTIFY_MAX];
+} rig_mbuf;
+static struct ble_gap_event rig_gap_event;
+
+static void
+rig_inject_notify(uint16_t len)
+{
+  struct os_mbuf *om = &rig_mbuf.om;
+  memset(&rig_mbuf, 0, sizeof(rig_mbuf));
+  uint8_t *data = (uint8_t *)OS_MBUF_USRHDR(om);
+  for (uint16_t i = 0; i < len; i++) data[i] = (uint8_t)(i & 0xff);
+  om->om_data = data;
+  om->om_len = len;
+  om->om_pkthdr_len = sizeof(struct os_mbuf_pkthdr);
+  OS_MBUF_PKTHDR(om)->omp_len = len;
+
+  memset(&rig_gap_event, 0, sizeof(rig_gap_event));
+  rig_gap_event.type = BLE_GAP_EVENT_NOTIFY_RX;
+  rig_gap_event.notify_rx.om = om;
+  rig_gap_event.notify_rx.attr_handle = LIMITS_NOTIFY_ATTR;
+  rig_gap_event.notify_rx.conn_handle = LIMITS_NOTIFY_CONN;
+  rig_gap_event.notify_rx.indication = 0;
+  picoruby_ble_gap_event(&rig_gap_event, NULL);
+  printf("[rig] notify injected len=%u\n", (unsigned)len);
+}
+
+static void
+rig_limits(void)
+{
+  /* L1: no delay between inserts, so the 32-deep ring overflows. */
+  for (int seq = LIMITS_BURST_FIRST; seq <= LIMITS_BURST_LAST; seq++) {
+    rig_inject(seq);
+  }
+  printf("[rig] burst done first=%d last=%d\n", LIMITS_BURST_FIRST, LIMITS_BURST_LAST);
+  vTaskDelay(pdMS_TO_TICKS(3000));
+
+  /* L2: values longer than the 92-byte cap of the event packet. */
+  rig_inject_notify(93);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  rig_inject_notify(200);
+  printf("[rig] limits done\n");
+}
+#endif
+
 static void
 rig_task(void *arg)
 {
@@ -156,6 +235,10 @@ rig_task(void *arg)
   printf("[rig] flood done n=%d rejected=%d\n", FLOOD_COUNT, rejected);
 #endif
 
+#ifdef PICORUBY_QEMU_EVQ_LIMITS
+  rig_limits();
+#endif
+
   vTaskDelete(NULL);
 }
 
@@ -167,5 +250,5 @@ rig_start(void)
   rig_record_vm_task();
   if (started) return;
   started = true;
-  xTaskCreate(rig_task, "evq_rig", 4096, NULL, 5, NULL);
+  xTaskCreate(rig_task, "evq_rig", RIG_TASK_STACK, NULL, 5, NULL);
 }
