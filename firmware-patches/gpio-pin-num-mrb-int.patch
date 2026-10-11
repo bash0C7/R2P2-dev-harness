@@ -1,0 +1,15 @@
+diff --git a/mrbgems/picoruby-gpio/src/mruby/gpio.c b/mrbgems/picoruby-gpio/src/mruby/gpio.c
+index 9f6c849..7b8e015 100644
+--- a/mrbgems/picoruby-gpio/src/mruby/gpio.c
++++ b/mrbgems/picoruby-gpio/src/mruby/gpio.c
+@@ -11,7 +11,9 @@ pin_num(mrb_state *mrb, int *opt_value)
+   mrb_value pin;
+   int pin_number;
+   if (opt_value) {
+-    mrb_get_args(mrb, "oi", &pin, opt_value);
++    mrb_int value; /* "i" writes an mrb_int (8 bytes with MRB_INT64), not an int */
++    mrb_get_args(mrb, "oi", &pin, &value);
++    *opt_value = (int)value;
+   } else {
+     mrb_get_args(mrb, "o", &pin);
+   }
