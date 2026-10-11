@@ -352,4 +352,29 @@ raise "expect power not-run without 'power done'" unless EvqVerdict.judge_power(
 raise "expect power not-run without 'power begin'" unless EvqVerdict.judge_power(power_log(power_fixed, begin_line: false)).rig_ran == false
 raise "expect power not-run on a log that died at load" unless EvqVerdict.judge_power("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
 
+def resync_log(second_rc: 0, second_synced: 1, control_rc: 0, host_done: true, order_ok: true, done: true, second_adv: true)
+  lines = ["[rig] host sync_cb session=1", "[rigapp] resync control",
+           "[rig] ble_gap_adv_start rc=#{control_rc} host_synced=#{control_rc.zero? ? 1 : 0}"]
+  host = ["[rig] host reset_cb session=1", "[rig] host sync_cb session=1", "[rig] host resync done"]
+  lines += host if host_done && order_ok
+  lines << "[rigapp] resync second new"
+  lines += host if host_done && !order_ok
+  lines << "[rig] ble_gap_adv_start rc=#{second_rc} host_synced=#{second_synced}" if second_adv
+  lines << "[rigapp] resync done" if done
+  lines.join("\n") + "\n"
+end
+
+resync_green = EvqVerdict.judge_resync(resync_log)
+raise "expect resync pass, got: #{resync_green.message}" unless resync_green.pass && resync_green.rig_ran == true
+resync_red = EvqVerdict.judge_resync(resync_log(second_rc: 22, second_synced: 0))
+raise "expect resync fail on a premature start" if resync_red.pass
+raise "expect resync rig_ran on a premature start" unless resync_red.rig_ran == true
+raise "expect rc named, got: #{resync_red.message}" unless resync_red.message.include?("host_synced=0 (rc=22 BLE_HS_ENOTSYNCED)")
+raise "expect resync not-run when the control fails" unless EvqVerdict.judge_resync(resync_log(control_rc: 22)).rig_ran == false
+raise "expect resync not-run without the host's re-sync" unless EvqVerdict.judge_resync(resync_log(host_done: false)).rig_ran == false
+raise "expect resync not-run when the re-sync came late" unless EvqVerdict.judge_resync(resync_log(order_ok: false)).rig_ran == false
+raise "expect resync not-run without 'resync done'" unless EvqVerdict.judge_resync(resync_log(done: false)).rig_ran == false
+raise "expect resync not-run without the second adv line" unless EvqVerdict.judge_resync(resync_log(second_adv: false)).rig_ran == false
+raise "expect resync not-run on a log that died at load" unless EvqVerdict.judge_resync("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
+
 puts "evq_verdict_test OK"

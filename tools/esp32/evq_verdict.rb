@@ -18,6 +18,10 @@
 # judge_power judges the power case (PICORUBY_QEMU_EVQ_POWER): seven
 # hci_power_control steps, each compared with the BTSTACK_EVENT_STATE sequence
 # BTstack emits for it (POWER_REFERENCE, measured on the Pico 2 W).
+#
+# judge_resync judges the resync case (PICORUBY_QEMU_EVQ_RESYNC): after the
+# rig's host has reset and synced again, a second BLE.new followed at once by
+# advertise must reach ble_gap_adv_start with the host synced.
 module EvqVerdict
   # rig_ran is set by judge_limits only: false when the limits phase left no
   # evidence in the log (the device program or the injector never got there), so
@@ -52,6 +56,13 @@ module EvqVerdict
   STATE_SEEN = /rigapp\] state (\d+)/
   MARK_SEEN = /rigapp\] mark (\d+)/
   CON_HANDLE_NONE = 0xffff
+  RESYNC_CONTROL = /rigapp\] resync control/
+  RESYNC_SECOND_NEW = /rigapp\] resync second new/
+  RESYNC_DONE = /rigapp\] resync done/
+  RESYNC_HOST_DONE = /\[rig\] host resync done/
+  RESYNC_SYNC_CB = /\[rig\] host sync_cb/
+  RESYNC_ADV_START = /\[rig\] ble_gap_adv_start rc=(-?\d+) host_synced=(\d)/
+  BLE_HS_ENOTSYNCED = 22
   POWER_BEGIN = /rigapp\] power begin/
   POWER_DONE = /rigapp\] power done/
   POWER_STEP_EVENT = /rigapp\] step (\d+) (state|disc) (\d+)/
@@ -341,6 +352,39 @@ module EvqVerdict
     else
       Result.new(pass: false, message: "#{summary}; FAIL: steps #{failed.join(',')}", rig_ran: true)
     end
+  end
+
+  # Resync case. The device program starts a peripheral, advertises (control:
+  # the host is synced, ble_gap_adv_start must get rc 0), waits out the rig
+  # host's reset and re-sync, then starts a second peripheral and advertises at
+  # once. Not run: a marker or the host's "resync done" line is missing, the
+  # re-sync did not come before the second BLE.new, an advertise left no
+  # ble_gap_adv_start line, or the control advertise failed (the rig's host is
+  # then not behaving as a synced host, which proves nothing about the port).
+  def judge_resync(log)
+    control = log.index(RESYNC_CONTROL)
+    second = log.index(RESYNC_SECOND_NEW)
+    host_done = log.index(RESYNC_HOST_DONE)
+    return not_run("resync: no 'resync control' line in log") if control.nil?
+    return not_run("resync: no 'resync second new' line in log") if second.nil?
+    return not_run("resync: the device program never logged 'resync done'") unless log.match?(RESYNC_DONE)
+    return not_run("resync: no 'host resync done' line in log") if host_done.nil?
+    return not_run("resync: the host's re-sync came after the second BLE.new") if host_done > second
+
+    control_adv = log[control...second].scan(RESYNC_ADV_START).first
+    second_adv = log[second..].scan(RESYNC_ADV_START).first
+    return not_run("resync: no ble_gap_adv_start line for the control advertise") if control_adv.nil?
+    return not_run("resync: no ble_gap_adv_start line for the advertise after the second BLE.new") if second_adv.nil?
+    return not_run("resync: the control advertise got rc=#{control_adv[0]} with host_synced=#{control_adv[1]}") unless control_adv[0].to_i.zero?
+
+    sync_cbs = log[0...second].scan(RESYNC_SYNC_CB).size
+    rc, host_synced = second_adv.map(&:to_i)
+    problems = []
+    unless rc.zero?
+      problems << "advertise after the second BLE.new reached ble_gap_adv_start with host_synced=#{host_synced} (rc=#{rc}" \
+                  "#{rc == BLE_HS_ENOTSYNCED ? ' BLE_HS_ENOTSYNCED' : ''}): picoruby_nimble_start returned before the host was synced"
+    end
+    verdict(problems, "resync: control rc=0, sync_cb called #{sync_cbs} times before the second BLE.new, second advertise rc=#{rc} host_synced=#{host_synced}")
   end
 
   def not_run(message)

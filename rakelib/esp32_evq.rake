@@ -22,6 +22,11 @@
 # in the ring, and each step is compared with the BTSTACK_EVENT_STATE sequence
 # BTstack emits for it.
 #
+# evq_resync_red runs the resync case (EVQ_RESYNC=1): the NimBLE host does not
+# run under QEMU, so the rig plays it for the sync handshake (rig_host_start in
+# rig_injector.c); after one reset and re-sync, a second BLE.new plus advertise
+# must reach ble_gap_adv_start with the host synced.
+#
 # The overlay patches the PR branch's working copy and is never
 # committed there; apply.sh/revert.sh own that lifecycle.
 require_relative "../tools/esp32/evq_verdict"
@@ -172,6 +177,23 @@ namespace :esp32 do
     puts "[esp32:evq_power_red] RED as expected: #{failed.size} of #{steps.size} steps fail (#{failed.map { |step| step[:n] }.join(',')})"
   end
 
+  desc "Resync rig (host reset and re-sync, then BLE.new + advertise), expecting FAIL on pre-fix firmware. Succeeds when the verdict is red"
+  task :evq_resync_red do
+    ENV["EVQ_RESYNC"] = "1"
+    Rake::Task["esp32:evq_run"].invoke
+    raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+    result = EvqVerdict.judge_resync(File.read(evq_log_path))
+    if result.rig_ran == false
+      puts "[esp32:evq_resync_red] RIG DID NOT RUN: #{result.message}"
+      exit 1
+    end
+    if result.pass
+      puts "[esp32:evq_resync_red] UNEXPECTED GREEN: #{result.message}"
+      exit 1
+    end
+    puts "[esp32:evq_resync_red] RED as expected: #{result.message}"
+  end
+
   desc "Limits rig (same checks), expecting every check PASS (both conditions logged, newest events refused, control events kept, no CAN_SEND_NOW without connection, INITIALIZING before WORKING)"
   task :evq_limits_green do
     checks = evq_limits_judge
@@ -201,6 +223,7 @@ def evq_log_path
   suffix << "-hb" if ENV["EVQ_FLOOD_DRAIN"] == "hb"
   suffix << "-limits" if ENV["EVQ_LIMITS"] == "1"
   suffix << "-power" if ENV["EVQ_POWER"] == "1"
+  suffix << "-resync" if ENV["EVQ_RESYNC"] == "1"
   File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}#{suffix}.log")
 end
 

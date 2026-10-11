@@ -61,13 +61,26 @@ index 92081f62..f2d66478 100644
  }
  
 diff --git a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-index 5547b7df..1720f1c0 100644
 --- a/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
 +++ b/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
-@@ -273,6 +273,21 @@ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
+@@ -233,10 +233,12 @@
+ static void
+ on_sync(void)
+ {
++#ifndef PICORUBY_QEMU_EVQ_RIG
+   ble_hs_util_ensure_addr(0);
+   if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
+     own_addr_type = 0;
+   }
++#endif
+   synced = true;
+   if (sync_sem) xSemaphoreGive(sync_sem);
+ }
+@@ -272,6 +274,26 @@
+ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
  {
    if (started) return 0;
- 
++
 +#ifdef PICORUBY_QEMU_EVQ_RIG
 +  /* Event-path rig: no radio under QEMU. Keep the ring, the write queue
 +   * and the heartbeat timer alive; the injector task stands in for the
@@ -79,18 +92,43 @@ index 5547b7df..1720f1c0 100644
 +  picoruby_nimble_reset_events();
 +  picoruby_nimble_reset_writes();
 +  rig_start();
++#ifdef PICORUBY_QEMU_EVQ_RESYNC
++  /* Resync case: the port's own sync wait below runs unchanged; the rig's
++   * host task stands in for NimBLE and calls the two callbacks it was given. */
++  goto rig_wait_for_sync;
++#endif
 +  started = true;
 +  return 0;
 +#endif
-+
+ 
    esp_err_t err = nvs_flash_init();
    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-     nvs_flash_erase();
-@@ -323,6 +338,11 @@ picoruby_nimble_stop(void)
+@@ -304,9 +326,18 @@
+   picoruby_nimble_reset_events();
+   picoruby_nimble_reset_writes();
+ 
++#ifdef PICORUBY_QEMU_EVQ_RESYNC
++rig_wait_for_sync:
++#endif
+   if (sync_sem == NULL) sync_sem = xSemaphoreCreateBinary();
+   synced = false;
++#ifdef PICORUBY_QEMU_EVQ_RESYNC
++  extern void rig_host_start(void (*sync_cb)(void), void (*reset_cb)(int));
++  rig_host_start(on_sync, on_reset);
++  (void)host_task;
++#else
+   nimble_port_freertos_init(host_task);
++#endif
+ 
+   if (xSemaphoreTake(sync_sem, SYNC_TIMEOUT_TICKS) != pdTRUE) {
+     nimble_port_stop();
+@@ -323,6 +354,13 @@
  {
    if (!started) return 0;
    heartbeat_force_stop();
 +#ifdef PICORUBY_QEMU_EVQ_RIG
++  extern void rig_host_stopped(void);
++  rig_host_stopped();
 +  synced = false;
 +  started = false;
 +  return 0;
@@ -150,3 +188,31 @@ index b8d4e92e..001ad692 100644
    if (event_queue.tt == MRBC_TT_NIL ||
        BLE_MAX_PENDING_EVENTS <= pending_event_count) return -1;
    mrbc_value event = mrbc_symbol_value(mrbc_str_to_symid("heartbeat"));
+diff --git a/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c b/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c
+--- a/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c
++++ b/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c
+@@ -25,6 +25,13 @@
+ static int
+ adv_start(void)
+ {
++#ifdef PICORUBY_QEMU_EVQ_RESYNC
++  /* rig: the NimBLE host is not enabled under QEMU, so the real call would
++   * answer BLE_HS_EDISABLED whatever the port did; the rig answers as a host
++   * that is, or is not, synced with its controller. */
++  extern int rig_gap_adv_start(void);
++  return rig_gap_adv_start();
++#endif
+   struct ble_gap_adv_params params;
+   memset(&params, 0, sizeof(params));
+   params.conn_mode = adv_connectable ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON;
+@@ -47,7 +54,9 @@
+   adv_data_len = adv_data_len_in;
+   adv_connectable = connectable;
+   adv_wanted = true;
+-  ble_gap_adv_stop();
++#ifndef PICORUBY_QEMU_EVQ_RESYNC
++  ble_gap_adv_stop(); /* rig: the real call dereferences the host that never ran */
++#endif
+   adv_start();
+ }
+ 

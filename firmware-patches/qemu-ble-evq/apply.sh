@@ -36,6 +36,8 @@ if [ "${EVQ_LIMITS:-0}" = "1" ]; then
   cp "$RIG_DIR/rigapp_limits.rb" "$ESP32_REPO/storage/home/app.rb"
 elif [ "${EVQ_POWER:-0}" = "1" ]; then
   cp "$RIG_DIR/rigapp_power.rb" "$ESP32_REPO/storage/home/app.rb"
+elif [ "${EVQ_RESYNC:-0}" = "1" ]; then
+  cp "$RIG_DIR/rigapp_resync.rb" "$ESP32_REPO/storage/home/app.rb"
 elif [ "${EVQ_FLOOD_DRAIN:-}" = "hb" ]; then
   sed 's/FLOOD_DRAIN_ON_HEARTBEAT_ONLY = false/FLOOD_DRAIN_ON_HEARTBEAT_ONLY = true/' "$RIG_DIR/rigapp.rb" > "$ESP32_REPO/storage/home/app.rb"
 else

@@ -45,6 +45,19 @@
  *                                         enqueued just before the k-th power-on
  *                                         call (the nested one, step 7)
  *
+ * Optional case, PICORUBY_QEMU_EVQ_RESYNC (judged by judge_resync): the NimBLE
+ * host does not run under QEMU, so the rig plays it for the sync handshake of
+ * picoruby_nimble_start, which otherwise runs as written. rig_host_start()
+ * replaces nimble_port_freertos_init(): a task calls the port's sync_cb after
+ * 200 ms; in the first session it then calls reset_cb and sync_cb again, as
+ * the host does after a controller reset. ble_gap_adv_start is answered by
+ * the rig: 0 when the rig host is synced, BLE_HS_ENOTSYNCED when it is not.
+ *   [rig] host sync_cb session=<n>        sync_cb called
+ *   [rig] host reset_cb session=<n>       reset_cb called
+ *   [rig] host resync done                the forced reset and re-sync are over
+ *   [rig] ble_gap_adv_start rc=<rc> host_synced=<0|1>
+ *                                         what the port asked of the host
+ *
  *   A marker event {0xFE, 1, n} is enqueued after L3 (n=1) and after L4
  *   (n=2), once the ring has drained; the device program logs it as
  *   "[rigapp] mark <n>".
@@ -61,7 +74,7 @@
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
 
-#if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER)
+#if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER) || defined(PICORUBY_QEMU_EVQ_RESYNC)
 /* Same includes as ports/esp32/ble.c: the notification path is fed with a
  * struct ble_gap_event carrying an os_mbuf. */
 #include "host/ble_hs.h"
@@ -269,6 +282,83 @@ rig_limits(void)
 }
 #endif
 
+#ifdef PICORUBY_QEMU_EVQ_RESYNC
+#define RESYNC_SYNC_MS 200
+#define RESYNC_RESET_AFTER_MS 300
+#define RESYNC_RESYNC_AFTER_MS 100
+#define RESYNC_RESET_REASON 0x13
+
+static volatile bool rig_host_synced = false;
+static volatile int rig_host_epoch = 0; /* session whose host task may still call back; 0 = none */
+static int rig_host_sessions = 0;
+static void (*rig_sync_cb)(void);
+static void (*rig_reset_cb)(int);
+
+static bool
+rig_host_alive(int session)
+{
+  return rig_host_epoch == session;
+}
+
+static void
+rig_host_task(void *arg)
+{
+  int session = (int)(intptr_t)arg;
+  vTaskDelay(pdMS_TO_TICKS(RESYNC_SYNC_MS));
+  if (rig_host_alive(session)) {
+    rig_host_synced = true;
+    printf("[rig] host sync_cb session=%d\n", session);
+    rig_sync_cb();
+    if (session == 1) {
+      vTaskDelay(pdMS_TO_TICKS(RESYNC_RESET_AFTER_MS));
+      if (rig_host_alive(session)) {
+        rig_host_synced = false;
+        printf("[rig] host reset_cb session=%d\n", session);
+        rig_reset_cb(RESYNC_RESET_REASON);
+        vTaskDelay(pdMS_TO_TICKS(RESYNC_RESYNC_AFTER_MS));
+        if (rig_host_alive(session)) {
+          rig_host_synced = true;
+          printf("[rig] host sync_cb session=%d\n", session);
+          rig_sync_cb();
+          printf("[rig] host resync done\n");
+        }
+      }
+    }
+  }
+  vTaskDelete(NULL);
+}
+
+/* Called from the patched picoruby_nimble_start in place of nimble_port_freertos_init. */
+void
+rig_host_start(void (*sync_cb)(void), void (*reset_cb)(int))
+{
+  rig_sync_cb = sync_cb;
+  rig_reset_cb = reset_cb;
+  rig_host_synced = false;
+  rig_host_epoch = ++rig_host_sessions;
+  xTaskCreate(rig_host_task, "evq_host", 4096, (void *)(intptr_t)rig_host_sessions, 5, NULL);
+}
+
+/* The rig's answer in place of ble_gap_adv_start (patched into adv_start). */
+int
+rig_gap_adv_start(void)
+{
+  int rc = rig_host_synced ? 0 : BLE_HS_ENOTSYNCED;
+  printf("[rig] ble_gap_adv_start rc=%d host_synced=%d\n", rc, (int)rig_host_synced);
+  return rc;
+}
+#endif
+
+/* Called from the patched picoruby_nimble_stop: the host the port stopped must not call back. */
+void
+rig_host_stopped(void)
+{
+#ifdef PICORUBY_QEMU_EVQ_RESYNC
+  rig_host_epoch = 0;
+  rig_host_synced = false;
+#endif
+}
+
 /* Called from the patched BLE_hci_power_control(1), on the VM thread, before
  * the port does anything for the call. In the power case the POWER_NESTED_CALL-th
  * call (step 7, power-on while on) gets one event into the ring first. */
@@ -288,7 +378,7 @@ static void
 rig_task(void *arg)
 {
   (void)arg;
-#ifdef PICORUBY_QEMU_EVQ_POWER
+#if defined(PICORUBY_QEMU_EVQ_POWER) || defined(PICORUBY_QEMU_EVQ_RESYNC)
   /* The device program drives this case; nothing to inject from here. */
   vTaskDelete(NULL);
   return;
