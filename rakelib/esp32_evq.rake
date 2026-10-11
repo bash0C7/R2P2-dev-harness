@@ -11,7 +11,10 @@
 # phase (EVQ_LIMITS=1): an 80-event burst into the 32-deep ring and
 # notifications of 93 and 200 bytes against the 92-byte value cap; green
 # needs a firmware that logs both conditions and refuses the newest events
-# rather than the oldest.
+# rather than the oldest. The same run judges three more defects, each
+# reported by name: a control event (DISCONNECTION_COMPLETE) lost to a data
+# burst, CAN_SEND_NOW produced without a connection, and power-on that
+# reports WORKING without INITIALIZING first.
 #
 # The overlay patches the PR branch's working copy and is never
 # committed there; apply.sh/revert.sh own that lifecycle.
@@ -131,32 +134,36 @@ namespace :esp32 do
     puts "[esp32:evq_flood_hb_green] PASS: #{result.message}"
   end
 
-  desc "Limits rig (ring overflow + over-long notifications), expecting FAIL on firmware that drops silently. Succeeds when the verdict is red"
+  desc "Limits rig (ring overflow, over-long notifications, control event in a burst, CAN_SEND_NOW without connection, power-on states), expecting every check FAIL on pre-fix firmware. Succeeds when every verdict is red"
   task :evq_limits_red do
-    result = evq_limits_judge
-    if result.rig_ran == false
-      puts "[esp32:evq_limits_red] RIG DID NOT RUN: #{result.message}"
+    checks = evq_limits_judge
+    evq_limits_report("esp32:evq_limits_red", checks)
+    unless evq_limits_not_run(checks).empty?
+      puts "[esp32:evq_limits_red] RIG DID NOT RUN: #{evq_limits_not_run(checks).join('; ')}"
       exit 1
     end
-    if result.pass
-      puts "[esp32:evq_limits_red] UNEXPECTED GREEN: #{result.message}"
+    green = checks.select { |_, result| result.pass }.keys
+    unless green.empty?
+      puts "[esp32:evq_limits_red] UNEXPECTED GREEN: #{green.join('; ')}"
       exit 1
     end
-    puts "[esp32:evq_limits_red] RED as expected: #{result.message}"
+    puts "[esp32:evq_limits_red] RED as expected: #{checks.size} of #{checks.size} checks"
   end
 
-  desc "Limits rig (ring overflow + over-long notifications), expecting PASS (both conditions logged, newest events refused)"
+  desc "Limits rig (same checks), expecting every check PASS (both conditions logged, newest events refused, control events kept, no CAN_SEND_NOW without connection, INITIALIZING before WORKING)"
   task :evq_limits_green do
-    result = evq_limits_judge
-    if result.rig_ran == false
-      puts "[esp32:evq_limits_green] RIG DID NOT RUN: #{result.message}"
+    checks = evq_limits_judge
+    evq_limits_report("esp32:evq_limits_green", checks)
+    unless evq_limits_not_run(checks).empty?
+      puts "[esp32:evq_limits_green] RIG DID NOT RUN: #{evq_limits_not_run(checks).join('; ')}"
       exit 1
     end
-    unless result.pass
-      puts "[esp32:evq_limits_green] FAIL: #{result.message}"
+    failed = checks.reject { |_, result| result.pass }.keys
+    unless failed.empty?
+      puts "[esp32:evq_limits_green] FAIL: #{failed.join('; ')}"
       exit 1
     end
-    puts "[esp32:evq_limits_green] PASS: #{result.message}"
+    puts "[esp32:evq_limits_green] PASS: #{checks.size} of #{checks.size} checks"
   end
 end
 
@@ -196,5 +203,16 @@ def evq_limits_judge
   ENV["EVQ_LIMITS"] = "1"
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
-  EvqVerdict.judge_limits(File.read(evq_log_path))
+  EvqVerdict.judge_limits_checks(File.read(evq_log_path))
+end
+
+def evq_limits_report(task, checks)
+  checks.each do |name, result|
+    status = result.rig_ran == false ? "NOT RUN" : (result.pass ? "PASS" : "FAIL")
+    puts "[#{task}] #{name}: #{status}: #{result.message}"
+  end
+end
+
+def evq_limits_not_run(checks)
+  checks.select { |_, result| result.rig_ran == false }.map { |name, _| name }
 end

@@ -23,6 +23,21 @@
  *   [rig] limits done                     end of the limits phase
  *   L1: seq 101..180 with no delay — overflows the 32-deep ring
  *   L2: notifications of 93 and 200 bytes — longer than the 92-byte cap
+ *   [rig] control done first=<a> last=<b> h1=<n> h2=<n>
+ *                                         L3 inserted (handles in decimal)
+ *   [rig] cansend injected n=<n> con_handle=<h>
+ *                                         L4 calls made; con_handle (decimal)
+ *                                         as read just before them
+ *   [rig] extra state injected            the extra BTSTACK_STATE(working) is
+ *                                         enqueued next; Ruby STATE lines
+ *                                         before this one come from the port
+ *   L3: DISCONNECTION_COMPLETE h1, burst seq 201..260, DISCONNECTION_COMPLETE h2,
+ *       back to back, through picoruby_ble_gap_event and rig_inject
+ *   L4: BLE_peripheral_request_can_send_now_event() called back to back with
+ *       no connection
+ *   A marker event {0xFE, 1, n} is enqueued after L3 (n=1) and after L4
+ *   (n=2), once the ring has drained; the device program logs it as
+ *   "[rigapp] mark <n>".
  */
 #include <stdint.h>
 #include <stdbool.h>
@@ -49,6 +64,14 @@ extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *da
 #define LIMITS_NOTIFY_MAX 200
 #define LIMITS_NOTIFY_CONN 1
 #define LIMITS_NOTIFY_ATTR 0x30
+#define CONTROL_BURST_FIRST 201
+#define CONTROL_BURST_LAST 260
+#define CONTROL_HANDLE_FIRST 0x0011
+#define CONTROL_HANDLE_LAST 0x0022
+#define CAN_SEND_CALLS 5
+#define MARK_EVENT 0xFE
+
+extern void BLE_peripheral_request_can_send_now_event(void);
 #define RIG_TASK_STACK 6144
 #else
 #define RIG_TASK_STACK 4096
@@ -167,6 +190,23 @@ rig_inject_notify(uint16_t len)
 }
 
 static void
+rig_inject_disconnect(uint16_t handle)
+{
+  memset(&rig_gap_event, 0, sizeof(rig_gap_event));
+  rig_gap_event.type = BLE_GAP_EVENT_DISCONNECT;
+  rig_gap_event.disconnect.reason = 0x13;
+  rig_gap_event.disconnect.conn.conn_handle = handle;
+  picoruby_ble_gap_event(&rig_gap_event, NULL);
+}
+
+static void
+rig_inject_mark(uint8_t n)
+{
+  const uint8_t mark[] = { MARK_EVENT, 1, n };
+  picoruby_nimble_enqueue_event(mark, sizeof(mark), false);
+}
+
+static void
 rig_limits(void)
 {
   /* L1: no delay between inserts, so the 32-deep ring overflows. */
@@ -180,6 +220,29 @@ rig_limits(void)
   rig_inject_notify(93);
   vTaskDelay(pdMS_TO_TICKS(300));
   rig_inject_notify(200);
+  vTaskDelay(pdMS_TO_TICKS(3000));
+
+  /* L3: control events around a burst that overflows the ring. */
+  rig_inject_disconnect(CONTROL_HANDLE_FIRST);
+  for (int seq = CONTROL_BURST_FIRST; seq <= CONTROL_BURST_LAST; seq++) {
+    rig_inject(seq);
+  }
+  rig_inject_disconnect(CONTROL_HANDLE_LAST);
+  printf("[rig] control done first=%d last=%d h1=%d h2=%d\n",
+         CONTROL_BURST_FIRST, CONTROL_BURST_LAST, CONTROL_HANDLE_FIRST, CONTROL_HANDLE_LAST);
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  rig_inject_mark(1);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  /* L4: nothing in the rig connects, so con_handle is still 0xffff. */
+  unsigned handle_before = (unsigned)con_handle;
+  for (int i = 0; i < CAN_SEND_CALLS; i++) {
+    BLE_peripheral_request_can_send_now_event();
+  }
+  printf("[rig] cansend injected n=%d con_handle=%u\n", CAN_SEND_CALLS, handle_before);
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  rig_inject_mark(2);
+  vTaskDelay(pdMS_TO_TICKS(1000));
   printf("[rig] limits done\n");
 }
 #endif
@@ -196,6 +259,9 @@ rig_task(void *arg)
    * that arrive earlier are dropped by packet_callback by design. */
   vTaskDelay(pdMS_TO_TICKS(2000));
   static const uint8_t state_working[] = { 0x60, 0x01, 0x02 };
+#ifdef PICORUBY_QEMU_EVQ_LIMITS
+  printf("[rig] extra state injected\n");
+#endif
   picoruby_nimble_enqueue_event(state_working, sizeof(state_working), false);
 
   rig_fault_write = 1;

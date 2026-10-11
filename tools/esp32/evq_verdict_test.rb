@@ -220,4 +220,90 @@ crashed = EvqVerdict.judge_limits("Loading app.rb\nFATAL: NoMemoryError (NoMemor
 raise "expect rig_ran=false when the device program died at load" unless !crashed.pass && crashed.rig_ran == false
 raise "expect the other judges to leave rig_ran unset" unless EvqVerdict.judge(oom_both_log, max_latency_ms: 50, expect_fault: true).rig_ran.nil?
 
+def checks_log(states: [1, 2], extra_state_line: true, control_done: true, burst: (230..260).to_a, disc: [34],
+               mark1: true, cansend_line: "[rig] cansend injected n=5 con_handle=65535", cansend_seen: 0, mark2: true)
+  lines = states.map { |st| "[rigapp] state #{st}" }
+  lines << "[rig] extra state injected" if extra_state_line
+  lines << "[rigapp] state 2" if extra_state_line
+  lines << "[rig] write enq A"
+  lines << "[rigapp] disc #{disc.first}" unless disc.empty?
+  burst.each { |seq| lines << format("[rigapp] recv seq=%d tin=2000 t=2010", seq) }
+  disc.drop(1).each { |lo| lines << "[rigapp] disc #{lo}" }
+  lines << "[rig] control done first=201 last=260 h1=17 h2=34" if control_done
+  lines << "[rigapp] mark 1" if mark1
+  lines << cansend_line if cansend_line
+  cansend_seen.times { lines << "[rigapp] cansend" }
+  lines << "[rigapp] mark 2" if mark2
+  lines << "[rig] limits done"
+  lines.join("\n") + "\n"
+end
+
+control_green = EvqVerdict.judge_control_burst(checks_log(disc: [17, 34], burst: (201..231).to_a))
+raise "expect control pass when both disconnects arrive, got: #{control_green.message}" unless control_green.pass && control_green.rig_ran == true
+raise "expect control summary, got: #{control_green.message}" unless control_green.message.include?("disconnect before burst seen=true") && control_green.message.include?("burst received 31 of 60")
+
+control_red = EvqVerdict.judge_control_burst(checks_log(disc: [34]))
+raise "expect control fail on the current firmware" if control_red.pass
+raise "expect control rig_ran on the current firmware" unless control_red.rig_ran == true
+raise "expect the lost first disconnect reported, got: #{control_red.message}" unless control_red.message.include?("handle 0x0011 (injected before the burst) never reached Ruby") && control_red.message.include?("disconnect after burst seen=true")
+raise "expect the second disconnect not reported lost, got: #{control_red.message}" if control_red.message.include?("handle 0x0022")
+
+control_last_lost = EvqVerdict.judge_control_burst(checks_log(disc: [17]))
+raise "expect control fail when the disconnect after the burst is refused, got: #{control_last_lost.message}" unless !control_last_lost.pass && control_last_lost.message.include?("handle 0x0022 (injected after the burst) never reached Ruby")
+
+control_swapped = EvqVerdict.judge_control_burst(checks_log(disc: [34, 17], burst: (201..231).to_a))
+raise "expect control fail when the disconnects arrive swapped" unless !control_swapped.pass && control_swapped.message.include?("out of order")
+
+control_no_overflow = EvqVerdict.judge_control_burst(checks_log(disc: [17, 34], burst: (201..260).to_a))
+raise "expect control fail (rig failure) when nothing was lost" unless !control_no_overflow.pass && control_no_overflow.rig_ran == true && control_no_overflow.message.include?("the rig did not overflow the ring: all 60")
+
+control_no_done = EvqVerdict.judge_control_burst(checks_log(control_done: false))
+raise "expect control not-run without the done line" unless !control_no_done.pass && control_no_done.rig_ran == false
+control_no_mark = EvqVerdict.judge_control_burst(checks_log(mark1: false))
+raise "expect control not-run without mark 1" unless !control_no_mark.pass && control_no_mark.rig_ran == false && control_no_mark.message.include?("mark 1")
+control_no_burst = EvqVerdict.judge_control_burst(checks_log(burst: []))
+raise "expect control not-run when no burst event reached Ruby" unless !control_no_burst.pass && control_no_burst.rig_ran == false
+raise "expect control not-run on a log that died at load" unless EvqVerdict.judge_control_burst("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
+
+cansend_green = EvqVerdict.judge_can_send_now(checks_log)
+raise "expect cansend pass when none arrives, got: #{cansend_green.message}" unless cansend_green.pass && cansend_green.rig_ran == true
+raise "expect cansend summary, got: #{cansend_green.message}" unless cansend_green.message.include?("5 calls with con_handle=0xffff, 0 CAN_SEND_NOW")
+
+cansend_red = EvqVerdict.judge_can_send_now(checks_log(cansend_seen: 5))
+raise "expect cansend fail on the current firmware" if cansend_red.pass
+raise "expect cansend rig_ran on the current firmware" unless cansend_red.rig_ran == true
+raise "expect cansend count reported, got: #{cansend_red.message}" unless cansend_red.message.include?("5 ATT_EVENT_CAN_SEND_NOW (0xB7) events reached Ruby with no connection, expected 0")
+
+cansend_no_mark = EvqVerdict.judge_can_send_now(checks_log(mark2: false))
+raise "expect cansend not-run without mark 2 (zero arrived is not proven)" unless !cansend_no_mark.pass && cansend_no_mark.rig_ran == false && cansend_no_mark.message.include?("mark 2")
+cansend_no_line = EvqVerdict.judge_can_send_now(checks_log(cansend_line: nil))
+raise "expect cansend not-run without the injected line" unless !cansend_no_line.pass && cansend_no_line.rig_ran == false
+cansend_connected = EvqVerdict.judge_can_send_now(checks_log(cansend_line: "[rig] cansend injected n=5 con_handle=1"))
+raise "expect cansend not-run when the rig had a connection" unless !cansend_connected.pass && cansend_connected.rig_ran == false && cansend_connected.message.include?("0x0001")
+
+states_green = EvqVerdict.judge_power_on_states(checks_log(states: [1, 2]))
+raise "expect states pass on 1, 2 before the injector's own, got: #{states_green.message}" unless states_green.pass && states_green.rig_ran == true
+raise "expect states sequence reported, got: #{states_green.message}" unless states_green.message.include?("[1, 2]")
+
+states_red = EvqVerdict.judge_power_on_states(checks_log(states: [2]))
+raise "expect states fail on the current firmware (WORKING only; the injector's own 2 is not counted)" if states_red.pass
+raise "expect states rig_ran on the current firmware" unless states_red.rig_ran == true
+raise "expect states sequence reported, got: #{states_red.message}" unless states_red.message.include?("[2] does not start with [1, 2]")
+
+states_reversed = EvqVerdict.judge_power_on_states(checks_log(states: [2, 1]))
+raise "expect states fail when WORKING comes before INITIALIZING" if states_reversed.pass
+
+states_no_cut = EvqVerdict.judge_power_on_states(checks_log(states: [1, 2], extra_state_line: false))
+raise "expect states not-run without the extra-state line" unless !states_no_cut.pass && states_no_cut.rig_ran == false
+states_none = EvqVerdict.judge_power_on_states(checks_log(states: []))
+raise "expect states not-run when no STATE reached Ruby" unless !states_none.pass && states_none.rig_ran == false
+
+named = EvqVerdict.judge_limits_checks(checks_log(states: [2], disc: [34], cansend_seen: 5))
+raise "expect four named checks, got: #{named.keys.inspect}" unless named.keys.size == 4 && named.keys.uniq.size == 4
+raise "expect every new check red on the current firmware shape" unless named.values.drop(1).none?(&:pass)
+fixed = EvqVerdict.judge_limits_checks(checks_log(states: [1, 2], disc: [17, 34], burst: (201..231).to_a))
+raise "expect the three new checks green on the fixed shape" unless fixed.values.drop(1).all?(&:pass)
+limits_without_own_burst = EvqVerdict.judge_limits(checks_log)
+raise "expect judge_limits not to take the control-burst line for its own" unless !limits_without_own_burst.pass && limits_without_own_burst.rig_ran == false
+
 puts "evq_verdict_test OK"
