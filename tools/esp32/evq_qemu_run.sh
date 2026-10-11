@@ -96,8 +96,19 @@ if [ ! -f "$EFUSE_PATH" ]; then
   idf.py -B "$BUILD_DIR" qemu efuse-burn --do-not-confirm BLK_VERSION_MAJOR 1
 fi
 
+PICORUBY_TREE="components/picoruby-esp32/picoruby"
+if TREE_HEAD="$(git -C "$PICORUBY_TREE" rev-parse HEAD 2>/dev/null)"; then
+  TREE_CHANGES="$(git -C "$PICORUBY_TREE" status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
+else
+  TREE_HEAD=unknown
+  TREE_CHANGES=unknown
+fi
+TREE_LINE="== picoruby tree under test: ${TREE_HEAD}, ${TREE_CHANGES} tracked files changed =="
+
 echo "== Building and booting QEMU (log: ${LOGFILE}) =="
-idf.py -B "$BUILD_DIR" qemu --qemu-extra-args='-m 8M' > "$LOGFILE" 2>&1 &
+echo "$TREE_LINE"
+echo "$TREE_LINE" > "$LOGFILE"
+idf.py -B "$BUILD_DIR" qemu --qemu-extra-args='-m 8M' >> "$LOGFILE" 2>&1 &
 QEMU_JOB_PID=$!
 
 result=1
