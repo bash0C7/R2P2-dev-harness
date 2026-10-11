@@ -72,12 +72,23 @@ else
   export HEAP_SIZE="${EVQ_HEAP_SIZE:-204800}"
 fi
 
-echo "== Configuring ${BUILD_DIR} (PICORB_VM=${VM}) =="
-idf.py -B "$BUILD_DIR" \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfigs/qemu_ble_evq;sdkconfigs/qemu" \
-  -D SDKCONFIG="$BUILD_DIR/sdkconfig" \
-  -D PICORB_VM="$VM" \
-  set-target esp32s3
+# EVQ_REUSE_BUILD=1 keeps an existing build directory (one per VM) and only re-runs cmake, so
+# ninja rebuilds what the overlay and the port changed instead of the whole IDF.
+if [ "${EVQ_REUSE_BUILD:-0}" = "1" ] && [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+  echo "== Reconfiguring ${BUILD_DIR} (PICORB_VM=${VM}) =="
+  idf.py -B "$BUILD_DIR" \
+    -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfigs/qemu_ble_evq;sdkconfigs/qemu" \
+    -D SDKCONFIG="$BUILD_DIR/sdkconfig" \
+    -D PICORB_VM="$VM" \
+    reconfigure
+else
+  echo "== Configuring ${BUILD_DIR} (PICORB_VM=${VM}) =="
+  idf.py -B "$BUILD_DIR" \
+    -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfigs/qemu_ble_evq;sdkconfigs/qemu" \
+    -D SDKCONFIG="$BUILD_DIR/sdkconfig" \
+    -D PICORB_VM="$VM" \
+    set-target esp32s3
+fi
 
 EFUSE_PATH="$BUILD_DIR/qemu_efuse.bin"
 if [ ! -f "$EFUSE_PATH" ]; then
