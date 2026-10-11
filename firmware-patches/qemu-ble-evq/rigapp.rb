@@ -79,7 +79,7 @@ class RigObserver < BLE
       @flood_received += 1
       @flood_bytes += v.bytesize
     end
-    puts "[rigapp] flood received=#{@flood_received} bytes=#{@flood_bytes}" if @flood_received != before
+    puts "[rigapp] flood received=#{@flood_received} bytes=#{@flood_bytes} t=#{Machine.board_millis}" if @flood_received != before
   end
 end
 

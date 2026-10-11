@@ -150,6 +150,8 @@ extern void rig_gatt_dsc_done(uint16_t conn);
 #define FLOOD_HANDLE 0x43
 #define FLOOD_PAYLOAD_LEN 128
 #define FLOOD_COUNT 500
+#define FLOOD_PROBE_EVERY 10
+#define WLAT_HANDLE 0x44
 #ifndef FLOOD_SPACING_MS
 #define FLOOD_SPACING_MS 2
 #endif
@@ -505,12 +507,22 @@ rig_task(void *arg)
   static uint8_t flood_payload[FLOOD_PAYLOAD_LEN];
   memset(flood_payload, 0x5a, sizeof(flood_payload));
   int rejected = 0;
+  int probes = 0;
+  uint32_t begin_ms = (uint32_t)(esp_timer_get_time() / 1000);
   for (int i = 0; i < FLOOD_COUNT; i++) {
     if (picoruby_nimble_enqueue_write(FLOOD_HANDLE, flood_payload, sizeof(flood_payload)) != 0) rejected++;
+    if (i % FLOOD_PROBE_EVERY == FLOOD_PROBE_EVERY / 2) {
+      /* a write to a second handle while the first is saturated: it must not wait for the flood */
+      char tin[12];
+      int n = snprintf(tin, sizeof(tin), "%lu", (unsigned long)(esp_timer_get_time() / 1000));
+      if (picoruby_nimble_enqueue_write(WLAT_HANDLE, (const uint8_t *)tin, (uint16_t)n) == 0) probes++;
+    }
     vTaskDelay(pdMS_TO_TICKS(FLOOD_SPACING_MS));
   }
+  uint32_t end_ms = (uint32_t)(esp_timer_get_time() / 1000);
   vTaskDelay(pdMS_TO_TICKS(1000)); /* let Ruby finish its own lines before ours */
-  printf("[rig] flood done n=%d rejected=%d\n", FLOOD_COUNT, rejected);
+  printf("[rig] flood done n=%d rejected=%d begin=%lu end=%lu probes=%d\n", FLOOD_COUNT, rejected,
+         (unsigned long)begin_ms, (unsigned long)end_ms, probes);
 #endif
 
 #ifdef PICORUBY_QEMU_EVQ_LIMITS

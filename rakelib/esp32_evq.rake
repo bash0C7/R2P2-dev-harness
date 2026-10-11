@@ -8,10 +8,10 @@
 # the expected verdict (red = pre-fix firmware must fail).
 #
 # evq_flood_* add a write flood (EVQ_FLOOD=1): 500 writes of 128 bytes into the
-# write ring (PICORUBY_BLE_WRQ_BYTES, 8192 by default). The heartbeat-drain
-# variants of the 16-entry per-handle bound are gone with that bound; a Ruby that
-# drains once a second now meets the Ruby heap instead (NoMemoryError, see
-# docs/research/pr427-evq-flood-2ms-hb-*.log). evq_limits_* add the limits
+# write ring (PICORUBY_BLE_WRQ_BYTES, 8192 by default), bounded per handle by
+# PICORUBY_BLE_WRQ_PENDING (16). evq_flood_hb_green drains only in the 1 Hz heartbeat and
+# judges the bound (EvqVerdict.judge_flood_hb); evq_flood_hb_red is the same run against
+# a port without the bound (be1dab0a), where the Ruby heap runs out. evq_limits_* add the limits
 # phase (EVQ_LIMITS=1): an 80-event burst into the 32-deep ring and
 # notifications of 93 and 200 bytes against the 92-byte value cap; green
 # needs a firmware that logs both conditions and refuses the newest events
@@ -102,11 +102,11 @@ namespace :esp32 do
     puts "[esp32:evq_oom_red] RED as expected: #{result.message}"
   end
 
-  desc "Write-flood rig, 2 ms burst, expecting PASS with nothing rejected (byte ring: 500 writes of 128 B, one per 2 ms; an entry is 4 + 128 = 132 B, the 8192-byte budget holds 62, the pump moves the whole ring to Ruby at every scheduler pass and Ruby pops at least every 20 ms, so about 10 entries are ever waiting)"
+  desc "Write-flood rig, 2 ms burst, Ruby pops every loop (at most 20 ms), expecting PASS: received + rejected == sent, and every rejection explained by the per-handle log line (the handle holds at most 16 values: 20 ms is 10 writes, plus the ring entries of one pump pass and the pops of one pass not yet observed, so a slow Ruby loop can touch the bound)"
   task :evq_flood_green do
     ENV["EVQ_FLOOD"] = "1"
     ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
-    result = evq_flood_judge(max_rejected: 0)
+    result = evq_flood_judge(explained: true)
     unless result.pass
       puts "[esp32:evq_flood_green] FAIL: #{result.message}"
       exit 1
@@ -125,6 +125,32 @@ namespace :esp32 do
     end
     puts "[esp32:evq_flood_paced_green] PASS: #{result.message}"
   end
+
+desc "Write-flood rig, 2 ms burst, Ruby pops only in the 1 Hz heartbeat, expecting PASS: no crash, received + rejected == sent, received a multiple of PICORUBY_BLE_WRQ_PENDING (16) bounded by the drains inside the flood, one log line naming handle 0x43 and 16, writes to a second handle delivered within the latency bound"
+task :evq_flood_hb_green do
+  ENV["EVQ_FLOOD"] = "1"
+  ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
+  ENV["EVQ_FLOOD_DRAIN"] = "hb"
+  result = evq_flood_hb_judge
+  unless result.pass
+    puts "[esp32:evq_flood_hb_green] FAIL: #{result.message}"
+    exit 1
+  end
+  puts "[esp32:evq_flood_hb_green] PASS: #{result.message}"
+end
+
+desc "The same flood against a port without the per-handle bound (be1dab0a: the Ruby heap runs out), expecting FAIL. Succeeds when the verdict is red"
+task :evq_flood_hb_red do
+  ENV["EVQ_FLOOD"] = "1"
+  ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
+  ENV["EVQ_FLOOD_DRAIN"] = "hb"
+  result = evq_flood_hb_judge
+  if result.pass
+    puts "[esp32:evq_flood_hb_red] UNEXPECTED GREEN: #{result.message}"
+    exit 1
+  end
+  puts "[esp32:evq_flood_hb_red] RED as expected: #{result.message}"
+end
 
   desc "Limits rig (ring overflow, over-long notifications, control event in a burst, CAN_SEND_NOW without connection, power-on states), expecting every check FAIL on pre-fix firmware. Succeeds when every verdict is red"
   task :evq_limits_red do
@@ -222,15 +248,25 @@ def evq_judge(expect_fault: false)
 end
 
 def evq_flood_default_heap
-  evq_vm == "mruby" ? "217088" : "102400"
+  evq_vm == "mruby" ? "217088" : "112640"
 end
 
-def evq_flood_judge(max_rejected: nil, min_rejected: nil)
+def evq_flood_hb_judge
+  ENV["EVQ_DONE_PATTERN"] = %q{\[rig\] flood done}
+  ENV["EVQ_HEAP_SIZE"] ||= evq_flood_default_heap
+  Rake::Task["esp32:evq_run"].invoke
+  raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+  EvqVerdict.judge_flood_hb(File.read(evq_log_path), max_latency_ms: EVQ_MAX_LATENCY_MS)
+end
+
+def evq_flood_judge(max_rejected: nil, min_rejected: nil, explained: false)
   ENV["EVQ_DONE_PATTERN"] = '\[rig\] flood done'
   ENV["EVQ_HEAP_SIZE"] ||= evq_flood_default_heap
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
-  EvqVerdict.judge_flood(File.read(evq_log_path), max_rejected: max_rejected, min_rejected: min_rejected)
+  log = File.read(evq_log_path)
+  return EvqVerdict.judge_flood_explained(log, max_rejected: max_rejected) if explained
+  EvqVerdict.judge_flood(log, max_rejected: max_rejected, min_rejected: min_rejected)
 end
 
 def evq_limits_judge

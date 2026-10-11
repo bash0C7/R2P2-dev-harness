@@ -472,4 +472,58 @@ raise "expect R1 checks unaffected by the later-step checks" unless r1.values.al
 r1, later = green_checks(green_log(cansend: 5))
 raise "expect later CAN_SEND_NOW check red with 5 events" if later.values.first.pass
 
+# Flood to a handle drained only on the heartbeat (judge_flood_hb) and the explained-rejection
+# judge of the continuous floods, against the per-handle bound of 16 (REVISION_3).
+def hb_log(drain_times: [1400, 2400], drains: nil, rejected: 436, begin_ms: 1000, end_ms: 2000, probes: 50,
+           probe_latencies: nil, refused_lines: ["W (1500) prb_ble_evq: writes to handle 67 refused: 16 values not yet popped (limit 16), refusing the newest writes to it until Ruby pops"],
+           crash: nil, sent: 500)
+  drains ||= drain_times.each_with_index.map { |t, i| [16 * (i + 1), t] }
+  lines = ["[rig] wlat done n=20"]
+  lines.concat(refused_lines)
+  (probe_latencies || Array.new(probes, 12)).each_with_index { |l, i| lines << "[rigapp] wlat tin=#{1000 + i * 20} t=#{1000 + i * 20 + l}" }
+  lines << "[rigapp] wlat tin=500 t=700" # before the flood: not a probe
+  drains.each { |count, t| lines << "[rigapp] flood received=#{count} bytes=#{count * 128} t=#{t}" }
+  lines << crash if crash
+  lines << "[rig] flood done n=#{sent} rejected=#{rejected} begin=#{begin_ms} end=#{end_ms} probes=#{probes}"
+  lines.join("\n") + "\n"
+end
+
+# received = 16 x (1 drain inside the flood + 1 after it) = 32... here two drains inside plus one after => 48
+ok = EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 1900, 2400], rejected: 500 - 48))
+raise "expect hb pass, got: #{ok.message}" unless ok.pass
+raise "expect the derivation in the message: #{ok.message}" unless ok.message.include?("48 = 16 x 3 <= 16 x (2 + 1)")
+raise "expect hb fail on a NoMemoryError" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, crash: "FATAL: NoMemoryError (NoMemoryError)")).pass
+raise "expect hb fail on 'Out of memory'" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, crash: "Fatal error: Out of memory.")).pass
+raise "expect hb fail on a backtrace" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, crash: "Backtrace: 0x4037")).pass
+raise "expect hb fail: accounting" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 400)).pass
+raise "expect hb fail: received not a multiple of 16" if EvqVerdict.judge_flood_hb(hb_log(drains: [[16, 1400], [30, 2400]], rejected: 470)).pass
+raise "expect hb fail: a batch above the limit" if EvqVerdict.judge_flood_hb(hb_log(drains: [[20, 1400], [40, 2400]], rejected: 460)).pass
+raise "expect hb fail: more received than the drains allow" if EvqVerdict.judge_flood_hb(hb_log(drains: [[16, 1400], [32, 2400], [48, 2500], [64, 2600]], rejected: 436)).pass
+raise "expect hb fail: no per-handle line" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: [])).pass
+raise "expect hb fail: two per-handle lines" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: Array.new(2) { "writes to handle 67 refused: 16 values not yet popped (limit 16)" })).pass
+raise "expect hb fail: the line names another handle" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["writes to handle 68 refused: 16 values not yet popped (limit 16)"])).pass
+raise "expect hb fail: the line names another count" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["writes to handle 67 refused: 17 values not yet popped (limit 16)"])).pass
+raise "expect hb fail: a second-handle write stalled" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, probe_latencies: Array.new(49, 12) + [400])).pass
+raise "expect hb fail: a second-handle write never arrived" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, probe_latencies: Array.new(49, 12))).pass
+raise "expect hb fail: no done line" if EvqVerdict.judge_flood_hb("[rigapp] flood received=16 bytes=2048 t=1400\n").pass
+raise "expect hb fail: nothing received" if EvqVerdict.judge_flood_hb(hb_log(drains: [], rejected: 500)).pass
+
+line = "writes to handle 67 refused: 16 values not yet popped (limit 16)"
+cont_ok = "[rig] flood done n=500 rejected=0\n[rigapp] flood received=500 bytes=64000\n"
+raise "expect explained pass with nothing rejected" unless EvqVerdict.judge_flood_explained(cont_ok).pass
+raise "expect explained fail: a line without a rejection" if EvqVerdict.judge_flood_explained(line + "\n" + cont_ok).pass
+cont_rej = "#{line}\n[rig] flood done n=500 rejected=12\n[rigapp] flood received=488 bytes=62464\n"
+raise "expect explained pass: 12 rejections with the per-handle line" unless EvqVerdict.judge_flood_explained(cont_rej).pass
+raise "expect explained fail: rejections without the line" if EvqVerdict.judge_flood_explained(cont_rej.sub(line, "")).pass
+raise "expect explained fail: accounting" if EvqVerdict.judge_flood_explained(cont_rej.sub("488", "480")).pass
+raise "expect explained fail: max_rejected" if EvqVerdict.judge_flood_explained(cont_rej, max_rejected: 0).pass
+
+# a port log line pushed into the middle of a Ruby line (same UART) does not lose the probe
+split = hb_log(drain_times: [1400, 1900, 2400], rejected: 500 - 48)
+first_probe = split[/^\[rigapp\] wlat tin=1000 t=1012$/]
+cut = first_probe.sub("wlat ", "wlat") .sub("tin=1000", "W (1500) prb_ble_evq: x\n tin=1000")
+raise "expect the fixture to contain the split" unless cut.include?("wlatW (1500)")
+split_log = split.sub(first_probe, cut)
+raise "expect hb pass with a port line inside a Ruby line, got: #{EvqVerdict.judge_flood_hb(split_log).message}" unless EvqVerdict.judge_flood_hb(split_log).pass
+
 puts "evq_verdict_test OK"

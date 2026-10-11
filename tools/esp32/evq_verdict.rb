@@ -181,6 +181,92 @@ module EvqVerdict
     end
   end
 
+  # Per-handle write bound (PICORUBY_BLE_WRQ_PENDING): a refusal names the handle and
+  # the count.
+  HANDLE_REFUSED = /writes to handle (\d+) refused: (\d+) values not yet popped \(limit (\d+)\)/
+  FLOOD_HANDLE = 0x43
+  FLOOD_DONE_TIMES = /flood done n=\d+ rejected=\d+ begin=(\d+) end=(\d+) probes=(\d+)/
+  FLOOD_RECV_TIMED = /flood received=(\d+) bytes=\d+ t=(\d+)/
+
+  # Flood whose rejections must be explained: every rejection is the per-handle bound
+  # (one log line naming the handle and the count), and with nothing rejected there is
+  # no such line. judge_flood still does the crash and accounting checks.
+  # The port logs from the injector task while Ruby prints on the same UART, which can
+  # push a whole port line into the middle of a Ruby line. Put the Ruby line back together:
+  # "[rigapp] wlat<port line>\n tin=1 t=2" becomes "<port line>\n[rigapp] wlat tin=1 t=2".
+  def unsplit_port_logs(log)
+    log.gsub(/^(\[rigapp\][^\n]*?)([WEI] \(\d+\) prb_ble_evq: [^\n]*\n)([^\n]*\n)/) { "#{$2}#{$1}#{$3}" }
+  end
+
+  def judge_flood_explained(log, max_rejected: nil)
+    log = unsplit_port_logs(log)
+    result = judge_flood(log, max_rejected: max_rejected)
+    return result unless result.pass
+
+    rejected = FLOOD_DONE.match(log)[2].to_i
+    lines = log.scan(HANDLE_REFUSED)
+    problems = []
+    problems << "#{rejected} writes rejected and no per-handle 'writes to handle N refused' line in the log" if rejected.positive? && lines.empty?
+    problems << "#{lines.size} per-handle lines in the log with nothing rejected" if rejected.zero? && !lines.empty?
+    problems << "#{lines.size} per-handle lines, expected one per power session" if lines.size > 1
+    verdict(problems, "#{result.message}, per-handle lines=#{lines.size}")
+  end
+
+  # Flood to a handle whose application pops only in the 1 Hz heartbeat
+  # (EVQ_FLOOD_DRAIN=hb), judged against REVISION_3: the bound is PICORUBY_BLE_WRQ_PENDING
+  # (limit) values per handle resident in Ruby.
+  #   - no crash (NoMemoryError, Out of memory, abort, backtrace);
+  #   - received + rejected == sent;
+  #   - between two drains the handle takes exactly `limit` writes and refuses the rest,
+  #     so every drain pops at most `limit` and the total received is a multiple of
+  #     `limit`, at most limit * (h + 1): h drains fall inside the flood window
+  #     [begin, end] (observed from the timed 'flood received' lines) and one more
+  #     pops the batch that was resident at the end;
+  #   - exactly one log line naming the flooded handle and the count `limit`;
+  #   - the probe writes to a second handle, queued during the flood, all arrive within
+  #     max_latency_ms (the saturated handle delays no other).
+  def judge_flood_hb(log, limit: 16, max_latency_ms: 50)
+    log = unsplit_port_logs(log)
+    problems = []
+    crash = log[FLOOD_CRASH] || log[/Backtrace:/]
+    problems << "crash pattern matched: #{crash}" if crash
+    done = FLOOD_DONE.match(log)
+    timed = FLOOD_DONE_TIMES.match(log)
+    problems << "no flood-done line with rejected count in log" if done.nil?
+    problems << "no flood-done begin/end/probes in log" if timed.nil?
+    if done.nil? || timed.nil?
+      return Result.new(pass: false, message: problems.join("; "))
+    end
+
+    sent = done[1].to_i
+    rejected = done[2].to_i
+    begin_ms, end_ms, probes = timed.captures.map(&:to_i)
+    drains = log.scan(FLOOD_RECV_TIMED).map { |count, t| [count.to_i, t.to_i] }
+    received = drains.last ? drains.last[0] : 0
+    batches = drains.each_with_index.map { |(count, _), i| count - (i.zero? ? 0 : drains[i - 1][0]) }
+    inside = drains.count { |_, t| t >= begin_ms && t <= end_ms }
+    problems << "no timed 'flood received' line in log" if drains.empty?
+    problems << "accounting: received #{received} + rejected #{rejected} != sent #{sent}" if received + rejected != sent
+    problems << "received #{received} is not a multiple of #{limit}" unless (received % limit).zero?
+    problems << "a drain popped #{batches.max} values, more than the limit #{limit}" if batches.any? && batches.max > limit
+    problems << "received #{received} exceeds #{limit} x (#{inside} drains inside the flood + 1) = #{limit * (inside + 1)}" if received > limit * (inside + 1)
+    problems << "received nothing" if received.zero?
+
+    lines = log.scan(HANDLE_REFUSED)
+    named = lines.select { |h, c, l| h.to_i == FLOOD_HANDLE && c.to_i == limit && l.to_i == limit }
+    problems << "#{lines.size} per-handle log lines, #{named.size} of them naming handle #{FLOOD_HANDLE} and count #{limit}; expected exactly one" unless lines.size == 1 && named.size == 1
+
+    probe_latency = log.scan(WLAT).select { |tin, _t| tin.to_i >= begin_ms }.map { |tin, t| t.to_i - tin.to_i }
+    problems << "#{probe_latency.size} of #{probes} writes to the second handle arrived" unless probe_latency.size == probes
+    slow = probe_latency.select { |l| l > max_latency_ms }
+    problems << "second-handle write latency > #{max_latency_ms}ms: #{slow.join(', ')}" unless slow.empty?
+
+    summary = "flood received=#{received} rejected=#{rejected} sent=#{sent}; drains: #{batches.size} (#{inside} inside the flood window #{begin_ms}-#{end_ms}), " \
+              "batches #{batches.inspect} => #{received} = #{limit} x #{received / limit} <= #{limit} x (#{inside} + 1); " \
+              "per-handle log lines=#{lines.size}; second-handle writes #{probe_latency.size}/#{probes}, worst latency #{probe_latency.max.inspect}ms"
+    verdict(problems, summary)
+  end
+
   # Limits case (PICORUBY_QEMU_EVQ_LIMITS): an 80-event burst into the
   # 32-deep ring, then NOTIFY_RX values of 93 and 200 bytes.
   #   burst: when the ring is full the newest events must be refused
