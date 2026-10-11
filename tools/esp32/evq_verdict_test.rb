@@ -385,12 +385,44 @@ def green_spec
       10 => [["state", 5, 6], ["disc", 51, 1008], ["state", 4, 1008]],
       11 => [["state", 1, 8], ["state", 2, 10]],
       12 => [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1008]],
+      13 => [["state", 1, 8], ["state", 2, 10]],
+      14 => [["state", 3, 6]],
+      15 => [["state", 1, 8], ["state", 2, 10]],
+      16 => [["state", 3, 6], ["disc", 51, 380], ["state", 0, 382]],
+      17 => [["state", 1, 8], ["state", 2, 10]],
+      18 => [["state", 3, 6]],
+      19 => [["state", 3, 6], ["disc", 51, 800], ["state", 0, 802]],
+      20 => [["state", 1, 8], ["state", 2, 10]],
+      21 => [["state", 3, 6]],
+      22 => [["state", 5, 6], ["disc", 51, 800], ["state", 4, 802]],
+      23 => [["state", 1, 8], ["state", 2, 10]],
+      24 => [["state", 5, 6]],
+      25 => [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1010]],
+      26 => [["state", 1, 8], ["state", 2, 10]],
+      27 => [["state", 5, 6]],
+      28 => [["state", 5, 6], ["disc", 51, 800], ["state", 4, 802]],
+      29 => [["state", 1, 8], ["state", 2, 10]],
+      30 => [["state", 2, 6]],
+      31 => [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1010]],
+      32 => [["state", 1, 8], ["state", 2, 10]],
+      33 => [["state", 3, 6], ["state", 0, 8]],
     },
-    hbs: { 4 => [1000], 5 => [4] },
-    port_lines: ["W (9999) prb_ble_evq: no disconnect arrived within the halting deadline, synthesised one: handle=0xffff",
-                 "W (9999) prb_ble_evq: event for a link already reported gone, or of an earlier power session, dropped: handle=0x0033"],
+    hbs: { 4 => [1000], 5 => [4], 29 => [1000], 31 => [4] },
+    # port log lines, by the step whose output they follow
+    after: {
+      8 => ["W (9541) prb_ble_evq: no disconnect arrived within the halting deadline, synthesised one: handle=0xffff",
+            "W (9998) prb_ble_evq: this power session: stale events dropped=0 halting discards=1 adv re-armed=0"],
+      10 => ["W (9999) prb_ble_evq: dropped a disconnect that belongs to an earlier power session: handle=0x0033"],
+      12 => ["W (9998) prb_ble_evq: this power session: stale events dropped=1 halting discards=1 adv re-armed=0"],
+      33 => ["[rig] host CONNECT handle=51", "[rig] nimble ble_gap_terminate handle=51 reason=0x13 -> 0 power=0",
+             "W (9999) prb_ble_evq: dropped a disconnect that belongs to an earlier power session: handle=0x0033"],
+    },
   }
 end
+
+SPEC_KINDS = { 13 => "on", 14 => "off", 15 => "on", 16 => "off", 17 => "on", 18 => "off", 19 => "off", 20 => "on", 21 => "off", 22 => "sleep",
+               23 => "on", 24 => "sleep", 25 => "off", 26 => "on", 27 => "sleep", 28 => "sleep", 29 => "on", 30 => "on", 31 => "off",
+               32 => "on", 33 => "off" }
 
 def green_log(spec = green_spec, begin_line: true, done_line: true)
   lines = []
@@ -399,15 +431,15 @@ def green_log(spec = green_spec, begin_line: true, done_line: true)
   lines << "[rigapp] step 1 state 1 t=100" << "[rigapp] step 1 state 2 t=101"
   lines << "[rigapp] step 2 state 3 t=800" << "[rigapp] step 2 state 0 t=801"
   t = 1000
-  (3..12).each do |n|
-    kind, nimble = spec[:calls][n] || ["off", []]
+  (3..33).each do |n|
+    kind, nimble = spec[:calls][n] || [SPEC_KINDS[n] || "off", []]
     lines << "[rigapp] step #{n} call #{kind} t=#{t}"
     lines.concat(nimble)
     spec[:events][n].each { |k, v, dt| lines << "[rigapp] step #{n} #{k} #{v} t=#{t + dt}" }
     (spec[:hbs][n] || []).each { |dt| lines << "[rigapp] step #{n} hb t=#{t + dt}" }
+    lines.concat(spec[:after][n] || [])
     t += 3000
   end
-  lines.concat(spec[:port_lines])
   lines << "[rigapp] power done" if done_line
   lines.join("\n") + "\n"
 end
@@ -421,7 +453,7 @@ ok = EvqVerdict.judge_power_green(green_log)
 raise "expect power_green pass on a correct run, got: #{ok.message}" unless ok.pass && ok.rig_ran == true
 checks, = EvqVerdict.power_green(green_log)
 raise "expect every check to pass on a correct run: #{EvqVerdict.power_green_lines(checks.reject { |c| c[:pass] })}" unless checks.all? { |c| c[:pass] }
-raise "expect 26 checks, got #{checks.size}" unless checks.size == 26
+raise "expect 53 checks, got #{checks.size}" unless checks.size == 53
 
 # the expected state events: a missing STATE(3) is caught in step 8
 spec = green_spec
@@ -480,11 +512,65 @@ spec = green_spec
 spec[:events][10] = [["state", 5, 6], ["disc", 51, 1008], ["state", 4, 1008], ["disc", 51, 1300]]
 raise "expect a second disconnect to fail the late-disconnect check" if green_check(green_log(spec), "late disconnect")[:pass]
 spec = green_spec
-spec[:port_lines] = [spec[:port_lines][0]]
+spec[:after][10] = []
 raise "expect a missing drop line to fail" if green_check(green_log(spec), "late disconnect")[:pass]
 spec = green_spec
-spec[:port_lines] = [spec[:port_lines][1]]
+spec[:after][8] = spec[:after][8].drop(1)
 raise "expect a missing deadline line to fail" if green_check(green_log(spec), "deadline logs")[:pass]
+
+# a power-off, power-on, power-off with one link held: the earlier session's disconnect must not
+# reach Ruby after the state OFF (the old port forgot the link on BLE_HS_EALREADY)
+spec = green_spec
+spec[:events][16] = [["state", 3, 6], ["state", 0, 8], ["disc", 51, 380]]
+raise "expect a disconnect after STATE(0) to fail step 16" if green_check(green_log(spec), "state events of step 16")[:pass]
+spec = green_spec
+spec[:events][16] = [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1010]]
+raise "expect a deadline-synthesised disconnect to fail the step 16 timing check" if green_check(green_log(spec), "step 16 delivers")[:pass]
+
+# a power transition during a pending halt: one STATE per halt
+spec = green_spec
+spec[:events][19] = [["state", 0, 6], ["disc", 51, 800], ["state", 0, 802]]
+raise "expect OFF during a pending OFF to fail when it announces OFF at once" if green_check(green_log(spec), "state events of step 19")[:pass]
+spec = green_spec
+spec[:events][22] = [["state", 0, 6], ["disc", 51, 800], ["state", 0, 802]]
+raise "expect SLEEP during a pending OFF to fail when the halt still ends in OFF" if green_check(green_log(spec), "state events of step 22")[:pass]
+spec = green_spec
+spec[:events][28] = [["state", 4, 6], ["disc", 51, 800], ["state", 4, 802]]
+raise "expect SLEEP during a pending SLEEP to fail when it announces SLEEPING at once" if green_check(green_log(spec), "state events of step 28")[:pass]
+spec = green_spec
+spec[:events][25] = [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1010], ["state", 0, 1100]]
+raise "expect a second STATE(0) for one halt to fail" if green_check(green_log(spec), "state events of step 25")[:pass]
+
+# the heartbeat follows the last call: a nested power-on does not keep it alive past a power-off
+spec = green_spec
+spec[:hbs][31] = [4, 1004]
+raise "expect a beat after power-off to fail" if green_check(green_log(spec), "no heartbeat after a power-off")[:pass]
+spec = green_spec
+spec[:hbs][29] = []
+raise "expect no beat while on (step 29) to fail" if green_check(green_log(spec), "heartbeat runs while on (step 29)")[:pass]
+
+# the summary of a power-off counts the deadline discard of that power-off
+spec = green_spec
+spec[:after][8] = spec[:after][8].take(1)
+raise "expect a missing summary to fail step 8" if green_check(green_log(spec), "summary of step 8")[:pass]
+spec = green_spec
+spec[:after][8] = [spec[:after][8][0]]
+spec[:after][9] = [green_spec[:after][8][1]]
+raise "expect a summary that comes after the next power-on to fail" if green_check(green_log(spec), "summary of step 8")[:pass]
+
+# a link accepted after the halt completed: terminated at once, its disconnect dropped, none delivered
+spec = green_spec
+spec[:events][33] = [["state", 3, 6], ["state", 0, 8], ["disc", 51, 300]]
+raise "expect a delivered disconnect to fail step 33" if green_check(green_log(spec), "link accepted after the halt")[:pass]
+spec = green_spec
+spec[:after][33] = spec[:after][33].reject { |l| l.include?("dropped") }
+raise "expect a missing drop line to fail step 33" if green_check(green_log(spec), "link accepted after the halt")[:pass]
+spec = green_spec
+spec[:after][33] = spec[:after][33].map { |l| l.sub("power=0", "power=1") }
+raise "expect a terminate made with power on to fail step 33" if green_check(green_log(spec), "link accepted after the halt")[:pass]
+spec = green_spec
+spec[:events][33] = [["state", 3, 6], ["state", 0, 600]]
+raise "expect a halt that is not immediate to fail step 33" if green_check(green_log(spec), "link accepted after the halt")[:pass]
 
 # not run: no 'power done', no 'power begin', a call line missing, a log that died at load
 raise "expect not-run without 'power done'" unless EvqVerdict.judge_power_green(green_log(done_line: false)).rig_ran == false

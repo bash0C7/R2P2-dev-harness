@@ -110,7 +110,7 @@ module EvqVerdict
   POWER_TIMED_EVENT = /\[rigapp\] step (\d+) (state|disc) (\d+) t=(\d+)/
   POWER_HB = /\[rigapp\] step (\d+) hb t=(\d+)/
   NIMBLE_CALL = /\[rig\] nimble (\w+)(?: handle=(\d+) reason=0x(\h+))?(?: -> (\d+))? power=(\d+)/
-  POWER_CALL_STEPS = (3..12).to_a
+  POWER_CALL_STEPS = (3..33).to_a
   POWER_LINK_HANDLE = 51
   POWER_TERMINATE_REASON = 0x13
   # The pump completes a power-off or sleep that has something left to wait for 1000 ms
@@ -125,6 +125,8 @@ module EvqVerdict
   POWER_HALTING_LATE_MS = 40
   POWER_IMMEDIATE_MAX_MS = 40
   POWER_HEARTBEAT_STOP_MS = 200
+  POWER_DROPPED_LINE = /dropped a disconnect that belongs to an earlier power session: handle=0x0033/
+  POWER_SUMMARY_DISCARDS = /this power session: .*halting discards=1/
   # States and, for 8, 10 and 12, the order of the terminated link's or cancelled attempt's
   # disconnect (:disc_ff = handle 0xffff, :disc_33 = the link of the rig's answering peer).
   POWER_HALTING_REFERENCE = {
@@ -133,6 +135,29 @@ module EvqVerdict
     10 => [5, :disc_33, 4],
     11 => [1, 2],
     12 => [3, :disc_33, 0],
+    # a power transition while a halt is pending (rigapp_power.rb, steps 13-31)
+    13 => [1, 2],
+    14 => [3],
+    15 => [1, 2],
+    16 => [3, :disc_33, 0],
+    17 => [1, 2],
+    18 => [3],
+    19 => [3, :disc_33, 0],
+    20 => [1, 2],
+    21 => [3],
+    22 => [5, :disc_33, 4],
+    23 => [1, 2],
+    24 => [5],
+    25 => [3, :disc_33, 0],
+    26 => [1, 2],
+    27 => [5],
+    28 => [5, :disc_33, 4],
+    29 => [1, 2],
+    30 => [2],
+    31 => [3, :disc_33, 0],
+    # the second instance: a link accepted after the halt completed
+    32 => [1, 2],
+    33 => [3, 0],
   }
   POWER_HALTING_NAMES = {
     8 => "power-off with a connect attempt nobody answers",
@@ -140,6 +165,27 @@ module EvqVerdict
     10 => "sleep with the link up, its disconnect arrives late",
     11 => "power-on from sleep",
     12 => "power-off with the link up",
+    13 => "power-on, link up",
+    14 => "power-off, its disconnect armed to come late",
+    15 => "power-on while that halt is pending",
+    16 => "power-off again; the disconnect of step 14 arrives",
+    17 => "power-on, link up",
+    18 => "power-off",
+    19 => "power-off during the pending halt",
+    20 => "power-on, link up",
+    21 => "power-off",
+    22 => "sleep during the pending power-off",
+    23 => "power-on from sleep, link up",
+    24 => "sleep",
+    25 => "power-off during the pending sleep",
+    26 => "power-on, link up",
+    27 => "sleep",
+    28 => "sleep during the pending sleep",
+    29 => "power-on from sleep",
+    30 => "power-on while on",
+    31 => "power-off after a nested power-on",
+    32 => "second instance, power-on",
+    33 => "power-off while a connect completes after the cancel failed",
   }
   # NimBLE calls that one hci_power_control makes, in order, with the power state at the
   # call (0 off, 1 on, 2 sleeping). OFF: power written first, then advertising stopped, the
@@ -713,7 +759,7 @@ module EvqVerdict
                 detail: late.nil? ? "no call line" : "#{late} beat(s) later than #{POWER_HEARTBEAT_STOP_MS} ms after the call" }
 
     step10_discs = (walk[:events][10] || []).count { |kind, _, _| kind == "disc" }
-    dropped = firmware_output(log).match?(/dropped: handle=0x0033/)
+    dropped = power_log_between(log, 10, 11).match?(POWER_DROPPED_LINE)
     checks << { name: "the late disconnect of step 10 is dropped", pass: step10_discs == 1 && dropped,
                 detail: "#{step10_discs} disconnect event(s) in step 10, port log line #{dropped ? 'present' : 'missing'}" }
     synthesised = firmware_output(log).match?(/halting deadline, synthesised one: handle=0xffff/)
@@ -723,11 +769,61 @@ module EvqVerdict
     problems = []
     problems << steps_why unless steps_ran
     problems << "#{walk[:calls].size} of #{POWER_CALL_STEPS.size} call lines in the log" unless walk[:calls].size == POWER_CALL_STEPS.size
+    # a transition while a halt is pending: the disconnect of the link comes from the link, so it
+    # arrives before the deadline (the stub raises it 600 ms after step 14, the program's call 16
+    # follows ~210 ms later)
+    call16 = walk[:calls][16]
+    disc16 = (walk[:events][16] || []).find { |kind, _, _| kind == "disc" }
+    if call16 && disc16
+      dt = disc16[2] - call16[:t]
+      checks << { name: "step 16 delivers the disconnect that came from the link, before the deadline", pass: dt >= 100 && dt <= 900,
+                  detail: "#{dt} ms after the call (the deadline would give ~#{POWER_HALTING_MS})" }
+    else
+      checks << { name: "step 16 delivers the disconnect that came from the link, before the deadline", pass: false, detail: "missing call line or disconnect" }
+    end
+
+    beats29 = (walk[:hbs][29] || []).size
+    checks << { name: "heartbeat runs while on (step 29)", pass: beats29 >= 1, detail: "#{beats29} beat(s) in the 1500 ms window" }
+    call31 = walk[:calls][31]
+    late31 = call31 ? (walk[:hbs][31] || []).count { |t| t > call31[:t] + POWER_HEARTBEAT_STOP_MS } : nil
+    checks << { name: "no heartbeat after a power-off that follows a nested power-on (step 31)", pass: late31 == 0,
+                detail: late31.nil? ? "no call line" : "#{late31} beat(s) later than #{POWER_HEARTBEAT_STOP_MS} ms after the call" }
+
+    [[8, 9], [12, 13]].each do |off_step, next_step|
+      section = power_log_between(log, off_step, next_step)
+      checks << { name: "the summary of step #{off_step}'s power-off counts its own deadline discard", pass: section.match?(POWER_SUMMARY_DISCARDS),
+                  detail: section.match?(POWER_SUMMARY_DISCARDS) ? "'halting discards=1' printed before step #{next_step}" : "no 'halting discards=1' line between step #{off_step} and step #{next_step}" }
+    end
+
+    after33 = power_log_after(log, 33)
+    connect = after33&.index("[rig] host CONNECT")
+    terminated = connect && after33[connect..].match?(/\[rig\] nimble ble_gap_terminate handle=51 reason=0x13 -> 0 power=0/)
+    dropped33 = connect && after33[connect..].match?(POWER_DROPPED_LINE)
+    disc33 = (walk[:events][33] || []).count { |kind, _, _| kind == "disc" }
+    state33 = (walk[:events][33] || []).last
+    call33 = walk[:calls][33]
+    immediate33 = call33 && state33 && state33[2] - call33[:t] <= POWER_IMMEDIATE_MAX_MS
+    checks << { name: "a link accepted after the halt completed is terminated, and its disconnect is dropped (step 33)", pass: !!(terminated && dropped33 && disc33.zero? && immediate33),
+                detail: "terminated while off=#{!!terminated}, late disconnect dropped=#{!!dropped33}, #{disc33} disconnect event(s), halt immediate=#{!!immediate33}" }
     [checks, problems.empty?, problems.join("; ")]
   end
 
   def power_green_lines(checks)
     checks.map { |c| "#{c[:pass] ? 'PASS' : 'FAIL'}: #{c[:name]}: #{c[:detail]}" }
+  end
+
+  # The firmware output between the "call" line of step n and the "call" line of step m.
+  def power_log_between(log, n, m)
+    fw = firmware_output(log)
+    from = fw.index(/\[rigapp\] step #{n} call /)
+    to = fw.index(/\[rigapp\] step #{m} call /)
+    from && to && to > from ? fw[from...to] : ""
+  end
+
+  def power_log_after(log, n)
+    fw = firmware_output(log)
+    from = fw.index(/\[rigapp\] step #{n} call /)
+    from ? fw[from..] : nil
   end
 
   def power_event_name(kind, value)

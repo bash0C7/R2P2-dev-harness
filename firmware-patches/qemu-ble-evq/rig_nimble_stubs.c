@@ -24,11 +24,23 @@
  *                 ble_gap_conn_cancel ends a pending attempt (the host would then raise
  *                 CONNECT with status BLE_HS_EAPP; the rig never does, which is what
  *                 lets the halting deadline run).
- *   terminate     ble_gap_terminate answers 0 and the DISCONNECT never comes, unless
+ *   terminate     ble_gap_terminate answers 0 for a link not yet terminating and
+ *                 BLE_HS_EALREADY for one that is (BLE_HS_CONN_F_TERMINATING, nb ble_gap.c
+ *                 in both trees); the flag clears when the link's DISCONNECT is raised or a
+ *                 new CONNECT for the handle arrives. The DISCONNECT never comes, unless
  *                 rig_stub_late_disconnect armed it: then the DISCONNECT of the
  *                 terminated link (reason BLE_HS_HCI_ERR(0x16)) is raised from a task of
- *                 its own that many milliseconds later, the real disconnect arriving
- *                 after the port gave up waiting for it.
+ *                 its own that many milliseconds later. The arming is consumed by the first
+ *                 terminate that follows.
+ *   peers         address byte 0xAA never answers; 0xBB answers with a CONNECT after 30 ms;
+ *                 0xCC answers the same way but ble_gap_conn_cancel then fails with
+ *                 BLE_HS_HCI_ERR(0x0C), as when the controller completed the connection
+ *                 first, and the terminate of that link is armed to be answered 300 ms late.
+ *   callouts      ble_npl_callout_* go through npl_funcs, which the host never initialises under
+ *                 QEMU; rig_stub_install_npl() gives it a table with the callout functions only,
+ *                 built on esp_timer: the callback runs from the esp_timer task, standing in for
+ *                 the host task. ble_npl_time_ms_to_ticks32 is the identity, as in the esp_timer
+ *                 mode of the porting layer.
  */
 #include <stdint.h>
 #include <stdbool.h>
@@ -42,13 +54,18 @@
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 #include "host/util/util.h"
+#include "nimble/nimble_port.h"
+#include "esp_timer.h"
 
 #include "ble_common.h"
 
 #define RIG_LINK_HANDLE 0x0033
 #define RIG_CONNECT_DELAY_MS 30
 #define RIG_ANSWERING_PEER 0xBB
+#define RIG_RACING_PEER 0xCC
+#define RIG_RACING_LATE_DISCONNECT_MS 300
 
+extern volatile uint8_t picoruby_ble_power __attribute__((weak));
 extern volatile uint8_t ble_power __attribute__((weak));
 
 #ifdef PICORUBY_QEMU_EVQ_RESYNC
@@ -59,6 +76,8 @@ static volatile bool adv_active = false;
 static volatile bool disc_active = false;
 static volatile bool conn_pending = false;
 static volatile int late_disconnect_ms = 0;
+static volatile bool conn_race = false;
+static volatile int terminating_handle = -1;
 
 void
 rig_stub_late_disconnect(int ms)
@@ -66,18 +85,24 @@ rig_stub_late_disconnect(int ms)
   late_disconnect_ms = ms;
 }
 
+struct rig_late_arg {
+  uint16_t handle;
+  int ms;
+};
+
 static void
 rig_late_disconnect_task(void *arg)
 {
-  const uint16_t handle = (uint16_t)(uintptr_t)arg;
-  vTaskDelay(pdMS_TO_TICKS(late_disconnect_ms));
-  late_disconnect_ms = 0;
+  struct rig_late_arg a = *(struct rig_late_arg *)arg;
+  free(arg);
+  vTaskDelay(pdMS_TO_TICKS(a.ms));
   struct ble_gap_event ev;
   memset(&ev, 0, sizeof(ev));
   ev.type = BLE_GAP_EVENT_DISCONNECT;
   ev.disconnect.reason = BLE_HS_HCI_ERR(0x16);
-  ev.disconnect.conn.conn_handle = handle;
-  printf("[rig] host DISCONNECT handle=%u\n", (unsigned)handle);
+  ev.disconnect.conn.conn_handle = a.handle;
+  printf("[rig] host DISCONNECT handle=%u\n", (unsigned)a.handle);
+  if (terminating_handle == (int)a.handle) terminating_handle = -1;
   picoruby_ble_gap_event(&ev, NULL);
   vTaskDelete(NULL);
 }
@@ -85,6 +110,7 @@ rig_late_disconnect_task(void *arg)
 static unsigned
 power_now(void)
 {
+  if (&picoruby_ble_power != NULL) return picoruby_ble_power;
   return &ble_power != NULL ? ble_power : 255;
 }
 
@@ -138,10 +164,18 @@ ble_gap_adv_active(void)
 int
 ble_gap_terminate(uint16_t conn_handle, uint8_t hci_reason)
 {
-  printf("[rig] nimble ble_gap_terminate handle=%u reason=0x%02x power=%u\n",
-         (unsigned)conn_handle, (unsigned)hci_reason, power_now());
-  if (late_disconnect_ms > 0) {
-    xTaskCreate(rig_late_disconnect_task, "evq_late", 6144, (void *)(uintptr_t)conn_handle, 5, NULL);
+  const int rc = (terminating_handle == (int)conn_handle) ? BLE_HS_EALREADY : 0;
+  printf("[rig] nimble ble_gap_terminate handle=%u reason=0x%02x -> %d power=%u\n",
+         (unsigned)conn_handle, (unsigned)hci_reason, rc, power_now());
+  if (rc != 0) return rc;
+  terminating_handle = conn_handle;
+  const int ms = late_disconnect_ms;
+  late_disconnect_ms = 0;
+  if (ms > 0) {
+    struct rig_late_arg *a = malloc(sizeof(*a));
+    a->handle = conn_handle;
+    a->ms = ms;
+    xTaskCreate(rig_late_disconnect_task, "evq_late", 6144, a, 5, NULL);
   }
   return 0;
 }
@@ -158,6 +192,7 @@ ble_gap_conn_cancel(void)
 {
   CALL_LOG("ble_gap_conn_cancel");
   if (!conn_pending) return BLE_HS_EALREADY;
+  if (conn_race) return BLE_HS_HCI_ERR(0x0C);
   conn_pending = false;
   return 0;
 }
@@ -211,6 +246,11 @@ rig_peer_task(void *arg)
     ev.connect.status = 0;
     ev.connect.conn_handle = RIG_LINK_HANDLE;
     printf("[rig] host CONNECT handle=%u\n", (unsigned)RIG_LINK_HANDLE);
+    terminating_handle = -1;
+    if (conn_race) {
+      conn_race = false;
+      late_disconnect_ms = RIG_RACING_LATE_DISCONNECT_MS;
+    }
     a.cb(&ev, a.cb_arg);
   }
   vTaskDelete(NULL);
@@ -228,7 +268,8 @@ ble_gap_connect(uint8_t own_addr_type, const ble_addr_t *peer_addr,
   CALL_LOG("ble_gap_connect");
   if (conn_pending) return BLE_HS_EALREADY;
   conn_pending = true;
-  if (peer_addr != NULL && peer_addr->val[5] == RIG_ANSWERING_PEER) {
+  conn_race = peer_addr != NULL && peer_addr->val[5] == RIG_RACING_PEER;
+  if (peer_addr != NULL && (peer_addr->val[5] == RIG_ANSWERING_PEER || conn_race)) {
     struct rig_connect_arg *a = malloc(sizeof(*a));
     a->cb = cb;
     a->cb_arg = cb_arg;
@@ -267,4 +308,98 @@ ble_hs_id_infer_auto(int privacy, uint8_t *out_addr_type)
   (void)privacy;
   if (out_addr_type != NULL) *out_addr_type = 0;
   return 0;
+}
+
+/* The callout functions the port uses reach the porting layer through npl_funcs, a table the
+ * host fills in nimble_port_init(), which the rig never runs. The rig's table has the callout
+ * functions and the millisecond conversion only. */
+struct rig_callout {
+  esp_timer_handle_t timer;
+  ble_npl_event_fn *fn;
+  void *arg;
+  struct ble_npl_event ev;
+};
+
+static void
+rig_callout_fire(void *arg)
+{
+  struct rig_callout *rc = arg;
+  printf("[rig] host callout fired power=%u\n", power_now());
+  rc->ev.event = rc->arg;
+  rc->fn(&rc->ev);
+}
+
+static int
+rig_npl_callout_init(struct ble_npl_callout *co, struct ble_npl_eventq *evq,
+                     ble_npl_event_fn *ev_cb, void *ev_arg)
+{
+  (void)evq;
+  struct rig_callout *rc = co->co;
+  if (rc == NULL) {
+    rc = calloc(1, sizeof(*rc));
+    const esp_timer_create_args_t args = { .callback = rig_callout_fire, .arg = rc, .name = "evq_callout" };
+    if (rc == NULL || esp_timer_create(&args, &rc->timer) != ESP_OK) return -1;
+    co->co = rc;
+  }
+  rc->fn = ev_cb;
+  rc->arg = ev_arg;
+  printf("[rig] nimble callout_init power=%u\n", power_now());
+  return 0;
+}
+
+static ble_npl_error_t
+rig_npl_callout_reset(struct ble_npl_callout *co, ble_npl_time_t ticks)
+{
+  struct rig_callout *rc = co->co;
+  printf("[rig] nimble callout_reset ms=%u power=%u\n", (unsigned)ticks, power_now());
+  esp_timer_stop(rc->timer);
+  return esp_timer_start_once(rc->timer, (uint64_t)ticks * 1000) == ESP_OK ? BLE_NPL_OK : BLE_NPL_ERROR;
+}
+
+static void
+rig_npl_callout_stop(struct ble_npl_callout *co)
+{
+  struct rig_callout *rc = co->co;
+  if (rc == NULL) return;
+  printf("[rig] nimble callout_stop power=%u\n", power_now());
+  esp_timer_stop(rc->timer);
+}
+
+static void
+rig_npl_callout_deinit(struct ble_npl_callout *co)
+{
+  struct rig_callout *rc = co->co;
+  if (rc == NULL) return;
+  printf("[rig] nimble callout_deinit power=%u\n", power_now());
+  esp_timer_stop(rc->timer);
+  esp_timer_delete(rc->timer);
+  free(rc);
+  co->co = NULL;
+}
+
+static ble_npl_time_t
+rig_npl_ms_to_ticks32(uint32_t ms)
+{
+  return ms;
+}
+
+static struct npl_funcs_t rig_npl = {
+  .p_ble_npl_callout_init = rig_npl_callout_init,
+  .p_ble_npl_callout_reset = rig_npl_callout_reset,
+  .p_ble_npl_callout_stop = rig_npl_callout_stop,
+  .p_ble_npl_callout_deinit = rig_npl_callout_deinit,
+  .p_ble_npl_time_ms_to_ticks32 = rig_npl_ms_to_ticks32,
+};
+
+void
+rig_stub_install_npl(void)
+{
+  if (npl_funcs == NULL) npl_funcs = &rig_npl;
+}
+
+struct ble_npl_eventq *
+nimble_port_get_dflt_eventq(void)
+{
+  static struct ble_npl_eventq rig_eventq;
+  return &rig_eventq;
 }

@@ -1,5 +1,5 @@
 # Device program of the power case (apply.sh copies it to storage/home/app.rb when EVQ_POWER=1).
-# Walks hci_power_control through twelve steps and logs every BTSTACK_EVENT_STATE, every
+# Walks hci_power_control through thirty-three steps and logs every BTSTACK_EVENT_STATE, every
 # DISCONNECTION_COMPLETE and every heartbeat with the step it arrived in and the time. Log tokens:
 #   [rigapp] power begin / power done
 #   [rigapp] step <n> call <on|off|sleep> t=<ms>   written just before the call, so the
@@ -18,6 +18,19 @@
 #  9 power-on, then a connect that a peer answers (the link comes up)
 # 10 sleep with the link up          11 power-on from sleep, link up again
 # 12 power-off with the link up
+# Power transitions while a halt is still pending (the stubbed host answers terminate with
+# BLE_HS_EALREADY once a link is terminating, and raises the disconnect late or never):
+# 13 power-on, link up              14 power-off (disconnect armed to come 600 ms later)
+# 15 power-on 100 ms later          16 power-off again; the disconnect of 14 arrives during it
+# 17 power-on, link up              18 power-off  19 power-off again, halt still pending
+# 20 power-on, link up              21 power-off  22 sleep during the pending power-off
+# 23 power-on from sleep, link up   24 sleep      25 power-off during the pending sleep
+# 26 power-on, link up              27 sleep      28 sleep again, halt still pending
+# 29 power-on from sleep            30 power-on while on             31 power-off (heartbeat stops)
+# A second BLE.new, powered off and connected afresh:
+# 32 power-on                       33 gap_connect to a peer whose connect completes after the
+#                                      cancel failed, then power-off at once: the link is
+#                                      accepted after the halt completed
 # Steps 8, 10 and 12 end with a terminated link or a cancelled attempt whose completion the
 # stubbed host never delivers in time: the port's halting deadline has to produce it.
 require 'ble'
@@ -25,6 +38,7 @@ require 'ble'
 class RigPower < BLE
   SILENT_PEER = "\xAA\x01\x02\x03\x04\x05"
   ANSWERING_PEER = "\xBB\x01\x02\x03\x04\x05"
+  RACING_PEER = "\xCC\x01\x02\x03\x04\x05"
 
   def initialize
     super(:central)
@@ -95,9 +109,62 @@ class RigPower < BLE
     drain(11, 300)
     call_power(12, "off", HCI_POWER_OFF)
     drain(12, 1600)
+    call_power(13, "on", HCI_POWER_ON)
+    link_up(13)
+    call_power(14, "off", HCI_POWER_OFF)
+    drain(14, 100)
+    call_power(15, "on", HCI_POWER_ON)
+    drain(15, 100)
+    call_power(16, "off", HCI_POWER_OFF)
+    drain(16, 1600)
+    call_power(17, "on", HCI_POWER_ON)
+    link_up(17)
+    call_power(18, "off", HCI_POWER_OFF)
+    drain(18, 200)
+    call_power(19, "off", HCI_POWER_OFF)
+    drain(19, 1600)
+    call_power(20, "on", HCI_POWER_ON)
+    link_up(20)
+    call_power(21, "off", HCI_POWER_OFF)
+    drain(21, 200)
+    call_power(22, "sleep", HCI_POWER_SLEEP)
+    drain(22, 1600)
+    call_power(23, "on", HCI_POWER_ON)
+    link_up(23)
+    call_power(24, "sleep", HCI_POWER_SLEEP)
+    drain(24, 200)
+    call_power(25, "off", HCI_POWER_OFF)
+    drain(25, 1600)
+    call_power(26, "on", HCI_POWER_ON)
+    link_up(26)
+    call_power(27, "sleep", HCI_POWER_SLEEP)
+    drain(27, 200)
+    call_power(28, "sleep", HCI_POWER_SLEEP)
+    drain(28, 1600)
+    call_power(29, "on", HCI_POWER_ON)
+    drain(29, 1500)
+    call_power(30, "on", HCI_POWER_ON)
+    drain(30, 100)
+    call_power(31, "off", HCI_POWER_OFF)
+    drain(31, 1600)
+  end
+
+  def link_up(step)
+    drain(step, 200)
+    call_connect(step, ANSWERING_PEER)
+    drain(step, 300)
+  end
+
+  def run_race
+    call_power(32, "on", HCI_POWER_ON)
+    drain(32, 200)
+    call_connect(33, RACING_PEER)
+    call_power(33, "off", HCI_POWER_OFF)
+    drain(33, 1000)
   end
 end
 
 puts "[rigapp] power begin"
 RigPower.new.run
+RigPower.new.run_race
 puts "[rigapp] power done"
