@@ -1,0 +1,225 @@
+Adding "qemu"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
+Executing "ninja all"...
+[1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
+R2P2-ESP32.bin binary size 0x17e5e0 bytes. Smallest app partition is 0x200000 bytes. 0x81a20 bytes (25%) free.
+[2/5] Performing build step for 'bootloader'
+[1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
+Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
+[3/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/main && /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/littlefs_py_venv/bin/littlefs-python create /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/storage /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin -v --fs-size=0x100000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    1048576  /  0x100000
+  Block Count:       256
+  Name Max:           64
+  Image:       /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin
+Adding Directory: home
+Adding Directory: etc
+Adding File:      home/app.rb
+Adding File:      home/.keep
+Adding File:      etc/.keep
+[4/5] No install step for 'bootloader'
+[5/5] Completed 'bootloader'
+[0;33mGenerating flash image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin[0m
+esptool.py --chip=esp32s3 merge_bin --output=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader/bootloader.bin 0x10000 R2P2-ESP32.bin 0x8000 partition_table/partition-table.bin 0x210000 storage.bin
+esptool.py v4.12.0
+SHA digest in image updated
+Wrote 0x400000 bytes to file /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin, ready to flash to offset 0x0
+[0;33mUsing existing efuse image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin[0m
+[0;33mRunning qemu (fg): qemu-system-xtensa -M esp32s3 -m 32M -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin,if=mtd,format=raw -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32s3.efuse,property=drive,value=efuse -global driver=timer.esp32s3.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -m 8M[0m
+Adding SPI flash device
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 20:39:10
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (17) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (22) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0f0020 size=7800ch (491532) map
+I (55) esp_image: segment 1: paddr=00088034 vaddr=3fc98700 size=05b80h ( 23424) load
+I (57) esp_image: segment 2: paddr=0008dbbc vaddr=40374000 size=0245ch (  9308) load
+I (58) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=ec2d4h (967380) map
+I (122) esp_image: segment 4: paddr=0017c2fc vaddr=4037645c size=1222ch ( 74284) load
+I (127) esp_image: segment 5: paddr=0018e530 vaddr=50000000 size=00020h (    32) load
+I (128) esp_image: segment 6: paddr=0018e558 vaddr=600fe000 size=00058h (    88) load
+I (129) boot: Loaded app from partition at offset 0x10000
+I (129) boot: Disabling RNG early entropy source...
+I (135) cpu_start: Multicore app
+I (144) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (146) cpu_start: Pro cpu start user code
+I (146) cpu_start: cpu freq: 160000000 Hz
+I (146) app_init: Application information:
+I (146) app_init: Project name:     R2P2-ESP32
+I (146) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (146) app_init: Compile time:     Oct 11 2026 20:39:02
+I (146) app_init: ELF file SHA256:  c94d91427...
+I (146) app_init: ESP-IDF:          v5.5.4
+I (146) efuse_init: Min chip rev:     v0.0
+I (146) efuse_init: Max chip rev:     v0.99 
+I (146) efuse_init: Chip rev:         v0.3
+I (146) heap_init: Initializing. RAM available for dynamic allocation:
+I (147) heap_init: At 3FCDAC08 len 0000EB08 (58 KiB): RAM
+I (147) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (147) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (147) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (149) spi_flash: detected chip: gd
+I (149) spi_flash: flash io: dio
+I (150) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (150) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (151) main_task: Started on CPU0
+I (156) main_task: Calling app_main()
+I (158) main_task: Returned from app_main()
+Initializing FLASH disk as the root volume... 
+Creating directory: bin
+Creating directory: etc/init.d
+Creating directory: etc/network
+Creating directory: etc/dfu
+Creating directory: var
+Creating directory: var/log
+Creating directory: lib
+Not found: /bin/cat, Writing 153 bytes
+Not found: /bin/cp, Writing 683 bytes
+Not found: /bin/date, Writing 103 bytes
+Not found: /bin/df, Writing 497 bytes
+Not found: /bin/dfuble, Writing 1361 bytes
+Not found: /bin/dfucat, Writing 466 bytes
+Not found: /bin/dfucli, Writing 590 bytes
+Not found: /bin/dfutcp, Writing 970 bytes
+Not found: /bin/free, Writing 190 bytes
+Not found: /bin/head, Writing 913 bytes
+Not found: /bin/hello, Writing 92 bytes
+Not found: /bin/ifconfig, Writing 739 bytes
+Not found: /bin/install, Writing 694 bytes
+Not found: /bin/irb, Writing 141 bytes
+Not found: /bin/looper, Writing 2163 bytes
+Not found: /bin/ls, Writing 1235 bytes
+Not found: /bin/mkdir, Writing 98 bytes
+Not found: /bin/mv, Writing 464 bytes
+Not found: /bin/nmble, Writing 4872 bytes
+Not found: /bin/nmcli, Writing 1600 bytes
+Not found: /bin/ntpdate, Writing 913 bytes
+Not found: /bin/ping, Writing 675 bytes
+Not found: /etc/init.d/r2p2, Writing 865 bytes
+Not found: /bin/rapicco, Writing 340 bytes
+Not found: /bin/rm, Writing 231 bytes
+Not found: /bin/setup_rtc, Writing 564 bytes
+Not found: /bin/setup_sdcard, Writing 654 bytes
+Not found: /bin/sl, Writing 5334 bytes
+Not found: /bin/tail, Writing 1060 bytes
+Not found: /bin/taskstat, Writing 922 bytes
+Not found: /bin/touch, Writing 195 bytes
+Not found: /bin/uptime, Writing 481 bytes
+Not found: /bin/vim, Writing 131 bytes
+Not found: /bin/wifi_connect, Writing 2679 bytes
+Not found: /bin/wifi_disconnect, Writing 651 bytes
+Not found: /etc/machine-id, Writing 12 bytes
+Available
+File /etc/network/wifi.yml does not exist
+Loading app.rb
+[rigapp] power begin
+E (3210) prb_ble_evq: CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT is on: NimBLE restarts a failed connection or advertisement by itself, outside the power state and without telling the port; set it to n in the sdkconfig fragment
+[rigapp] step 1 state 1 t=3379
+[rigapp] step 1 state 2 t=3380
+[rig] nimble ble_gap_disc power=1
+[rig] nimble ble_gap_adv_stop power=0
+[rig] nimble ble_gap_conn_active -> 0 power=0
+[rig] nimble ble_gap_disc_cancel power=0
+[rigapp] step 2 state 3 t=3988
+[rigapp] step 2 state 0 t=3991
+[rigapp] step 3 call off t=4391
+[rigapp] step 3 state 0 t=4395
+[rigapp] step 4 call on t=4810
+[rig] nimble ble_gap_disc power=1
+[rigapp] step 4 state 1 t=4816
+[rigapp] step 4 state 2 t=4818
+[rigapp] step 4 hb t=5816
+[rigapp] step 5 call sleep t=6331
+[rig] nimble ble_gap_conn_active -> 0 power=2
+[rigapp] step 5 state 5 t=6337
+[rigapp] step 5 state 4 t=6339
+[rigapp] step 6 call on t=7840
+[rig] nimble ble_gap_disc power=1
+[rigapp] step 6 state 1 t=7845
+[rigapp] step 6 state 2 t=7848
+[rigapp] step 7 call on t=8251
+[rig] power inject disc handle=51 call=4
+[rigapp] step 7 disc 51 t=8256
+[rigapp] step 7 state 2 t=8259
+[rig] nimble ble_gap_disc power=1
+[rig] nimble ble_gap_disc_cancel power=1
+[rig] nimble ble_gap_connect power=1
+[rigapp] step 8 gap_connect 0
+[rigapp] step 8 call off t=8667
+[rig] nimble ble_gap_adv_stop power=0
+[rig] nimble ble_gap_conn_active -> 1 power=0
+[rig] nimble ble_gap_conn_cancel power=0
+[rig] nimble ble_gap_disc_cancel power=0
+[rigapp] step 8 state 3 t=8673
+[rigapp] step 8 hb t=8846
+W (9510) prb_ble_evq: no disconnect arrived within the halting deadline, synthesised one: handle=0xffff
+[rigapp] step 8 disc 255 t=9680
+[rigapp] step 8 state 0 t=9683
+[rigapp] step 8 hb t=9846
+[rigapp] step 9 call on t=10281
+[rig] nimble ble_gap_disc power=1
+[rigapp] step 9 state 1 t=10287
+[rigapp] step 9 state 2 t=10290
+[rig] nimble ble_gap_disc power=1
+[rig] nimble ble_gap_disc_cancel power=1
+[rig] nimble ble_gap_connect power=1
+[rigapp] step 9 gap_connect 0
+[rig] host CONNECT handle=51
+[rigapp] step 9 meta t=10527
+[rigapp] step 10 call sleep t=10800
+[rig] nimble ble_gap_terminate handle=51 reason=0x13 power=2
+[rig] nimble ble_gap_conn_active -> 0 power=2
+[rigapp] step 10 state 5 t=10807
+[rigapp] step 10 hb t=10845
+[rigapp] step 10 disc 51 t=11809
+[rigapp] step 10 state 4 t=11814
+[rigapp] step 10 hb t=11845
+[rig] host DISCONNECT handle=51
+W (11948) prb_ble_evq: event for a link already reported gone, or of an earlier power session, dropped: handle=0x0033
+[rigapp] step 11 call on t=12621
+[rig] nimble ble_gap_disc power=1
+[rigapp] step 11 state 1 t=12625
+[rigapp] step 11 state 2 t=12627
+[rig] nimble ble_gap_disc power=1
+[rig] nimble ble_gap_disc_cancel power=1
+[rig] nimble ble_gap_connect power=1
+[rigapp] step 11 gap_connect 0
+[rigapp] step 11 hb t=12845
+[rig] host CONNECT handle=51
+[rigapp] step 11 meta t=12864
+[rigapp] step 12 call off t=13141
+[rig] nimble ble_gap_adv_stop power=0
+[rig] nimble ble_gap_terminate handle=51 reason=0x13 power=0
+[rig] nimble ble_gap_conn_active -> 0 power=0
+[rig] nimble ble_gap_disc_cancel power=0
+W (12983) prb_ble_evq: this power session: stale events dropped=1 halting discards=2 adv re-armed=0
+[rigapp] step 12 state 3 t=13151
+[rigapp] step 12 hb t=13845
+W (13986) prb_ble_evq: no disconnect arrived within the halting deadline, synthesised one: handle=0x0033
+[rigapp] step 12 disc 51 t=14156
+[rigapp] step 12 state 0 t=14159
+[rigapp] power done
+[5nqemu-system-xtensa: terminating on signal 15 from pid 33376 (<unknown process>)

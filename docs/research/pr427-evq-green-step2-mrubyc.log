@@ -1,0 +1,913 @@
+Adding "qemu"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc
+Executing "ninja all"...
+[1/48] Performing build step for 'bootloader'
+[1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/bootloader/bootloader.bin
+Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
+[2/48] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/esp-idf/main && /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/littlefs_py_venv/bin/littlefs-python create /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/storage /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/storage.bin -v --fs-size=0x100000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    1048576  /  0x100000
+  Block Count:       256
+  Name Max:           64
+  Image:       /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/storage.bin
+Adding Directory: home
+Adding Directory: etc
+Adding File:      home/app.rb
+Adding File:      home/.keep
+Adding File:      etc/.keep
+[3/48] No install step for 'bootloader'
+[4/48] Completed 'bootloader'
+[5/48] PicoRuby build
+MRUBY_CONFIG=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb CONFIG_IDF_TARGET=esp32s3 USE_BLE=1 rake
+/Applications/Xcode.app/Contents/Developer/usr/bin/make _autogen_builtin_symbol.h _autogen_builtin_class.h \
+		_autogen_class_array.h _autogen_class_exception.h _autogen_class_float.h _autogen_class_hash.h _autogen_class_integer.h _autogen_module_math.h _autogen_class_object.h _autogen_class_proc.h _autogen_class_range.h _autogen_class_string.h _autogen_class_symbol.h _autogen_class_rrt0.h _autogen_class_task_queue.h _autogen_unicode_case.h
+../support/make_symbol_table.rb --path-c . --path-rb ../mrblib -o _autogen_builtin_symbol.h
+../support/make_class_table.rb -o _autogen_builtin_class.h c_object.c c_array.c c_hash.c c_math.c c_numeric.c c_proc.c c_range.c c_string.c symbol.c error.c rrt0.c c_task_queue.c
+../support/make_method_table.rb c_array.c
+../support/make_method_table.rb error.c
+../support/make_method_table.rb c_numeric.c
+../support/make_method_table.rb c_hash.c
+make[1]: `_autogen_class_integer.h' is up to date.
+../support/make_method_table.rb c_math.c
+../support/make_method_table.rb c_object.c
+../support/make_method_table.rb c_proc.c
+../support/make_method_table.rb c_range.c
+../support/make_method_table.rb c_string.c
+../support/make_method_table.rb symbol.c
+../support/make_method_table.rb rrt0.c
+../support/make_method_table.rb c_task_queue.c
+../support/generate_unicode_case_tables.rb UnicodeData.txt _autogen_unicode_case.h
+Total uppercase mappings: 1195
+Total lowercase mappings: 1178
+
+Upcase - using XOR patterns: 0x01, 0x20, 0x08, 0x60, 0x50, 0xC40, 0x30, 0x3DA0, 0xB850, 0x03, 0x10, 0x70, 0xB8D0, 0xB830, 0xB870, 0x07
+  Ranges: 62
+  Exceptions: 222
+  Estimated size: 1260 bytes
+
+Downcase - using XOR patterns: 0x01, 0x20, 0x08, 0x60, 0x50, 0xC40, 0x30, 0x3DA0, 0xB850, 0x03, 0x07, 0xB8D0, 0xB830, 0xB870, 0x10, 0x70
+  Ranges: 63
+  Exceptions: 203
+  Estimated size: 1190 bytes
+
+============================================================
+Total table size: 2450 bytes (2.39 KB)
+  Ranges: 125 × 6 = 750 bytes
+  Exceptions: 425 × 4 = 1700 bytes
+Written to _autogen_unicode_case.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_6x12_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_8x16_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_12x24_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_16x32_table.h
+CPP   src/version.c -> build/esp32-femtoruby/src/version.pi
+CPP   mrbgems/mruby-compiler/src/ccontext.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/ccontext.pi
+CPP   mrbgems/mruby-compiler/src/cdump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/cdump.pi
+CPP   mrbgems/mruby-compiler/src/codedump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codedump.pi
+CPP   mrbgems/mruby-compiler/src/codegen.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codegen.pi
+CPP   mrbgems/mruby-compiler/src/compile.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/compile.pi
+CPP   mrbgems/mruby-compiler/src/debug.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/debug.pi
+CPP   mrbgems/mruby-compiler/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/diagnostic.pi
+CPP   mrbgems/mruby-compiler/src/dump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/dump.pi
+CPP   mrbgems/mruby-compiler/src/irep.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/irep.pi
+CPP   mrbgems/mruby-compiler/src/mrc_presym.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mrc_presym.pi
+CPP   mrbgems/mruby-compiler/src/mruby_compat.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mruby_compat.pi
+CPP   mrbgems/mruby-compiler/src/parser_util.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/parser_util.pi
+CPP   mrbgems/mruby-compiler/src/pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/pool.pi
+GEN   build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.pi
+      MRBC mrbgems/picoruby-metaprog/mrblib/gc.rb 
+           mrbgems/picoruby-metaprog/mrblib/object.rb 
+           mrbgems/picoruby-metaprog/mrblib/string.rb 
+      MRBC mrbgems/picoruby-sandbox/mrblib/sandbox.rb 
+      MRBC mrbgems/picoruby-env/mrblib/env.rb 
+      MRBC mrbgems/picoruby-time/mrblib/time.rb 
+      MRBC mrbgems/picoruby-vfs/mrblib/dir.rb 
+           mrbgems/picoruby-vfs/mrblib/file.rb 
+           mrbgems/picoruby-vfs/mrblib/vfs.rb 
+      MRBC mrbgems/picoruby-littlefs/mrblib/littlefs.rb 
+      MRBC mrbgems/picoruby-require/mrblib/require.rb 
+      MRBC mrbgems/picoruby-io-console/mrblib/io-console.rb 
+      MRBC mrbgems/picoruby-machine/mrblib/io.rb 
+           mrbgems/picoruby-machine/mrblib/kernel.rb 
+           mrbgems/picoruby-machine/mrblib/machine.rb 
+           mrbgems/picoruby-machine/mrblib/signal.rb 
+      MRBC mrbgems/picoruby-picorubyvm/mrblib/picorubymv.rb 
+      MRBC mrbgems/picoruby-watchdog/mrblib/watchdog.rb 
+      MRBC mrbgems/picoruby-editor/mrblib/buffer.rb 
+           mrbgems/picoruby-editor/mrblib/editor.rb 
+      MRBC mrbgems/picoruby-pack/mrblib/pack.rb 
+      MRBC mrbgems/picoruby-picomodem/mrblib/picomodem.rb 
+      MRBC mrbgems/picoruby-yaml/mrblib/yaml.rb 
+      MRBC mrbgems/picoruby-network/mrblib/network.rb 
+      MRBC mrbgems/picoruby-shell/mrblib/job.rb 
+           mrbgems/picoruby-shell/mrblib/kernel.rb 
+           mrbgems/picoruby-shell/mrblib/parser.rb 
+           mrbgems/picoruby-shell/mrblib/pipeline.rb 
+           mrbgems/picoruby-shell/mrblib/shell.rb 
+           mrbgems/picoruby-shell/mrblib/shell_helpers.rb 
+      MRBC mrbgems/picoruby-picoline/mrblib/picoline.rb 
+      MRBC mrbgems/picoruby-vim/mrblib/vim.rb 
+      MRBC mrbgems/picoruby-bdffont/mrblib/bdffont.rb 
+      MRBC mrbgems/picoruby-terminus/mrblib/terminus.rb 
+      MRBC mrbgems/picoruby-rapicco/mrblib/parser.rb 
+           mrbgems/picoruby-rapicco/mrblib/pngbit.rb 
+           mrbgems/picoruby-rapicco/mrblib/rapicco.rb 
+           mrbgems/picoruby-rapicco/mrblib/slide.rb 
+           mrbgems/picoruby-rapicco/mrblib/sprite.rb 
+      MRBC mrbgems/picoruby-rng/mrblib/kernel.rb 
+           mrbgems/picoruby-rng/mrblib/rng.rb 
+      MRBC mrbgems/picoruby-base64/mrblib/base64.rb 
+      MRBC mrbgems/picoruby-gpio/mrblib/gpio.rb 
+      MRBC mrbgems/picoruby-i2c/mrblib/i2c.rb 
+      MRBC mrbgems/picoruby-spi/mrblib/spi.rb 
+      MRBC mrbgems/picoruby-adc/mrblib/adc.rb 
+      MRBC mrbgems/picoruby-uart/mrblib/uart.rb 
+      MRBC mrbgems/picoruby-pwm/mrblib/pwm.rb 
+      MRBC mrbgems/picoruby-irq/mrblib/irq.rb 
+      MRBC mrbgems/picoruby-mbedtls/mrblib/cipher.rb 
+           mrbgems/picoruby-mbedtls/mrblib/cmac.rb 
+           mrbgems/picoruby-mbedtls/mrblib/digest.rb 
+           mrbgems/picoruby-mbedtls/mrblib/ec.rb 
+           mrbgems/picoruby-mbedtls/mrblib/rsa.rb 
+      MRBC mrbgems/picoruby-ble/mrblib/ble.rb 
+           mrbgems/picoruby-ble/mrblib/ble_advertising_data.rb 
+           mrbgems/picoruby-ble/mrblib/ble_advertising_report.rb 
+           mrbgems/picoruby-ble/mrblib/ble_central.rb 
+           mrbgems/picoruby-ble/mrblib/ble_gatt_database.rb 
+           mrbgems/picoruby-ble/mrblib/ble_utils.rb 
+      MRBC mrbgems/picoruby-ble-uart/mrblib/ble_uart.rb 
+      MRBC mrbgems/picoruby-esp32/mrblib/esp32.rb 
+      MRBC mrbgems/picoruby-rmt/mrblib/rmt.rb 
+      MRBC mrbgems/picoruby-socket/mrblib/basic_socket.rb 
+           mrbgems/picoruby-socket/mrblib/dns_resolver.rb 
+           mrbgems/picoruby-socket/mrblib/ssl_socket.rb 
+           mrbgems/picoruby-socket/mrblib/tcp_server.rb 
+           mrbgems/picoruby-socket/mrblib/tcp_socket.rb 
+           mrbgems/picoruby-socket/mrblib/udp_socket.rb 
+      MRBC mrbgems/picoruby-net-mqtt/mrblib/mqtt.rb 
+      MRBC mrbgems/picoruby-adafruit_sk6812/mrblib/sk6812.rb 
+      MRBC mrbgems/picoruby-net-ntp/mrblib/net_ntp.rb 
+CPP   build/esp32-femtoruby/mrbgems/picogem_init.c -> build/esp32-femtoruby/mrbgems/picogem_init.pi
+CPP   mrbgems/picoruby-require/src/require.c -> build/esp32-femtoruby/mrbgems/picoruby-require/src/require.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.pi
+CPP   mrbgems/picoruby-machine/src/estalloc.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/estalloc.pi
+CPP   mrbgems/picoruby-machine/src/heap.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/heap.pi
+CPP   mrbgems/picoruby-machine/src/machine.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/machine.pi
+CPP   mrbgems/picoruby-machine/src/scheduler_service.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/scheduler_service.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.pi
+CPP   mrbgems/picoruby-picorubyvm/src/instruction_sequence.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/instruction_sequence.pi
+CPP   mrbgems/picoruby-picorubyvm/src/picorubyvm.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/picorubyvm.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.pi
+CPP   mrbgems/picoruby-time/src/time.c -> build/esp32-femtoruby/mrbgems/picoruby-time/src/time.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs_dir.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_dir.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs_file.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_file.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.pi
+CPP   mrbgems/picoruby-watchdog/src/watchdog.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/src/watchdog.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.pi
+      MRBC mrbgems/picoruby-shell/shell_executables/cp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/date.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/df.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfuble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfutcp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/free.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/head.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/hello.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ifconfig.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/install.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/irb.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/looper.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ls.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mkdir.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mv.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmcli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ntpdate.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ping.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/r2p2.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rapicco.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rm.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_rtc.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_sdcard.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/sl.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/tail.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/taskstat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/touch.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/uptime.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/vim.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_connect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_disconnect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/date.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/df.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfuble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfutcp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/free.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/head.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/hello.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ifconfig.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/install.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/irb.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/looper.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ls.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mkdir.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mv.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmcli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ntpdate.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ping.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/r2p2.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rapicco.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rm.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_rtc.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_sdcard.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/sl.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/tail.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/taskstat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/touch.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/uptime.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/vim.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_connect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_disconnect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cat.rb 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.pi
+CPP   mrbgems/picoruby-shell/src/shell.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/src/shell.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.pi
+CPP   mrbgems/picoruby-rng/src/rng.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/src/rng.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.pi
+CPP   mrbgems/picoruby-base64/src/base64.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/src/base64.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.pi
+CPP   mrbgems/picoruby-gpio/src/gpio.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/src/gpio.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.pi
+CPP   mrbgems/picoruby-i2c/src/i2c.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/src/i2c.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.pi
+CPP   mrbgems/picoruby-spi/src/spi.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/src/spi.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.pi
+CPP   mrbgems/picoruby-adc/src/adc.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/src/adc.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.pi
+CPP   mrbgems/picoruby-uart/src/uart.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/src/uart.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.pi
+CPP   mrbgems/picoruby-pwm/src/pwm.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/src/pwm.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.pi
+CPP   mrbgems/picoruby-irq/src/irq.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq.pi
+CPP   mrbgems/picoruby-irq/src/irq_source.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq_source.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.pi
+CPP   mrbgems/picoruby-ble/src/ble.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble.pi
+CPP   mrbgems/picoruby-ble/src/ble_broadcaster.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_broadcaster.pi
+CPP   mrbgems/picoruby-ble/src/ble_central.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_central.pi
+CPP   mrbgems/picoruby-ble/src/ble_peripheral.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_peripheral.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.pi
+CPP   mrbgems/picoruby-esp32/src/esp32.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/src/esp32.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.pi
+CPP   mrbgems/picoruby-rmt/src/rmt.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/src/rmt.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.pi
+CPP   mrbgems/picoruby-mbedtls/src/cipher.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cipher.pi
+CPP   mrbgems/picoruby-mbedtls/src/cmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cmac.pi
+CPP   mrbgems/picoruby-mbedtls/src/digest.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/digest.pi
+CPP   mrbgems/picoruby-mbedtls/src/hmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/hmac.pi
+CPP   mrbgems/picoruby-mbedtls/src/mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/mbedtls.pi
+CPP   mrbgems/picoruby-mbedtls/src/pkey.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/pkey.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.pi
+CPP   mrbgems/picoruby-socket/src/altcp_tls_mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/altcp_tls_mbedtls.pi
+CPP   mrbgems/picoruby-socket/src/socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/socket.pi
+CPP   mrbgems/picoruby-socket/src/ssl_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/ssl_socket.pi
+CPP   mrbgems/picoruby-socket/src/tcp_server.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_server.pi
+CPP   mrbgems/picoruby-socket/src/tcp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_socket.pi
+CPP   mrbgems/picoruby-socket/src/udp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/udp_socket.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.pi
+CPP   mrbgems/picoruby-sandbox/src/sandbox.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/src/sandbox.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.pi
+CPP   mrbgems/picoruby-io-console/src/io-console.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/src/io-console.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.pi
+CPP   mrbgems/picoruby-env/src/env.c -> build/esp32-femtoruby/mrbgems/picoruby-env/src/env.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.pi
+CPP   mrbgems/picoruby-crc/src/crc.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/src/crc.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.pi
+CPP   mrbgems/picoruby-data/src/data.c -> build/esp32-femtoruby/mrbgems/picoruby-data/src/data.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.pi
+CPP   mrbgems/picoruby-terminus/src/terminus.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/src/terminus.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.pi
+CPP   mrbgems/picoruby-metaprog/src/metaprog.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/src/metaprog.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.pi
+CPP   mrbgems/picoruby-pack/src/pack.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/src/pack.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.pi
+CPP   mrbgems/picoruby-bdffont/src/bdffont.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/src/bdffont.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.pi
+GEN   mrblib/*.rb -> build/esp32-femtoruby/mrblib/mrblib.c
+      MRBC mrblib/10error.rb 
+           mrblib/array.rb 
+           mrblib/compar.rb 
+           mrblib/enum.rb 
+           mrblib/hash.rb 
+           mrblib/kernel.rb 
+           mrblib/numeric.rb 
+           mrblib/range.rb 
+           mrblib/string.rb 
+           mrblib/symbol.rb 
+CPP   build/esp32-femtoruby/mrblib/mrblib.c -> build/esp32-femtoruby/mrblib/mrblib.pi
+GEN   build/esp32-femtoruby/include/mruby/presym/id.h 
+GEN   build/esp32-femtoruby/include/mruby/presym/table.h 
+GEN   build/esp32-femtoruby/presym 
+CC    src/version.c -> build/esp32-femtoruby/src/version.o
+CC    mrbgems/mruby-compiler/src/ccontext.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/ccontext.o
+CC    mrbgems/mruby-compiler/src/cdump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/cdump.o
+CC    mrbgems/mruby-compiler/src/codedump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codedump.o
+CC    mrbgems/mruby-compiler/src/codegen.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codegen.o
+CC    mrbgems/mruby-compiler/src/compile.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/compile.o
+CC    mrbgems/mruby-compiler/src/debug.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/debug.o
+CC    mrbgems/mruby-compiler/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/diagnostic.o
+CC    mrbgems/mruby-compiler/src/dump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/dump.o
+CC    mrbgems/mruby-compiler/src/irep.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/irep.o
+CC    mrbgems/mruby-compiler/src/mrc_presym.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mrc_presym.o
+CC    mrbgems/mruby-compiler/src/mruby_compat.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mruby_compat.o
+CC    mrbgems/mruby-compiler/src/parser_util.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/parser_util.o
+CC    mrbgems/mruby-compiler/src/pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/pool.o
+CC    mrbgems/mruby-compiler/lib/prism/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/diagnostic.o
+CC    mrbgems/mruby-compiler/lib/prism/src/encoding.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/encoding.o
+CC    mrbgems/mruby-compiler/lib/prism/src/node.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/node.o
+CC    mrbgems/mruby-compiler/lib/prism/src/options.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/options.o
+CC    mrbgems/mruby-compiler/lib/prism/src/pack.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/pack.o
+CC    mrbgems/mruby-compiler/lib/prism/src/prettyprint.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/prettyprint.o
+CC    mrbgems/mruby-compiler/lib/prism/src/prism.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/prism.o
+CC    mrbgems/mruby-compiler/lib/prism/src/regexp.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/regexp.o
+CC    mrbgems/mruby-compiler/lib/prism/src/serialize.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/serialize.o
+CC    mrbgems/mruby-compiler/lib/prism/src/static_literals.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/static_literals.o
+CC    mrbgems/mruby-compiler/lib/prism/src/token_type.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/token_type.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_buffer.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_buffer.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_char.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_char.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_constant_pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_constant_pool.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_integer.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_integer.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_list.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_list.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_memchr.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_memchr.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_newline_list.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_newline_list.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_string.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_string.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_strncasecmp.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_strncasecmp.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_strpbrk.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_strpbrk.o
+CC    build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/alloc.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/alloc.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_array.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_array.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_hash.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_hash.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_math.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_math.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_numeric.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_numeric.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_object.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_object.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_proc.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_proc.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_range.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_range.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_string.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_string.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_task_queue.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_task_queue.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/class.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/class.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/console.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/console.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/error.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/error.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/global.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/global.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/keyvalue.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/keyvalue.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/load.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/load.o
+make: Nothing to be done for `default'.
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/mrblib.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/mrblib.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/rrt0.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/rrt0.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/symbol.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/symbol.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/value.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/value.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/vm.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/vm.o
+CC    build/esp32-femtoruby/mrbgems/picogem_init.c -> build/esp32-femtoruby/mrbgems/picogem_init.o
+CC    mrbgems/picoruby-require/src/require.c -> build/esp32-femtoruby/mrbgems/picoruby-require/src/require.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.o
+CC    mrbgems/picoruby-machine/src/estalloc.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/estalloc.o
+CC    mrbgems/picoruby-machine/src/heap.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/heap.o
+CC    mrbgems/picoruby-machine/src/machine.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/machine.o
+CC    mrbgems/picoruby-machine/src/scheduler_service.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/scheduler_service.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.o
+CC    mrbgems/picoruby-picorubyvm/src/instruction_sequence.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/instruction_sequence.o
+CC    mrbgems/picoruby-picorubyvm/src/picorubyvm.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/picorubyvm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.o
+CC    mrbgems/picoruby-time/src/time.c -> build/esp32-femtoruby/mrbgems/picoruby-time/src/time.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.o
+CC    mrbgems/picoruby-littlefs/src/littlefs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs.o
+CC    mrbgems/picoruby-littlefs/src/littlefs_dir.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_dir.o
+CC    mrbgems/picoruby-littlefs/src/littlefs_file.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_file.o
+CC    mrbgems/picoruby-littlefs/lib/littlefs/lfs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/lfs.o
+CC    mrbgems/picoruby-littlefs/lib/littlefs/lfs_util.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/lfs_util.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.o
+CC    mrbgems/picoruby-watchdog/src/watchdog.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/src/watchdog.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.o
+CC    mrbgems/picoruby-shell/src/shell.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/src/shell.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.o
+CC    mrbgems/picoruby-rng/src/rng.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/src/rng.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.o
+CC    mrbgems/picoruby-base64/src/base64.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/src/base64.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.o
+CC    mrbgems/picoruby-gpio/src/gpio.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/src/gpio.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.o
+CC    mrbgems/picoruby-i2c/src/i2c.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/src/i2c.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.o
+CC    mrbgems/picoruby-spi/src/spi.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/src/spi.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.o
+CC    mrbgems/picoruby-adc/src/adc.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/src/adc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.o
+CC    mrbgems/picoruby-uart/src/uart.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/src/uart.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.o
+CC    mrbgems/picoruby-pwm/src/pwm.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/src/pwm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.o
+CC    mrbgems/picoruby-irq/src/irq.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq.o
+CC    mrbgems/picoruby-irq/src/irq_source.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq_source.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.o
+CC    mrbgems/picoruby-ble/src/ble.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble.o
+CC    mrbgems/picoruby-ble/src/ble_broadcaster.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_broadcaster.o
+CC    mrbgems/picoruby-ble/src/ble_central.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_central.o
+CC    mrbgems/picoruby-ble/src/ble_peripheral.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_peripheral.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.o
+CC    mrbgems/picoruby-esp32/src/esp32.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/src/esp32.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.o
+CC    mrbgems/picoruby-rmt/src/rmt.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/src/rmt.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.o
+CC    mrbgems/picoruby-mbedtls/src/cipher.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cipher.o
+CC    mrbgems/picoruby-mbedtls/src/cmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cmac.o
+CC    mrbgems/picoruby-mbedtls/src/digest.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/digest.o
+CC    mrbgems/picoruby-mbedtls/src/hmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/hmac.o
+CC    mrbgems/picoruby-mbedtls/src/mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/mbedtls.o
+CC    mrbgems/picoruby-mbedtls/src/pkey.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/pkey.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.o
+CC    mrbgems/picoruby-socket/src/altcp_tls_mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/altcp_tls_mbedtls.o
+CC    mrbgems/picoruby-socket/src/socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/socket.o
+CC    mrbgems/picoruby-socket/src/ssl_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/ssl_socket.o
+CC    mrbgems/picoruby-socket/src/tcp_server.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_server.o
+CC    mrbgems/picoruby-socket/src/tcp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_socket.o
+CC    mrbgems/picoruby-socket/src/udp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/udp_socket.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.o
+CC    mrbgems/picoruby-sandbox/src/sandbox.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/src/sandbox.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.o
+CC    mrbgems/picoruby-io-console/src/io-console.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/src/io-console.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.o
+CC    mrbgems/picoruby-env/src/env.c -> build/esp32-femtoruby/mrbgems/picoruby-env/src/env.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.o
+CC    mrbgems/picoruby-crc/src/crc.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/src/crc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.o
+CC    mrbgems/picoruby-data/src/data.c -> build/esp32-femtoruby/mrbgems/picoruby-data/src/data.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.o
+CC    mrbgems/picoruby-terminus/src/terminus.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/src/terminus.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.o
+CC    mrbgems/picoruby-metaprog/src/metaprog.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/src/metaprog.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.o
+CC    mrbgems/picoruby-pack/src/pack.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/src/pack.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.o
+CC    mrbgems/picoruby-bdffont/src/bdffont.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/src/bdffont.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.o
+CC    build/esp32-femtoruby/mrblib/mrblib.c -> build/esp32-femtoruby/mrblib/mrblib.o
+AR    build/esp32-femtoruby/lib/libmruby.a 
+
+Build summary:
+
+================================================
+      Config Name: esp32-femtoruby
+ Output Directory: build/esp32-femtoruby
+    Included Gems:
+             mruby-compiler - mruby compiler using Prism
+             picoruby-adafruit_sk6812 - Adafruit SK6812 RGBW LED driver
+             picoruby-adc - ADC class / General peripherals
+             picoruby-base64 - Base64 for PicoRuby
+             picoruby-bdffont - Shared BDF bitmap font rendering infrastructure
+             picoruby-ble - BLE class
+             picoruby-ble-uart - BLE UART (Nordic UART Service) wrapper for PicoRuby
+             picoruby-crc - PicoRuby CRC library
+             picoruby-data - Data class
+             picoruby-editor - Library for editor-like application
+             picoruby-env - ENV
+             picoruby-esp32 - ESP32 class
+             picoruby-gpio - GPIO class / General peripherals
+             picoruby-i2c - I2C class / General peripherals
+             picoruby-io-console - IO class
+             picoruby-irq - IRQ module
+             picoruby-littlefs - Filesystem using littlefs
+             picoruby-machine - Machine class
+             picoruby-mbedtls - Mbed-TLS porting for PicoRuby
+             picoruby-metaprog - Meta Programming for PicoRuby
+             picoruby-mrubyc - mruby/c library
+             picoruby-net-mqtt - MQTT client for PicoRuby
+             picoruby-net-ntp - NTP (Network Time Protocol) client for PicoRuby
+             picoruby-network - Network abstraction layer for different platforms
+             picoruby-pack - pack/unpack for PicoRuby (C implementation)
+             picoruby-picoline - HighLine-like interface for PicoRuby
+             picoruby-picomodem - PicoRuby Binary Transfer Protocol (RBTP) for device communication
+             picoruby-picorubyvm - PicoRubyVM class
+             picoruby-pwm - PWM class / General peripherals
+             picoruby-rapicco - Rabbit-like presentation tool for terminal emulator
+             picoruby-require - PicoRuby require gem
+             picoruby-rmt - RMT(Remote Control) peripheral driver
+             picoruby-rng - Random Number Generator for PicoRuby
+             picoruby-sandbox - Sandbox class for shell and picoirb
+             picoruby-shell - PicoRuby Shell library
+             picoruby-socket - CRuby-compatible Socket implementation for PicoRuby
+             picoruby-spi - SPI class / General peripherals
+             picoruby-terminus - Terminus font
+             picoruby-time - Time class
+             picoruby-uart - UART class / General peripherals
+             picoruby-vfs - Virtual-File-System-like wrapper for filesystems
+             picoruby-vim - vim-like text editor
+             picoruby-watchdog - Watchdog class
+             picoruby-yaml - YAML parser for PicoRuby
+================================================
+
+================================================
+      Config Name: mrbc/default
+ Output Directory: build/mrbc/default
+         Binaries: mrbc
+    Included Gems:
+             mruby-bin-mrbc - mruby compiler executable using Prism
+             mruby-compiler - mruby compiler using Prism
+================================================
+
+[6/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-esp32/ports/esp32.c.obj
+[7/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-littlefs/ports/esp32/flash_hal.c.obj
+[8/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-env/ports/esp32/env.c.obj
+[9/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-io-console/ports/esp32/io-console.c.obj
+[10/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-machine/ports/common/machine.c.obj
+[11/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-gpio/ports/esp32/gpio.c.obj
+[12/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-rng/ports/esp32/rng.c.obj
+[13/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-spi/ports/esp32/spi.c.obj
+[14/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-irq/ports/esp32/irq.c.obj
+[15/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/esp32/timing_alt.c.obj
+[16/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-watchdog/ports/esp32/watchdog.c.obj
+[17/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-adc/ports/esp32/adc.c.obj
+[18/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-rmt/ports/esp32/rmt.c.obj
+[19/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-pwm/ports/esp32/pwm.c.obj
+[20/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-machine/ports/esp32/machine.c.obj
+[21/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/cipher.c.obj
+[22/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/cmac.c.obj
+[23/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/digest.c.obj
+[24/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/hmac.c.obj
+[25/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/net_helpers.c.obj
+[26/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/md.c.obj
+[27/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby-esp32.c.obj
+[28/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-i2c/ports/esp32/i2c.c.obj
+[29/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/pkey.c.obj
+[30/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-require/ports/esp32/platform.c.obj
+[31/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/tcp_server.c.obj
+[32/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/udp_socket.c.obj
+[33/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/ssl_socket.c.obj
+[34/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/tcp_socket.c.obj
+[35/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-uart/ports/esp32/uart.c.obj
+[36/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/pump_mrubyc.c.obj
+[37/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/mrb/main_task.c.obj
+[38/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c.obj
+[39/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/rig_injector.c.obj
+[40/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_central.c.obj
+[41/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/rig_nimble_stubs.c.obj
+[42/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble.c.obj
+[43/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c.obj
+[44/48] Linking C static library esp-idf/picoruby-esp32/libpicoruby-esp32.a
+[45/48] Generating esp-idf/esp_system/ld/sections.ld
+[46/48] Linking CXX executable R2P2-ESP32.elf
+[47/48] Generating binary image from built executable
+esptool.py v4.12.0
+Creating esp32s3 image...
+Merged 3 ELF sections
+Successfully created esp32s3 image.
+Generated /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/R2P2-ESP32.bin
+[48/48] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/R2P2-ESP32.bin
+R2P2-ESP32.bin binary size 0x13a6c0 bytes. Smallest app partition is 0x200000 bytes. 0xc5940 bytes (39%) free.
+[0;33mGenerating flash image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin[0m
+esptool.py --chip=esp32s3 merge_bin --output=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader/bootloader.bin 0x10000 R2P2-ESP32.bin 0x8000 partition_table/partition-table.bin 0x210000 storage.bin
+esptool.py v4.12.0
+SHA digest in image updated
+Wrote 0x400000 bytes to file /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin, ready to flash to offset 0x0
+[0;33mUsing existing efuse image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_efuse.bin[0m
+[0;33mRunning qemu (fg): qemu-system-xtensa -M esp32s3 -m 32M -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin,if=mtd,format=raw -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32s3.efuse,property=drive,value=efuse -global driver=timer.esp32s3.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -m 8M[0m
+Adding SPI flash device
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 20:50:01
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (17) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (21) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=6e82ch (452652) map
+I (53) esp_image: segment 1: paddr=0007e854 vaddr=3fc98700 size=017c4h (  6084) load
+I (54) esp_image: segment 2: paddr=00080020 vaddr=42000020 size=b33a8h (734120) map
+I (103) esp_image: segment 3: paddr=001333d0 vaddr=3fc99ec4 size=02bach ( 11180) load
+I (104) esp_image: segment 4: paddr=00135f84 vaddr=40374000 size=14688h ( 83592) load
+I (110) esp_image: segment 5: paddr=0014a614 vaddr=50000000 size=00020h (    32) load
+I (111) esp_image: segment 6: paddr=0014a63c vaddr=600fe000 size=00058h (    88) load
+I (112) boot: Loaded app from partition at offset 0x10000
+I (112) boot: Disabling RNG early entropy source...
+I (118) cpu_start: Multicore app
+I (127) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (128) cpu_start: Pro cpu start user code
+I (128) cpu_start: cpu freq: 160000000 Hz
+I (128) app_init: Application information:
+I (129) app_init: Project name:     R2P2-ESP32
+I (129) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (129) app_init: Compile time:     Oct 11 2026 20:49:53
+I (129) app_init: ELF file SHA256:  e140cb336...
+I (129) app_init: ESP-IDF:          v5.5.4
+I (129) efuse_init: Min chip rev:     v0.0
+I (129) efuse_init: Max chip rev:     v0.99 
+I (129) efuse_init: Chip rev:         v0.3
+I (129) heap_init: Initializing. RAM available for dynamic allocation:
+I (129) heap_init: At 3FCD9260 len 000104B0 (65 KiB): RAM
+I (129) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (129) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (129) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (132) spi_flash: detected chip: gd
+I (132) spi_flash: flash io: dio
+I (132) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (133) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (134) main_task: Started on CPU0
+I (137) main_task: Calling app_main()
+I (140) main_task: Returned from app_main()
+warning: already initialized constant STDIN
+warning: already initialized constant STDOUT
+Initializing FLASH disk as the root volume... 
+Creating directory: bin
+Creating directory: etc/init.d
+Creating directory: etc/network
+Creating directory: etc/dfu
+Creating directory: var
+Creating directory: var/log
+Creating directory: lib
+Not found: /bin/cat, Writing 153 bytes
+Not found: /bin/cp, Writing 683 bytes
+Not found: /bin/date, Writing 103 bytes
+Not found: /bin/df, Writing 497 bytes
+Not found: /bin/dfuble, Writing 1361 bytes
+Not found: /bin/dfucat, Writing 466 bytes
+Not found: /bin/dfucli, Writing 590 bytes
+Not found: /bin/dfutcp, Writing 970 bytes
+Not found: /bin/free, Writing 190 bytes
+Not found: /bin/head, Writing 913 bytes
+Not found: /bin/hello, Writing 92 bytes
+Not found: /bin/ifconfig, Writing 739 bytes
+Not found: /bin/install, Writing 694 bytes
+Not found: /bin/irb, Writing 141 bytes
+Not found: /bin/looper, Writing 2163 bytes
+Not found: /bin/ls, Writing 1235 bytes
+Not found: /bin/mkdir, Writing 98 bytes
+Not found: /bin/mv, Writing 464 bytes
+Not found: /bin/nmble, Writing 4872 bytes
+Not found: /bin/nmcli, Writing 1600 bytes
+Not found: /bin/ntpdate, Writing 913 bytes
+Not found: /bin/ping, Writing 675 bytes
+Not found: /etc/init.d/r2p2, Writing 865 bytes
+Not found: /bin/rapicco, Writing 340 bytes
+Not found: /bin/rm, Writing 231 bytes
+Not found: /bin/setup_rtc, Writing 564 bytes
+Not found: /bin/setup_sdcard, Writing 654 bytes
+Not found: /bin/sl, Writing 5334 bytes
+Not found: /bin/tail, Writing 1060 bytes
+Not found: /bin/taskstat, Writing 922 bytes
+Not found: /bin/touch, Writing 195 bytes
+Not found: /bin/uptime, Writing 481 bytes
+Not found: /bin/vim, Writing 131 bytes
+Not found: /bin/wifi_connect, Writing 2679 bytes
+Not found: /bin/wifi_disconnect, Writing 651 bytes
+Not found: /etc/machine-id, Writing 12 bytes
+Available
+File /etc/network/wifi.yml does not exist
+Loading app.rb
+E (3632) prb_ble_evq: CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT is on: NimBLE restarts a failed connection or advertisement by itself, outside the power state and without telling the port; set it to n in the sdkconfig fragment
+[rigapp] mem init total=204800 used=75696 free=128760 frag=33
+[rig] nimble ble_gap_disc power=1
+[rig] write enq A
+[rigapp] write h=0x42 v="A"
+[rig] write enq B
+[rigapp] write h=0x42 v="B"
+[rigapp] recv seq=1 tin=6886 t=6889
+[rigapp] recv seq=2 tin=7388 t=7395
+[rigapp] recv seq=3 tin=7891 t=7894
+[rigapp] recv seq=4 tin=8392 t=8397
+[rigapp] recv seq=5 tin=8893 t=8898
+[rigapp] recv seq=6 tin=9393 t=9396
+[rigapp] recv seq=7 tin=9893 t=9896
+[rigapp] recv seq=8 tin=10393 t=10398
+[rigapp] recv seq=9 tin=10894 t=10899
+[rigapp] recv seq=10 tin=11393 t=11397
+[rigapp] recv seq=11 tin=11894 t=11897
+[rigapp] recv seq=12 tin=12394 t=12397
+[rigapp] recv seq=13 tin=12893 t=12897
+[rigapp] recv seq=14 tin=13394 t=13398
+[rigapp] recv seq=15 tin=13894 t=13898
+[rigapp] recv seq=16 tin=14395 t=14399
+[rigapp] recv seq=17 tin=14895 t=14898
+[rigapp] recv seq=18 tin=15396 t=15399
+[rigapp] recv seq=19 tin=15896 t=15899
+[rigapp] recv seq=20 tin=16396 t=16401
+[rigapp] recv seq=21 tin=16896 t=16900
+[rigapp] recv seq=22 tin=16906 t=16907
+[rigapp] recv seq=23 tin=16916 t=16918
+[rigapp] recv seq=24 tin=16925 t=16927
+[rigapp] recv seq=25 tin=16936 t=16937
+[rigapp] recv seq=26 tin=16946 t=16948
+[rigapp] recv seq=27 tin=16956 t=16959
+[rigapp] recv seq=28 tin=16967 t=16969
+[rigapp] recv seq=29 tin=16978 t=16980
+[rigapp] recv seq=30 tin=16989 t=16991
+[rigapp] recv seq=31 tin=17000 t=17001
+[rigapp] recv seq=32 tin=17011 t=17012
+[rigapp] recv seq=33 tin=17022 t=17023
+[rigapp] recv seq=34 tin=17032 t=17033
+[rigapp] recv seq=35 tin=17041 t=17043
+[rigapp] recv seq=36 tin=17052 t=17053
+[rigapp] recv seq=37 tin=17063 t=17064
+[rigapp] recv seq=38 tin=17073 t=17074
+[rigapp] recv seq=39 tin=17083 t=17084
+[rigapp] recv seq=40 tin=17093 t=17095
+[rigapp] recv seq=41 tin=17104 t=17105
+[rigapp] recv seq=42 tin=17113 t=17114
+[rigapp] recv seq=43 tin=17124 t=17125
+[rigapp] recv seq=44 tin=17134 t=17137
+[rigapp] recv seq=45 tin=17145 t=17146
+[rigapp] recv seq=46 tin=17154 t=17155
+[rigapp] recv seq=47 tin=17165 t=17166
+[rigapp] recv seq=48 tin=17175 t=17178
+[rigapp] recv seq=49 tin=17186 t=17187
+[rigapp] recv seq=50 tin=17195 t=17196
+[rigapp] recv seq=51 tin=17206 t=17207
+[rigapp] recv seq=52 tin=17216 t=17219
+[rigapp] recv seq=53 tin=17227 t=17228
+[rigapp] recv seq=54 tin=17237 t=17238
+[rigapp] recv seq=55 tin=17248 t=17249
+[rigapp] recv seq=56 tin=17259 t=17260
+[rigapp] recv seq=57 tin=17269 t=17271
+[rigapp] recv seq=58 tin=17280 t=17281
+[rigapp] recv seq=59 tin=17291 t=17292
+[rigapp] recv seq=60 tin=17301 t=17302
+[rig] inject done n=60
+[rigapp] wlat tin=17312 t=17330
+[rigapp] wlat tin=17412 t=17421
+[rigapp] wlat tin=17512 t=17541
+[rigapp] wlat tin=17612 t=17630
+[rigapp] wlat tin=17713 t=17721
+[rigapp] wlat tin=17812 t=17840
+[rigapp] wlat tin=17913 t=17930
+[rigapp] wlat tin=18013 t=18021
+[rigapp] wlat tin=18114 t=18141
+[rigapp] wlat tin=18213 t=18230
+[rigapp] wlat tin=18313 t=18320
+[rigapp] wlat tin=18413 t=18440
+[rigapp] wlat tin=18513 t=18531
+[rigapp] wlat tin=18615 t=18620
+[rigapp] wlat tin=18714 t=18740
+[rigapp] wlat tin=18816 t=18840
+[rigapp] wlat tin=18917 t=18931
+[rigapp] wlat tin=19018 t=19020
+[rigapp] wlat tin=19117 t=19141
+[rigapp] wlat tin=19218 t=19231
+[rig] wlat done n=20
+qemu-system-xtensa: terminating on signal 15 from pid 82802 (<unknown process>)

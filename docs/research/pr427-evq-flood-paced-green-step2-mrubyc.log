@@ -1,0 +1,1492 @@
+Adding "qemu"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc
+Executing "ninja all"...
+[1/48] Performing build step for 'bootloader'
+[1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/bootloader/bootloader.bin
+Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
+[2/48] No install step for 'bootloader'
+[3/48] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/esp-idf/main && /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/littlefs_py_venv/bin/littlefs-python create /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/storage /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/storage.bin -v --fs-size=0x100000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    1048576  /  0x100000
+  Block Count:       256
+  Name Max:           64
+  Image:       /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/storage.bin
+Adding Directory: home
+Adding Directory: etc
+Adding File:      home/app.rb
+Adding File:      home/.keep
+Adding File:      etc/.keep
+[4/48] Completed 'bootloader'
+[5/48] PicoRuby build
+MRUBY_CONFIG=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb CONFIG_IDF_TARGET=esp32s3 USE_BLE=1 rake
+/Applications/Xcode.app/Contents/Developer/usr/bin/make _autogen_builtin_symbol.h _autogen_builtin_class.h \
+		_autogen_class_array.h _autogen_class_exception.h _autogen_class_float.h _autogen_class_hash.h _autogen_class_integer.h _autogen_module_math.h _autogen_class_object.h _autogen_class_proc.h _autogen_class_range.h _autogen_class_string.h _autogen_class_symbol.h _autogen_class_rrt0.h _autogen_class_task_queue.h _autogen_unicode_case.h
+../support/make_symbol_table.rb --path-c . --path-rb ../mrblib -o _autogen_builtin_symbol.h
+../support/make_class_table.rb -o _autogen_builtin_class.h c_object.c c_array.c c_hash.c c_math.c c_numeric.c c_proc.c c_range.c c_string.c symbol.c error.c rrt0.c c_task_queue.c
+../support/make_method_table.rb c_array.c
+../support/make_method_table.rb error.c
+../support/make_method_table.rb c_numeric.c
+../support/make_method_table.rb c_hash.c
+make[1]: `_autogen_class_integer.h' is up to date.
+../support/make_method_table.rb c_math.c
+../support/make_method_table.rb c_object.c
+../support/make_method_table.rb c_proc.c
+../support/make_method_table.rb c_range.c
+../support/make_method_table.rb c_string.c
+../support/make_method_table.rb symbol.c
+../support/make_method_table.rb rrt0.c
+../support/make_method_table.rb c_task_queue.c
+../support/generate_unicode_case_tables.rb UnicodeData.txt _autogen_unicode_case.h
+Total uppercase mappings: 1195
+Total lowercase mappings: 1178
+
+Upcase - using XOR patterns: 0x01, 0x20, 0x08, 0x60, 0x50, 0xC40, 0x30, 0x3DA0, 0xB850, 0x03, 0x10, 0x70, 0xB8D0, 0xB830, 0xB870, 0x07
+  Ranges: 62
+  Exceptions: 222
+  Estimated size: 1260 bytes
+
+Downcase - using XOR patterns: 0x01, 0x20, 0x08, 0x60, 0x50, 0xC40, 0x30, 0x3DA0, 0xB850, 0x03, 0x07, 0xB8D0, 0xB830, 0xB870, 0x10, 0x70
+  Ranges: 63
+  Exceptions: 203
+  Estimated size: 1190 bytes
+
+============================================================
+Total table size: 2450 bytes (2.39 KB)
+  Ranges: 125 × 6 = 750 bytes
+  Exceptions: 425 × 4 = 1700 bytes
+Written to _autogen_unicode_case.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_6x12_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_8x16_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_12x24_table.h
+Building /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/components/picoruby-esp32/picoruby/build/esp32-femtoruby/mrbgems/picoruby-terminus/include/terminus_16x32_table.h
+CPP   src/version.c -> build/esp32-femtoruby/src/version.pi
+CPP   mrbgems/mruby-compiler/src/ccontext.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/ccontext.pi
+CPP   mrbgems/mruby-compiler/src/cdump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/cdump.pi
+CPP   mrbgems/mruby-compiler/src/codedump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codedump.pi
+CPP   mrbgems/mruby-compiler/src/codegen.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codegen.pi
+CPP   mrbgems/mruby-compiler/src/compile.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/compile.pi
+CPP   mrbgems/mruby-compiler/src/debug.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/debug.pi
+CPP   mrbgems/mruby-compiler/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/diagnostic.pi
+CPP   mrbgems/mruby-compiler/src/dump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/dump.pi
+CPP   mrbgems/mruby-compiler/src/irep.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/irep.pi
+CPP   mrbgems/mruby-compiler/src/mrc_presym.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mrc_presym.pi
+CPP   mrbgems/mruby-compiler/src/mruby_compat.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mruby_compat.pi
+CPP   mrbgems/mruby-compiler/src/parser_util.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/parser_util.pi
+CPP   mrbgems/mruby-compiler/src/pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/pool.pi
+GEN   build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.pi
+      MRBC mrbgems/picoruby-metaprog/mrblib/gc.rb 
+           mrbgems/picoruby-metaprog/mrblib/object.rb 
+           mrbgems/picoruby-metaprog/mrblib/string.rb 
+      MRBC mrbgems/picoruby-sandbox/mrblib/sandbox.rb 
+      MRBC mrbgems/picoruby-env/mrblib/env.rb 
+      MRBC mrbgems/picoruby-time/mrblib/time.rb 
+      MRBC mrbgems/picoruby-vfs/mrblib/dir.rb 
+           mrbgems/picoruby-vfs/mrblib/file.rb 
+           mrbgems/picoruby-vfs/mrblib/vfs.rb 
+      MRBC mrbgems/picoruby-littlefs/mrblib/littlefs.rb 
+      MRBC mrbgems/picoruby-require/mrblib/require.rb 
+      MRBC mrbgems/picoruby-io-console/mrblib/io-console.rb 
+      MRBC mrbgems/picoruby-machine/mrblib/io.rb 
+           mrbgems/picoruby-machine/mrblib/kernel.rb 
+           mrbgems/picoruby-machine/mrblib/machine.rb 
+           mrbgems/picoruby-machine/mrblib/signal.rb 
+      MRBC mrbgems/picoruby-picorubyvm/mrblib/picorubymv.rb 
+      MRBC mrbgems/picoruby-watchdog/mrblib/watchdog.rb 
+      MRBC mrbgems/picoruby-editor/mrblib/buffer.rb 
+           mrbgems/picoruby-editor/mrblib/editor.rb 
+      MRBC mrbgems/picoruby-pack/mrblib/pack.rb 
+      MRBC mrbgems/picoruby-picomodem/mrblib/picomodem.rb 
+      MRBC mrbgems/picoruby-yaml/mrblib/yaml.rb 
+      MRBC mrbgems/picoruby-network/mrblib/network.rb 
+      MRBC mrbgems/picoruby-shell/mrblib/job.rb 
+           mrbgems/picoruby-shell/mrblib/kernel.rb 
+           mrbgems/picoruby-shell/mrblib/parser.rb 
+           mrbgems/picoruby-shell/mrblib/pipeline.rb 
+           mrbgems/picoruby-shell/mrblib/shell.rb 
+           mrbgems/picoruby-shell/mrblib/shell_helpers.rb 
+      MRBC mrbgems/picoruby-picoline/mrblib/picoline.rb 
+      MRBC mrbgems/picoruby-vim/mrblib/vim.rb 
+      MRBC mrbgems/picoruby-bdffont/mrblib/bdffont.rb 
+      MRBC mrbgems/picoruby-terminus/mrblib/terminus.rb 
+      MRBC mrbgems/picoruby-rapicco/mrblib/parser.rb 
+           mrbgems/picoruby-rapicco/mrblib/pngbit.rb 
+           mrbgems/picoruby-rapicco/mrblib/rapicco.rb 
+           mrbgems/picoruby-rapicco/mrblib/slide.rb 
+           mrbgems/picoruby-rapicco/mrblib/sprite.rb 
+      MRBC mrbgems/picoruby-rng/mrblib/kernel.rb 
+           mrbgems/picoruby-rng/mrblib/rng.rb 
+      MRBC mrbgems/picoruby-base64/mrblib/base64.rb 
+      MRBC mrbgems/picoruby-gpio/mrblib/gpio.rb 
+      MRBC mrbgems/picoruby-i2c/mrblib/i2c.rb 
+      MRBC mrbgems/picoruby-spi/mrblib/spi.rb 
+      MRBC mrbgems/picoruby-adc/mrblib/adc.rb 
+      MRBC mrbgems/picoruby-uart/mrblib/uart.rb 
+      MRBC mrbgems/picoruby-pwm/mrblib/pwm.rb 
+      MRBC mrbgems/picoruby-irq/mrblib/irq.rb 
+      MRBC mrbgems/picoruby-mbedtls/mrblib/cipher.rb 
+           mrbgems/picoruby-mbedtls/mrblib/cmac.rb 
+           mrbgems/picoruby-mbedtls/mrblib/digest.rb 
+           mrbgems/picoruby-mbedtls/mrblib/ec.rb 
+           mrbgems/picoruby-mbedtls/mrblib/rsa.rb 
+      MRBC mrbgems/picoruby-ble/mrblib/ble.rb 
+           mrbgems/picoruby-ble/mrblib/ble_advertising_data.rb 
+           mrbgems/picoruby-ble/mrblib/ble_advertising_report.rb 
+           mrbgems/picoruby-ble/mrblib/ble_central.rb 
+           mrbgems/picoruby-ble/mrblib/ble_gatt_database.rb 
+           mrbgems/picoruby-ble/mrblib/ble_utils.rb 
+      MRBC mrbgems/picoruby-ble-uart/mrblib/ble_uart.rb 
+      MRBC mrbgems/picoruby-esp32/mrblib/esp32.rb 
+      MRBC mrbgems/picoruby-rmt/mrblib/rmt.rb 
+      MRBC mrbgems/picoruby-socket/mrblib/basic_socket.rb 
+           mrbgems/picoruby-socket/mrblib/dns_resolver.rb 
+           mrbgems/picoruby-socket/mrblib/ssl_socket.rb 
+           mrbgems/picoruby-socket/mrblib/tcp_server.rb 
+           mrbgems/picoruby-socket/mrblib/tcp_socket.rb 
+           mrbgems/picoruby-socket/mrblib/udp_socket.rb 
+      MRBC mrbgems/picoruby-net-mqtt/mrblib/mqtt.rb 
+      MRBC mrbgems/picoruby-adafruit_sk6812/mrblib/sk6812.rb 
+      MRBC mrbgems/picoruby-net-ntp/mrblib/net_ntp.rb 
+CPP   build/esp32-femtoruby/mrbgems/picogem_init.c -> build/esp32-femtoruby/mrbgems/picogem_init.pi
+CPP   mrbgems/picoruby-require/src/require.c -> build/esp32-femtoruby/mrbgems/picoruby-require/src/require.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.pi
+CPP   mrbgems/picoruby-machine/src/estalloc.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/estalloc.pi
+CPP   mrbgems/picoruby-machine/src/heap.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/heap.pi
+CPP   mrbgems/picoruby-machine/src/machine.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/machine.pi
+CPP   mrbgems/picoruby-machine/src/scheduler_service.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/scheduler_service.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.pi
+CPP   mrbgems/picoruby-picorubyvm/src/instruction_sequence.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/instruction_sequence.pi
+CPP   mrbgems/picoruby-picorubyvm/src/picorubyvm.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/picorubyvm.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.pi
+CPP   mrbgems/picoruby-time/src/time.c -> build/esp32-femtoruby/mrbgems/picoruby-time/src/time.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs_dir.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_dir.pi
+CPP   mrbgems/picoruby-littlefs/src/littlefs_file.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_file.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.pi
+CPP   mrbgems/picoruby-watchdog/src/watchdog.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/src/watchdog.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.pi
+      MRBC mrbgems/picoruby-shell/shell_executables/cp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/date.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/df.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfuble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfutcp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/free.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/head.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/hello.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ifconfig.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/install.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/irb.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/looper.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ls.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mkdir.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mv.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmcli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ntpdate.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ping.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/r2p2.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rapicco.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rm.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_rtc.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_sdcard.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/sl.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/tail.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/taskstat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/touch.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/uptime.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/vim.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_connect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_disconnect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/date.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/df.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfuble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfucli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/dfutcp.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/free.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/head.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/hello.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ifconfig.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/install.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/irb.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/looper.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ls.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mkdir.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/mv.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmble.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/nmcli.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ntpdate.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/ping.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/r2p2.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rapicco.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/rm.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_rtc.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/setup_sdcard.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/sl.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/tail.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/taskstat.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/touch.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/uptime.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/vim.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_connect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/wifi_disconnect.rb 
+      MRBC mrbgems/picoruby-shell/shell_executables/cat.rb 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.pi
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.pi
+CPP   mrbgems/picoruby-shell/src/shell.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/src/shell.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.pi
+CPP   mrbgems/picoruby-rng/src/rng.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/src/rng.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.pi
+CPP   mrbgems/picoruby-base64/src/base64.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/src/base64.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.pi
+CPP   mrbgems/picoruby-gpio/src/gpio.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/src/gpio.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.pi
+CPP   mrbgems/picoruby-i2c/src/i2c.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/src/i2c.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.pi
+CPP   mrbgems/picoruby-spi/src/spi.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/src/spi.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.pi
+CPP   mrbgems/picoruby-adc/src/adc.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/src/adc.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.pi
+CPP   mrbgems/picoruby-uart/src/uart.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/src/uart.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.pi
+CPP   mrbgems/picoruby-pwm/src/pwm.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/src/pwm.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.pi
+CPP   mrbgems/picoruby-irq/src/irq.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq.pi
+CPP   mrbgems/picoruby-irq/src/irq_source.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq_source.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.pi
+CPP   mrbgems/picoruby-ble/src/ble.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble.pi
+CPP   mrbgems/picoruby-ble/src/ble_broadcaster.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_broadcaster.pi
+CPP   mrbgems/picoruby-ble/src/ble_central.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_central.pi
+CPP   mrbgems/picoruby-ble/src/ble_peripheral.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_peripheral.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.pi
+CPP   mrbgems/picoruby-esp32/src/esp32.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/src/esp32.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.pi
+CPP   mrbgems/picoruby-rmt/src/rmt.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/src/rmt.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.pi
+CPP   mrbgems/picoruby-mbedtls/src/cipher.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cipher.pi
+CPP   mrbgems/picoruby-mbedtls/src/cmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cmac.pi
+CPP   mrbgems/picoruby-mbedtls/src/digest.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/digest.pi
+CPP   mrbgems/picoruby-mbedtls/src/hmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/hmac.pi
+CPP   mrbgems/picoruby-mbedtls/src/mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/mbedtls.pi
+CPP   mrbgems/picoruby-mbedtls/src/pkey.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/pkey.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.pi
+CPP   mrbgems/picoruby-socket/src/altcp_tls_mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/altcp_tls_mbedtls.pi
+CPP   mrbgems/picoruby-socket/src/socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/socket.pi
+CPP   mrbgems/picoruby-socket/src/ssl_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/ssl_socket.pi
+CPP   mrbgems/picoruby-socket/src/tcp_server.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_server.pi
+CPP   mrbgems/picoruby-socket/src/tcp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_socket.pi
+CPP   mrbgems/picoruby-socket/src/udp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/udp_socket.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.pi
+CPP   mrbgems/picoruby-sandbox/src/sandbox.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/src/sandbox.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.pi
+CPP   mrbgems/picoruby-io-console/src/io-console.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/src/io-console.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.pi
+CPP   mrbgems/picoruby-env/src/env.c -> build/esp32-femtoruby/mrbgems/picoruby-env/src/env.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.pi
+CPP   mrbgems/picoruby-crc/src/crc.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/src/crc.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.pi
+CPP   mrbgems/picoruby-data/src/data.c -> build/esp32-femtoruby/mrbgems/picoruby-data/src/data.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.pi
+CPP   mrbgems/picoruby-terminus/src/terminus.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/src/terminus.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.pi
+CPP   mrbgems/picoruby-metaprog/src/metaprog.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/src/metaprog.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.pi
+CPP   mrbgems/picoruby-pack/src/pack.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/src/pack.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.pi
+CPP   mrbgems/picoruby-bdffont/src/bdffont.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/src/bdffont.pi
+GEN   build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c 
+CPP   build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.pi
+GEN   mrblib/*.rb -> build/esp32-femtoruby/mrblib/mrblib.c
+      MRBC mrblib/10error.rb 
+           mrblib/array.rb 
+           mrblib/compar.rb 
+           mrblib/enum.rb 
+           mrblib/hash.rb 
+           mrblib/kernel.rb 
+           mrblib/numeric.rb 
+           mrblib/range.rb 
+           mrblib/string.rb 
+           mrblib/symbol.rb 
+CPP   build/esp32-femtoruby/mrblib/mrblib.c -> build/esp32-femtoruby/mrblib/mrblib.pi
+GEN   build/esp32-femtoruby/include/mruby/presym/id.h 
+GEN   build/esp32-femtoruby/include/mruby/presym/table.h 
+GEN   build/esp32-femtoruby/presym 
+CC    src/version.c -> build/esp32-femtoruby/src/version.o
+CC    mrbgems/mruby-compiler/src/ccontext.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/ccontext.o
+CC    mrbgems/mruby-compiler/src/cdump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/cdump.o
+CC    mrbgems/mruby-compiler/src/codedump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codedump.o
+CC    mrbgems/mruby-compiler/src/codegen.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/codegen.o
+CC    mrbgems/mruby-compiler/src/compile.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/compile.o
+CC    mrbgems/mruby-compiler/src/debug.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/debug.o
+CC    mrbgems/mruby-compiler/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/diagnostic.o
+CC    mrbgems/mruby-compiler/src/dump.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/dump.o
+CC    mrbgems/mruby-compiler/src/irep.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/irep.o
+CC    mrbgems/mruby-compiler/src/mrc_presym.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mrc_presym.o
+CC    mrbgems/mruby-compiler/src/mruby_compat.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/mruby_compat.o
+CC    mrbgems/mruby-compiler/src/parser_util.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/parser_util.o
+CC    mrbgems/mruby-compiler/src/pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/src/pool.o
+CC    mrbgems/mruby-compiler/lib/prism/src/diagnostic.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/diagnostic.o
+CC    mrbgems/mruby-compiler/lib/prism/src/encoding.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/encoding.o
+CC    mrbgems/mruby-compiler/lib/prism/src/node.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/node.o
+CC    mrbgems/mruby-compiler/lib/prism/src/options.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/options.o
+CC    mrbgems/mruby-compiler/lib/prism/src/pack.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/pack.o
+CC    mrbgems/mruby-compiler/lib/prism/src/prettyprint.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/prettyprint.o
+CC    mrbgems/mruby-compiler/lib/prism/src/prism.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/prism.o
+CC    mrbgems/mruby-compiler/lib/prism/src/regexp.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/regexp.o
+CC    mrbgems/mruby-compiler/lib/prism/src/serialize.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/serialize.o
+CC    mrbgems/mruby-compiler/lib/prism/src/static_literals.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/static_literals.o
+CC    mrbgems/mruby-compiler/lib/prism/src/token_type.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/token_type.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_buffer.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_buffer.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_char.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_char.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_constant_pool.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_constant_pool.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_integer.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_integer.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_list.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_list.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_memchr.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_memchr.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_newline_list.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_newline_list.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_string.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_string.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_strncasecmp.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_strncasecmp.o
+CC    mrbgems/mruby-compiler/lib/prism/src/util/pm_strpbrk.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/lib/util/pm_strpbrk.o
+CC    build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.c -> build/esp32-femtoruby/mrbgems/mruby-compiler/gem_init.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/alloc.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/alloc.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_array.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_array.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_hash.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_hash.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_math.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_math.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_numeric.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_numeric.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_object.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_object.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_proc.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_proc.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_range.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_range.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_string.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_string.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/c_task_queue.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/c_task_queue.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/class.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/class.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/console.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/console.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/error.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/error.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/global.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/global.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/keyvalue.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/keyvalue.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/load.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/load.o
+make: Nothing to be done for `default'.
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/mrblib.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/mrblib.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/rrt0.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/rrt0.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/symbol.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/symbol.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/value.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/value.o
+CC    mrbgems/picoruby-mrubyc/lib/mrubyc/src/vm.c -> build/esp32-femtoruby/mrbgems/picoruby-mrubyc/src/vm.o
+CC    build/esp32-femtoruby/mrbgems/picogem_init.c -> build/esp32-femtoruby/mrbgems/picogem_init.o
+CC    mrbgems/picoruby-require/src/require.c -> build/esp32-femtoruby/mrbgems/picoruby-require/src/require.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-require/gem_init.o
+CC    mrbgems/picoruby-machine/src/estalloc.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/estalloc.o
+CC    mrbgems/picoruby-machine/src/heap.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/heap.o
+CC    mrbgems/picoruby-machine/src/machine.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/machine.o
+CC    mrbgems/picoruby-machine/src/scheduler_service.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/src/scheduler_service.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-machine/gem_init.o
+CC    mrbgems/picoruby-picorubyvm/src/instruction_sequence.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/instruction_sequence.o
+CC    mrbgems/picoruby-picorubyvm/src/picorubyvm.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/src/picorubyvm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picorubyvm/gem_init.o
+CC    mrbgems/picoruby-time/src/time.c -> build/esp32-femtoruby/mrbgems/picoruby-time/src/time.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-time/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vfs/gem_init.o
+CC    mrbgems/picoruby-littlefs/src/littlefs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs.o
+CC    mrbgems/picoruby-littlefs/src/littlefs_dir.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_dir.o
+CC    mrbgems/picoruby-littlefs/src/littlefs_file.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/littlefs_file.o
+CC    mrbgems/picoruby-littlefs/lib/littlefs/lfs.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/lfs.o
+CC    mrbgems/picoruby-littlefs/lib/littlefs/lfs_util.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/src/lfs_util.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-littlefs/gem_init.o
+CC    mrbgems/picoruby-watchdog/src/watchdog.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/src/watchdog.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-watchdog/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/cp.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/date.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/df.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfuble.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfucli.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/dfutcp.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/free.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/head.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/hello.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ifconfig.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/install.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/irb.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/looper.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ls.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mkdir.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/mv.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmble.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/nmcli.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ntpdate.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/ping.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/r2p2.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rapicco.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/rm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_rtc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/setup_sdcard.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/sl.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/tail.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/taskstat.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/touch.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/uptime.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/vim.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_connect.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/shell_executables/wifi_disconnect.o
+CC    mrbgems/picoruby-shell/src/shell.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/src/shell.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-shell/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picoline/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-vim/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rapicco/gem_init.o
+CC    mrbgems/picoruby-rng/src/rng.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/src/rng.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rng/gem_init.o
+CC    mrbgems/picoruby-base64/src/base64.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/src/base64.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-base64/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-yaml/gem_init.o
+CC    mrbgems/picoruby-gpio/src/gpio.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/src/gpio.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-gpio/gem_init.o
+CC    mrbgems/picoruby-i2c/src/i2c.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/src/i2c.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-i2c/gem_init.o
+CC    mrbgems/picoruby-spi/src/spi.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/src/spi.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-spi/gem_init.o
+CC    mrbgems/picoruby-adc/src/adc.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/src/adc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adc/gem_init.o
+CC    mrbgems/picoruby-uart/src/uart.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/src/uart.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-uart/gem_init.o
+CC    mrbgems/picoruby-pwm/src/pwm.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/src/pwm.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pwm/gem_init.o
+CC    mrbgems/picoruby-irq/src/irq.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq.o
+CC    mrbgems/picoruby-irq/src/irq_source.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/src/irq_source.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-irq/gem_init.o
+CC    mrbgems/picoruby-ble/src/ble.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble.o
+CC    mrbgems/picoruby-ble/src/ble_broadcaster.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_broadcaster.o
+CC    mrbgems/picoruby-ble/src/ble_central.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_central.o
+CC    mrbgems/picoruby-ble/src/ble_peripheral.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/src/ble_peripheral.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-ble-uart/gem_init.o
+CC    mrbgems/picoruby-esp32/src/esp32.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/src/esp32.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-esp32/gem_init.o
+CC    mrbgems/picoruby-rmt/src/rmt.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/src/rmt.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-rmt/gem_init.o
+CC    mrbgems/picoruby-mbedtls/src/cipher.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cipher.o
+CC    mrbgems/picoruby-mbedtls/src/cmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/cmac.o
+CC    mrbgems/picoruby-mbedtls/src/digest.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/digest.o
+CC    mrbgems/picoruby-mbedtls/src/hmac.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/hmac.o
+CC    mrbgems/picoruby-mbedtls/src/mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/mbedtls.o
+CC    mrbgems/picoruby-mbedtls/src/pkey.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/src/pkey.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-mbedtls/gem_init.o
+CC    mrbgems/picoruby-socket/src/altcp_tls_mbedtls.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/altcp_tls_mbedtls.o
+CC    mrbgems/picoruby-socket/src/socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/socket.o
+CC    mrbgems/picoruby-socket/src/ssl_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/ssl_socket.o
+CC    mrbgems/picoruby-socket/src/tcp_server.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_server.o
+CC    mrbgems/picoruby-socket/src/tcp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/tcp_socket.o
+CC    mrbgems/picoruby-socket/src/udp_socket.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/src/udp_socket.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-socket/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-network/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-mqtt/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-adafruit_sk6812/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-net-ntp/gem_init.o
+CC    mrbgems/picoruby-sandbox/src/sandbox.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/src/sandbox.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-sandbox/gem_init.o
+CC    mrbgems/picoruby-io-console/src/io-console.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/src/io-console.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-io-console/gem_init.o
+CC    mrbgems/picoruby-env/src/env.c -> build/esp32-femtoruby/mrbgems/picoruby-env/src/env.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-env/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-editor/gem_init.o
+CC    mrbgems/picoruby-crc/src/crc.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/src/crc.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-crc/gem_init.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-picomodem/gem_init.o
+CC    mrbgems/picoruby-data/src/data.c -> build/esp32-femtoruby/mrbgems/picoruby-data/src/data.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-data/gem_init.o
+CC    mrbgems/picoruby-terminus/src/terminus.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/src/terminus.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-terminus/gem_init.o
+CC    mrbgems/picoruby-metaprog/src/metaprog.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/src/metaprog.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-metaprog/gem_init.o
+CC    mrbgems/picoruby-pack/src/pack.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/src/pack.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-pack/gem_init.o
+CC    mrbgems/picoruby-bdffont/src/bdffont.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/src/bdffont.o
+CC    build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.c -> build/esp32-femtoruby/mrbgems/picoruby-bdffont/gem_init.o
+CC    build/esp32-femtoruby/mrblib/mrblib.c -> build/esp32-femtoruby/mrblib/mrblib.o
+AR    build/esp32-femtoruby/lib/libmruby.a 
+
+Build summary:
+
+================================================
+      Config Name: esp32-femtoruby
+ Output Directory: build/esp32-femtoruby
+    Included Gems:
+             mruby-compiler - mruby compiler using Prism
+             picoruby-adafruit_sk6812 - Adafruit SK6812 RGBW LED driver
+             picoruby-adc - ADC class / General peripherals
+             picoruby-base64 - Base64 for PicoRuby
+             picoruby-bdffont - Shared BDF bitmap font rendering infrastructure
+             picoruby-ble - BLE class
+             picoruby-ble-uart - BLE UART (Nordic UART Service) wrapper for PicoRuby
+             picoruby-crc - PicoRuby CRC library
+             picoruby-data - Data class
+             picoruby-editor - Library for editor-like application
+             picoruby-env - ENV
+             picoruby-esp32 - ESP32 class
+             picoruby-gpio - GPIO class / General peripherals
+             picoruby-i2c - I2C class / General peripherals
+             picoruby-io-console - IO class
+             picoruby-irq - IRQ module
+             picoruby-littlefs - Filesystem using littlefs
+             picoruby-machine - Machine class
+             picoruby-mbedtls - Mbed-TLS porting for PicoRuby
+             picoruby-metaprog - Meta Programming for PicoRuby
+             picoruby-mrubyc - mruby/c library
+             picoruby-net-mqtt - MQTT client for PicoRuby
+             picoruby-net-ntp - NTP (Network Time Protocol) client for PicoRuby
+             picoruby-network - Network abstraction layer for different platforms
+             picoruby-pack - pack/unpack for PicoRuby (C implementation)
+             picoruby-picoline - HighLine-like interface for PicoRuby
+             picoruby-picomodem - PicoRuby Binary Transfer Protocol (RBTP) for device communication
+             picoruby-picorubyvm - PicoRubyVM class
+             picoruby-pwm - PWM class / General peripherals
+             picoruby-rapicco - Rabbit-like presentation tool for terminal emulator
+             picoruby-require - PicoRuby require gem
+             picoruby-rmt - RMT(Remote Control) peripheral driver
+             picoruby-rng - Random Number Generator for PicoRuby
+             picoruby-sandbox - Sandbox class for shell and picoirb
+             picoruby-shell - PicoRuby Shell library
+             picoruby-socket - CRuby-compatible Socket implementation for PicoRuby
+             picoruby-spi - SPI class / General peripherals
+             picoruby-terminus - Terminus font
+             picoruby-time - Time class
+             picoruby-uart - UART class / General peripherals
+             picoruby-vfs - Virtual-File-System-like wrapper for filesystems
+             picoruby-vim - vim-like text editor
+             picoruby-watchdog - Watchdog class
+             picoruby-yaml - YAML parser for PicoRuby
+================================================
+
+================================================
+      Config Name: mrbc/default
+ Output Directory: build/mrbc/default
+         Binaries: mrbc
+    Included Gems:
+             mruby-bin-mrbc - mruby compiler executable using Prism
+             mruby-compiler - mruby compiler using Prism
+================================================
+
+[6/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-esp32/ports/esp32.c.obj
+[7/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-io-console/ports/esp32/io-console.c.obj
+[8/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-env/ports/esp32/env.c.obj
+[9/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-machine/ports/common/machine.c.obj
+[10/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-gpio/ports/esp32/gpio.c.obj
+[11/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-littlefs/ports/esp32/flash_hal.c.obj
+[12/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-rng/ports/esp32/rng.c.obj
+[13/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-spi/ports/esp32/spi.c.obj
+[14/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-irq/ports/esp32/irq.c.obj
+[15/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/esp32/timing_alt.c.obj
+[16/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-watchdog/ports/esp32/watchdog.c.obj
+[17/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-rmt/ports/esp32/rmt.c.obj
+[18/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/cmac.c.obj
+[19/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-pwm/ports/esp32/pwm.c.obj
+[20/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/cipher.c.obj
+[21/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-adc/ports/esp32/adc.c.obj
+[22/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-machine/ports/esp32/machine.c.obj
+[23/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby-esp32.c.obj
+[24/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/digest.c.obj
+[25/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/md.c.obj
+[26/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/net_helpers.c.obj
+[27/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/hmac.c.obj
+[28/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-i2c/ports/esp32/i2c.c.obj
+[29/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-mbedtls/ports/common/pkey.c.obj
+[30/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-require/ports/esp32/platform.c.obj
+[31/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-uart/ports/esp32/uart.c.obj
+[32/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/tcp_socket.c.obj
+[33/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/udp_socket.c.obj
+[34/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/tcp_server.c.obj
+[35/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-socket/ports/esp32/ssl_socket.c.obj
+[36/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/pump_mrubyc.c.obj
+[37/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/mrb/main_task.c.obj
+[38/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c.obj
+[39/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/rig_injector.c.obj
+[40/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_central.c.obj
+[41/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/rig_nimble_stubs.c.obj
+[42/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/ble.c.obj
+[43/48] Building C object esp-idf/picoruby-esp32/CMakeFiles/__idf_picoruby-esp32.dir/picoruby/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c.obj
+[44/48] Linking C static library esp-idf/picoruby-esp32/libpicoruby-esp32.a
+[45/48] Generating esp-idf/esp_system/ld/sections.ld
+[46/48] Linking CXX executable R2P2-ESP32.elf
+[47/48] Generating binary image from built executable
+esptool.py v4.12.0
+Creating esp32s3 image...
+Merged 3 ELF sections
+Successfully created esp32s3 image.
+Generated /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/R2P2-ESP32.bin
+[48/48] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/R2P2-ESP32.bin
+R2P2-ESP32.bin binary size 0x13a7d0 bytes. Smallest app partition is 0x200000 bytes. 0xc5830 bytes (39%) free.
+[0;33mGenerating flash image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin[0m
+esptool.py --chip=esp32s3 merge_bin --output=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader/bootloader.bin 0x10000 R2P2-ESP32.bin 0x8000 partition_table/partition-table.bin 0x210000 storage.bin
+esptool.py v4.12.0
+SHA digest in image updated
+Wrote 0x400000 bytes to file /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin, ready to flash to offset 0x0
+[0;33mUsing existing efuse image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_efuse.bin[0m
+[0;33mRunning qemu (fg): qemu-system-xtensa -M esp32s3 -m 32M -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_flash.bin,if=mtd,format=raw -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq-mrubyc/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32s3.efuse,property=drive,value=efuse -global driver=timer.esp32s3.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -m 8M[0m
+Adding SPI flash device
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 20:50:01
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (17) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (22) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=6e86ch (452716) map
+I (53) esp_image: segment 1: paddr=0007e894 vaddr=3fc98700 size=01784h (  6020) load
+I (54) esp_image: segment 2: paddr=00080020 vaddr=42000020 size=b347ch (734332) map
+I (102) esp_image: segment 3: paddr=001334a4 vaddr=3fc99e84 size=02bech ( 11244) load
+I (104) esp_image: segment 4: paddr=00136098 vaddr=40374000 size=14688h ( 83592) load
+I (110) esp_image: segment 5: paddr=0014a728 vaddr=50000000 size=00020h (    32) load
+I (110) esp_image: segment 6: paddr=0014a750 vaddr=600fe000 size=00058h (    88) load
+I (111) boot: Loaded app from partition at offset 0x10000
+I (111) boot: Disabling RNG early entropy source...
+I (117) cpu_start: Multicore app
+I (126) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (128) cpu_start: Pro cpu start user code
+I (128) cpu_start: cpu freq: 160000000 Hz
+I (128) app_init: Application information:
+I (128) app_init: Project name:     R2P2-ESP32
+I (128) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (128) app_init: Compile time:     Oct 11 2026 20:49:53
+I (128) app_init: ELF file SHA256:  e605bf423...
+I (128) app_init: ESP-IDF:          v5.5.4
+I (128) efuse_init: Min chip rev:     v0.0
+I (128) efuse_init: Max chip rev:     v0.99 
+I (128) efuse_init: Chip rev:         v0.3
+I (128) heap_init: Initializing. RAM available for dynamic allocation:
+I (129) heap_init: At 3FCC2AE0 len 00026C30 (155 KiB): RAM
+I (129) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (129) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (129) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (131) spi_flash: detected chip: gd
+I (131) spi_flash: flash io: dio
+I (132) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (132) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (133) main_task: Started on CPU0
+I (137) main_task: Calling app_main()
+I (140) main_task: Returned from app_main()
+warning: already initialized constant STDIN
+warning: already initialized constant STDOUT
+Initializing FLASH disk as the root volume... 
+Creating directory: bin
+Creating directory: etc/init.d
+Creating directory: etc/network
+Creating directory: etc/dfu
+Creating directory: var
+Creating directory: var/log
+Creating directory: lib
+Not found: /bin/cat, Writing 153 bytes
+Not found: /bin/cp, Writing 683 bytes
+Not found: /bin/date, Writing 103 bytes
+Not found: /bin/df, Writing 497 bytes
+Not found: /bin/dfuble, Writing 1361 bytes
+Not found: /bin/dfucat, Writing 466 bytes
+Not found: /bin/dfucli, Writing 590 bytes
+Not found: /bin/dfutcp, Writing 970 bytes
+Not found: /bin/free, Writing 190 bytes
+Not found: /bin/head, Writing 913 bytes
+Not found: /bin/hello, Writing 92 bytes
+Not found: /bin/ifconfig, Writing 739 bytes
+Not found: /bin/install, Writing 694 bytes
+Not found: /bin/irb, Writing 141 bytes
+Not found: /bin/looper, Writing 2163 bytes
+Not found: /bin/ls, Writing 1235 bytes
+Not found: /bin/mkdir, Writing 98 bytes
+Not found: /bin/mv, Writing 464 bytes
+Not found: /bin/nmble, Writing 4872 bytes
+Not found: /bin/nmcli, Writing 1600 bytes
+Not found: /bin/ntpdate, Writing 913 bytes
+Not found: /bin/ping, Writing 675 bytes
+Not found: /etc/init.d/r2p2, Writing 865 bytes
+Not found: /bin/rapicco, Writing 340 bytes
+Not found: /bin/rm, Writing 231 bytes
+Not found: /bin/setup_rtc, Writing 564 bytes
+Not found: /bin/setup_sdcard, Writing 654 bytes
+Not found: /bin/sl, Writing 5334 bytes
+Not found: /bin/tail, Writing 1060 bytes
+Not found: /bin/taskstat, Writing 922 bytes
+Not found: /bin/touch, Writing 195 bytes
+Not found: /bin/uptime, Writing 481 bytes
+Not found: /bin/vim, Writing 131 bytes
+Not found: /bin/wifi_connect, Writing 2679 bytes
+Not found: /bin/wifi_disconnect, Writing 651 bytes
+Not found: /etc/machine-id, Writing 12 bytes
+Available
+File /etc/network/wifi.yml does not exist
+Loading app.rb
+E (3582) prb_ble_evq: CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT is on: NimBLE restarts a failed connection or advertisement by itself, outside the power state and without telling the port; set it to n in the sdkconfig fragment
+[rigapp] mem init total=112640 used=75696 free=36600 frag=33
+[rig] nimble ble_gap_disc power=1
+[rig] write enq A
+[rigapp] write h=0x42 v="A"
+[rig] write enq B
+[rigapp] write h=0x42 v="B"
+[rigapp] recv seq=1 tin=6837 t=6846
+[rigapp] recv seq=2 tin=7343 t=7347
+[rigapp] recv seq=3 tin=7843 t=7846
+[rigapp] recv seq=4 tin=8344 t=8349
+[rigapp] recv seq=5 tin=8847 t=8850
+[rigapp] recv seq=6 tin=9348 t=9350
+[rigapp] recv seq=7 tin=9848 t=9852
+[rigapp] recv seq=8 tin=10348 t=10352
+[rigapp] recv seq=9 tin=10849 t=10852
+[rigapp] recv seq=10 tin=11350 t=11355
+[rigapp] recv seq=11 tin=11852 t=11854
+[rigapp] recv seq=12 tin=12353 t=12358
+[rigapp] recv seq=13 tin=12853 t=12855
+[rigapp] recv seq=14 tin=13354 t=13357
+[rigapp] recv seq=15 tin=13854 t=13855
+[rigapp] recv seq=16 tin=14354 t=14357
+[rigapp] recv seq=17 tin=14854 t=14857
+[rigapp] recv seq=18 tin=15354 t=15358
+[rigapp] recv seq=19 tin=15854 t=15857
+[rigapp] recv seq=20 tin=16354 t=16356
+[rigapp] recv seq=21 tin=16854 t=16858
+[rigapp] recv seq=22 tin=16865 t=16866
+[rigapp] recv seq=23 tin=16875 t=16877
+[rigapp] recv seq=24 tin=16884 t=16886
+[rigapp] recv seq=25 tin=16895 t=16897
+[rigapp] recv seq=26 tin=16905 t=16906
+[rigapp] recv seq=27 tin=16915 t=16916
+[rigapp] recv seq=28 tin=16925 t=16926
+[rigapp] recv seq=29 tin=16935 t=16937
+[rigapp] recv seq=30 tin=16945 t=16946
+[rigapp] recv seq=31 tin=16956 t=16957
+[rigapp] recv seq=32 tin=16965 t=16966
+[rigapp] recv seq=33 tin=16976 t=16977
+[rigapp] recv seq=34 tin=16986 t=16989
+[rigapp] recv seq=35 tin=16997 t=16998
+[rigapp] recv seq=36 tin=17006 t=17007
+[rigapp] recv seq=37 tin=17017 t=17018
+[rigapp] recv seq=38 tin=17027 t=17028
+[rigapp] recv seq=39 tin=17038 t=17039
+[rigapp] recv seq=40 tin=17047 t=17048
+[rigapp] recv seq=41 tin=17058 t=17059
+[rigapp] recv seq=42 tin=17068 t=17070
+[rigapp] recv seq=43 tin=17079 t=17080
+[rigapp] recv seq=44 tin=17089 t=17091
+[rigapp] recv seq=45 tin=17100 t=17101
+[rigapp] recv seq=46 tin=17111 t=17112
+[rigapp] recv seq=47 tin=17121 t=17122
+[rigapp] recv seq=48 tin=17132 t=17133
+[rigapp] recv seq=49 tin=17141 t=17142
+[rigapp] recv seq=50 tin=17152 t=17153
+[rigapp] recv seq=51 tin=17162 t=17164
+[rigapp] recv seq=52 tin=17173 t=17174
+[rigapp] recv seq=53 tin=17182 t=17183
+[rigapp] recv seq=54 tin=17193 t=17194
+[rigapp] recv seq=55 tin=17203 t=17205
+[rigapp] recv seq=56 tin=17214 t=17215
+[rigapp] recv seq=57 tin=17223 t=17224
+[rigapp] recv seq=58 tin=17234 t=17235
+[rigapp] recv seq=59 tin=17244 t=17245
+[rigapp] recv seq=60 tin=17255 t=17256
+[rig] inject done n=60
+[rigapp] wlat tin=17265 t=17289
+[rigapp] wlat tin=17365 t=17380
+[rigapp] wlat tin=17466 t=17468
+[rigapp] wlat tin=17568 t=17589
+[rigapp] wlat tin=17669 t=17679
+[rigapp] wlat tin=17768 t=17788
+[rigapp] wlat tin=17869 t=17879
+[rigapp] wlat tin=17970 t=17999
+[rigapp] wlat tin=18071 t=18089
+[rigapp] wlat tin=18172 t=18178
+[rigapp] wlat tin=18272 t=18299
+[rigapp] wlat tin=18372 t=18390
+[rigapp] wlat tin=18473 t=18479
+[rigapp] wlat tin=18574 t=18599
+[rigapp] wlat tin=18675 t=18689
+[rigapp] wlat tin=18774 t=18789
+[rigapp] wlat tin=18875 t=18878
+[rigapp] wlat tin=18976 t=18999
+[rigapp] wlat tin=19076 t=19088
+[rigapp] wlat tin=19176 t=19179
+[rig] wlat done n=20
+[rigapp] flood received=1 bytes=128 t=19299
+[rigapp] flood received=2 bytes=256 t=19329
+[rigapp] flood received=3 bytes=384 t=19359
+[rigapp] flood received=4 bytes=512 t=19389
+[rigapp] flood received=5 bytes=640 t=19420
+[rigapp] wlat tin=19443 t=19449
+[rigapp] flood received=6 bytes=768 t=19454
+[rigapp] flood received=7 bytes=896 t=19479
+[rigapp] flood received=8 bytes=1024 t=19510
+[rigapp] flood received=9 bytes=1152 t=19569
+[rigapp] flood received=10 bytes=1280 t=19599
+[rigapp] flood received=11 bytes=1408 t=19630
+[rigapp] flood received=12 bytes=1536 t=19659
+[rigapp] flood received=13 bytes=1664 t=19689
+[rigapp] flood received=14 bytes=1792 t=19718
+[rigapp] mem hb total_received=14 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=15 bytes=1920 t=19770
+[rigapp] wlat tin=19777 t=19798
+[rigapp] flood received=16 bytes=2048 t=19801
+[rigapp] flood received=17 bytes=2176 t=19829
+[rigapp] flood received=18 bytes=2304 t=19859
+[rigapp] flood received=19 bytes=2432 t=19890
+[rigapp] flood received=20 bytes=2560 t=19920
+[rigapp] flood received=21 bytes=2688 t=19949
+[rigapp] flood received=22 bytes=2816 t=19980
+[rigapp] flood received=23 bytes=2944 t=20039
+[rigapp] flood received=24 bytes=3072 t=20069
+[rigapp] flood received=25 bytes=3200 t=20098
+[rigapp] wlat tin=20112 t=20128
+[rigapp] flood received=26 bytes=3328 t=20131
+[rigapp] flood received=27 bytes=3456 t=20159
+[rigapp] flood received=28 bytes=3584 t=20189
+[rigapp] flood received=29 bytes=3712 t=20218
+[rigapp] flood received=30 bytes=3840 t=20250
+[rigapp] flood received=31 bytes=3968 t=20279
+[rigapp] flood received=32 bytes=4096 t=20340
+[rigapp] flood received=33 bytes=4224 t=20369
+[rigapp] flood received=34 bytes=4352 t=20399
+[rigapp] flood received=35 bytes=4480 t=20429
+[rigapp] wlat tin=20446 t=20459
+[rigapp] flood received=36 bytes=4608 t=20464
+[rigapp] flood received=37 bytes=4736 t=20490
+[rigapp] flood received=38 bytes=4864 t=20519
+[rigapp] flood received=39 bytes=4992 t=20549
+[rigapp] flood received=40 bytes=5120 t=20610
+[rigapp] flood received=41 bytes=5248 t=20639
+[rigapp] flood received=42 bytes=5376 t=20670
+[rigapp] flood received=43 bytes=5504 t=20699
+[rigapp] flood received=44 bytes=5632 t=20730
+[rigapp] mem hb total_received=44 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=45 bytes=5760 t=20769
+[rigapp] wlat tin=20779 t=20800
+[rigapp] flood received=46 bytes=5888 t=20804
+[rigapp] flood received=47 bytes=6016 t=20830
+[rigapp] flood received=48 bytes=6144 t=20859
+[rigapp] flood received=49 bytes=6272 t=20890
+[rigapp] flood received=50 bytes=6400 t=20920
+[rigapp] flood received=51 bytes=6528 t=20949
+[rigapp] flood received=52 bytes=6656 t=20979
+[rigapp] flood received=53 bytes=6784 t=21038
+[rigapp] flood received=54 bytes=6912 t=21069
+[rigapp] flood received=55 bytes=7040 t=21099
+[rigapp] wlat tin=21112 t=21129
+[rigapp] flood received=56 bytes=7168 t=21130
+[rigapp] flood received=57 bytes=7296 t=21158
+[rigapp] flood received=58 bytes=7424 t=21189
+[rigapp] flood received=59 bytes=7552 t=21219
+[rigapp] flood received=60 bytes=7680 t=21249
+[rigapp] flood received=61 bytes=7808 t=21280
+[rigapp] flood received=62 bytes=7936 t=21338
+[rigapp] flood received=63 bytes=8064 t=21369
+[rigapp] flood received=64 bytes=8192 t=21400
+[rigapp] flood received=65 bytes=8320 t=21430
+[rigapp] wlat tin=21446 t=21459
+[rigapp] flood received=66 bytes=8448 t=21463
+[rigapp] flood received=67 bytes=8576 t=21489
+[rigapp] flood received=68 bytes=8704 t=21519
+[rigapp] flood received=69 bytes=8832 t=21549
+[rigapp] flood received=70 bytes=8960 t=21579
+[rigapp] flood received=71 bytes=9088 t=21639
+[rigapp] flood received=72 bytes=9216 t=21669
+[rigapp] flood received=73 bytes=9344 t=21698
+[rigapp] flood received=74 bytes=9472 t=21729
+[rigapp] mem hb total_received=74 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=75 bytes=9600 t=21758
+[rigapp] wlat tin=21777 t=21788
+[rigapp] flood received=76 bytes=9728 t=21789
+[rigapp] flood received=77 bytes=9856 t=21819
+[rigapp] flood received=78 bytes=9984 t=21849
+[rigapp] flood received=79 bytes=10112 t=21879
+[rigapp] flood received=80 bytes=10240 t=21939
+[rigapp] flood received=81 bytes=10368 t=21970
+[rigapp] flood received=82 bytes=10496 t=21999
+[rigapp] flood received=83 bytes=10624 t=22029
+[rigapp] flood received=84 bytes=10752 t=22059
+[rigapp] flood received=85 bytes=10880 t=22089
+[rigapp] wlat tin=22111 t=22118
+[rigapp] flood received=86 bytes=11008 t=22120
+[rigapp] flood received=87 bytes=11136 t=22149
+[rigapp] flood received=88 bytes=11264 t=22179
+[rigapp] flood received=89 bytes=11392 t=22239
+[rigapp] flood received=90 bytes=11520 t=22269
+[rigapp] flood received=91 bytes=11648 t=22300
+[rigapp] flood received=92 bytes=11776 t=22329
+[rigapp] flood received=93 bytes=11904 t=22360
+[rigapp] flood received=94 bytes=12032 t=22389
+[rigapp] flood received=95 bytes=12160 t=22419
+[rigapp] wlat tin=22446 t=22449
+[rigapp] flood received=96 bytes=12288 t=22453
+[rigapp] flood received=97 bytes=12416 t=22510
+[rigapp] flood received=98 bytes=12544 t=22539
+[rigapp] flood received=99 bytes=12672 t=22569
+[rigapp] flood received=100 bytes=12800 t=22599
+[rigapp] flood received=101 bytes=12928 t=22630
+[rigapp] flood received=102 bytes=13056 t=22659
+[rigapp] flood received=103 bytes=13184 t=22689
+[rigapp] flood received=104 bytes=13312 t=22720
+[rigapp] mem hb total_received=104 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=105 bytes=13440 t=22759
+[rigapp] wlat tin=22783 t=22788
+[rigapp] flood received=106 bytes=13568 t=22791
+[rigapp] flood received=107 bytes=13696 t=22819
+[rigapp] flood received=108 bytes=13824 t=22879
+[rigapp] flood received=109 bytes=13952 t=22909
+[rigapp] flood received=110 bytes=14080 t=22940
+[rigapp] flood received=111 bytes=14208 t=22969
+[rigapp] flood received=112 bytes=14336 t=22999
+[rigapp] flood received=113 bytes=14464 t=23030
+[rigapp] flood received=114 bytes=14592 t=23059
+[rigapp] flood received=115 bytes=14720 t=23090
+[rigapp] wlat tin=23118 t=23118
+[rigapp] flood received=116 bytes=14848 t=23119
+[rigapp] flood received=117 bytes=14976 t=23179
+[rigapp] flood received=118 bytes=15104 t=23209
+[rigapp] flood received=119 bytes=15232 t=23240
+[rigapp] flood received=120 bytes=15360 t=23268
+[rigapp] flood received=121 bytes=15488 t=23299
+[rigapp] flood received=122 bytes=15616 t=23329
+[rigapp] flood received=123 bytes=15744 t=23359
+[rigapp] flood received=124 bytes=15872 t=23390
+[rigapp] flood received=125 bytes=16000 t=23449
+[rigapp] wlat tin=23453 t=23480
+[rigapp] flood received=126 bytes=16128 t=23484
+[rigapp] flood received=127 bytes=16256 t=23509
+[rigapp] flood received=128 bytes=16384 t=23539
+[rigapp] flood received=129 bytes=16512 t=23569
+[rigapp] flood received=130 bytes=16640 t=23599
+[rigapp] flood received=131 bytes=16768 t=23630
+[rigapp] flood received=132 bytes=16896 t=23659
+[rigapp] flood received=133 bytes=17024 t=23689
+[rigapp] mem hb total_received=133 total=112640 used=76544 free=35752 frag=35
+[rigapp] flood received=134 bytes=17152 t=23742
+[rigapp] flood received=135 bytes=17280 t=23768
+[rigapp] wlat tin=23789 t=23798
+[rigapp] flood received=136 bytes=17408 t=23802
+[rigapp] flood received=137 bytes=17536 t=23829
+[rigapp] flood received=138 bytes=17664 t=23860
+[rigapp] flood received=139 bytes=17792 t=23889
+[rigapp] flood received=140 bytes=17920 t=23949
+[rigapp] flood received=141 bytes=18048 t=23980
+[rigapp] flood received=142 bytes=18176 t=24009
+[rigapp] flood received=143 bytes=18304 t=24038
+[rigapp] flood received=144 bytes=18432 t=24070
+[rigapp] flood received=145 bytes=18560 t=24099
+[rigapp] wlat tin=24122 t=24129
+[rigapp] flood received=146 bytes=18688 t=24133
+[rigapp] flood received=147 bytes=18816 t=24159
+[rigapp] flood received=148 bytes=18944 t=24189
+[rigapp] flood received=149 bytes=19072 t=24249
+[rigapp] flood received=150 bytes=19200 t=24280
+[rigapp] flood received=151 bytes=19328 t=24309
+[rigapp] flood received=152 bytes=19456 t=24339
+[rigapp] flood received=153 bytes=19584 t=24368
+[rigapp] flood received=154 bytes=19712 t=24398
+[rigapp] flood received=155 bytes=19840 t=24429
+[rigapp] wlat tin=24455 t=24459
+[rigapp] flood received=156 bytes=19968 t=24463
+[rigapp] flood received=157 bytes=20096 t=24490
+[rigapp] flood received=158 bytes=20224 t=24550
+[rigapp] flood received=159 bytes=20352 t=24579
+[rigapp] flood received=160 bytes=20480 t=24609
+[rigapp] flood received=161 bytes=20608 t=24638
+[rigapp] flood received=162 bytes=20736 t=24669
+[rigapp] flood received=163 bytes=20864 t=24699
+[rigapp] flood received=164 bytes=20992 t=24730
+[rigapp] mem hb total_received=164 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=165 bytes=21120 t=24769
+[rigapp] wlat tin=24788 t=24800
+[rigapp] flood received=166 bytes=21248 t=24804
+[rigapp] flood received=167 bytes=21376 t=24829
+[rigapp] flood received=168 bytes=21504 t=24859
+[rigapp] flood received=169 bytes=21632 t=24890
+[rigapp] flood received=170 bytes=21760 t=24949
+[rigapp] flood received=171 bytes=21888 t=24980
+[rigapp] flood received=172 bytes=22016 t=25010
+[rigapp] flood received=173 bytes=22144 t=25039
+[rigapp] flood received=174 bytes=22272 t=25069
+[rigapp] flood received=175 bytes=22400 t=25099
+[rigapp] wlat tin=25121 t=25129
+[rigapp] flood received=176 bytes=22528 t=25132
+[rigapp] flood received=177 bytes=22656 t=25158
+[rigapp] flood received=178 bytes=22784 t=25190
+[rigapp] flood received=179 bytes=22912 t=25249
+[rigapp] flood received=180 bytes=23040 t=25279
+[rigapp] flood received=181 bytes=23168 t=25309
+[rigapp] flood received=182 bytes=23296 t=25338
+[rigapp] flood received=183 bytes=23424 t=25369
+[rigapp] flood received=184 bytes=23552 t=25399
+[rigapp] flood received=185 bytes=23680 t=25429
+[rigapp] wlat tin=25456 t=25459
+[rigapp] flood received=186 bytes=23808 t=25463
+[rigapp] flood received=187 bytes=23936 t=25519
+[rigapp] flood received=188 bytes=24064 t=25550
+[rigapp] flood received=189 bytes=24192 t=25579
+[rigapp] flood received=190 bytes=24320 t=25609
+[rigapp] flood received=191 bytes=24448 t=25639
+[rigapp] flood received=192 bytes=24576 t=25669
+[rigapp] flood received=193 bytes=24704 t=25699
+[rigapp] flood received=194 bytes=24832 t=25729
+[rigapp] mem hb total_received=194 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=195 bytes=24960 t=25769
+[rigapp] wlat tin=25790 t=25799
+[rigapp] flood received=196 bytes=25088 t=25803
+[rigapp] flood received=197 bytes=25216 t=25828
+[rigapp] flood received=198 bytes=25344 t=25859
+[rigapp] flood received=199 bytes=25472 t=25890
+[rigapp] flood received=200 bytes=25600 t=25950
+[rigapp] flood received=201 bytes=25728 t=25979
+[rigapp] flood received=202 bytes=25856 t=26009
+[rigapp] flood received=203 bytes=25984 t=26039
+[rigapp] flood received=204 bytes=26112 t=26069
+[rigapp] flood received=205 bytes=26240 t=26100
+[rigapp] wlat tin=26122 t=26129
+[rigapp] flood received=206 bytes=26368 t=26133
+[rigapp] flood received=207 bytes=26496 t=26159
+[rigapp] flood received=208 bytes=26624 t=26220
+[rigapp] flood received=209 bytes=26752 t=26249
+[rigapp] flood received=210 bytes=26880 t=26278
+[rigapp] flood received=211 bytes=27008 t=26309
+[rigapp] flood received=212 bytes=27136 t=26339
+[rigapp] flood received=213 bytes=27264 t=26369
+[rigapp] flood received=214 bytes=27392 t=26399
+[rigapp] flood received=215 bytes=27520 t=26430
+[rigapp] wlat tin=26459 t=26459
+[rigapp] flood received=216 bytes=27648 t=26463
+[rigapp] flood received=217 bytes=27776 t=26520
+[rigapp] flood received=218 bytes=27904 t=26550
+[rigapp] flood received=219 bytes=28032 t=26579
+[rigapp] flood received=220 bytes=28160 t=26609
+[rigapp] flood received=221 bytes=28288 t=26639
+[rigapp] flood received=222 bytes=28416 t=26669
+[rigapp] flood received=223 bytes=28544 t=26699
+[rigapp] flood received=224 bytes=28672 t=26730
+[rigapp] mem hb total_received=224 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=225 bytes=28800 t=26769
+[rigapp] wlat tin=26794 t=26799
+[rigapp] flood received=226 bytes=28928 t=26804
+[rigapp] flood received=227 bytes=29056 t=26840
+[rigapp] flood received=228 bytes=29184 t=26868
+[rigapp] flood received=229 bytes=29312 t=26900
+[rigapp] flood received=230 bytes=29440 t=26929
+[rigapp] flood received=231 bytes=29568 t=26990
+[rigapp] flood received=232 bytes=29696 t=27019
+[rigapp] flood received=233 bytes=29824 t=27049
+[rigapp] flood received=234 bytes=29952 t=27079
+[rigapp] flood received=235 bytes=30080 t=27110
+[rigapp] wlat tin=27129 t=27139
+[rigapp] flood received=236 bytes=30208 t=27143
+[rigapp] flood received=237 bytes=30336 t=27169
+[rigapp] flood received=238 bytes=30464 t=27199
+[rigapp] flood received=239 bytes=30592 t=27259
+[rigapp] flood received=240 bytes=30720 t=27288
+[rigapp] flood received=241 bytes=30848 t=27319
+[rigapp] flood received=242 bytes=30976 t=27349
+[rigapp] flood received=243 bytes=31104 t=27379
+[rigapp] flood received=244 bytes=31232 t=27409
+[rigapp] flood received=245 bytes=31360 t=27440
+[rigapp] wlat tin=27463 t=27469
+[rigapp] flood received=246 bytes=31488 t=27473
+[rigapp] flood received=247 bytes=31616 t=27499
+[rigapp] flood received=248 bytes=31744 t=27560
+[rigapp] flood received=249 bytes=31872 t=27589
+[rigapp] flood received=250 bytes=32000 t=27619
+[rigapp] flood received=251 bytes=32128 t=27650
+[rigapp] flood received=252 bytes=32256 t=27679
+[rigapp] flood received=253 bytes=32384 t=27708
+[rigapp] mem hb total_received=253 total=112640 used=76548 free=35748 frag=35
+[rigapp] flood received=254 bytes=32512 t=27734
+[rigapp] flood received=255 bytes=32640 t=27789
+[rigapp] wlat tin=27798 t=27819
+[rigapp] flood received=256 bytes=32768 t=27821
+[rigapp] flood received=257 bytes=32896 t=27848
+[rigapp] flood received=258 bytes=33024 t=27878
+[rigapp] flood received=259 bytes=33152 t=27909
+[rigapp] flood received=260 bytes=33280 t=27939
+[rigapp] flood received=261 bytes=33408 t=27970
+[rigapp] flood received=262 bytes=33536 t=27998
+[rigapp] flood received=263 bytes=33664 t=28060
+[rigapp] flood received=264 bytes=33792 t=28089
+[rigapp] flood received=265 bytes=33920 t=28119
+[rigapp] wlat tin=28131 t=28149
+[rigapp] flood received=266 bytes=34048 t=28153
+[rigapp] flood received=267 bytes=34176 t=28180
+[rigapp] flood received=268 bytes=34304 t=28209
+[rigapp] flood received=269 bytes=34432 t=28238
+[rigapp] flood received=270 bytes=34560 t=28269
+[rigapp] flood received=271 bytes=34688 t=28329
+[rigapp] flood received=272 bytes=34816 t=28359
+[rigapp] flood received=273 bytes=34944 t=28388
+[rigapp] flood received=274 bytes=35072 t=28419
+[rigapp] flood received=275 bytes=35200 t=28448
+[rigapp] wlat tin=28466 t=28478
+[rigapp] flood received=276 bytes=35328 t=28481
+[rigapp] flood received=277 bytes=35456 t=28509
+[rigapp] flood received=278 bytes=35584 t=28540
+[rigapp] flood received=279 bytes=35712 t=28569
+[rigapp] flood received=280 bytes=35840 t=28630
+[rigapp] flood received=281 bytes=35968 t=28660
+[rigapp] flood received=282 bytes=36096 t=28689
+[rigapp] flood received=283 bytes=36224 t=28718
+[rigapp] mem hb total_received=283 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=284 bytes=36352 t=28740
+[rigapp] flood received=285 bytes=36480 t=28769
+[rigapp] wlat tin=28800 t=28829
+[rigapp] flood received=286 bytes=36608 t=28833
+[rigapp] flood received=287 bytes=36736 t=28860
+[rigapp] flood received=288 bytes=36864 t=28890
+[rigapp] flood received=289 bytes=36992 t=28919
+[rigapp] flood received=290 bytes=37120 t=28948
+[rigapp] flood received=291 bytes=37248 t=28979
+[rigapp] flood received=292 bytes=37376 t=29009
+[rigapp] flood received=293 bytes=37504 t=29039
+[rigapp] flood received=294 bytes=37632 t=29070
+[rigapp] flood received=295 bytes=37760 t=29129
+[rigapp] wlat tin=29135 t=29158
+[rigapp] flood received=296 bytes=37888 t=29162
+[rigapp] flood received=297 bytes=38016 t=29190
+[rigapp] flood received=298 bytes=38144 t=29219
+[rigapp] flood received=299 bytes=38272 t=29250
+[rigapp] flood received=300 bytes=38400 t=29279
+[rigapp] flood received=301 bytes=38528 t=29309
+[rigapp] flood received=302 bytes=38656 t=29339
+[rigapp] flood received=303 bytes=38784 t=29368
+[rigapp] flood received=304 bytes=38912 t=29429
+[rigapp] flood received=305 bytes=39040 t=29459
+[rigapp] wlat tin=29469 t=29489
+[rigapp] flood received=306 bytes=39168 t=29492
+[rigapp] flood received=307 bytes=39296 t=29519
+[rigapp] flood received=308 bytes=39424 t=29549
+[rigapp] flood received=309 bytes=39552 t=29579
+[rigapp] flood received=310 bytes=39680 t=29608
+[rigapp] flood received=311 bytes=39808 t=29640
+[rigapp] flood received=312 bytes=39936 t=29669
+[rigapp] flood received=313 bytes=40064 t=29729
+[rigapp] mem hb total_received=313 total=112640 used=76544 free=35752 frag=35
+[rigapp] flood received=314 bytes=40192 t=29740
+[rigapp] flood received=315 bytes=40320 t=29769
+[rigapp] wlat tin=29802 t=29829
+[rigapp] flood received=316 bytes=40448 t=29833
+[rigapp] flood received=317 bytes=40576 t=29860
+[rigapp] flood received=318 bytes=40704 t=29889
+[rigapp] flood received=319 bytes=40832 t=29919
+[rigapp] flood received=320 bytes=40960 t=29950
+[rigapp] flood received=321 bytes=41088 t=29979
+[rigapp] flood received=322 bytes=41216 t=30009
+[rigapp] flood received=323 bytes=41344 t=30039
+[rigapp] flood received=324 bytes=41472 t=30100
+[rigapp] flood received=325 bytes=41600 t=30129
+[rigapp] wlat tin=30139 t=30159
+[rigapp] flood received=326 bytes=41728 t=30163
+[rigapp] flood received=327 bytes=41856 t=30190
+[rigapp] flood received=328 bytes=41984 t=30219
+[rigapp] flood received=329 bytes=42112 t=30249
+[rigapp] flood received=330 bytes=42240 t=30279
+[rigapp] flood received=331 bytes=42368 t=30310
+[rigapp] flood received=332 bytes=42496 t=30339
+[rigapp] flood received=333 bytes=42624 t=30399
+[rigapp] flood received=334 bytes=42752 t=30430
+[rigapp] flood received=335 bytes=42880 t=30459
+[rigapp] wlat tin=30470 t=30489
+[rigapp] flood received=336 bytes=43008 t=30492
+[rigapp] flood received=337 bytes=43136 t=30518
+[rigapp] flood received=338 bytes=43264 t=30549
+[rigapp] flood received=339 bytes=43392 t=30579
+[rigapp] flood received=340 bytes=43520 t=30609
+[rigapp] flood received=341 bytes=43648 t=30639
+[rigapp] flood received=342 bytes=43776 t=30670
+[rigapp] flood received=343 bytes=43904 t=30730
+[rigapp] mem hb total_received=343 total=112640 used=76392 free=35904 frag=39
+[rigapp] flood received=344 bytes=44032 t=30741
+[rigapp] flood received=345 bytes=44160 t=30800
+[rigapp] wlat tin=30802 t=30829
+[rigapp] flood received=346 bytes=44288 t=30833
+[rigapp] flood received=347 bytes=44416 t=30859
+[rigapp] flood received=348 bytes=44544 t=30889
+[rigapp] flood received=349 bytes=44672 t=30920
+[rigapp] flood received=350 bytes=44800 t=30949
+[rigapp] flood received=351 bytes=44928 t=30979
+[rigapp] flood received=352 bytes=45056 t=31009
+[rigapp] flood received=353 bytes=45184 t=31040
+[rigapp] flood received=354 bytes=45312 t=31099
+[rigapp] flood received=355 bytes=45440 t=31129
+[rigapp] wlat tin=31137 t=31160
+[rigapp] flood received=356 bytes=45568 t=31164
+[rigapp] flood received=357 bytes=45696 t=31189
+[rigapp] flood received=358 bytes=45824 t=31219
+[rigapp] flood received=359 bytes=45952 t=31250
+[rigapp] flood received=360 bytes=46080 t=31280
+[rigapp] flood received=361 bytes=46208 t=31309
+[rigapp] flood received=362 bytes=46336 t=31370
+[rigapp] flood received=363 bytes=46464 t=31400
+[rigapp] flood received=364 bytes=46592 t=31429
+[rigapp] flood received=365 bytes=46720 t=31458
+[rigapp] wlat tin=31475 t=31489
+[rigapp] flood received=366 bytes=46848 t=31490
+[rigapp] flood received=367 bytes=46976 t=31519
+[rigapp] flood received=368 bytes=47104 t=31549
+[rigapp] flood received=369 bytes=47232 t=31578
+[rigapp] flood received=370 bytes=47360 t=31610
+[rigapp] flood received=371 bytes=47488 t=31669
+[rigapp] flood received=372 bytes=47616 t=31698
+[rigapp] flood received=373 bytes=47744 t=31730
+[rigapp] mem hb total_received=373 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=374 bytes=47872 t=31769
+[rigapp] flood received=375 bytes=48000 t=31798
+[rigapp] wlat tin=31807 t=31829
+[rigapp] flood received=376 bytes=48128 t=31830
+[rigapp] flood received=377 bytes=48256 t=31859
+[rigapp] flood received=378 bytes=48384 t=31888
+[rigapp] flood received=379 bytes=48512 t=31919
+[rigapp] flood received=380 bytes=48640 t=31949
+[rigapp] flood received=381 bytes=48768 t=31979
+[rigapp] flood received=382 bytes=48896 t=32009
+[rigapp] flood received=383 bytes=49024 t=32069
+[rigapp] flood received=384 bytes=49152 t=32099
+[rigapp] flood received=385 bytes=49280 t=32129
+[rigapp] wlat tin=32141 t=32159
+[rigapp] flood received=386 bytes=49408 t=32163
+[rigapp] flood received=387 bytes=49536 t=32189
+[rigapp] flood received=388 bytes=49664 t=32219
+[rigapp] flood received=389 bytes=49792 t=32249
+[rigapp] flood received=390 bytes=49920 t=32280
+[rigapp] flood received=391 bytes=50048 t=32309
+[rigapp] flood received=392 bytes=50176 t=32369
+[rigapp] flood received=393 bytes=50304 t=32399
+[rigapp] flood received=394 bytes=50432 t=32430
+[rigapp] flood received=395 bytes=50560 t=32459
+[rigapp] wlat tin=32476 t=32488
+[rigapp] flood received=396 bytes=50688 t=32490
+[rigapp] flood received=397 bytes=50816 t=32519
+[rigapp] flood received=398 bytes=50944 t=32549
+[rigapp] flood received=399 bytes=51072 t=32579
+[rigapp] flood received=400 bytes=51200 t=32610
+[rigapp] flood received=401 bytes=51328 t=32669
+[rigapp] flood received=402 bytes=51456 t=32699
+[rigapp] flood received=403 bytes=51584 t=32729
+[rigapp] mem hb total_received=403 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=404 bytes=51712 t=32770
+[rigapp] flood received=405 bytes=51840 t=32799
+[rigapp] wlat tin=32811 t=32829
+[rigapp] flood received=406 bytes=51968 t=32833
+[rigapp] flood received=407 bytes=52096 t=32860
+[rigapp] flood received=408 bytes=52224 t=32889
+[rigapp] flood received=409 bytes=52352 t=32920
+[rigapp] flood received=410 bytes=52480 t=32949
+[rigapp] flood received=411 bytes=52608 t=32979
+[rigapp] flood received=412 bytes=52736 t=33039
+[rigapp] flood received=413 bytes=52864 t=33069
+[rigapp] flood received=414 bytes=52992 t=33099
+[rigapp] flood received=415 bytes=53120 t=33129
+[rigapp] wlat tin=33143 t=33159
+[rigapp] flood received=416 bytes=53248 t=33161
+[rigapp] flood received=417 bytes=53376 t=33189
+[rigapp] flood received=418 bytes=53504 t=33218
+[rigapp] flood received=419 bytes=53632 t=33249
+[rigapp] flood received=420 bytes=53760 t=33279
+[rigapp] flood received=421 bytes=53888 t=33339
+[rigapp] flood received=422 bytes=54016 t=33370
+[rigapp] flood received=423 bytes=54144 t=33398
+[rigapp] flood received=424 bytes=54272 t=33429
+[rigapp] flood received=425 bytes=54400 t=33460
+[rigapp] wlat tin=33479 t=33490
+[rigapp] flood received=426 bytes=54528 t=33492
+[rigapp] flood received=427 bytes=54656 t=33518
+[rigapp] flood received=428 bytes=54784 t=33549
+[rigapp] flood received=429 bytes=54912 t=33580
+[rigapp] flood received=430 bytes=55040 t=33639
+[rigapp] flood received=431 bytes=55168 t=33669
+[rigapp] flood received=432 bytes=55296 t=33699
+[rigapp] flood received=433 bytes=55424 t=33729
+[rigapp] mem hb total_received=433 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=434 bytes=55552 t=33770
+[rigapp] flood received=435 bytes=55680 t=33800
+[rigapp] wlat tin=33814 t=33829
+[rigapp] flood received=436 bytes=55808 t=33833
+[rigapp] flood received=437 bytes=55936 t=33860
+[rigapp] flood received=438 bytes=56064 t=33889
+[rigapp] flood received=439 bytes=56192 t=33919
+[rigapp] flood received=440 bytes=56320 t=33948
+[rigapp] flood received=441 bytes=56448 t=34010
+[rigapp] flood received=442 bytes=56576 t=34039
+[rigapp] flood received=443 bytes=56704 t=34069
+[rigapp] flood received=444 bytes=56832 t=34100
+[rigapp] flood received=445 bytes=56960 t=34130
+[rigapp] wlat tin=34149 t=34159
+[rigapp] flood received=446 bytes=57088 t=34164
+[rigapp] flood received=447 bytes=57216 t=34189
+[rigapp] flood received=448 bytes=57344 t=34219
+[rigapp] flood received=449 bytes=57472 t=34278
+[rigapp] flood received=450 bytes=57600 t=34309
+[rigapp] flood received=451 bytes=57728 t=34339
+[rigapp] flood received=452 bytes=57856 t=34369
+[rigapp] flood received=453 bytes=57984 t=34398
+[rigapp] flood received=454 bytes=58112 t=34429
+[rigapp] flood received=455 bytes=58240 t=34459
+[rigapp] wlat tin=34483 t=34489
+[rigapp] flood received=456 bytes=58368 t=34491
+[rigapp] flood received=457 bytes=58496 t=34519
+[rigapp] flood received=458 bytes=58624 t=34549
+[rigapp] flood received=459 bytes=58752 t=34608
+[rigapp] flood received=460 bytes=58880 t=34639
+[rigapp] flood received=461 bytes=59008 t=34669
+[rigapp] flood received=462 bytes=59136 t=34699
+[rigapp] flood received=463 bytes=59264 t=34729
+[rigapp] mem hb total_received=463 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=464 bytes=59392 t=34768
+[rigapp] flood received=465 bytes=59520 t=34799
+[rigapp] wlat tin=34817 t=34828
+[rigapp] flood received=466 bytes=59648 t=34832
+[rigapp] flood received=467 bytes=59776 t=34859
+[rigapp] flood received=468 bytes=59904 t=34889
+[rigapp] flood received=469 bytes=60032 t=34919
+[rigapp] flood received=470 bytes=60160 t=34979
+[rigapp] flood received=471 bytes=60288 t=35009
+[rigapp] flood received=472 bytes=60416 t=35039
+[rigapp] flood received=473 bytes=60544 t=35070
+[rigapp] flood received=474 bytes=60672 t=35100
+[rigapp] flood received=475 bytes=60800 t=35129
+[rigapp] wlat tin=35150 t=35158
+[rigapp] flood received=476 bytes=60928 t=35161
+[rigapp] flood received=477 bytes=61056 t=35189
+[rigapp] flood received=478 bytes=61184 t=35220
+[rigapp] flood received=479 bytes=61312 t=35250
+[rigapp] flood received=480 bytes=61440 t=35310
+[rigapp] flood received=481 bytes=61568 t=35339
+[rigapp] flood received=482 bytes=61696 t=35369
+[rigapp] flood received=483 bytes=61824 t=35399
+[rigapp] flood received=484 bytes=61952 t=35430
+[rigapp] flood received=485 bytes=62080 t=35460
+[rigapp] wlat tin=35482 t=35489
+[rigapp] flood received=486 bytes=62208 t=35493
+[rigapp] flood received=487 bytes=62336 t=35519
+[rigapp] flood received=488 bytes=62464 t=35579
+[rigapp] flood received=489 bytes=62592 t=35609
+[rigapp] flood received=490 bytes=62720 t=35639
+[rigapp] flood received=491 bytes=62848 t=35669
+[rigapp] flood received=492 bytes=62976 t=35699
+[rigapp] flood received=493 bytes=63104 t=35729
+[rigapp] mem hb total_received=493 total=112640 used=76396 free=35900 frag=39
+[rigapp] flood received=494 bytes=63232 t=35770
+[rigapp] flood received=495 bytes=63360 t=35800
+[rigapp] wlat tin=35816 t=35829
+[rigapp] flood received=496 bytes=63488 t=35833
+[rigapp] flood received=497 bytes=63616 t=35859
+[rigapp] flood received=498 bytes=63744 t=35889
+[rigapp] flood received=499 bytes=63872 t=35920
+[rigapp] flood received=500 bytes=64000 t=35979
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rig] flood done n=500 rejected=0 begin=19277 end=35984 probes=50
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76396 free=35900 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76396 free=35900 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76396 free=35900 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+[rigapp] mem hb total_received=500 total=112640 used=76392 free=35904 frag=39
+qemu-system-xtensa: terminating on signal 15 from pid 80706 (<unknown process>)
