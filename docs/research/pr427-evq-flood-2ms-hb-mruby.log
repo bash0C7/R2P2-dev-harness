@@ -3,7 +3,7 @@ Executing action: all (aliases: build)
 Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
 Executing "ninja all"...
 [1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
-R2P2-ESP32.bin binary size 0x1801d0 bytes. Smallest app partition is 0x200000 bytes. 0x7fe30 bytes (25%) free.
+R2P2-ESP32.bin binary size 0x180270 bytes. Smallest app partition is 0x200000 bytes. 0x7fd90 bytes (25%) free.
 [2/5] Performing build step for 'bootloader'
 [1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
 Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
@@ -39,7 +39,7 @@ load:0x403c8700,len:0xd24
 load:0x403cb700,len:0x2ef0
 entry 0x403c8924
 I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
-I (13) boot: compile time Oct 11 2026 18:14:12
+I (13) boot: compile time Oct 11 2026 19:54:35
 I (13) boot: Multicore bootloader
 I (15) boot: chip revision: v0.3
 I (15) boot: efuse block revision: v1.0
@@ -50,44 +50,44 @@ I (17) boot: Enabling RNG early entropy source...
 I (20) boot: Partition Table:
 I (20) boot: ## Label            Usage          Type ST Offset   Length
 I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
-I (20) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
 I (21) boot:  2 factory          factory app      00 00 00010000 00200000
 I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
 I (21) boot: End of partition table
-I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0f0020 size=7996ch (498028) map
-I (55) esp_image: segment 1: paddr=00089994 vaddr=3fc98700 size=05b70h ( 23408) load
-I (57) esp_image: segment 2: paddr=0008f50c vaddr=40374000 size=00b0ch (  2828) load
-I (58) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=ec57ch (968060) map
-I (124) esp_image: segment 4: paddr=0017c5a4 vaddr=40374b0c size=13b7ch ( 80764) load
-I (130) esp_image: segment 5: paddr=00190128 vaddr=50000000 size=00020h (    32) load
-I (130) esp_image: segment 6: paddr=00190150 vaddr=600fe000 size=00058h (    88) load
-I (131) boot: Loaded app from partition at offset 0x10000
-I (131) boot: Disabling RNG early entropy source...
-I (137) cpu_start: Multicore app
-I (147) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
-I (148) cpu_start: Pro cpu start user code
-I (148) cpu_start: cpu freq: 160000000 Hz
-I (148) app_init: Application information:
-I (148) app_init: Project name:     R2P2-ESP32
-I (148) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
-I (148) app_init: Compile time:     Oct 11 2026 18:14:03
-I (148) app_init: ELF file SHA256:  8ae00f9ee...
-I (148) app_init: ESP-IDF:          v5.5.4
-I (148) efuse_init: Min chip rev:     v0.0
-I (148) efuse_init: Max chip rev:     v0.99 
-I (148) efuse_init: Chip rev:         v0.3
-I (148) heap_init: Initializing. RAM available for dynamic allocation:
-I (149) heap_init: At 3FCDAB20 len 0000EBF0 (58 KiB): RAM
-I (149) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
-I (149) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
-I (149) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
-I (151) spi_flash: detected chip: gd
-I (151) spi_flash: flash io: dio
-I (152) sleep_gpio: Configure to isolate all GPIO pins in sleep state
-I (152) sleep_gpio: Enable automatic switching of GPIO sleep configuration
-I (153) main_task: Started on CPU0
-I (158) main_task: Calling app_main()
-I (160) main_task: Returned from app_main()
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0f0020 size=7998ch (498060) map
+I (55) esp_image: segment 1: paddr=000899b4 vaddr=3fc98700 size=05b70h ( 23408) load
+I (57) esp_image: segment 2: paddr=0008f52c vaddr=40374000 size=00aech (  2796) load
+I (58) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=ec5f8h (968184) map
+I (121) esp_image: segment 4: paddr=0017c620 vaddr=40374aec size=13b9ch ( 80796) load
+I (126) esp_image: segment 5: paddr=001901c4 vaddr=50000000 size=00020h (    32) load
+I (127) esp_image: segment 6: paddr=001901ec vaddr=600fe000 size=00058h (    88) load
+I (128) boot: Loaded app from partition at offset 0x10000
+I (128) boot: Disabling RNG early entropy source...
+I (134) cpu_start: Multicore app
+I (143) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (145) cpu_start: Pro cpu start user code
+I (145) cpu_start: cpu freq: 160000000 Hz
+I (145) app_init: Application information:
+I (145) app_init: Project name:     R2P2-ESP32
+I (145) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (145) app_init: Compile time:     Oct 11 2026 19:54:26
+I (145) app_init: ELF file SHA256:  77cc05e7c...
+I (145) app_init: ESP-IDF:          v5.5.4
+I (145) efuse_init: Min chip rev:     v0.0
+I (145) efuse_init: Max chip rev:     v0.99 
+I (145) efuse_init: Chip rev:         v0.3
+I (145) heap_init: Initializing. RAM available for dynamic allocation:
+I (145) heap_init: At 3FCDAB20 len 0000EBF0 (58 KiB): RAM
+I (145) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (145) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (145) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (148) spi_flash: detected chip: gd
+I (148) spi_flash: flash io: dio
+I (148) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (149) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (150) main_task: Started on CPU0
+I (154) main_task: Calling app_main()
+I (156) main_task: Returned from app_main()
 Initializing FLASH disk as the root volume... 
 Creating directory: bin
 Creating directory: etc/init.d
@@ -135,94 +135,106 @@ Not found: /etc/machine-id, Writing 12 bytes
 Available
 File /etc/network/wifi.yml does not exist
 Loading app.rb
-[rigapp] mem init total=217088 used=189752 free=26960 frag=17
+[rigapp] mem init total=217088 used=189968 free=26744 frag=19
 [rig] write enq A
 [rigapp] write h=0x42 v="A"
 [rig] write enq B
 [rigapp] write h=0x42 v="B"
-[rigapp] recv seq=1 tin=6438 t=6449
-[rigapp] recv seq=2 tin=6938 t=6940
-[rigapp] recv seq=3 tin=7439 t=7441
-[rigapp] recv seq=4 tin=7940 t=7942
-[rigapp] recv seq=5 tin=8440 t=8446
-[rigapp] recv seq=6 tin=8942 t=8944
-[rigapp] recv seq=7 tin=9443 t=9445
-[rigapp] recv seq=8 tin=9944 t=9948
-[rigapp] recv seq=9 tin=10444 t=10446
-[rigapp] recv seq=10 tin=10944 t=10949
-[rigapp] recv seq=11 tin=11445 t=11449
-[rigapp] recv seq=12 tin=11945 t=11947
-[rigapp] recv seq=13 tin=12445 t=12449
-[rigapp] recv seq=14 tin=12945 t=12946
-[rigapp] recv seq=15 tin=13444 t=13450
-[rigapp] recv seq=16 tin=13945 t=13947
-[rigapp] recv seq=17 tin=14444 t=14448
-[rigapp] recv seq=18 tin=14945 t=14948
-[rigapp] recv seq=19 tin=15445 t=15450
-[rigapp] recv seq=20 tin=15945 t=15946
-[rigapp] recv seq=21 tin=16445 t=16448
-[rigapp] recv seq=22 tin=16456 t=16460
-[rigapp] recv seq=23 tin=16466 t=16468
-[rigapp] recv seq=24 tin=16477 t=16479
-[rigapp] recv seq=25 tin=16487 t=16491
-[rigapp] recv seq=26 tin=16498 t=16499
-[rigapp] recv seq=27 tin=16508 t=16511
-[rigapp] recv seq=28 tin=16517 t=16520
-[rigapp] recv seq=29 tin=16528 t=16532
-[rigapp] recv seq=30 tin=16538 t=16539
-[rigapp] recv seq=31 tin=16548 t=16551
-[rigapp] recv seq=32 tin=16558 t=16560
-[rigapp] recv seq=33 tin=16569 t=16572
-[rigapp] recv seq=34 tin=16580 t=16581
-[rigapp] recv seq=35 tin=16590 t=16591
-[rigapp] recv seq=36 tin=16600 t=16605
-[rigapp] recv seq=37 tin=16611 t=16612
-[rigapp] recv seq=38 tin=16622 t=16625
-[rigapp] recv seq=39 tin=16632 t=16635
-[rigapp] recv seq=40 tin=16643 t=16648
-[rigapp] recv seq=41 tin=16652 t=16654
-[rigapp] recv seq=42 tin=16662 t=16664
-[rigapp] recv seq=43 tin=16673 t=16677
-[rigapp] recv seq=44 tin=16684 t=16685
-[rigapp] recv seq=45 tin=16694 t=16697
-[rigapp] recv seq=46 tin=16705 t=16707
-[rigapp] recv seq=47 tin=16714 t=16718
-[rigapp] recv seq=48 tin=16725 t=16726
-[rigapp] recv seq=49 tin=16736 t=16738
-[rigapp] recv seq=50 tin=16746 t=16750
-[rigapp] recv seq=51 tin=16757 t=16758
-[rigapp] recv seq=52 tin=16766 t=16768
-[rigapp] recv seq=53 tin=16777 t=16778
-[rigapp] recv seq=54 tin=16787 t=16792
-[rigapp] recv seq=55 tin=16798 t=16800
-[rigapp] recv seq=56 tin=16809 t=16810
-[rigapp] recv seq=57 tin=16818 t=16819
-[rigapp] recv seq=58 tin=16829 t=16830
-[rigapp] recv seq=59 tin=16839 t=16842
-[rigapp] recv seq=60 tin=16850 t=16851
+[rigapp] recv seq=1 tin=6455 t=6469
+[rigapp] recv seq=2 tin=6958 t=6961
+[rigapp] recv seq=3 tin=7458 t=7466
+[rigapp] recv seq=4 tin=7965 t=7970
+[rigapp] recv seq=5 tin=8464 t=8469
+[rigapp] recv seq=6 tin=8965 t=8974
+[rigapp] recv seq=7 tin=9464 t=9467
+[rigapp] recv seq=8 tin=9965 t=9974
+[rigapp] recv seq=9 tin=10465 t=10468
+[rigapp] recv seq=10 tin=10965 t=10968
+[rigapp] recv seq=11 tin=11465 t=11469
+[rigapp] recv seq=12 tin=11966 t=11969
+[rigapp] recv seq=13 tin=12467 t=12470
+[rigapp] recv seq=14 tin=12967 t=12970
+[rigapp] recv seq=15 tin=13467 t=13474
+[rigapp] recv seq=16 tin=13967 t=13971
+[rigapp] recv seq=17 tin=14468 t=14474
+[rigapp] recv seq=18 tin=14968 t=14971
+[rigapp] recv seq=19 tin=15468 t=15470
+[rigapp] recv seq=20 tin=15968 t=15970
+[rigapp] recv seq=21 tin=16468 t=16471
+[rigapp] recv seq=22 tin=16478 t=16483
+[rigapp] recv seq=23 tin=16489 t=16490
+[rigapp] recv seq=24 tin=16498 t=16499
+[rigapp] recv seq=25 tin=16510 t=16515
+[rigapp] recv seq=26 tin=16520 t=16521
+[rigapp] recv seq=27 tin=16531 t=16532
+[rigapp] recv seq=28 tin=16541 t=16544
+[rigapp] recv seq=29 tin=16552 t=16556
+[rigapp] recv seq=30 tin=16563 t=16564
+[rigapp] recv seq=31 tin=16573 t=16575
+[rigapp] recv seq=32 tin=16584 t=16586
+[rigapp] recv seq=33 tin=16595 t=16597
+[rigapp] recv seq=34 tin=16605 t=16608
+[rigapp] recv seq=35 tin=16616 t=16617
+[rigapp] recv seq=36 tin=16626 t=16630
+[rigapp] recv seq=37 tin=16637 t=16638
+[rigapp] recv seq=38 tin=16646 t=16647
+[rigapp] recv seq=39 tin=16657 t=16658
+[rigapp] recv seq=40 tin=16668 t=16672
+[rigapp] recv seq=41 tin=16678 t=16679
+[rigapp] recv seq=42 tin=16687 t=16688
+[rigapp] recv seq=43 tin=16698 t=16701
+[rigapp] recv seq=44 tin=16708 t=16711
+[rigapp] recv seq=45 tin=16719 t=16720
+[rigapp] recv seq=46 tin=16730 t=16732
+[rigapp] recv seq=47 tin=16740 t=16744
+[rigapp] recv seq=48 tin=16751 t=16753
+[rigapp] recv seq=49 tin=16761 t=16762
+[rigapp] recv seq=50 tin=16772 t=16775
+[rigapp] recv seq=51 tin=16781 t=16782
+[rigapp] recv seq=52 tin=16792 t=16793
+[rigapp] recv seq=53 tin=16802 t=16805
+[rigapp] recv seq=54 tin=16813 t=16818
+[rigapp] recv seq=55 tin=16824 t=16825
+[rigapp] recv seq=56 tin=16834 t=16835
+[rigapp] recv seq=57 tin=16845 t=16846
+[rigapp] recv seq=58 tin=16856 t=16858
+[rigapp] recv seq=59 tin=16866 t=16869
+[rigapp] recv seq=60 tin=16877 t=16878
 [rig] inject done n=60
-[rigapp] wlat tin=16860 t=16864
-[rigapp] wlat tin=16961 t=16964
-[rigapp] wlat tin=17062 t=17063
-[rigapp] wlat tin=17161 t=17163
-[rigapp] wlat tin=17262 t=17264
-[rigapp] wlat tin=17363 t=17373
-[rigapp] wlat tin=17462 t=17474
-[rigapp] wlat tin=17563 t=17574
-[rigapp] wlat tin=17664 t=17673
-[rigapp] wlat tin=17764 t=17774
-[rigapp] wlat tin=17865 t=17873
-[rigapp] wlat tin=17965 t=17974
-[rigapp] wlat tin=18065 t=18074
-[rigapp] wlat tin=18165 t=18174
-[rigapp] wlat tin=18265 t=18275
-[rigapp] wlat tin=18365 t=18374
-[rigapp] wlat tin=18465 t=18474
-[rigapp] wlat tin=18565 t=18573
-[rigapp] wlat tin=18665 t=18673
-[rigapp] wlat tin=18764 t=18773
+[rigapp] wlat tin=16888 t=16897
+[rigapp] wlat tin=16988 t=16997
+[rigapp] wlat tin=17088 t=17097
+[rigapp] wlat tin=17190 t=17198
+[rigapp] wlat tin=17289 t=17297
+[rigapp] wlat tin=17390 t=17408
+[rigapp] wlat tin=17490 t=17507
+[rigapp] wlat tin=17591 t=17608
+[rigapp] wlat tin=17691 t=17708
+[rigapp] wlat tin=17791 t=17808
+[rigapp] wlat tin=17892 t=17907
+[rigapp] wlat tin=17991 t=18007
+[rigapp] wlat tin=18092 t=18107
+[rigapp] wlat tin=18192 t=18207
+[rigapp] wlat tin=18292 t=18308
+[rigapp] wlat tin=18392 t=18408
+[rigapp] wlat tin=18493 t=18507
+[rigapp] wlat tin=18594 t=18608
+[rigapp] wlat tin=18694 t=18708
+[rigapp] wlat tin=18793 t=18807
 [rig] wlat done n=20
+[rigapp] wlat tin=18908 t=18927
+[rigapp] wlat tin=18937 t=18947
+[rigapp] wlat tin=18968 t=18968
+[rigapp] wlat tin=18996 t=19007
+[rigapp] wlat tin=19025 t=19027
+[rigapp] wlat tin=19052 t=19068
+[rigapp] wlat tin=19080 t=19088
+[rigapp] wlat tin=19108 t=19127
+[rigapp] wlat tin=19135 t=19147
+[rigapp] wlat tin=19163 t=19168
+[rigapp] wlat tin=19185 t=19187
+[rigapp] wlat tin=19209 t=19228
 FATAL: NoMemoryError (NoMemoryError)
-W (19297) prb_ble_evq: write queue full (budget=8192 bytes), refusing the newest writes until Ruby drains it
-[rig] flood done n=500 rejected=281
-qemu-system-xtensa: terminating on signal 15 from pid 53955 (<unknown process>)
+W (19266) prb_ble_evq: write queue full (budget=8192 bytes), refusing the newest writes until Ruby drains it
+[rig] flood done n=500 rejected=308 begin=18893 end=20315 probes=28
+qemu-system-xtensa: terminating on signal 15 from pid 4463 (<unknown process>)

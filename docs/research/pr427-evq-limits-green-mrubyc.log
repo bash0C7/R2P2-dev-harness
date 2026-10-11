@@ -3,7 +3,7 @@ Executing action: all (aliases: build)
 Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
 Executing "ninja all"...
 [1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
-R2P2-ESP32.bin binary size 0x13c4b0 bytes. Smallest app partition is 0x200000 bytes. 0xc3b50 bytes (38%) free.
+R2P2-ESP32.bin binary size 0x13c850 bytes. Smallest app partition is 0x200000 bytes. 0xc37b0 bytes (38%) free.
 [2/5] Performing build step for 'bootloader'
 [1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
 Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
@@ -39,7 +39,7 @@ load:0x403c8700,len:0xd24
 load:0x403cb700,len:0x2ef0
 entry 0x403c8924
 I (13) boot: ESP-IDF v5.5.4 2nd stage bootloader
-I (13) boot: compile time Oct 11 2026 18:42:48
+I (13) boot: compile time Oct 11 2026 19:33:57
 I (13) boot: Multicore bootloader
 I (15) boot: chip revision: v0.3
 I (16) boot: efuse block revision: v1.0
@@ -47,45 +47,45 @@ I (16) boot.esp32s3: Boot SPI Speed : 80MHz
 I (16) boot.esp32s3: SPI Mode       : SLOW READ
 I (17) boot.esp32s3: SPI Flash Size : 4MB
 I (18) boot: Enabling RNG early entropy source...
-I (20) boot: Partition Table:
+I (21) boot: Partition Table:
 I (21) boot: ## Label            Usage          Type ST Offset   Length
 I (21) boot:  0 nvs              WiFi data        01 02 00009000 00006000
 I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
 I (21) boot:  2 factory          factory app      00 00 00010000 00200000
 I (22) boot:  3 storage          Unknown data     01 83 00210000 00100000
 I (22) boot: End of partition table
-I (23) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7028ch (459404) map
-I (54) esp_image: segment 1: paddr=000802b4 vaddr=3fc98700 size=04370h ( 17264) load
-I (55) esp_image: segment 2: paddr=0008462c vaddr=40374000 size=0b9ech ( 47596) load
-I (59) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b3734h (735028) map
-I (108) esp_image: segment 4: paddr=0014375c vaddr=4037f9ec size=08c9ch ( 35996) load
-I (111) esp_image: segment 5: paddr=0014c400 vaddr=50000000 size=00020h (    32) load
-I (111) esp_image: segment 6: paddr=0014c428 vaddr=600fe000 size=00058h (    88) load
-I (112) boot: Loaded app from partition at offset 0x10000
-I (112) boot: Disabling RNG early entropy source...
-I (118) cpu_start: Multicore app
-I (128) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
-I (129) cpu_start: Pro cpu start user code
-I (129) cpu_start: cpu freq: 160000000 Hz
-I (129) app_init: Application information:
-I (129) app_init: Project name:     R2P2-ESP32
-I (129) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
-I (129) app_init: Compile time:     Oct 11 2026 18:42:40
-I (129) app_init: ELF file SHA256:  2dc192248...
-I (129) app_init: ESP-IDF:          v5.5.4
-I (129) efuse_init: Min chip rev:     v0.0
-I (129) efuse_init: Max chip rev:     v0.99 
-I (130) efuse_init: Chip rev:         v0.3
-I (130) heap_init: Initializing. RAM available for dynamic allocation:
-I (130) heap_init: At 3FCD87D8 len 00010F38 (67 KiB): RAM
-I (130) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
-I (130) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
-I (130) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
-I (132) spi_flash: detected chip: gd
-I (132) spi_flash: flash io: dio
-I (133) sleep_gpio: Configure to isolate all GPIO pins in sleep state
-I (133) sleep_gpio: Enable automatic switching of GPIO sleep configuration
-I (134) main_task: Started on CPU0
+I (23) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7035ch (459612) map
+I (54) esp_image: segment 1: paddr=00080384 vaddr=3fc98700 size=04370h ( 17264) load
+I (56) esp_image: segment 2: paddr=000846fc vaddr=40374000 size=0b91ch ( 47388) load
+I (60) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b3a08h (735752) map
+I (106) esp_image: segment 4: paddr=00143a30 vaddr=4037f91c size=08d6ch ( 36204) load
+I (109) esp_image: segment 5: paddr=0014c7a4 vaddr=50000000 size=00020h (    32) load
+I (110) esp_image: segment 6: paddr=0014c7cc vaddr=600fe000 size=00058h (    88) load
+I (111) boot: Loaded app from partition at offset 0x10000
+I (111) boot: Disabling RNG early entropy source...
+I (116) cpu_start: Multicore app
+I (126) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (127) cpu_start: Pro cpu start user code
+I (127) cpu_start: cpu freq: 160000000 Hz
+I (127) app_init: Application information:
+I (127) app_init: Project name:     R2P2-ESP32
+I (127) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (128) app_init: Compile time:     Oct 11 2026 19:33:48
+I (128) app_init: ELF file SHA256:  ff9b4e392...
+I (128) app_init: ESP-IDF:          v5.5.4
+I (128) efuse_init: Min chip rev:     v0.0
+I (128) efuse_init: Max chip rev:     v0.99 
+I (128) efuse_init: Chip rev:         v0.3
+I (128) heap_init: Initializing. RAM available for dynamic allocation:
+I (128) heap_init: At 3FCD87E8 len 00010F28 (67 KiB): RAM
+I (128) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (128) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (128) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (131) spi_flash: detected chip: gd
+I (131) spi_flash: flash io: dio
+I (131) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (131) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (133) main_task: Started on CPU0
 I (138) main_task: Calling app_main()
 I (140) main_task: Returned from app_main()
 warning: already initialized constant STDIN
@@ -142,100 +142,101 @@ Loading app.rb
 [rig] write enq A
 [rigapp] state 2
 [rig] write enq B
-[rigapp] recv seq=1 tin=6867 t=6874
-[rigapp] recv seq=2 tin=7370 t=7374
-[rigapp] recv seq=3 tin=7870 t=7877
-[rigapp] recv seq=4 tin=8374 t=8377
-[rigapp] recv seq=5 tin=8875 t=8880
-[rigapp] recv seq=6 tin=9376 t=9379
-[rigapp] recv seq=7 tin=9876 t=9879
-[rigapp] recv seq=8 tin=10375 t=10377
-[rigapp] recv seq=9 tin=10877 t=10880
-[rigapp] recv seq=10 tin=11376 t=11380
-[rigapp] recv seq=11 tin=11877 t=11880
-[rigapp] recv seq=12 tin=12376 t=12380
-[rigapp] recv seq=13 tin=12877 t=12881
-[rigapp] recv seq=14 tin=13378 t=13382
-[rigapp] recv seq=15 tin=13877 t=13879
-[rigapp] recv seq=16 tin=14378 t=14382
-[rigapp] recv seq=17 tin=14878 t=14879
-[rigapp] recv seq=18 tin=15378 t=15382
-[rigapp] recv seq=19 tin=15878 t=15882
-[rigapp] recv seq=20 tin=16378 t=16382
-[rigapp] recv seq=21 tin=16878 t=16883
-[rigapp] recv seq=22 tin=16887 t=16890
-[rigapp] recv seq=23 tin=16898 t=16899
-[rigapp] recv seq=24 tin=16908 t=16911
-[rigapp] recv seq=25 tin=16917 t=16918
-[rigapp] recv seq=26 tin=16928 t=16929
-[rigapp] recv seq=27 tin=16938 t=16941
-[rigapp] recv seq=28 tin=16949 t=16952
-[rigapp] recv seq=29 tin=16958 t=16959
-[rigapp] recv seq=30 tin=16969 t=16970
-[rigapp] recv seq=31 tin=16979 t=16982
-[rigapp] recv seq=32 tin=16990 t=16991
-[rigapp] recv seq=33 tin=16999 t=17000
-[rigapp] recv seq=34 tin=17010 t=17011
-[rigapp] recv seq=35 tin=17020 t=17022
-[rigapp] recv seq=36 tin=17031 t=17033
-[rigapp] recv seq=37 tin=17040 t=17042
-[rigapp] recv seq=38 tin=17050 t=17052
-[rigapp] recv seq=39 tin=17061 t=17062
-[rigapp] recv seq=40 tin=17071 t=17073
-[rigapp] recv seq=41 tin=17082 t=17084
-[rigapp] recv seq=42 tin=17093 t=17093
-[rigapp] recv seq=43 tin=17103 t=17105
-[rigapp] recv seq=44 tin=17114 t=17115
-[rigapp] recv seq=45 tin=17124 t=17125
-[rigapp] recv seq=46 tin=17135 t=17136
-[rigapp] recv seq=47 tin=17146 t=17147
-[rigapp] recv seq=48 tin=17156 t=17157
-[rigapp] recv seq=49 tin=17167 t=17168
-[rigapp] recv seq=50 tin=17177 t=17179
-[rigapp] recv seq=51 tin=17188 t=17189
-[rigapp] recv seq=52 tin=17197 t=17198
-[rigapp] recv seq=53 tin=17208 t=17209
-[rigapp] recv seq=54 tin=17218 t=17221
-[rigapp] recv seq=55 tin=17229 t=17230
-[rigapp] recv seq=56 tin=17238 t=17239
-[rigapp] recv seq=57 tin=17249 t=17250
-[rigapp] recv seq=58 tin=17259 t=17261
-[rigapp] recv seq=59 tin=17270 t=17272
-[rigapp] recv seq=60 tin=17281 t=17282
+[rigapp] recv seq=1 tin=6853 t=6863
+[rigapp] recv seq=2 tin=7359 t=7365
+[rigapp] recv seq=3 tin=7860 t=7864
+[rigapp] recv seq=4 tin=8362 t=8367
+[rigapp] recv seq=5 tin=8862 t=8865
+[rigapp] recv seq=6 tin=9362 t=9365
+[rigapp] recv seq=7 tin=9862 t=9867
+[rigapp] recv seq=8 tin=10361 t=10366
+[rigapp] recv seq=9 tin=10862 t=10867
+[rigapp] recv seq=10 tin=11363 t=11368
+[rigapp] recv seq=11 tin=11863 t=11867
+[rigapp] recv seq=12 tin=12363 t=12366
+[rigapp] recv seq=13 tin=12863 t=12865
+[rigapp] recv seq=14 tin=13364 t=13369
+[rigapp] recv seq=15 tin=13864 t=13865
+[rigapp] recv seq=16 tin=14364 t=14367
+[rigapp] recv seq=17 tin=14863 t=14867
+[rigapp] recv seq=18 tin=15363 t=15367
+[rigapp] recv seq=19 tin=15864 t=15868
+[rigapp] recv seq=20 tin=16364 t=16367
+[rigapp] recv seq=21 tin=16863 t=16867
+[rigapp] recv seq=22 tin=16874 t=16875
+[rigapp] recv seq=23 tin=16883 t=16885
+[rigapp] recv seq=24 tin=16894 t=16895
+[rigapp] recv seq=25 tin=16905 t=16906
+[rigapp] recv seq=26 tin=16915 t=16918
+[rigapp] recv seq=27 tin=16926 t=16929
+[rigapp] recv seq=28 tin=16937 t=16938
+[rigapp] recv seq=29 tin=16947 t=16949
+[rigapp] recv seq=30 tin=16958 t=16959
+[rigapp] recv seq=31 tin=16967 t=16968
+[rigapp] recv seq=32 tin=16978 t=16979
+[rigapp] recv seq=33 tin=16988 t=16990
+[rigapp] recv seq=34 tin=16999 t=17000
+[rigapp] recv seq=35 tin=17008 t=17009
+[rigapp] recv seq=36 tin=17019 t=17020
+[rigapp] recv seq=37 tin=17029 t=17030
+[rigapp] recv seq=38 tin=17040 t=17041
+[rigapp] recv seq=39 tin=17049 t=17052
+[rigapp] recv seq=40 tin=17060 t=17061
+[rigapp] recv seq=41 tin=17070 t=17073
+[rigapp] recv seq=42 tin=17081 t=17082
+[rigapp] recv seq=43 tin=17092 t=17094
+[rigapp] recv seq=44 tin=17102 t=17103
+[rigapp] recv seq=45 tin=17113 t=17114
+[rigapp] recv seq=46 tin=17123 t=17126
+[rigapp] recv seq=47 tin=17134 t=17135
+[rigapp] recv seq=48 tin=17145 t=17146
+[rigapp] recv seq=49 tin=17155 t=17158
+[rigapp] recv seq=50 tin=17166 t=17167
+[rigapp] recv seq=51 tin=17177 t=17178
+[rigapp] recv seq=52 tin=17187 t=17188
+[rigapp] recv seq=53 tin=17198 t=17199
+[rigapp] recv seq=54 tin=17208 t=17210
+[rigapp] recv seq=55 tin=17219 t=17220
+[rigapp] recv seq=56 tin=17229 t=17231
+[rigapp] recv seq=57 tin=17240 t=17241
+[rigapp] recv seq=58 tin=17251 t=17252
+[rigapp] recv seq=59 tin=17261 t=17262
+[rigapp] recv seq=60 tin=17272 t=17273
 [rig] inject done n=60
+W (18739) prb_ble_evq: writes to handle 68 refused: 16 values not yet popped (limit 16), refusing the newest writes to it until Ruby pops
 [rig] wlat done n=20
-W (19153) prb_ble_evq: event ring full (budget=1024 bytes), refusing the newest entries until Ruby drains it
-[rigapp] recv seq=101 tin=19300 t=19309
-[rigapp] recv seq=102 tin=19300 t=19313
-[rigapp] recv seq=103 tin=19300 t=19316
-[rigapp] recv seq=104 tin=19300 t=19318
-[rigapp] recv seq=105 tin=19300 t=19320
-[rigapp] recv seq=106 tin=19300 t=19323
-[rigapp] recv seq=107 tin=19300 t=19325
-[rigapp] recv seq=108 tin=19300 t=19327
-[rigapp] recv seq=109 tin=19301 t=19329
-[rigapp] recv seq=110 tin=19301 t=19331
-[rigapp] recv seq=111 tin=19301 t=19333
-[rigapp] recv seq=112 tin=19301 t=19334
-[rigapp] recv seq=113 tin=19301 t=19336
-[rigapp] recv seq=114 tin=19301 t=19338
-[rigapp] recv seq=115 tin=19301 t=19339
-[rigapp] recv seq=116 tin=19301 t=19341
-[rigapp] recv seq=117 tin=19301 t=19343
-[rigapp] recv seq=118 tin=19301 t=19344
-[rigapp] recv seq=119 tin=19301 t=19346
-[rigapp] recv seq=120 tin=19301 t=19347
-[rigapp] recv seq=121 tin=19301 t=19349
-[rigapp] recv seq=122 tin=19301 t=19350
-[rigapp] recv seq=123 tin=19301 t=19352
-[rigapp] recv seq=124 tin=19302 t=19353
-[rigapp] recv seq=125 tin=19302 t=19355
-[rigapp] recv seq=126 tin=19302 t=19356
-[rigapp] recv seq=127 tin=19302 t=19357
-[rigapp] recv seq=128 tin=19302 t=19359
-[rigapp] recv seq=129 tin=19302 t=19360
-[rigapp] recv seq=130 tin=19302 t=19361
-[rigapp] recv seq=131 tin=19302 t=19363
+W (19148) prb_ble_evq: event ring full (budget=1024 bytes), refusing the newest entries until Ruby drains it
+[rigapp] recv seq=101 tin=19291 t=19301
+[rigapp] recv seq=102 tin=19292 t=19305
+[rigapp] recv seq=103 tin=19292 t=19308
+[rigapp] recv seq=104 tin=19292 t=19312
+[rigapp] recv seq=105 tin=19292 t=19315
+[rigapp] recv seq=106 tin=19292 t=19317
+[rigapp] recv seq=107 tin=19292 t=19319
+[rigapp] recv seq=108 tin=19292 t=19322
+[rigapp] recv seq=109 tin=19292 t=19324
+[rigapp] recv seq=110 tin=19292 t=19326
+[rigapp] recv seq=111 tin=19292 t=19328
+[rigapp] recv seq=112 tin=19293 t=19330
+[rigapp] recv seq=113 tin=19293 t=19332
+[rigapp] recv seq=114 tin=19293 t=19333
+[rigapp] recv seq=115 tin=19293 t=19335
+[rigapp] recv seq=116 tin=19293 t=19337
+[rigapp] recv seq=117 tin=19293 t=19338
+[rigapp] recv seq=118 tin=19293 t=19340
+[rigapp] recv seq=119 tin=19293 t=19342
+[rigapp] recv seq=120 tin=19293 t=19343
+[rigapp] recv seq=121 tin=19293 t=19345
+[rigapp] recv seq=122 tin=19293 t=19346
+[rigapp] recv seq=123 tin=19293 t=19348
+[rigapp] recv seq=124 tin=19293 t=19349
+[rigapp] recv seq=125 tin=19293 t=19350
+[rigapp] recv seq=126 tin=19294 t=19352
+[rigapp] recv seq=127 tin=19294 t=19353
+[rigapp] recv seq=128 tin=19294 t=19354
+[rigapp] recv seq=129 tin=19294 t=19356
+[rigapp] recv seq=130 tin=19294 t=19357
+[rigapp] recv seq=131 tin=19294 t=19359
 [rig] burst accepted=31 refused=49 first_refused=132 budget=1024 entry=32
 [rig] burst done first=101 last=180
 [rig] notify injected len=93
@@ -243,53 +244,52 @@ W (19153) prb_ble_evq: event ring full (budget=1024 bytes), refusing the newest 
 [rig] notify injected len=200
 [rigapp] notif len=200 raw=212
 [rigapp] disc 17
-[rigapp] recv seq=201 tin=25619 t=25625
-[rigapp] recv seq=202 tin=25620 t=25629
-[rigapp] recv seq=203 tin=25620 t=25633
-[rigapp] recv seq=204 tin=25620 t=25637
-[rigapp] recv seq=205 tin=25620 t=25640
-[rigapp] recv seq=206 tin=25620 t=25643
-[rigapp] recv seq=207 tin=25620 t=25645
-[rigapp] recv seq=208 tin=25620 t=25647
-[rigapp] recv seq=209 tin=25620 t=25649
-[rigapp] recv seq=210 tin=25620 t=25651
-[rigapp] recv seq=211 tin=25620 t=25653
-[rigapp] recv seq=212 tin=25620 t=25655
-[rigapp] recv seq=213 tin=25621 t=25657
-[rigapp] recv seq=214 tin=25621 t=25659
-[rigapp] recv seq=215 tin=25621 t=25660
-[rigapp] recv seq=216 tin=25621 t=25662
-[rigapp] recv seq=217 tin=25621 t=25664
-[rigapp] recv seq=218 tin=25621 t=25665
-[rigapp] recv seq=219 tin=25621 t=25667
-[rigapp] recv seq=220 tin=25621 t=25668
-[rigapp] recv seq=221 tin=25621 t=25670
-[rigapp] recv seq=222 tin=25621 t=25672
-[rigapp] recv seq=223 tin=25621 t=25673
-[rigapp] recv seq=224 tin=25622 t=25675
-[rigapp] recv seq=225 tin=25622 t=25676
-[rigapp] recv seq=226 tin=25622 t=25677
-[rigapp] recv seq=227 tin=25622 t=25679
-[rigapp] recv seq=228 tin=25622 t=25680
-[rigapp] recv seq=229 tin=25622 t=25682
-[rigapp] recv seq=230 tin=25622 t=25683
-[rigapp] recv seq=231 tin=25622 t=25684
-[rigapp] recv seq=232 tin=25622 t=25686
-[rigapp] recv seq=233 tin=25622 t=25687
-[rigapp] recv seq=234 tin=25622 t=25688
-[rigapp] recv seq=235 tin=25622 t=25689
-[rigapp] recv seq=236 tin=25622 t=25691
-[rigapp] recv seq=237 tin=25622 t=25692
-[rigapp] recv seq=238 tin=25622 t=25693
-[rigapp] recv seq=239 tin=25622 t=25694
-[rigapp] recv seq=240 tin=25622 t=25696
-[rigapp] recv seq=241 tin=25622 t=25697
-[rigapp] recv seq=242 tin=25622 t=25698
-[rigapp] recv seq=243 tin=25622 t=25699
-[rigapp] recv seq=244 tin=25622 t=25700
-[rigapp] recv seq=245 tin=25623 t=25701
-[rigapp] recv seq=246 tin=25623 t=25703
-[rigapp] recv seq=247 tin=25623 t=25704
+[rigapp] recv seq=201 tin=25610 t=25614
+[rigapp] recv seq=202 tin=25610 t=25617
+[rigapp] recv seq=203 tin=25611 t=25620
+[rigapp] recv seq=204 tin=25611 t=25622
+[rigapp] recv seq=205 tin=25611 t=25624
+[rigapp] recv seq=206 tin=25611 t=25626
+[rigapp] recv seq=207 tin=25611 t=25628
+[rigapp] recv seq=208 tin=25611 t=25630
+[rigapp] recv seq=209 tin=25611 t=25632
+[rigapp] recv seq=210 tin=25611 t=25634
+[rigapp] recv seq=211 tin=25611 t=25636
+[rigapp] recv seq=212 tin=25611 t=25637
+[rigapp] recv seq=213 tin=25611 t=25639
+[rigapp] recv seq=214 tin=25611 t=25641
+[rigapp] recv seq=215 tin=25611 t=25642
+[rigapp] recv seq=216 tin=25611 t=25644
+[rigapp] recv seq=217 tin=25611 t=25645
+[rigapp] recv seq=218 tin=25611 t=25647
+[rigapp] recv seq=219 tin=25611 t=25648
+[rigapp] recv seq=220 tin=25611 t=25650
+[rigapp] recv seq=221 tin=25611 t=25651
+[rigapp] recv seq=222 tin=25611 t=25653
+[rigapp] recv seq=223 tin=25611 t=25654
+[rigapp] recv seq=224 tin=25611 t=25655
+[rigapp] recv seq=225 tin=25611 t=25657
+[rigapp] recv seq=226 tin=25611 t=25658
+[rigapp] recv seq=227 tin=25611 t=25659
+[rigapp] recv seq=228 tin=25611 t=25661
+[rigapp] recv seq=229 tin=25611 t=25662
+[rigapp] recv seq=230 tin=25612 t=25663
+[rigapp] recv seq=231 tin=25612 t=25664
+[rigapp] recv seq=232 tin=25612 t=25666
+[rigapp] recv seq=233 tin=25612 t=25667
+[rigapp] recv seq=234 tin=25612 t=25668
+[rigapp] recv seq=235 tin=25612 t=25669
+[rigapp] recv seq=236 tin=25612 t=25671
+[rigapp] recv seq=237 tin=25612 t=25672
+[rigapp] recv seq=238 tin=25612 t=25673
+[rigapp] recv seq=239 tin=25612 t=25674
+[rigapp] recv seq=240 tin=25612 t=25675
+[rigapp] recv seq=241 tin=25612 t=25676
+[rigapp] recv seq=242 tin=25612 t=25678
+[rigapp] recv seq=243 tin=25612 t=25679
+[rigapp] recv seq=244 tin=25612 t=25680
+[rigapp] recv seq=245 tin=25612 t=25681
+[rigapp] recv seq=246 tin=25612 t=25682
 [rigapp] disc 34
 [rig] control done first=201 last=260 h1=17 h2=34
 [rigapp] mark 1
@@ -347,4 +347,4 @@ W (19153) prb_ble_evq: event ring full (budget=1024 bytes), refusing the newest 
 [rig] proc B done
 [rigapp] mark 3
 [rig] limits done
-qemu-system-xtensa: terminating on signal 15 from pid 70465 (<unknown process>)
+qemu-system-xtensa: terminating on signal 15 from pid 2264 (<unknown process>)

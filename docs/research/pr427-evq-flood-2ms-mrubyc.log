@@ -3,7 +3,7 @@ Executing action: all (aliases: build)
 Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
 Executing "ninja all"...
 [1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
-R2P2-ESP32.bin binary size 0x13c0c0 bytes. Smallest app partition is 0x200000 bytes. 0xc3f40 bytes (38%) free.
+R2P2-ESP32.bin binary size 0x13c510 bytes. Smallest app partition is 0x200000 bytes. 0xc3af0 bytes (38%) free.
 [2/5] Performing build step for 'bootloader'
 [1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
 Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
@@ -39,7 +39,7 @@ load:0x403c8700,len:0xd24
 load:0x403cb700,len:0x2ef0
 entry 0x403c8924
 I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
-I (13) boot: compile time Oct 11 2026 18:49:31
+I (13) boot: compile time Oct 11 2026 19:46:20
 I (13) boot: Multicore bootloader
 I (15) boot: chip revision: v0.3
 I (15) boot: efuse block revision: v1.0
@@ -53,41 +53,41 @@ I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
 I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
 I (21) boot:  2 factory          factory app      00 00 00010000 00200000
 I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
-I (21) boot: End of partition table
-I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7014ch (459084) map
-I (53) esp_image: segment 1: paddr=00080174 vaddr=3fc98700 size=04370h ( 17264) load
-I (55) esp_image: segment 2: paddr=000844ec vaddr=40374000 size=0bb2ch ( 47916) load
-I (59) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b3490h (734352) map
-I (106) esp_image: segment 4: paddr=001434b8 vaddr=4037fb2c size=08b5ch ( 35676) load
-I (108) esp_image: segment 5: paddr=0014c01c vaddr=50000000 size=00020h (    32) load
-I (109) esp_image: segment 6: paddr=0014c044 vaddr=600fe000 size=00058h (    88) load
-I (110) boot: Loaded app from partition at offset 0x10000
-I (110) boot: Disabling RNG early entropy source...
-I (116) cpu_start: Multicore app
-I (125) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
-I (127) cpu_start: Pro cpu start user code
-I (127) cpu_start: cpu freq: 160000000 Hz
-I (127) app_init: Application information:
-I (127) app_init: Project name:     R2P2-ESP32
-I (127) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
-I (127) app_init: Compile time:     Oct 11 2026 18:49:22
-I (127) app_init: ELF file SHA256:  d94683b7d...
-I (127) app_init: ESP-IDF:          v5.5.4
-I (127) efuse_init: Min chip rev:     v0.0
-I (127) efuse_init: Max chip rev:     v0.99 
-I (127) efuse_init: Chip rev:         v0.3
-I (127) heap_init: Initializing. RAM available for dynamic allocation:
-I (127) heap_init: At 3FCC0270 len 000294A0 (165 KiB): RAM
-I (127) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
-I (127) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
-I (128) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
-I (130) spi_flash: detected chip: gd
-I (130) spi_flash: flash io: dio
-I (130) sleep_gpio: Configure to isolate all GPIO pins in sleep state
-I (131) sleep_gpio: Enable automatic switching of GPIO sleep configuration
-I (132) main_task: Started on CPU0
-I (137) main_task: Calling app_main()
-I (138) main_task: Returned from app_main()
+I (22) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7023ch (459324) map
+I (53) esp_image: segment 1: paddr=00080264 vaddr=3fc98700 size=04370h ( 17264) load
+I (55) esp_image: segment 2: paddr=000845dc vaddr=40374000 size=0ba3ch ( 47676) load
+I (59) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b37f0h (735216) map
+I (108) esp_image: segment 4: paddr=00143818 vaddr=4037fa3c size=08c4ch ( 35916) load
+I (111) esp_image: segment 5: paddr=0014c46c vaddr=50000000 size=00020h (    32) load
+I (111) esp_image: segment 6: paddr=0014c494 vaddr=600fe000 size=00058h (    88) load
+I (112) boot: Loaded app from partition at offset 0x10000
+I (112) boot: Disabling RNG early entropy source...
+I (118) cpu_start: Multicore app
+I (128) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (129) cpu_start: Pro cpu start user code
+I (129) cpu_start: cpu freq: 160000000 Hz
+I (129) app_init: Application information:
+I (129) app_init: Project name:     R2P2-ESP32
+I (129) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (129) app_init: Compile time:     Oct 11 2026 19:46:12
+I (129) app_init: ELF file SHA256:  0f5ccb56e...
+I (129) app_init: ESP-IDF:          v5.5.4
+I (129) efuse_init: Min chip rev:     v0.0
+I (129) efuse_init: Max chip rev:     v0.99 
+I (129) efuse_init: Chip rev:         v0.3
+I (130) heap_init: Initializing. RAM available for dynamic allocation:
+I (130) heap_init: At 3FCC2A80 len 00026C90 (155 KiB): RAM
+I (130) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (130) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (130) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (132) spi_flash: detected chip: gd
+I (132) spi_flash: flash io: dio
+I (133) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (133) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (134) main_task: Started on CPU0
+I (139) main_task: Calling app_main()
+I (140) main_task: Returned from app_main()
 warning: already initialized constant STDIN
 warning: already initialized constant STDOUT
 Initializing FLASH disk as the root volume... 
@@ -137,153 +137,201 @@ Not found: /etc/machine-id, Writing 12 bytes
 Available
 File /etc/network/wifi.yml does not exist
 Loading app.rb
-[rigapp] mem init total=102400 used=75996 free=26060 frag=27
+[rigapp] mem init total=112640 used=75696 free=36600 frag=33
 [rig] write enq A
 [rigapp] write h=0x42 v="A"
 [rig] write enq B
 [rigapp] write h=0x42 v="B"
-[rigapp] recv seq=1 tin=6838 t=6847
-[rigapp] recv seq=2 tin=7343 t=7349
-[rigapp] recv seq=3 tin=7846 t=7848
-[rigapp] recv seq=4 tin=8346 t=8350
-[rigapp] recv seq=5 tin=8846 t=8849
-[rigapp] recv seq=6 tin=9346 t=9349
-[rigapp] recv seq=7 tin=9847 t=9850
-[rigapp] recv seq=8 tin=10347 t=10350
-[rigapp] recv seq=9 tin=10847 t=10849
-[rigapp] recv seq=10 tin=11347 t=11351
-[rigapp] recv seq=11 tin=11848 t=11853
-[rigapp] recv seq=12 tin=12350 t=12353
-[rigapp] recv seq=13 tin=12851 t=12853
-[rigapp] recv seq=14 tin=13351 t=13356
-[rigapp] recv seq=15 tin=13851 t=13852
-[rigapp] recv seq=16 tin=14351 t=14354
-[rigapp] recv seq=17 tin=14853 t=14855
-[rigapp] recv seq=18 tin=15353 t=15357
-[rigapp] recv seq=19 tin=15853 t=15855
-[rigapp] recv seq=20 tin=16352 t=16357
-[rigapp] recv seq=21 tin=16853 t=16856
-[rigapp] recv seq=22 tin=16864 t=16865
-[rigapp] recv seq=23 tin=16875 t=16875
-[rigapp] recv seq=24 tin=16885 t=16888
-[rigapp] recv seq=25 tin=16896 t=16897
-[rigapp] recv seq=26 tin=16906 t=16907
-[rigapp] recv seq=27 tin=16917 t=16919
-[rigapp] recv seq=28 tin=16927 t=16930
-[rigapp] recv seq=29 tin=16938 t=16939
-[rigapp] recv seq=30 tin=16947 t=16948
-[rigapp] recv seq=31 tin=16958 t=16959
-[rigapp] recv seq=32 tin=16968 t=16971
-[rigapp] recv seq=33 tin=16979 t=16980
-[rigapp] recv seq=34 tin=16988 t=16989
-[rigapp] recv seq=35 tin=16999 t=17000
-[rigapp] recv seq=36 tin=17009 t=17011
-[rigapp] recv seq=37 tin=17020 t=17021
-[rigapp] recv seq=38 tin=17029 t=17030
-[rigapp] recv seq=39 tin=17040 t=17041
-[rigapp] recv seq=40 tin=17050 t=17053
-[rigapp] recv seq=41 tin=17061 t=17062
-[rigapp] recv seq=42 tin=17072 t=17075
-[rigapp] recv seq=43 tin=17083 t=17084
-[rigapp] recv seq=44 tin=17094 t=17095
-[rigapp] recv seq=45 tin=17104 t=17105
-[rigapp] recv seq=46 tin=17113 t=17114
-[rigapp] recv seq=47 tin=17124 t=17126
-[rigapp] recv seq=48 tin=17134 t=17136
-[rigapp] recv seq=49 tin=17145 t=17146
-[rigapp] recv seq=50 tin=17155 t=17156
-[rigapp] recv seq=51 tin=17166 t=17167
-[rigapp] recv seq=52 tin=17177 t=17178
-[rigapp] recv seq=53 tin=17187 t=17190
-[rigapp] recv seq=54 tin=17198 t=17199
-[rigapp] recv seq=55 tin=17208 t=17209
-[rigapp] recv seq=56 tin=17218 t=17219
-[rigapp] recv seq=57 tin=17229 t=17231
-[rigapp] recv seq=58 tin=17239 t=17241
-[rigapp] recv seq=59 tin=17249 t=17251
-[rigapp] recv seq=60 tin=17260 t=17261
+[rigapp] recv seq=1 tin=6846 t=6853
+[rigapp] recv seq=2 tin=7350 t=7353
+[rigapp] recv seq=3 tin=7851 t=7858
+[rigapp] recv seq=4 tin=8354 t=8357
+[rigapp] recv seq=5 tin=8854 t=8858
+[rigapp] recv seq=6 tin=9354 t=9358
+[rigapp] recv seq=7 tin=9856 t=9859
+[rigapp] recv seq=8 tin=10356 t=10360
+[rigapp] recv seq=9 tin=10855 t=10859
+[rigapp] recv seq=10 tin=11356 t=11361
+[rigapp] recv seq=11 tin=11857 t=11862
+[rigapp] recv seq=12 tin=12358 t=12362
+[rigapp] recv seq=13 tin=12858 t=12860
+[rigapp] recv seq=14 tin=13358 t=13363
+[rigapp] recv seq=15 tin=13859 t=13860
+[rigapp] recv seq=16 tin=14358 t=14363
+[rigapp] recv seq=17 tin=14859 t=14861
+[rigapp] recv seq=18 tin=15358 t=15363
+[rigapp] recv seq=19 tin=15859 t=15862
+[rigapp] recv seq=20 tin=16360 t=16364
+[rigapp] recv seq=21 tin=16860 t=16863
+[rigapp] recv seq=22 tin=16870 t=16873
+[rigapp] recv seq=23 tin=16881 t=16882
+[rigapp] recv seq=24 tin=16890 t=16892
+[rigapp] recv seq=25 tin=16901 t=16902
+[rigapp] recv seq=26 tin=16912 t=16913
+[rigapp] recv seq=27 tin=16922 t=16925
+[rigapp] recv seq=28 tin=16933 t=16934
+[rigapp] recv seq=29 tin=16943 t=16945
+[rigapp] recv seq=30 tin=16954 t=16955
+[rigapp] recv seq=31 tin=16965 t=16967
+[rigapp] recv seq=32 tin=16975 t=16978
+[rigapp] recv seq=33 tin=16986 t=16987
+[rigapp] recv seq=34 tin=16997 t=16999
+[rigapp] recv seq=35 tin=17007 t=17008
+[rigapp] recv seq=36 tin=17016 t=17019
+[rigapp] recv seq=37 tin=17027 t=17028
+[rigapp] recv seq=38 tin=17037 t=17040
+[rigapp] recv seq=39 tin=17048 t=17049
+[rigapp] recv seq=40 tin=17057 t=17058
+[rigapp] recv seq=41 tin=17068 t=17069
+[rigapp] recv seq=42 tin=17078 t=17081
+[rigapp] recv seq=43 tin=17089 t=17090
+[rigapp] recv seq=44 tin=17098 t=17099
+[rigapp] recv seq=45 tin=17109 t=17110
+[rigapp] recv seq=46 tin=17119 t=17121
+[rigapp] recv seq=47 tin=17130 t=17131
+[rigapp] recv seq=48 tin=17139 t=17141
+[rigapp] recv seq=49 tin=17150 t=17151
+[rigapp] recv seq=50 tin=17161 t=17163
+[rigapp] recv seq=51 tin=17171 t=17173
+[rigapp] recv seq=52 tin=17182 t=17183
+[rigapp] recv seq=53 tin=17191 t=17192
+[rigapp] recv seq=54 tin=17202 t=17203
+[rigapp] recv seq=55 tin=17212 t=17214
+[rigapp] recv seq=56 tin=17223 t=17226
+[rigapp] recv seq=57 tin=17232 t=17233
+[rigapp] recv seq=58 tin=17243 t=17244
+[rigapp] recv seq=59 tin=17253 t=17254
+[rigapp] recv seq=60 tin=17264 t=17265
 [rig] inject done n=60
-[rigapp] wlat tin=17270 t=17286
-[rigapp] wlat tin=17370 t=17377
-[rigapp] wlat tin=17472 t=17497
-[rigapp] wlat tin=17572 t=17587
-[rigapp] wlat tin=17672 t=17677
-[rigapp] wlat tin=17772 t=17796
-[rigapp] wlat tin=17872 t=17886
-[rigapp] wlat tin=17973 t=17976
-[rigapp] wlat tin=18072 t=18097
-[rigapp] wlat tin=18173 t=18187
-[rigapp] wlat tin=18273 t=18277
-[rigapp] wlat tin=18373 t=18397
-[rigapp] wlat tin=18474 t=18486
-[rigapp] wlat tin=18574 t=18576
-[rigapp] wlat tin=18675 t=18696
-[rigapp] wlat tin=18775 t=18796
-[rigapp] wlat tin=18875 t=18887
-[rigapp] wlat tin=18975 t=18977
-[rigapp] wlat tin=19076 t=19097
-[rigapp] wlat tin=19176 t=19187
+[rigapp] wlat tin=17275 t=17291
+[rigapp] wlat tin=17374 t=17383
+[rigapp] wlat tin=17474 t=17502
+[rigapp] wlat tin=17575 t=17593
+[rigapp] wlat tin=17677 t=17682
+[rigapp] wlat tin=17778 t=17803
+[rigapp] wlat tin=17879 t=17892
+[rigapp] wlat tin=17980 t=17982
+[rigapp] wlat tin=18081 t=18102
+[rigapp] wlat tin=18181 t=18193
+[rigapp] wlat tin=18282 t=18283
+[rigapp] wlat tin=18382 t=18401
+[rigapp] wlat tin=18483 t=18491
+[rigapp] wlat tin=18583 t=18612
+[rigapp] wlat tin=18683 t=18701
+[rigapp] wlat tin=18782 t=18803
+[rigapp] wlat tin=18883 t=18892
+[rigapp] wlat tin=18983 t=19012
+[rigapp] wlat tin=19084 t=19102
+[rigapp] wlat tin=19185 t=19191
 [rig] wlat done n=20
-[rigapp] flood received=1 bytes=128
-[rigapp] flood received=11 bytes=1408
-[rigapp] flood received=23 bytes=2944
-[rigapp] flood received=34 bytes=4352
-[rigapp] flood received=45 bytes=5760
-[rigapp] flood received=57 bytes=7296
-[rigapp] flood received=67 bytes=8576
-[rigapp] flood received=78 bytes=9984
-[rigapp] flood received=89 bytes=11392
-[rigapp] flood received=100 bytes=12800
-[rigapp] flood received=111 bytes=14208
-[rigapp] flood received=122 bytes=15616
-[rigapp] flood received=134 bytes=17152
-[rigapp] flood received=146 bytes=18688
-[rigapp] flood received=157 bytes=20096
-[rigapp] flood received=167 bytes=21376
-[rigapp] mem hb total_received=167 total=102400 used=77664 free=24392 frag=25
-[rigapp] flood received=172 bytes=22016
-[rigapp] flood received=181 bytes=23168
-[rigapp] flood received=191 bytes=24448
-[rigapp] flood received=203 bytes=25984
-[rigapp] flood received=214 bytes=27392
-[rigapp] flood received=224 bytes=28672
-[rigapp] flood received=235 bytes=30080
-[rigapp] flood received=245 bytes=31360
-[rigapp] flood received=256 bytes=32768
-[rigapp] flood received=266 bytes=34048
-[rigapp] flood received=276 bytes=35328
-[rigapp] flood received=286 bytes=36608
-[rigapp] flood received=296 bytes=37888
-[rigapp] flood received=308 bytes=39424
-[rigapp] flood received=320 bytes=40960
-[rigapp] flood received=331 bytes=42368
-[rigapp] flood received=341 bytes=43648
-[rigapp] flood received=353 bytes=45184
-[rigapp] flood received=364 bytes=46592
-[rigapp] flood received=374 bytes=47872
-[rigapp] flood received=385 bytes=49280
-[rigapp] flood received=395 bytes=50560
-[rigapp] flood received=407 bytes=52096
-[rigapp] flood received=419 bytes=53632
-[rigapp] flood received=430 bytes=55040
-[rigapp] flood received=441 bytes=56448
-[rigapp] flood received=451 bytes=57728
-[rigapp] flood received=462 bytes=59136
-[rigapp] flood received=472 bytes=60416
-[rigapp] flood received=482 bytes=61696
-[rigapp] flood received=492 bytes=62976
-[rigapp] flood received=500 bytes=64000
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rig] flood done n=500 rejected=0
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
-[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
-qemu-system-xtensa: terminating on signal 15 from pid 4575 (<unknown process>)
+[rigapp] wlat tin=19299 t=19312
+[rigapp] flood received=10 bytes=1280 t=19317
+[rigapp] wlat tin=19327 t=19341
+[rigapp] flood received=21 bytes=2688 t=19345
+[rigapp] wlat tin=19353 t=19372
+[rigapp] flood received=32 bytes=4096 t=19376
+[rigapp] wlat tin=19383 t=19401
+[rigapp] flood received=42 bytes=5376 t=19406
+[rigapp] wlat tin=19410 t=19433
+[rigapp] flood received=53 bytes=6784 t=19437
+[rigapp] wlat tin=19441 t=19472
+[rigapp] wlat tin=19468 t=19474
+[rigapp] flood reW (19330) prb_ble_evq: writes to handle 67 refused: 16 values not yet popped (limit 16), refusing the newest writes to it until Ruby pops
+ceived=67 bytes=8576 t=19478
+[rigapp] wlat tin=19496 t=19512
+[rigapp] flood received=80 bytes=10240 t=19515
+[rigapp] wlat tin=19520 t=19542
+[rigapp] flood received=92 bytes=11776 t=19545
+[rigapp] wlat tin=19545 t=19572
+[rigapp] wlat tin=19571 t=19574
+[rigapp] flood received=104 bytes=13312 t=19577
+[rigapp] wlat tin=19599 t=19602
+[rigapp] flood received=115 bytes=14720 t=19605
+[rigapp] wlat tin=19624 t=19632
+[rigapp] flood received=126 bytes=16128 t=19636
+[rigapp] wlat tin=19653 t=19662
+[rigapp] flood received=136 bytes=17408 t=19665
+[rigapp] wlat tin=19682 t=19692
+[rigapp] flood received=148 bytes=18944 t=19697
+[rigapp] wlat tin=19708 t=19721
+[rigapp] flood received=158 bytes=20224 t=19725
+[rigapp] mem hb total_received=158 total=112640 used=78020 free=34276 frag=31
+[rigapp] wlat tin=19736 t=19752
+[rigapp] flood received=169 bytes=21632 t=19754
+[rigapp] wlat tin=19763 t=19782
+[rigapp] flood received=180 bytes=23040 t=19785
+[rigapp] wlat tin=19794 t=19813
+[rigapp] flood received=190 bytes=24320 t=19817
+[rigapp] wlat tin=19822 t=19842
+[rigapp] flood received=201 bytes=25728 t=19845
+[rigapp] wlat tin=19848 t=19871
+[rigapp] flood received=213 bytes=27264 t=19875
+[rigapp] wlat tin=19872 t=19902
+[rigapp] wlat tin=19898 t=19906
+[rigapp] flood received=225 bytes=28800 t=19909
+[rigapp] wlat tin=19927 t=19942
+[rigapp] flood received=240 bytes=30720 t=19947
+[rigapp] wlat tin=19953 t=19972
+[rigapp] flood received=249 bytes=31872 t=19975
+[rigapp] wlat tin=19981 t=20002
+[rigapp] flood received=260 bytes=33280 t=20004
+[rigapp] wlat tin=20009 t=20031
+[rigapp] flood received=270 bytes=34560 t=20033
+[rigapp] wlat tin=20038 t=20062
+[rigapp] flood received=281 bytes=35968 t=20064
+[rigapp] wlat tin=20067 t=20092
+[rigapp] wlat tin=20092 t=20095
+[rigapp] flood received=293 bytes=37504 t=20098
+[rigapp] wlat tin=20118 t=20122
+[rigapp] flood received=304 bytes=38912 t=20124
+[rigapp] wlat tin=20146 t=20151
+[rigapp] flood received=314 bytes=40192 t=20154
+[rigapp] wlat tin=20176 t=20181
+[rigapp] flood received=324 bytes=41472 t=20184
+[rigapp] wlat tin=20203 t=20211
+[rigapp] flood received=335 bytes=42880 t=20215
+[rigapp] wlat tin=20230 t=20242
+[rigapp] flood received=347 bytes=44416 t=20245
+[rigapp] wlat tin=20254 t=20271
+[rigapp] flood received=358 bytes=45824 t=20275
+[rigapp] wlat tin=20283 t=20301
+[rigapp] flood received=369 bytes=47232 t=20305
+[rigapp] wlat tin=20309 t=20331
+[rigapp] flood received=380 bytes=48640 t=20335
+[rigapp] wlat tin=20339 t=20362
+[rigapp] flood received=391 bytes=50048 t=20366
+[rigapp] wlat tin=20365 t=20392
+[rigapp] flood received=402 bytes=51456 t=20397
+[rigapp] wlat tin=20394 t=20422
+[rigapp] flood received=412 bytes=52736 t=20425
+[rigapp] wlat tin=20424 t=20451
+[rigapp] wlat tin=20449 t=20454
+[rigapp] flood received=423 bytes=54144 t=20457
+[rigapp] wlat tin=20478 t=20482
+[rigapp] flood received=434 bytes=55552 t=20485
+[rigapp] wlat tin=20508 t=20513
+[rigapp] flood received=445 bytes=56960 t=20517
+[rigapp] wlat tin=20535 t=20542
+[rigapp] flood received=455 bytes=58240 t=20546
+[rigapp] wlat tin=20562 t=20572
+[rigapp] flood received=467 bytes=59776 t=20576
+[rigapp] wlat tin=20586 t=20602
+[rigapp] flood received=478 bytes=61184 t=20607
+[rigapp] wlat tin=20613 t=20632
+[rigapp] flood received=489 bytes=62592 t=20637
+[rigapp] wlat tin=20641 t=20663
+[rigapp] flood received=497 bytes=63616 t=20667
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rig] flood done n=500 rejected=3 begin=19287 end=20651 probes=50
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+[rigapp] mem hb total_received=497 total=112640 used=76600 free=35696 frag=37
+qemu-system-xtensa: terminating on signal 15 from pid 62787 (<unknown process>)
