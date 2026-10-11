@@ -108,9 +108,8 @@ extern void rig_stub_install_npl(void);
 /* absent from the ports that predate the advertising callout */
 extern void picoruby_ble_peripheral_rearm_init(void) __attribute__((weak));
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
-#ifndef PICORUBY_QEMU_EVQ_OLD_PORT
-extern int picoruby_nimble_set_write_handles(const uint16_t *handles, size_t count);
-#endif
+/* absent from the ports that do not keep a row per write handle */
+extern int picoruby_nimble_set_write_handles(const uint16_t *handles, size_t count) __attribute__((weak));
 
 #if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER) || defined(PICORUBY_QEMU_EVQ_RESYNC)
 /* Same includes as ports/esp32/ble.c: the notification path is fed with a
@@ -556,13 +555,11 @@ rig_start(void)
   rig_record_vm_task();
   rig_stub_install_npl();
   if (picoruby_ble_peripheral_rearm_init != NULL) picoruby_ble_peripheral_rearm_init();
-#ifndef PICORUBY_QEMU_EVQ_OLD_PORT
-  {
+  if (picoruby_nimble_set_write_handles != NULL) {
     /* the injector queues writes to these handles; they get rows the way the port builds its own */
     static const uint16_t rig_handles[] = { 0x42, 0x43, 0x44 };
     picoruby_nimble_set_write_handles(rig_handles, sizeof(rig_handles) / sizeof(rig_handles[0]));
   }
-#endif
   if (started) return;
   started = true;
   xTaskCreate(rig_task, "evq_rig", RIG_TASK_STACK, NULL, 5, NULL);
