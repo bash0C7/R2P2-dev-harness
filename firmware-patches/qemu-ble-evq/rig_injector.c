@@ -51,8 +51,11 @@
  *
  * Optional case, PICORUBY_QEMU_EVQ_POWER (judged by judge_power): the device
  * program (rigapp_power.rb) drives hci_power_control through seven steps and
- * the injector task stays idle. Its only act is rig_before_power_on(), called
- * from the patched BLE_hci_power_control(1) before the port does anything:
+ * the injector task stays idle. The rig acts only through rig_power_control_entry(),
+ * called from the patched BLE_hci_power_control before the port does anything for the
+ * call, and through the NimBLE stubs (rig_nimble_stubs.c), which log every call the
+ * port makes to the host. The entry hook injects, before the power-on call numbered
+ * POWER_NESTED_CALL (the nested one, step 7):
  *   [rig] power inject disc handle=<n> call=<k>
  *                                         a DISCONNECTION_COMPLETE for handle n
  *                                         enqueued just before the k-th power-on
@@ -102,6 +105,9 @@ rig_enqueue(const uint8_t *pkt, uint16_t len)
 }
 #endif
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
+#ifndef PICORUBY_QEMU_EVQ_OLD_PORT
+extern int picoruby_nimble_set_write_handles(const uint16_t *handles, size_t count);
+#endif
 
 #if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER) || defined(PICORUBY_QEMU_EVQ_RESYNC)
 /* Same includes as ports/esp32/ble.c: the notification path is fed with a
@@ -115,6 +121,8 @@ extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *da
 #ifdef PICORUBY_QEMU_EVQ_POWER
 /* rigapp_power.rb powers on in steps 1, 4, 6 and 7; step 7 is the nested one. */
 #define POWER_NESTED_CALL 4
+#define POWER_LATE_DISCONNECT_MS 1300
+extern void rig_stub_late_disconnect(int ms);
 #define POWER_DISC_HANDLE 0x0033
 #endif
 
@@ -173,13 +181,6 @@ static void
 rig_record_vm_task(void)
 {
   rig_vm_task = xTaskGetCurrentTaskHandle();
-}
-
-/* Called from the patched BLE_hci_power_control(1). */
-void
-rig_notify_power_on(void)
-{
-  rig_power_on = true;
 }
 
 /* Patched into BLE_push_event / BLE_heartbeat (both VMs). */
@@ -440,18 +441,22 @@ rig_host_stopped(void)
 #endif
 }
 
-/* Called from the patched BLE_hci_power_control(1), on the VM thread, before
- * the port does anything for the call. In the power case the POWER_NESTED_CALL-th
- * call (step 7, power-on while on) gets one event into the ring first. */
+/* Called from the patched BLE_hci_power_control, on the VM thread, before the
+ * port does anything for the call. In the power case the POWER_NESTED_CALL-th
+ * power-on call (step 7, power-on while on) gets one event into the ring first, and
+ * a sleep call arms the stubbed host to deliver the disconnect of the terminated
+ * link late. */
 void
-rig_before_power_on(void)
+rig_power_control_entry(uint8_t power_mode)
 {
+  if (power_mode == 1) rig_power_on = true;
 #ifdef PICORUBY_QEMU_EVQ_POWER
   static int calls = 0;
-  if (++calls == POWER_NESTED_CALL) {
+  if (power_mode == 1 && ++calls == POWER_NESTED_CALL) {
     rig_inject_disconnect(POWER_DISC_HANDLE);
     printf("[rig] power inject disc handle=%d call=%d\n", POWER_DISC_HANDLE, calls);
   }
+  if (power_mode == 2) rig_stub_late_disconnect(POWER_LATE_DISCONNECT_MS);
 #endif
 }
 
@@ -538,6 +543,13 @@ rig_start(void)
 {
   static bool started = false;
   rig_record_vm_task();
+#ifndef PICORUBY_QEMU_EVQ_OLD_PORT
+  {
+    /* the injector queues writes to these handles; they get rows the way the port builds its own */
+    static const uint16_t rig_handles[] = { 0x42, 0x43, 0x44 };
+    picoruby_nimble_set_write_handles(rig_handles, sizeof(rig_handles) / sizeof(rig_handles[0]));
+  }
+#endif
   if (started) return;
   started = true;
   xTaskCreate(rig_task, "evq_rig", RIG_TASK_STACK, NULL, 5, NULL);

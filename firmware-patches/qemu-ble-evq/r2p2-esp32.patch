@@ -2,7 +2,7 @@ diff --git a/components/picoruby-esp32/CMakeLists.txt b/components/picoruby-esp3
 index 169620b3..ba73238b 100644
 --- a/components/picoruby-esp32/CMakeLists.txt
 +++ b/components/picoruby-esp32/CMakeLists.txt
-@@ -66,6 +66,37 @@ if(CONFIG_BT_NIMBLE_ENABLED)
+@@ -66,6 +66,41 @@ if(CONFIG_BT_NIMBLE_ENABLED)
    set(MRUBY_USE_BLE 1)
  endif()
 
@@ -10,6 +10,10 @@ index 169620b3..ba73238b 100644
 +if(DEFINED ENV{PICORUBY_QEMU_EVQ_RIG})
 +  list(APPEND ADDITIONAL_DEFINITIONS -DPICORUBY_QEMU_EVQ_RIG)
 +  list(APPEND BLE_SRCS ${COMPONENT_DIR}/rig_injector.c)
++  list(APPEND BLE_SRCS ${COMPONENT_DIR}/rig_nimble_stubs.c)
++  foreach(fn ble_gap_adv_stop ble_gap_adv_set_data ble_gap_adv_start ble_gap_adv_active ble_gap_terminate ble_gap_conn_active ble_gap_conn_cancel ble_gap_disc ble_gap_disc_cancel ble_gap_disc_active ble_gap_connect ble_gap_conn_find ble_hs_id_copy_addr ble_hs_util_ensure_addr ble_hs_id_infer_auto)
++    list(APPEND ADDITIONAL_DEFINITIONS -D${fn}=rig_${fn})
++  endforeach()
 +endif()
 +
 +if(DEFINED ENV{PICORUBY_QEMU_EVQ_FLOOD})

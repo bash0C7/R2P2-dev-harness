@@ -20,8 +20,6 @@ fi
 EXTRA_PATCHES=()
 [ "${EVQ_OOM:-0}" = "1" ] && EXTRA_PATCHES+=(oom_fault.patch)
 [ "${EVQ_OOM_RED:-0}" = "1" ] && EXTRA_PATCHES+=(oom_red.patch)
-# The port with the per-handle write accounting needs a row for every handle the injector writes to.
-grep -q picoruby_nimble_set_write_handles "$SUBMODULE/mrbgems/picoruby-ble/ports/esp32/nimble_owner.h" && EXTRA_PATCHES+=(rig_write_rows.patch)
 
 git -C "$SUBMODULE" apply --check --ignore-whitespace "$RIG_DIR/radio_stub.patch"
 git -C "$ESP32_REPO" apply --check "$RIG_DIR/r2p2-esp32.patch"
@@ -32,6 +30,7 @@ for p in "${EXTRA_PATCHES[@]}"; do
 done
 
 cp "$RIG_DIR/rig_injector.c" "$ESP32_REPO/components/picoruby-esp32/rig_injector.c"
+cp "$RIG_DIR/rig_nimble_stubs.c" "$ESP32_REPO/components/picoruby-esp32/rig_nimble_stubs.c"
 cp "$RIG_DIR/sdkconfig.qemu_ble_evq" "$ESP32_REPO/sdkconfigs/qemu_ble_evq"
 mkdir -p "$ESP32_REPO/storage/home"
 if [ "${EVQ_LIMITS:-0}" = "1" ]; then
