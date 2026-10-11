@@ -80,73 +80,37 @@ class RigPower < BLE
     puts "[rigapp] step #{step} gap_connect #{gap_connect(peer, 0)}"
   end
 
+  # [step, call, drain ms (LINK: link up after the call), a peer to connect to before the call]
+  LINK = -1
+  MODES = { "on" => 1, "off" => 0, "sleep" => 2 }
+  PLAN = [
+    [3, "off", 400, nil], [4, "on", 1500, nil], [5, "sleep", 1500, nil], [6, "on", 400, nil], [7, "on", 400, nil],
+    [8, "off", 1600, SILENT_PEER], [9, "on", LINK, nil], [10, "sleep", 1800, nil], [11, "on", LINK, nil], [12, "off", 1600, nil],
+    [13, "on", LINK, nil], [14, "off", 100, nil], [15, "on", 100, nil], [16, "off", 1600, nil],
+    [17, "on", LINK, nil], [18, "off", 200, nil], [19, "off", 1600, nil],
+    [20, "on", LINK, nil], [21, "off", 200, nil], [22, "sleep", 1600, nil],
+    [23, "on", LINK, nil], [24, "sleep", 200, nil], [25, "off", 1600, nil],
+    [26, "on", LINK, nil], [27, "sleep", 200, nil], [28, "sleep", 1600, nil],
+    [29, "on", 1500, nil], [30, "on", 100, nil], [31, "off", 1600, nil]
+  ]
+
   def run
     @step = 1
     start(600)
     drain(2)
-    call_power(3, "off", HCI_POWER_OFF)
-    drain(3)
-    call_power(4, "on", HCI_POWER_ON)
-    drain(4, 1500)
-    call_power(5, "sleep", HCI_POWER_SLEEP)
-    drain(5, 1500)
-    call_power(6, "on", HCI_POWER_ON)
-    drain(6)
-    call_power(7, "on", HCI_POWER_ON)
-    drain(7)
-    call_connect(8, SILENT_PEER)
-    call_power(8, "off", HCI_POWER_OFF)
-    drain(8, 1600)
-    call_power(9, "on", HCI_POWER_ON)
-    drain(9, 200)
-    call_connect(9, ANSWERING_PEER)
-    drain(9, 300)
-    call_power(10, "sleep", HCI_POWER_SLEEP)
-    drain(10, 1800)
-    call_power(11, "on", HCI_POWER_ON)
-    drain(11, 200)
-    call_connect(11, ANSWERING_PEER)
-    drain(11, 300)
-    call_power(12, "off", HCI_POWER_OFF)
-    drain(12, 1600)
-    call_power(13, "on", HCI_POWER_ON)
-    link_up(13)
-    call_power(14, "off", HCI_POWER_OFF)
-    drain(14, 100)
-    call_power(15, "on", HCI_POWER_ON)
-    drain(15, 100)
-    call_power(16, "off", HCI_POWER_OFF)
-    drain(16, 1600)
-    call_power(17, "on", HCI_POWER_ON)
-    link_up(17)
-    call_power(18, "off", HCI_POWER_OFF)
-    drain(18, 200)
-    call_power(19, "off", HCI_POWER_OFF)
-    drain(19, 1600)
-    call_power(20, "on", HCI_POWER_ON)
-    link_up(20)
-    call_power(21, "off", HCI_POWER_OFF)
-    drain(21, 200)
-    call_power(22, "sleep", HCI_POWER_SLEEP)
-    drain(22, 1600)
-    call_power(23, "on", HCI_POWER_ON)
-    link_up(23)
-    call_power(24, "sleep", HCI_POWER_SLEEP)
-    drain(24, 200)
-    call_power(25, "off", HCI_POWER_OFF)
-    drain(25, 1600)
-    call_power(26, "on", HCI_POWER_ON)
-    link_up(26)
-    call_power(27, "sleep", HCI_POWER_SLEEP)
-    drain(27, 200)
-    call_power(28, "sleep", HCI_POWER_SLEEP)
-    drain(28, 1600)
-    call_power(29, "on", HCI_POWER_ON)
-    drain(29, 1500)
-    call_power(30, "on", HCI_POWER_ON)
-    drain(30, 100)
-    call_power(31, "off", HCI_POWER_OFF)
-    drain(31, 1600)
+    i = 0
+    while i < PLAN.size
+      row = PLAN[i]
+      step = row[0]
+      call_connect(step, row[3]) if row[3]
+      call_power(step, row[1], MODES[row[1]])
+      if row[2] == LINK
+        link_up(step)
+      else
+        drain(step, row[2])
+      end
+      i += 1
+    end
   end
 
   def link_up(step)
