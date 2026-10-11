@@ -377,4 +377,99 @@ raise "expect resync not-run without 'resync done'" unless EvqVerdict.judge_resy
 raise "expect resync not-run without the second adv line" unless EvqVerdict.judge_resync(resync_log(second_adv: false)).rig_ran == false
 raise "expect resync not-run on a log that died at load" unless EvqVerdict.judge_resync("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
 
+# Limits run against the byte-ring port (judge_limits_green). The burst numbers are
+# the rig's: budget 1024, entry 32 (2 + 30), reserve 11 => floor(1013 / 32) = 31 fit.
+def green_log(accepted: 31, first_refused: 132, received: nil, burst_order: nil, overflow_lines: 1,
+              notifs: [93, 200], seen: nil, truncat: false, proc_a_results: 3, proc_b_results: 20,
+              status_a: 0, status_b: 0x11, disc_before: true, disc_after: false, mark3: true, budget: 1024, entry: 32,
+              cansend: 0, states: [2])
+  received ||= (101...(101 + accepted)).to_a
+  received = burst_order if burst_order
+  lines = ["write enq A"]
+  lines << "[rig] burst accepted=#{accepted} refused=#{80 - accepted} first_refused=#{first_refused} budget=#{budget} entry=#{entry}"
+  lines << "[rig] burst done first=101 last=180"
+  received.each { |s| lines << "[rigapp] recv seq=#{s} tin=1000 t=1005" }
+  overflow_lines.times { lines << "W (1234) prb_ble_evq: event ring full (budget=#{budget} bytes), refusing the newest entries until Ruby drains it" }
+  seen ||= notifs
+  notifs.each_with_index { |n, i| lines << "[rig] notify injected len=#{n}"; lines << "[rigapp] notif len=#{seen[i]} raw=#{seen[i] + 12}" if seen[i] }
+  lines << "E (2000) prb_ble_evq: notification value truncated: 300 bytes, event carries 255" if truncat
+  lines << "[rig] control done first=201 last=260 h1=17 h2=34"
+  lines << "[rigapp] disc 17" if disc_before
+  lines << "[rigapp] disc 34" if disc_after
+  lines << "[rigapp] mark 1"
+  lines << "[rig] cansend injected n=5 con_handle=65535"
+  cansend.times { lines << "[rigapp] cansend" }
+  lines << "[rigapp] mark 2"
+  lines << "[rig] proc A injected results=3 handle_first=1"
+  proc_a_results.times { |i| lines << "[rigapp] dsc #{1 + i}" }
+  lines << "[rig] proc A done" << "[rigapp] complete #{status_a}"
+  lines << "[rig] proc B injected results=100 handle_first=101"
+  proc_b_results.times { |i| lines << "[rigapp] dsc #{101 + i}" }
+  lines << "[rig] proc B done" << "[rigapp] complete #{status_b}"
+  lines << "[rigapp] mark 3" if mark3
+  lines << "[rig] limits done"
+  lines.insert(1, *states.map { |s| "[rigapp] state #{s}" }, "[rig] extra state injected") # port states, then the injector's own
+  lines.join("\n") + "\n"
+end
+
+def green_checks(log)
+  r1, later = EvqVerdict.judge_limits_green(log)
+  [r1.transform_keys { |k| k[/\A\(\w\)/] }, later]
+end
+
+r1, later = green_checks(green_log)
+raise "expect five R1 checks, got #{r1.keys}" unless r1.keys == %w[(a) (b) (c) (d) (e)]
+raise "expect every R1 check green, got: #{r1.reject { |_, r| r.pass }.map { |k, r| "#{k} #{r.message}" }}" unless r1.values.all?(&:pass)
+raise "expect the derivation in (a): #{r1['(a)'].message}" unless r1["(a)"].message.include?("floor((1024-11)/32)=31 fit") && r1["(a)"].message.include?("0 drained")
+raise "expect the two later-step checks by name" unless later.keys == ["no CAN_SEND_NOW without a connection", "power-on reports INITIALIZING then WORKING"]
+raise "expect the power-on states check red with [2]" if later.values.last.pass
+
+# (a): pump drained 5 entries during the burst => 36 accepted, first refused later, all delivered
+r1, = green_checks(green_log(accepted: 36, first_refused: 137))
+raise "expect (a) green with drained entries, got: #{r1['(a)'].message}" unless r1["(a)"].pass && r1["(a)"].message.include?("5 drained")
+# (a): accepted fewer than the budget holds
+raise "expect (a) fail: ring accepted 20 < 31" if green_checks(green_log(accepted: 20, first_refused: 121))[0]["(a)"].pass
+# (a): Ruby received fewer than accepted (an accepted entry lost)
+lost = green_log(accepted: 31, first_refused: 132, received: (101..130).to_a)
+raise "expect (a) fail: 30 delivered of 31 accepted" if green_checks(lost)[0]["(a)"].pass
+# (a): the oldest dropped (what the old ring did): newest 31 delivered
+oldest_dropped = green_log(accepted: 31, first_refused: 132, received: (150..180).to_a)
+raise "expect (a) fail: oldest entries dropped" if green_checks(oldest_dropped)[0]["(a)"].pass
+# (a): out of order
+swapped = green_log(accepted: 31, first_refused: 132, burst_order: (101..131).to_a.reverse)
+raise "expect (a) fail: out of order" if green_checks(swapped)[0]["(a)"].pass
+# (a): the rig did not overflow
+no_overflow = green_log(accepted: 80, first_refused: 0)
+no_overflow_result = green_checks(no_overflow)[0]["(a)"]
+raise "expect (a) fail: no overflow" if no_overflow_result.pass
+# (a): not run on the old port (no 'burst accepted' line)
+old_port = green_log.sub(/^\[rig\] burst accepted.*\n/, "")
+raise "expect (a) not-run on the old port" unless green_checks(old_port)[0]["(a)"].rig_ran == false
+# (b)
+raise "expect (b) fail: logged twice" if green_checks(green_log(overflow_lines: 2))[0]["(b)"].pass
+raise "expect (b) fail: not logged" if green_checks(green_log(overflow_lines: 0))[0]["(b)"].pass
+# (c)
+raise "expect (c) fail: B completes with 0 over refused results (old port)" if green_checks(green_log(status_b: 0))[0]["(c)"].pass
+raise "expect (c) fail: A completes with 0x11" if green_checks(green_log(status_a: 0x11))[0]["(c)"].pass
+raise "expect (c) fail: B delivered all 100 results" if green_checks(green_log(proc_b_results: 100))[0]["(c)"].pass
+raise "expect (c) fail: A lost a result" if green_checks(green_log(proc_a_results: 2))[0]["(c)"].pass
+raise "expect (c) not-run without mark 3" unless green_checks(green_log(mark3: false))[0]["(c)"].rig_ran == false
+# (d)
+raise "expect (d) fail: 93 arrived as 92" if green_checks(green_log(seen: [92, 200]))[0]["(d)"].pass
+raise "expect (d) fail: truncation line" if green_checks(green_log(truncat: true))[0]["(d)"].pass
+raise "expect (d) not-run without notify lines" unless green_checks(green_log(notifs: []))[0]["(d)"].rig_ran == false
+# the 'truncat' check ignores the build output before the run's first rig line
+build_noise = "CC src/truncation.c\n" + green_log
+raise "expect (d) green with a 'truncat' file name in the build output" unless green_checks(build_noise)[0]["(d)"].pass
+# (e)
+raise "expect (e) fail: first disconnect lost" if green_checks(green_log(disc_before: false))[0]["(e)"].pass
+r1, = green_checks(green_log(disc_after: true))
+raise "expect (e) green and reporting the second disconnect" unless r1["(e)"].pass && r1["(e)"].message.include?("seen=true")
+# later steps never decide: a log where both turn green still has the R1 checks green
+r1, later = green_checks(green_log(states: [1, 2]))
+raise "expect later power-on check green with [1, 2]" unless later.values.last.pass
+raise "expect R1 checks unaffected by the later-step checks" unless r1.values.all?(&:pass)
+r1, later = green_checks(green_log(cansend: 5))
+raise "expect later CAN_SEND_NOW check red with 5 events" if later.values.first.pass
+
 puts "evq_verdict_test OK"

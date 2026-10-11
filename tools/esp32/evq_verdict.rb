@@ -11,6 +11,11 @@
 # (VALUE_EVENT_DATA_MAX). It passes when the firmware says so in its log
 # and does not punch holes into the stream.
 #
+# judge_limits_green judges the same run against the byte-ring port (R1): the
+# burst, the single overflow log line, the completion status over refused
+# results, whole notifications and the disconnect before the burst, each with
+# its own derivation; the two checks of later steps come back separately.
+#
 # judge_control_burst, judge_can_send_now and judge_power_on_states judge
 # three more defects of the same limits run; judge_limits_checks returns all
 # four verdicts by name, so a partial fix shows which one turned green.
@@ -48,6 +53,17 @@ module EvqVerdict
   # The firmware's message when a received value is cut to fit the event
   # packet must contain "truncat" (truncated / truncating / truncation).
   TRUNCATION_LOGGED = /truncat/i
+  # What the byte ring answered to the L1 burst (rig_injector.c; the port with the
+  # 32-slot ring has no such line).
+  BURST_ACCEPTED = /burst accepted=(\d+) refused=(\d+) first_refused=(\d+) budget=(\d+) entry=(\d+)/
+  PROC_INJECTED = /proc ([AB]) injected results=(\d+) handle_first=(\d+)/
+  COMPLETE_SEEN = /rigapp\] complete (\d+)/
+  DSC_SEEN = /rigapp\] dsc (\d+)/
+  # Bytes of the event ring that only a GATT completion may use (nimble_owner.c,
+  # EVQ_COMPLETION_BYTES = 2 + 9) and the status such a completion carries when a
+  # result of its procedure was refused (ATT_ERROR_INSUFFICIENT_RESOURCES).
+  EVQ_COMPLETION_RESERVE = 11
+  STATUS_INSUFFICIENT_RESOURCES = 0x11
   CONTROL_BURST_DONE = /control done first=(\d+) last=(\d+) h1=(\d+) h2=(\d+)/
   CANSEND_INJECTED = /cansend injected n=(\d+) con_handle=(\d+)/
   EXTRA_STATE_INJECTED = /extra state injected/
@@ -296,6 +312,142 @@ module EvqVerdict
     problems = []
     problems << "power-on STATE sequence #{states.inspect} does not start with [1, 2] (INITIALIZING, WORKING)" unless states.first(2) == [1, 2]
     verdict(problems, "states: power-on sequence #{states.inspect}")
+  end
+
+  # The R1 checks of the limits run, for a port whose event ring is a byte ring
+  # that refuses the newest entry (judge_limits_green). Each returns a Result.
+  #
+  # (a) The L1 burst: budget B bytes, entry E bytes (2 + packet), reserve 11 bytes
+  #     that only a completion may use. With nothing drained, entries are accepted
+  #     while used + E + 11 <= B, so floor((B - 11) / E) fit. The rig reports how
+  #     many the ring accepted (A); A - floor(...) is what the pump moved out of the
+  #     ring during the burst. Ruby must receive exactly the accepted events, in
+  #     order, and nothing older than the first refusal may be missing.
+  def judge_burst_refuses_newest(log)
+    fw = firmware_output(log)
+    burst = BURST_DONE.match(fw)
+    acc = BURST_ACCEPTED.match(fw)
+    return not_run("burst: no 'burst done' line in log") if burst.nil?
+    return not_run("burst: no 'burst accepted' line in log (the port is not the byte-ring port)") if acc.nil?
+
+    accepted, refused, first_refused, budget, entry = acc.captures.map(&:to_i)
+    range = (burst[1].to_i..burst[2].to_i).to_a
+    got = fw.scan(RECV).map { |seq, _tin, _t| seq.to_i } & range
+    return not_run("burst: no burst event (#{range.first}-#{range.last}) reached Ruby: the rig or the consumer is broken") if got.empty?
+
+    fits = (budget - EVQ_COMPLETION_RESERVE) / entry
+    drained = accepted - fits
+    problems = []
+    problems << "the rig did not overflow the ring: all #{range.size} burst events were accepted" if refused.zero?
+    problems << "the ring accepted #{accepted}, fewer than the #{fits} its budget holds" if accepted < fits
+    problems << "Ruby received #{got.size} burst events, the ring accepted #{accepted}" unless got.size == accepted
+    problems << "burst events reached Ruby out of order: #{got.first(8).join(',')}..." unless got == got.sort
+    older = range.select { |s| first_refused.zero? || s < first_refused }
+    missing_older = older - got
+    problems << "seq #{seq_ranges(missing_older)} is older than the first refusal (seq #{first_refused}) and never reached Ruby" unless missing_older.empty?
+    summary = "burst: budget #{budget} B, entry #{entry} B, reserve #{EVQ_COMPLETION_RESERVE} B => floor((#{budget}-#{EVQ_COMPLETION_RESERVE})/#{entry})=#{fits} fit with no drain; " \
+              "ring accepted #{accepted} (#{drained} drained by the pump during the burst), refused #{refused} from seq #{first_refused}; " \
+              "Ruby received #{got.size} (seq #{seq_ranges(got)})"
+    verdict(problems, summary)
+  end
+
+  # (b) One "event ring full" line in the run, which is one power session.
+  def judge_overflow_logged_once(log)
+    fw = firmware_output(log)
+    return not_run("overflow log: no 'burst done' line in log") unless fw.match?(BURST_DONE)
+
+    count = fw.lines.count { |line| line.match?(RING_OVERFLOW_LOGGED) }
+    problems = []
+    problems << "#{count} 'event ring full' lines in the log, expected exactly 1 per power session" unless count == 1
+    verdict(problems, "overflow log: #{count} 'event ring full' line(s) for the overflowing bursts of one power session")
+  end
+
+  # (c) Two descriptor-discovery procedures driven through the port's disc_dsc_cb:
+  #     A (results fit) completes with status 0, B (results refused) with 0x11.
+  def judge_completion_status(log)
+    fw = firmware_output(log)
+    procs = fw.scan(PROC_INJECTED).map { |name, n, first| [name, n.to_i, first.to_i] }
+    return not_run("completion: no 'proc A/B injected' lines in log") unless procs.map(&:first) == %w[A B]
+    return not_run("completion: the device program never logged 'mark 3' after the procedures") unless fw.scan(MARK_SEEN).flatten.include?("3")
+
+    dsc = fw.scan(DSC_SEEN).flatten.map(&:to_i)
+    completes = fw.scan(COMPLETE_SEEN).flatten.map(&:to_i)
+    (_, a_n, a_first), (_, b_n, b_first) = procs
+    a_got = dsc.count { |h| (a_first...(a_first + a_n)).cover?(h) }
+    b_got = dsc.count { |h| (b_first...(b_first + b_n)).cover?(h) }
+    problems = []
+    problems << "#{completes.size} QUERY_COMPLETE events reached Ruby, expected 2 (one per procedure): #{completes.inspect}" unless completes.size == 2
+    problems << "procedure A delivered #{a_got} of #{a_n} results" unless a_got == a_n
+    problems << "procedure B delivered all #{b_n} results: the rig did not overflow the ring" if b_got == b_n
+    if completes.size == 2
+      problems << "completion of procedure A (nothing refused) has status #{completes[0]}, expected 0" unless completes[0].zero?
+      unless completes[1] == STATUS_INSUFFICIENT_RESOURCES
+        problems << "completion of procedure B (#{b_n - b_got} results refused) has status #{completes[1]}, expected 0x11"
+      end
+    end
+    verdict(problems, "completion: A #{a_got}/#{a_n} results, status #{completes[0].inspect}; B #{b_got}/#{b_n} results, status #{completes[1].inspect}")
+  end
+
+  # (d) Notifications of 93 and 200 bytes arrive whole and the firmware logs no
+  #     truncation.
+  def judge_notifications_whole(log)
+    fw = firmware_output(log)
+    injected = fw.scan(NOTIFY_INJECTED).flatten.map(&:to_i)
+    return not_run("notifications: no 'notify injected' line in log") if injected.empty?
+
+    seen = fw.scan(NOTIF_SEEN).map { |len, _raw| len.to_i }
+    problems = []
+    problems << "notifications injected #{injected.inspect}, Ruby saw #{seen.inspect}" unless seen == injected
+    problems << "a 'truncat' line is in the log" if fw.match?(TRUNCATION_LOGGED)
+    verdict(problems, "notifications: injected #{injected.inspect}, Ruby saw #{seen.inspect}, truncation logged=#{fw.match?(TRUNCATION_LOGGED)}")
+  end
+
+  # (e) The DISCONNECTION_COMPLETE injected before the L3 burst reaches Ruby. The one
+  #     injected after the burst is reported, not required: a ring that is full
+  #     refuses it by design.
+  def judge_disconnect_before_burst(log)
+    fw = firmware_output(log)
+    done = CONTROL_BURST_DONE.match(fw)
+    return not_run("disconnect: no 'control done' line in log") if done.nil?
+    return not_run("disconnect: the device program never logged 'mark 1' after the burst") unless fw.scan(MARK_SEEN).flatten.include?("1")
+
+    seen = fw.scan(DISC_SEEN).flatten.map(&:to_i)
+    first_seen = seen.include?(done[3].to_i & 0xff)
+    last_seen = seen.include?(done[4].to_i & 0xff)
+    problems = []
+    problems << "DISCONNECTION_COMPLETE for handle 0x#{format('%04x', done[3].to_i)} (injected before the burst) never reached Ruby" unless first_seen
+    verdict(problems, "disconnect: before the burst seen=#{first_seen}; after the burst (informational, refused when the ring is full) seen=#{last_seen}")
+  end
+
+  R1_CHECK_NAMES = {
+    burst: "(a) burst: the oldest entries that fit the budget are delivered, in order",
+    once: "(b) one 'event ring full' line per power session",
+    completion: "(c) completion carries 0x11 when a result of its procedure was refused",
+    notifications: "(d) notifications of 93 and 200 bytes arrive whole, no 'truncat' line",
+    disconnect: "(e) the disconnect injected before the burst is delivered",
+  }
+
+  LATER_STEP_NAMES = {
+    cansend: "no CAN_SEND_NOW without a connection",
+    states: "power-on reports INITIALIZING then WORKING",
+  }
+
+  # [r1, later]: r1 are the checks of R1 (must pass on the byte-ring port), later
+  # are the two checks of the limits run that belong to later steps; they are
+  # expected to stay red until those steps land and never decide the verdict.
+  def judge_limits_green(log)
+    r1 = {
+      R1_CHECK_NAMES[:burst] => judge_burst_refuses_newest(log),
+      R1_CHECK_NAMES[:once] => judge_overflow_logged_once(log),
+      R1_CHECK_NAMES[:completion] => judge_completion_status(log),
+      R1_CHECK_NAMES[:notifications] => judge_notifications_whole(log),
+      R1_CHECK_NAMES[:disconnect] => judge_disconnect_before_burst(log),
+    }
+    later = {
+      LATER_STEP_NAMES[:cansend] => judge_can_send_now(log),
+      LATER_STEP_NAMES[:states] => judge_power_on_states(log),
+    }
+    [r1, later]
   end
 
   def judge_limits_checks(log)

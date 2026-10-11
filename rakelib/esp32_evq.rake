@@ -7,11 +7,18 @@
 # VM thread. evq_red and evq_green run the same rig; they differ only in
 # the expected verdict (red = pre-fix firmware must fail).
 #
-# evq_flood_* add a write flood (EVQ_FLOOD=1). evq_limits_* add the limits
+# evq_flood_* add a write flood (EVQ_FLOOD=1): 500 writes of 128 bytes into the
+# write ring (PICORUBY_BLE_WRQ_BYTES, 8192 by default). The heartbeat-drain
+# variants of the 16-entry per-handle bound are gone with that bound; a Ruby that
+# drains once a second now meets the Ruby heap instead (NoMemoryError, see
+# docs/research/pr427-evq-flood-2ms-hb-*.log). evq_limits_* add the limits
 # phase (EVQ_LIMITS=1): an 80-event burst into the 32-deep ring and
 # notifications of 93 and 200 bytes against the 92-byte value cap; green
 # needs a firmware that logs both conditions and refuses the newest events
-# rather than the oldest. The same run judges three more defects, each
+# rather than the oldest. The overlay gives the byte-ring port a 1024-byte event
+# budget (PICORUBY_BLE_EVQ_BYTES) so the 80-event burst overflows it; evq_limits_green
+# judges the R1 checks and reports the checks of later steps without deciding on
+# them. The same run (evq_limits_red) judges three more defects, each
 # reported by name: a control event (DISCONNECTION_COMPLETE) lost to a data
 # burst, CAN_SEND_NOW produced without a connection, and power-on that
 # reports WORKING without INITIALIZING first.
@@ -95,11 +102,11 @@ namespace :esp32 do
     puts "[esp32:evq_oom_red] RED as expected: #{result.message}"
   end
 
-  desc "Write-flood rig, 2 ms burst, expecting PASS (no abort, received + rejected == sent)"
+  desc "Write-flood rig, 2 ms burst, expecting PASS with nothing rejected (byte ring: 500 writes of 128 B, one per 2 ms; an entry is 4 + 128 = 132 B, the 8192-byte budget holds 62, the pump moves the whole ring to Ruby at every scheduler pass and Ruby pops at least every 20 ms, so about 10 entries are ever waiting)"
   task :evq_flood_green do
     ENV["EVQ_FLOOD"] = "1"
     ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
-    result = evq_flood_judge
+    result = evq_flood_judge(max_rejected: 0)
     unless result.pass
       puts "[esp32:evq_flood_green] FAIL: #{result.message}"
       exit 1
@@ -107,7 +114,7 @@ namespace :esp32 do
     puts "[esp32:evq_flood_green] PASS: #{result.message}"
   end
 
-  desc "Write-flood rig at link pace (33 ms), expecting PASS with nothing rejected"
+  desc "Write-flood rig at link pace (33 ms), expecting PASS with nothing rejected (one entry per 33 ms against a 62-entry budget)"
   task :evq_flood_paced_green do
     ENV["EVQ_FLOOD"] = "1"
     ENV["EVQ_FLOOD_SPACING_MS"] = "33"
@@ -117,32 +124,6 @@ namespace :esp32 do
       exit 1
     end
     puts "[esp32:evq_flood_paced_green] PASS: #{result.message}"
-  end
-
-  desc "Write-flood rig, 2 ms burst, Ruby drains only on the heartbeat, expecting FAIL on pre-fix firmware (abort, or nothing rejected). Succeeds when the verdict is red"
-  task :evq_flood_hb_red do
-    ENV["EVQ_FLOOD"] = "1"
-    ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
-    ENV["EVQ_FLOOD_DRAIN"] = "hb"
-    result = evq_flood_judge(min_rejected: 1)
-    if result.pass
-      puts "[esp32:evq_flood_hb_red] UNEXPECTED GREEN: #{result.message}"
-      exit 1
-    end
-    puts "[esp32:evq_flood_hb_red] RED as expected: #{result.message}"
-  end
-
-  desc "Write-flood rig, 2 ms burst, Ruby drains only on the heartbeat, expecting PASS with the per-handle bound engaged (rejected >= 1)"
-  task :evq_flood_hb_green do
-    ENV["EVQ_FLOOD"] = "1"
-    ENV["EVQ_FLOOD_SPACING_MS"] ||= "2"
-    ENV["EVQ_FLOOD_DRAIN"] = "hb"
-    result = evq_flood_judge(min_rejected: 1)
-    unless result.pass
-      puts "[esp32:evq_flood_hb_green] FAIL: #{result.message}"
-      exit 1
-    end
-    puts "[esp32:evq_flood_hb_green] PASS: #{result.message}"
   end
 
   desc "Limits rig (ring overflow, over-long notifications, control event in a burst, CAN_SEND_NOW without connection, power-on states), expecting every check FAIL on pre-fix firmware. Succeeds when every verdict is red"
@@ -194,20 +175,27 @@ namespace :esp32 do
     puts "[esp32:evq_resync_red] RED as expected: #{result.message}"
   end
 
-  desc "Limits rig (same checks), expecting every check PASS (both conditions logged, newest events refused, control events kept, no CAN_SEND_NOW without connection, INITIALIZING before WORKING)"
+  desc "Limits rig, byte-ring port: the R1 checks must PASS (oldest entries that fit the budget delivered in order, one 'event ring full' line, completion 0x11 over refused results, 93 and 200 byte values whole, disconnect before the burst kept); the checks of later steps are reported and never decide"
   task :evq_limits_green do
-    checks = evq_limits_judge
-    evq_limits_report("esp32:evq_limits_green", checks)
-    unless evq_limits_not_run(checks).empty?
-      puts "[esp32:evq_limits_green] RIG DID NOT RUN: #{evq_limits_not_run(checks).join('; ')}"
+    ENV["EVQ_LIMITS"] = "1"
+    Rake::Task["esp32:evq_run"].invoke
+    raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+    r1, later = EvqVerdict.judge_limits_green(File.read(evq_log_path))
+    evq_limits_report("esp32:evq_limits_green", r1)
+    later.each do |name, result|
+      status = result.rig_ran == false ? "NOT RUN" : (result.pass ? "unexpectedly green" : "still red")
+      puts "[esp32:evq_limits_green] later step: #{status}: #{name}: #{result.message}"
+    end
+    unless evq_limits_not_run(r1).empty?
+      puts "[esp32:evq_limits_green] RIG DID NOT RUN: #{evq_limits_not_run(r1).join("; ")}"
       exit 1
     end
-    failed = checks.reject { |_, result| result.pass }.keys
+    failed = r1.reject { |_, result| result.pass }.keys
     unless failed.empty?
-      puts "[esp32:evq_limits_green] FAIL: #{failed.join('; ')}"
+      puts "[esp32:evq_limits_green] FAIL: #{failed.join("; ")}"
       exit 1
     end
-    puts "[esp32:evq_limits_green] PASS: #{checks.size} of #{checks.size} checks"
+    puts "[esp32:evq_limits_green] PASS: #{r1.size} of #{r1.size} R1 checks"
   end
 end
 

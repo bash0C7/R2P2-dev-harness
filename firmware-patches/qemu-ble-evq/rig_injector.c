@@ -17,12 +17,19 @@
  *            up, so the ring drops the oldest events (lost seqs)
  *
  * Optional phase, PICORUBY_QEMU_EVQ_LIMITS (judged by judge_limits):
+ *   [rig] burst accepted=<n> refused=<m> first_refused=<seq|0> budget=<b> entry=<e>
+ *                                         what the ring answered to the burst (port
+ *                                         with the byte ring only); budget is
+ *                                         PICORUBY_BLE_EVQ_BYTES, entry the bytes one
+ *                                         injected event takes (2 + packet)
  *   [rig] burst done first=<a> last=<b>   non-adv events a..b enqueued back to back
  *   [rig] notify injected len=<n>         NOTIFY_RX with an n-byte value handed
  *                                         to picoruby_ble_gap_event
  *   [rig] limits done                     end of the limits phase
- *   L1: seq 101..180 with no delay — overflows the 32-deep ring
- *   L2: notifications of 93 and 200 bytes — longer than the 92-byte cap
+ *   L1: seq 101..180 with no delay — overflows the event ring (the overlay sets
+ *       PICORUBY_BLE_EVQ_BYTES=1024: 31 entries of 32 bytes fit beside the
+ *       11-byte completion reserve; the 32-deep ring of the old port overflows too)
+ *   L2: notifications of 93 and 200 bytes — longer than the old 92-byte cap
  *   [rig] control done first=<a> last=<b> h1=<n> h2=<n>
  *                                         L3 inserted (handles in decimal)
  *   [rig] cansend injected n=<n> con_handle=<h>
@@ -35,6 +42,12 @@
  *       back to back, through picoruby_ble_gap_event and rig_inject
  *   L4: BLE_peripheral_request_can_send_now_event() called back to back with
  *       no connection
+ *   L5: two descriptor-discovery procedures driven through the port's own
+ *       disc_dsc_cb (rig_gatt_dsc_result / rig_gatt_dsc_done, compiled into
+ *       ble.c by radio_stub.patch): A with 3 results, B with 100 results that
+ *       overflow the ring; each ends with the completion the port builds
+ *   [rig] proc <A|B> injected results=<n> handle_first=<h>
+ *   [rig] proc <A|B> done
  *
  * Optional case, PICORUBY_QEMU_EVQ_POWER (judged by judge_power): the device
  * program (rigapp_power.rb) drives hci_power_control through seven steps and
@@ -59,7 +72,7 @@
  *                                         what the port asked of the host
  *
  *   A marker event {0xFE, 1, n} is enqueued after L3 (n=1) and after L4
- *   (n=2), once the ring has drained; the device program logs it as
+ *   (n=2) and after L5 (n=3), once the ring has drained; the device program logs it as
  *   "[rigapp] mark <n>".
  */
 #include <stdint.h>
@@ -71,7 +84,23 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 
+#ifdef PICORUBY_QEMU_EVQ_OLD_PORT
+/* port at 7529064b: void, with the advertising-report coalescing flag */
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
+static int
+rig_enqueue(const uint8_t *pkt, uint16_t len)
+{
+  picoruby_nimble_enqueue_event(pkt, len, false);
+  return 0;
+}
+#else
+extern int picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len);
+static int
+rig_enqueue(const uint8_t *pkt, uint16_t len)
+{
+  return picoruby_nimble_enqueue_event(pkt, len);
+}
+#endif
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
 
 #if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER) || defined(PICORUBY_QEMU_EVQ_RESYNC)
@@ -104,6 +133,14 @@ extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *da
 #define MARK_EVENT 0xFE
 
 extern void BLE_peripheral_request_can_send_now_event(void);
+/* compiled into ble.c by radio_stub.patch */
+extern void rig_gatt_dsc_result(uint16_t conn, uint16_t handle);
+extern void rig_gatt_dsc_done(uint16_t conn);
+#define PROC_CONN 1
+#define PROC_A_RESULTS 3
+#define PROC_A_HANDLE_FIRST 1
+#define PROC_B_RESULTS 100
+#define PROC_B_HANDLE_FIRST 101
 #define RIG_TASK_STACK 6144
 #else
 #define RIG_TASK_STACK 4096
@@ -177,13 +214,13 @@ rig_build_adv(uint8_t *p, int seq, uint32_t tin_ms)
   return total;
 }
 
-static void
+static int
 rig_inject(int seq)
 {
   static uint8_t adv[32];
   uint32_t tin_ms = (uint32_t)(esp_timer_get_time() / 1000);
   uint16_t len = rig_build_adv(adv, seq, tin_ms);
-  picoruby_nimble_enqueue_event(adv, len, false);
+  return rig_enqueue(adv, len);
 }
 
 #if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER)
@@ -238,18 +275,51 @@ static void
 rig_inject_mark(uint8_t n)
 {
   const uint8_t mark[] = { MARK_EVENT, 1, n };
-  picoruby_nimble_enqueue_event(mark, sizeof(mark), false);
+  rig_enqueue(mark, sizeof(mark));
+}
+
+/* One descriptor-discovery procedure as the host would run it: results through
+ * the port's disc_dsc_cb, then the callback's end-of-procedure call. */
+static void
+rig_procedure(char name, int results, int handle_first)
+{
+  for (int i = 0; i < results; i++) {
+    rig_gatt_dsc_result(PROC_CONN, (uint16_t)(handle_first + i));
+  }
+  rig_gatt_dsc_done(PROC_CONN);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  printf("[rig] proc %c injected results=%d handle_first=%d\n", name, results, handle_first);
+  printf("[rig] proc %c done\n", name);
 }
 
 static void
 rig_limits(void)
 {
-  /* L1: no delay between inserts, so the 32-deep ring overflows. */
+  /* L1: no delay between inserts, so the ring overflows. The port with the byte
+   * ring answers each insert; the judge compares what it accepted with what
+   * reached Ruby. */
+  int accepted = 0, refused = 0, first_refused = 0;
   for (int seq = LIMITS_BURST_FIRST; seq <= LIMITS_BURST_LAST; seq++) {
-    rig_inject(seq);
+    if (rig_inject(seq) == 0) {
+      accepted++;
+    } else {
+      refused++;
+      if (first_refused == 0) first_refused = seq;
+    }
   }
+  /* Both tasks write to the same UART: a rig line printed while the pump is
+   * still handing events to Ruby would cut one of Ruby's lines in half. */
+  vTaskDelay(pdMS_TO_TICKS(1000));
+#ifndef PICORUBY_QEMU_EVQ_OLD_PORT
+  {
+    uint8_t probe[32];
+    int entry = 2 + (int)rig_build_adv(probe, LIMITS_BURST_FIRST, 0);
+    printf("[rig] burst accepted=%d refused=%d first_refused=%d budget=%d entry=%d\n",
+           accepted, refused, first_refused, PICORUBY_BLE_EVQ_BYTES, entry);
+  }
+#endif
   printf("[rig] burst done first=%d last=%d\n", LIMITS_BURST_FIRST, LIMITS_BURST_LAST);
-  vTaskDelay(pdMS_TO_TICKS(3000));
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   /* L2: values longer than the 92-byte cap of the event packet. */
   rig_inject_notify(93);
@@ -263,9 +333,10 @@ rig_limits(void)
     rig_inject(seq);
   }
   rig_inject_disconnect(CONTROL_HANDLE_LAST);
+  vTaskDelay(pdMS_TO_TICKS(1000));
   printf("[rig] control done first=%d last=%d h1=%d h2=%d\n",
          CONTROL_BURST_FIRST, CONTROL_BURST_LAST, CONTROL_HANDLE_FIRST, CONTROL_HANDLE_LAST);
-  vTaskDelay(pdMS_TO_TICKS(3000));
+  vTaskDelay(pdMS_TO_TICKS(2000));
   rig_inject_mark(1);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -277,6 +348,14 @@ rig_limits(void)
   printf("[rig] cansend injected n=%d con_handle=%u\n", CAN_SEND_CALLS, handle_before);
   vTaskDelay(pdMS_TO_TICKS(3000));
   rig_inject_mark(2);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  /* L5: a procedure whose results fit, then one whose results overflow the ring. */
+  rig_procedure('A', PROC_A_RESULTS, PROC_A_HANDLE_FIRST);
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  rig_procedure('B', PROC_B_RESULTS, PROC_B_HANDLE_FIRST);
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  rig_inject_mark(3);
   vTaskDelay(pdMS_TO_TICKS(1000));
   printf("[rig] limits done\n");
 }
@@ -394,7 +473,7 @@ rig_task(void *arg)
 #ifdef PICORUBY_QEMU_EVQ_LIMITS
   printf("[rig] extra state injected\n");
 #endif
-  picoruby_nimble_enqueue_event(state_working, sizeof(state_working), false);
+  rig_enqueue(state_working, sizeof(state_working));
 
   rig_fault_write = 1;
   printf("[rig] write enq A\n");
@@ -430,6 +509,7 @@ rig_task(void *arg)
     if (picoruby_nimble_enqueue_write(FLOOD_HANDLE, flood_payload, sizeof(flood_payload)) != 0) rejected++;
     vTaskDelay(pdMS_TO_TICKS(FLOOD_SPACING_MS));
   }
+  vTaskDelay(pdMS_TO_TICKS(1000)); /* let Ruby finish its own lines before ours */
   printf("[rig] flood done n=%d rejected=%d\n", FLOOD_COUNT, rejected);
 #endif
 

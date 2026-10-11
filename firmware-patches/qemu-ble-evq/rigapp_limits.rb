@@ -5,6 +5,8 @@
 #   [rigapp] disc <b3>    HCI_EVENT_DISCONNECTION_COMPLETE (0x05), b3 = handle low byte
 #   [rigapp] cansend      ATT_EVENT_CAN_SEND_NOW (0xB7)
 #   [rigapp] mark <b2>    rig marker (0xFE)
+#   [rigapp] complete <b8>  GATT_EVENT_QUERY_COMPLETE (0xA0), b8 = ATT status
+#   [rigapp] dsc <h>      GATT_EVENT_ALL_CHARACTERISTIC_DESCRIPTORS_QUERY_RESULT (0xA4), h = descriptor handle
 require 'ble'
 
 class RigObserver < BLE
@@ -44,7 +46,11 @@ class RigObserver < BLE
     puts "[rigapp] cansend" if t == 0xB7
     puts "[rigapp] state #{event_packet.getbyte(2)}" if t == BTSTACK_EVENT_STATE
     puts "[rigapp] mark #{event_packet.getbyte(2)}" if t == 0xFE
+    puts "[rigapp] complete #{event_packet.getbyte(8)}" if t == 0xA0
+    puts "[rigapp] dsc #{event_packet.getbyte(8) + event_packet.getbyte(9) * 256}" if t == 0xA4
     super(event_packet)
+    # the base class takes a disconnect for the end of the scan; the rig keeps listening
+    @state = :TC_W4_SCAN_RESULT if t == HCI_EVENT_DISCONNECTION_COMPLETE
   end
 
   def heartbeat_callback

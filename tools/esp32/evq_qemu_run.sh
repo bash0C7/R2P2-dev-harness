@@ -44,6 +44,16 @@ export PICORUBY_QEMU_EVQ_RIG=1
 [ "${EVQ_POWER:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_POWER=1
 [ "${EVQ_RESYNC:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_RESYNC=1
 
+# The port at 7529064b has the 32-slot ring and a 3-argument enqueue; the rig
+# follows whichever port it is built against (rig_injector.c, rig_enqueue).
+PORT_HEADER="components/picoruby-esp32/picoruby/mrbgems/picoruby-ble/ports/esp32/nimble_owner.h"
+if grep -q coalesce_adv "$PORT_HEADER" 2>/dev/null; then
+  export PICORUBY_QEMU_EVQ_OLD_PORT=1
+  echo "== port under test: ring of 32 slots (3-argument enqueue) =="
+else
+  echo "== port under test: byte rings =="
+fi
+
 # Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
 # some gem/memory layouts corrupt a TCB right after app_main returns; a
 # 16 KiB VM task stack has made it disappear on QEMU and on the board.
