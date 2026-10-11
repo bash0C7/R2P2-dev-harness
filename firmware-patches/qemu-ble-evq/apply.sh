@@ -34,6 +34,8 @@ cp "$RIG_DIR/sdkconfig.qemu_ble_evq" "$ESP32_REPO/sdkconfigs/qemu_ble_evq"
 mkdir -p "$ESP32_REPO/storage/home"
 if [ "${EVQ_LIMITS:-0}" = "1" ]; then
   cp "$RIG_DIR/rigapp_limits.rb" "$ESP32_REPO/storage/home/app.rb"
+elif [ "${EVQ_POWER:-0}" = "1" ]; then
+  cp "$RIG_DIR/rigapp_power.rb" "$ESP32_REPO/storage/home/app.rb"
 elif [ "${EVQ_FLOOD_DRAIN:-}" = "hb" ]; then
   sed 's/FLOOD_DRAIN_ON_HEARTBEAT_ONLY = false/FLOOD_DRAIN_ON_HEARTBEAT_ONLY = true/' "$RIG_DIR/rigapp.rb" > "$ESP32_REPO/storage/home/app.rb"
 else

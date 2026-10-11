@@ -306,4 +306,50 @@ raise "expect the three new checks green on the fixed shape" unless fixed.values
 limits_without_own_burst = EvqVerdict.judge_limits(checks_log)
 raise "expect judge_limits not to take the control-burst line for its own" unless !limits_without_own_burst.pass && limits_without_own_burst.rig_ran == false
 
+def power_log(steps, inject: true, begin_line: true, done_line: true)
+  lines = []
+  lines << "[rigapp] power begin" if begin_line
+  lines << "[rig] power inject disc handle=51 call=4" if inject
+  steps.each do |n, events|
+    events.each do |e|
+      lines << (e == :disc ? "[rigapp] step #{n} disc 51" : "[rigapp] step #{n} state #{e}")
+    end
+  end
+  lines << "[rigapp] step 7 disc 17"
+  lines << "[rigapp] power done" if done_line
+  lines.join("\n") + "\n"
+end
+
+power_fixed = { 1 => [1, 2], 2 => [3, 0], 3 => [0], 4 => [1, 2], 5 => [5, 4], 6 => [1, 2], 7 => [:disc, 2] }
+power_today = { 1 => [2], 4 => [2], 6 => [2], 7 => [2] }
+
+green = EvqVerdict.judge_power(power_log(power_fixed))
+raise "expect power pass on the reference sequence, got: #{green.message}" unless green.pass && green.rig_ran == true
+power_steps, = EvqVerdict.power_steps(power_log(power_fixed))
+raise "expect seven power steps" unless power_steps.size == 7 && power_steps.all? { |st| st[:pass] }
+raise "expect a disc of another handle not to count for step 7" unless power_steps.last[:got] == [:disc, 2]
+
+red = EvqVerdict.judge_power(power_log(power_today))
+raise "expect power fail on today's shape" if red.pass
+raise "expect power rig_ran on today's shape" unless red.rig_ran == true
+raise "expect failing steps named, got: #{red.message}" unless red.message.include?("steps 1,2,3,4,5,6,7")
+today_steps, = EvqVerdict.power_steps(power_log(power_today))
+lines = EvqVerdict.power_step_lines(today_steps)
+raise "expect step 1 line, got: #{lines[0]}" unless lines[0] == "step 1: FAIL expected=[1, 2] got=[2] (power-on)"
+raise "expect step 3 line, got: #{lines[2]}" unless lines[2].start_with?("step 3: FAIL expected=[0] got=[]")
+raise "expect step 7 line, got: #{lines[6]}" unless lines[6].include?("expected=[2, disc] got=[2]")
+
+one_off = power_fixed.merge(5 => [4])
+one_off_steps, = EvqVerdict.power_steps(power_log(one_off))
+raise "expect only step 5 to fail" unless one_off_steps.reject { |st| st[:pass] }.map { |st| st[:n] } == [5]
+lost_disc = power_fixed.merge(7 => [2])
+raise "expect step 7 to fail when the injected event is lost" if EvqVerdict.judge_power(power_log(lost_disc)).pass
+reordered = power_fixed.merge(7 => [2, :disc])
+raise "expect step 7 to accept either order" unless EvqVerdict.judge_power(power_log(reordered)).pass
+
+raise "expect power not-run without the inject line" unless EvqVerdict.judge_power(power_log(power_fixed, inject: false)).rig_ran == false
+raise "expect power not-run without 'power done'" unless EvqVerdict.judge_power(power_log(power_fixed, done_line: false)).rig_ran == false
+raise "expect power not-run without 'power begin'" unless EvqVerdict.judge_power(power_log(power_fixed, begin_line: false)).rig_ran == false
+raise "expect power not-run on a log that died at load" unless EvqVerdict.judge_power("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
+
 puts "evq_verdict_test OK"

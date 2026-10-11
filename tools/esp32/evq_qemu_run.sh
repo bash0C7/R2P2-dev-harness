@@ -17,9 +17,12 @@ LOGFILE="${2:?Usage: $0 <mrubyc|mruby> <logfile>}"
 BUILD_DIR="${EVQ_BUILD_DIR:-build-qemu-evq}"
 RUN_TIMEOUT="${EVQ_RUN_TIMEOUT:-420}"
 # The injector logs this once, after its last insertion (rig_injector.c).
-# The limits case (EVQ_LIMITS=1) appends a phase, so its own last line counts.
+# The limits case (EVQ_LIMITS=1) appends a phase, so its own last line counts;
+# the power case (EVQ_POWER=1) has no injector phases, its device program ends it.
 if [ "${EVQ_LIMITS:-0}" = "1" ]; then
   DONE_DEFAULT='\[rig\] limits done'
+elif [ "${EVQ_POWER:-0}" = "1" ]; then
+  DONE_DEFAULT='\[rigapp\] power done'
 else
   DONE_DEFAULT='\[rig\] wlat done'
 fi
@@ -35,6 +38,7 @@ export PICORUBY_QEMU_EVQ_RIG=1
 [ "${EVQ_FLOOD:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_FLOOD=1
 [ -n "${EVQ_FLOOD_SPACING_MS:-}" ] && export PICORUBY_QEMU_EVQ_FLOOD_SPACING_MS="$EVQ_FLOOD_SPACING_MS"
 [ "${EVQ_LIMITS:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_LIMITS=1
+[ "${EVQ_POWER:-0}" = "1" ] && export PICORUBY_QEMU_EVQ_POWER=1
 
 # Known Core-1 StoreProhibited boot-loop mitigation (harness docs/spec.md):
 # some gem/memory layouts corrupt a TCB right after app_main returns; a

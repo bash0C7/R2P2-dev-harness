@@ -35,6 +35,16 @@
  *       back to back, through picoruby_ble_gap_event and rig_inject
  *   L4: BLE_peripheral_request_can_send_now_event() called back to back with
  *       no connection
+ *
+ * Optional case, PICORUBY_QEMU_EVQ_POWER (judged by judge_power): the device
+ * program (rigapp_power.rb) drives hci_power_control through seven steps and
+ * the injector task stays idle. Its only act is rig_before_power_on(), called
+ * from the patched BLE_hci_power_control(1) before the port does anything:
+ *   [rig] power inject disc handle=<n> call=<k>
+ *                                         a DISCONNECTION_COMPLETE for handle n
+ *                                         enqueued just before the k-th power-on
+ *                                         call (the nested one, step 7)
+ *
  *   A marker event {0xFE, 1, n} is enqueued after L3 (n=1) and after L4
  *   (n=2), once the ring has drained; the device program logs it as
  *   "[rigapp] mark <n>".
@@ -51,13 +61,22 @@
 extern void picoruby_nimble_enqueue_event(const uint8_t *pkt, uint16_t len, bool coalesce_adv);
 extern int picoruby_nimble_enqueue_write(uint16_t ruby_handle, const uint8_t *data, uint16_t len);
 
-#ifdef PICORUBY_QEMU_EVQ_LIMITS
+#if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER)
 /* Same includes as ports/esp32/ble.c: the notification path is fed with a
  * struct ble_gap_event carrying an os_mbuf. */
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 #include "os/os_mbuf.h"
 #include "ble_common.h"
+#endif
+
+#ifdef PICORUBY_QEMU_EVQ_POWER
+/* rigapp_power.rb powers on in steps 1, 4, 6 and 7; step 7 is the nested one. */
+#define POWER_NESTED_CALL 4
+#define POWER_DISC_HANDLE 0x0033
+#endif
+
+#ifdef PICORUBY_QEMU_EVQ_LIMITS
 
 #define LIMITS_BURST_FIRST 101
 #define LIMITS_BURST_LAST 180
@@ -154,6 +173,20 @@ rig_inject(int seq)
   picoruby_nimble_enqueue_event(adv, len, false);
 }
 
+#if defined(PICORUBY_QEMU_EVQ_LIMITS) || defined(PICORUBY_QEMU_EVQ_POWER)
+static struct ble_gap_event rig_gap_event;
+
+static void
+rig_inject_disconnect(uint16_t handle)
+{
+  memset(&rig_gap_event, 0, sizeof(rig_gap_event));
+  rig_gap_event.type = BLE_GAP_EVENT_DISCONNECT;
+  rig_gap_event.disconnect.reason = 0x13;
+  rig_gap_event.disconnect.conn.conn_handle = handle;
+  picoruby_ble_gap_event(&rig_gap_event, NULL);
+}
+#endif
+
 #ifdef PICORUBY_QEMU_EVQ_LIMITS
 /* One os_mbuf as NimBLE hands it to the GAP callback, built by hand: the
  * host is not running, so no mbuf pool exists. The layout is what
@@ -165,7 +198,6 @@ static union {
   struct os_mbuf om;
   uint8_t raw[sizeof(struct os_mbuf) + sizeof(struct os_mbuf_pkthdr) + LIMITS_NOTIFY_MAX];
 } rig_mbuf;
-static struct ble_gap_event rig_gap_event;
 
 static void
 rig_inject_notify(uint16_t len)
@@ -187,16 +219,6 @@ rig_inject_notify(uint16_t len)
   rig_gap_event.notify_rx.indication = 0;
   picoruby_ble_gap_event(&rig_gap_event, NULL);
   printf("[rig] notify injected len=%u\n", (unsigned)len);
-}
-
-static void
-rig_inject_disconnect(uint16_t handle)
-{
-  memset(&rig_gap_event, 0, sizeof(rig_gap_event));
-  rig_gap_event.type = BLE_GAP_EVENT_DISCONNECT;
-  rig_gap_event.disconnect.reason = 0x13;
-  rig_gap_event.disconnect.conn.conn_handle = handle;
-  picoruby_ble_gap_event(&rig_gap_event, NULL);
 }
 
 static void
@@ -247,10 +269,30 @@ rig_limits(void)
 }
 #endif
 
+/* Called from the patched BLE_hci_power_control(1), on the VM thread, before
+ * the port does anything for the call. In the power case the POWER_NESTED_CALL-th
+ * call (step 7, power-on while on) gets one event into the ring first. */
+void
+rig_before_power_on(void)
+{
+#ifdef PICORUBY_QEMU_EVQ_POWER
+  static int calls = 0;
+  if (++calls == POWER_NESTED_CALL) {
+    rig_inject_disconnect(POWER_DISC_HANDLE);
+    printf("[rig] power inject disc handle=%d call=%d\n", POWER_DISC_HANDLE, calls);
+  }
+#endif
+}
+
 static void
 rig_task(void *arg)
 {
   (void)arg;
+#ifdef PICORUBY_QEMU_EVQ_POWER
+  /* The device program drives this case; nothing to inject from here. */
+  vTaskDelete(NULL);
+  return;
+#endif
   while (!rig_power_on) {
     vTaskDelay(pdMS_TO_TICKS(100));
   }

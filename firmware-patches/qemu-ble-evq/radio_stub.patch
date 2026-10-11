@@ -2,7 +2,14 @@ diff --git a/mrbgems/picoruby-ble/ports/esp32/ble.c b/mrbgems/picoruby-ble/ports
 index 199ea2ea..76c852d5 100644
 --- a/mrbgems/picoruby-ble/ports/esp32/ble.c
 +++ b/mrbgems/picoruby-ble/ports/esp32/ble.c
-@@ -589,8 +589,15 @@ BLE_hci_power_control(uint8_t power_mode)
+@@ -586,11 +586,22 @@ BLE_hci_power_control(uint8_t power_mode)
+ {
+   if (!picoruby_nimble_started()) return;
+   if (power_mode == 1) {
++#ifdef PICORUBY_QEMU_EVQ_RIG
++    extern void rig_before_power_on(void);
++    rig_before_power_on();
++#endif
      picoruby_nimble_reset_events();
      picoruby_nimble_heartbeat_enable(true);
      picoruby_ble_synth_state_working();
@@ -18,7 +25,7 @@ index 199ea2ea..76c852d5 100644
      switch (role) {
        case BLE_ROLE_PERIPHERAL:
        case BLE_ROLE_BROADCASTER:
-@@ -609,6 +616,10 @@ BLE_hci_power_control(uint8_t power_mode)
+@@ -609,6 +620,10 @@ BLE_hci_power_control(uint8_t power_mode)
  void
  BLE_gap_local_bd_addr(uint8_t *local_addr)
  {

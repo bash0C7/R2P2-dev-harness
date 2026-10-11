@@ -16,6 +16,12 @@
 # burst, CAN_SEND_NOW produced without a connection, and power-on that
 # reports WORKING without INITIALIZING first.
 #
+# evq_power_red runs the power case (EVQ_POWER=1): a device program walks
+# hci_power_control through power-on, power-off, power-off while off,
+# power-on, sleep, power-on from sleep and a nested power-on with one event
+# in the ring, and each step is compared with the BTSTACK_EVENT_STATE sequence
+# BTstack emits for it.
+#
 # The overlay patches the PR branch's working copy and is never
 # committed there; apply.sh/revert.sh own that lifecycle.
 require_relative "../tools/esp32/evq_verdict"
@@ -150,6 +156,22 @@ namespace :esp32 do
     puts "[esp32:evq_limits_red] RED as expected: #{checks.size} of #{checks.size} checks"
   end
 
+  desc "Power rig (seven hci_power_control steps against the BTstack state sequence), expecting at least one step FAIL on pre-fix firmware. Succeeds when the verdict is red"
+  task :evq_power_red do
+    steps, rig_ran, why = evq_power_judge
+    puts EvqVerdict.power_step_lines(steps).map { |line| "[esp32:evq_power_red] #{line}" }
+    unless rig_ran
+      puts "[esp32:evq_power_red] RIG DID NOT RUN: #{why}"
+      exit 1
+    end
+    failed = steps.reject { |step| step[:pass] }
+    if failed.empty?
+      puts "[esp32:evq_power_red] UNEXPECTED GREEN: all #{steps.size} steps match the reference"
+      exit 1
+    end
+    puts "[esp32:evq_power_red] RED as expected: #{failed.size} of #{steps.size} steps fail (#{failed.map { |step| step[:n] }.join(',')})"
+  end
+
   desc "Limits rig (same checks), expecting every check PASS (both conditions logged, newest events refused, control events kept, no CAN_SEND_NOW without connection, INITIALIZING before WORKING)"
   task :evq_limits_green do
     checks = evq_limits_judge
@@ -178,6 +200,7 @@ def evq_log_path
   suffix << "-flood#{ENV['EVQ_FLOOD_SPACING_MS']}ms" if ENV["EVQ_FLOOD"] == "1"
   suffix << "-hb" if ENV["EVQ_FLOOD_DRAIN"] == "hb"
   suffix << "-limits" if ENV["EVQ_LIMITS"] == "1"
+  suffix << "-power" if ENV["EVQ_POWER"] == "1"
   File.join(esp32_repo_dir, "qemu-evq-#{evq_vm}#{suffix}.log")
 end
 
@@ -204,6 +227,13 @@ def evq_limits_judge
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
   EvqVerdict.judge_limits_checks(File.read(evq_log_path))
+end
+
+def evq_power_judge
+  ENV["EVQ_POWER"] = "1"
+  Rake::Task["esp32:evq_run"].invoke
+  raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+  EvqVerdict.power_steps(File.read(evq_log_path))
 end
 
 def evq_limits_report(task, checks)

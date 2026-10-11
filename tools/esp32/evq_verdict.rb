@@ -14,6 +14,10 @@
 # judge_control_burst, judge_can_send_now and judge_power_on_states judge
 # three more defects of the same limits run; judge_limits_checks returns all
 # four verdicts by name, so a partial fix shows which one turned green.
+#
+# judge_power judges the power case (PICORUBY_QEMU_EVQ_POWER): seven
+# hci_power_control steps, each compared with the BTSTACK_EVENT_STATE sequence
+# BTstack emits for it (POWER_REFERENCE, measured on the Pico 2 W).
 module EvqVerdict
   # rig_ran is set by judge_limits only: false when the limits phase left no
   # evidence in the log (the device program or the injector never got there), so
@@ -48,6 +52,33 @@ module EvqVerdict
   STATE_SEEN = /rigapp\] state (\d+)/
   MARK_SEEN = /rigapp\] mark (\d+)/
   CON_HANDLE_NONE = 0xffff
+  POWER_BEGIN = /rigapp\] power begin/
+  POWER_DONE = /rigapp\] power done/
+  POWER_STEP_EVENT = /rigapp\] step (\d+) (state|disc) (\d+)/
+  POWER_INJECTED = /power inject disc handle=(\d+) call=(\d+)/
+  # BTSTACK_EVENT_STATE values per step: HCI_STATE_OFF=0 INITIALIZING=1
+  # WORKING=2 HALTING=3 SLEEPING=4 FALLING_ASLEEP=5. Step 7 also expects the
+  # injected DISCONNECTION_COMPLETE (:disc), put into the ring just before the
+  # nested power-on; its position relative to the state is not part of the
+  # reference, so step 7 is compared as a multiset.
+  POWER_REFERENCE = {
+    1 => [1, 2],
+    2 => [3, 0],
+    3 => [0],
+    4 => [1, 2],
+    5 => [5, 4],
+    6 => [1, 2],
+    7 => [2, :disc],
+  }
+  POWER_STEP_NAMES = {
+    1 => "power-on",
+    2 => "power-off",
+    3 => "power-off while off",
+    4 => "power-on again",
+    5 => "sleep",
+    6 => "power-on from sleep",
+    7 => "nested power-on with an event in the ring",
+  }
   # First rig line of a run: everything before it is the idf.py build output
   # and the boot log, where a file name could contain "truncat".
   RIG_RUN_START = "write enq A"
@@ -263,6 +294,53 @@ module EvqVerdict
       "no CAN_SEND_NOW without a connection" => judge_can_send_now(log),
       "power-on reports INITIALIZING then WORKING" => judge_power_on_states(log),
     }
+  end
+
+  # Power case. Returns [steps, rig_ran, why]: steps is
+  # [{n:, name:, expected:, got:, pass:}], rig_ran is false when the device
+  # program did not finish the walk or the injector did not fire for step 7
+  # (the steps then say nothing about the firmware); why names what is missing.
+  def power_steps(log)
+    fw = log[(log.index(POWER_BEGIN) || 0)..]
+    injected = POWER_INJECTED.match(fw)
+    handle_low = injected && (injected[1].to_i & 0xff)
+    got = Hash.new { |h, k| h[k] = [] }
+    fw.scan(POWER_STEP_EVENT) do |step, kind, value|
+      if kind == "state"
+        got[step.to_i] << value.to_i
+      elsif value.to_i == handle_low
+        got[step.to_i] << :disc
+      end
+    end
+    steps = POWER_REFERENCE.map do |n, expected|
+      actual = got[n]
+      same = n == 7 ? actual.sort_by(&:to_s) == expected.sort_by(&:to_s) : actual == expected
+      { n: n, name: POWER_STEP_NAMES[n], expected: expected, got: actual, pass: same }
+    end
+    why = []
+    why << "no 'power begin' line in log" unless log.match?(POWER_BEGIN)
+    why << "no 'power done' line in log (the walk did not finish)" unless log.match?(POWER_DONE)
+    why << "no 'power inject disc' line in log (the injector did not fire for step 7)" if injected.nil?
+    [steps, why.empty?, why.join("; ")]
+  end
+
+  def power_step_lines(steps)
+    steps.map do |s|
+      "step #{s[:n]}: #{s[:pass] ? 'PASS' : 'FAIL'} expected=[#{s[:expected].join(', ')}] got=[#{s[:got].join(', ')}] (#{s[:name]})"
+    end
+  end
+
+  def judge_power(log)
+    steps, rig_ran, why = power_steps(log)
+    failed = steps.reject { |s| s[:pass] }.map { |s| s[:n] }
+    summary = "power: #{steps.size - failed.size} of #{steps.size} steps match the reference"
+    if !rig_ran
+      Result.new(pass: false, message: "rig did not run: #{why}", rig_ran: false)
+    elsif failed.empty?
+      Result.new(pass: true, message: summary, rig_ran: true)
+    else
+      Result.new(pass: false, message: "#{summary}; FAIL: steps #{failed.join(',')}", rig_ran: true)
+    end
   end
 
   def not_run(message)
