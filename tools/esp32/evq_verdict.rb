@@ -239,7 +239,7 @@ module EvqVerdict
 
   # Per-handle write bound (PICORUBY_BLE_WRQ_PENDING): a refusal names the handle and
   # the count.
-  HANDLE_REFUSED = /writes to handle (\d+) refused: (\d+) values not yet popped \(limit (\d+)\)/
+  HANDLE_REFUSED = /handle (\d+) holds (\d+) values Ruby has not popped; refusing newer writes/
   FLOOD_HANDLE = 0x43
   FLOOD_DONE_TIMES = /flood done n=\d+ rejected=\d+ begin=(\d+) end=(\d+) probes=(\d+)/
   FLOOD_RECV_TIMED = /flood received=(\d+) bytes=\d+ t=(\d+)/
@@ -262,7 +262,7 @@ module EvqVerdict
     rejected = FLOOD_DONE.match(log)[2].to_i
     lines = log.scan(HANDLE_REFUSED)
     problems = []
-    problems << "#{rejected} writes rejected and no per-handle 'writes to handle N refused' line in the log" if rejected.positive? && lines.empty?
+    problems << "#{rejected} writes rejected and no per-handle 'handle N holds M values' line in the log" if rejected.positive? && lines.empty?
     problems << "#{lines.size} per-handle lines in the log with nothing rejected" if rejected.zero? && !lines.empty?
     problems << "#{lines.size} per-handle lines, expected one per power session" if lines.size > 1
     verdict(problems, "#{result.message}, per-handle lines=#{lines.size}")
@@ -309,7 +309,7 @@ module EvqVerdict
     problems << "received nothing" if received.zero?
 
     lines = log.scan(HANDLE_REFUSED)
-    named = lines.select { |h, c, l| h.to_i == FLOOD_HANDLE && c.to_i == limit && l.to_i == limit }
+    named = lines.select { |h, c| h.to_i == FLOOD_HANDLE && c.to_i == limit }
     problems << "#{lines.size} per-handle log lines, #{named.size} of them naming handle #{FLOOD_HANDLE} and count #{limit}; expected exactly one" unless lines.size == 1 && named.size == 1
 
     probe_latency = log.scan(WLAT).select { |tin, _t| tin.to_i >= begin_ms }.map { |tin, t| t.to_i - tin.to_i }

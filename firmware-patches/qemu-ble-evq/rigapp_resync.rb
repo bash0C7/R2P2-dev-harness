@@ -1,6 +1,8 @@
 # Device program of the resync case (apply.sh copies it to storage/home/app.rb when EVQ_RESYNC=1).
-# Starts a peripheral twice. The rig's host (rig_injector.c) syncs once per start and, in the
-# first session, resets and syncs again after the first start has returned. Log tokens:
+# Starts a peripheral twice and powers each on before it advertises: a port with a power state
+# keeps an advertise made while off for the next power-on and does not reach the host with it.
+# The rig's host (rig_injector.c) syncs once per start and, in the first session, resets and
+# syncs again after the first start has returned. Log tokens:
 #   [rigapp] resync control     the control advertise follows the first BLE.new
 #   [rigapp] resync second new  the second BLE.new follows, after the reset and re-sync
 #   [rigapp] resync done
@@ -16,11 +18,13 @@ def wait_ms(ms)
 end
 
 first = BLE.new(:peripheral)
+first.hci_power_control(BLE::HCI_POWER_ON)
 puts "[rigapp] resync control"
 first.advertise(ADV)
 wait_ms(1200)
 puts "[rigapp] resync second new"
 second = BLE.new(:peripheral)
+second.hci_power_control(BLE::HCI_POWER_ON)
 second.advertise(ADV)
 wait_ms(500)
 puts "[rigapp] resync done"

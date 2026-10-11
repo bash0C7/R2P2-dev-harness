@@ -625,7 +625,7 @@ raise "expect later CAN_SEND_NOW check red with 5 events" if later.values.first.
 # Flood to a handle drained only on the heartbeat (judge_flood_hb) and the explained-rejection
 # judge of the continuous floods, against the per-handle bound of 16 (REVISION_3).
 def hb_log(drain_times: [1400, 2400], drains: nil, rejected: 436, begin_ms: 1000, end_ms: 2000, probes: 50,
-           probe_latencies: nil, refused_lines: ["W (1500) prb_ble_evq: writes to handle 67 refused: 16 values not yet popped (limit 16), refusing the newest writes to it until Ruby pops"],
+           probe_latencies: nil, refused_lines: ["W (1500) prb_ble_evq: handle 67 holds 16 values Ruby has not popped; refusing newer writes to it until Ruby pops"],
            crash: nil, sent: 500)
   drains ||= drain_times.each_with_index.map { |t, i| [16 * (i + 1), t] }
   lines = ["[rig] wlat done n=20"]
@@ -650,15 +650,15 @@ raise "expect hb fail: received not a multiple of 16" if EvqVerdict.judge_flood_
 raise "expect hb fail: a batch above the limit" if EvqVerdict.judge_flood_hb(hb_log(drains: [[20, 1400], [40, 2400]], rejected: 460)).pass
 raise "expect hb fail: more received than the drains allow" if EvqVerdict.judge_flood_hb(hb_log(drains: [[16, 1400], [32, 2400], [48, 2500], [64, 2600]], rejected: 436)).pass
 raise "expect hb fail: no per-handle line" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: [])).pass
-raise "expect hb fail: two per-handle lines" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: Array.new(2) { "writes to handle 67 refused: 16 values not yet popped (limit 16)" })).pass
-raise "expect hb fail: the line names another handle" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["writes to handle 68 refused: 16 values not yet popped (limit 16)"])).pass
-raise "expect hb fail: the line names another count" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["writes to handle 67 refused: 17 values not yet popped (limit 16)"])).pass
+raise "expect hb fail: two per-handle lines" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: Array.new(2) { "handle 67 holds 16 values Ruby has not popped; refusing newer writes to it until Ruby pops" })).pass
+raise "expect hb fail: the line names another handle" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["handle 68 holds 16 values Ruby has not popped; refusing newer writes to it until Ruby pops"])).pass
+raise "expect hb fail: the line names another count" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, refused_lines: ["handle 67 holds 17 values Ruby has not popped; refusing newer writes to it until Ruby pops"])).pass
 raise "expect hb fail: a second-handle write stalled" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, probe_latencies: Array.new(49, 12) + [400])).pass
 raise "expect hb fail: a second-handle write never arrived" if EvqVerdict.judge_flood_hb(hb_log(drain_times: [1400, 2400], rejected: 468, probe_latencies: Array.new(49, 12))).pass
 raise "expect hb fail: no done line" if EvqVerdict.judge_flood_hb("[rigapp] flood received=16 bytes=2048 t=1400\n").pass
 raise "expect hb fail: nothing received" if EvqVerdict.judge_flood_hb(hb_log(drains: [], rejected: 500)).pass
 
-line = "writes to handle 67 refused: 16 values not yet popped (limit 16)"
+line = "handle 67 holds 16 values Ruby has not popped; refusing newer writes to it until Ruby pops"
 cont_ok = "[rig] flood done n=500 rejected=0\n[rigapp] flood received=500 bytes=64000\n"
 raise "expect explained pass with nothing rejected" unless EvqVerdict.judge_flood_explained(cont_ok).pass
 raise "expect explained fail: a line without a rejection" if EvqVerdict.judge_flood_explained(line + "\n" + cont_ok).pass
