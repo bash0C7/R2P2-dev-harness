@@ -106,6 +106,62 @@ module EvqVerdict
     6 => "power-on from sleep",
     7 => "nested power-on with an event in the ring",
   }
+  POWER_CALL = /\[rigapp\] step (\d+) call (\w+) t=(\d+)/
+  POWER_TIMED_EVENT = /\[rigapp\] step (\d+) (state|disc) (\d+) t=(\d+)/
+  POWER_HB = /\[rigapp\] step (\d+) hb t=(\d+)/
+  NIMBLE_CALL = /\[rig\] nimble (\w+)(?: handle=(\d+) reason=0x(\h+))?(?: -> (\d+))? power=(\d+)/
+  POWER_CALL_STEPS = (3..12).to_a
+  POWER_LINK_HANDLE = 51
+  POWER_TERMINATE_REASON = 0x13
+  # The pump completes a power-off or sleep that has something left to wait for 1000 ms
+  # after the call (bt hci.c:5978-5983; measured on the Pico 2 W at 1005 ms, ledger D30).
+  # The device program reads the time when it pops the event, so the interval it sees is
+  # the deadline plus what lies between the pump and the program: the scheduler pass that
+  # runs the pump (MRB_TICK_UNIT 10 ms on the board; the rig builds the same way) and the
+  # program's 20 ms poll of the queue. Early: the program stamps the call before the port
+  # stamps halting_since, and both round to a millisecond.
+  POWER_HALTING_MS = 1000
+  POWER_HALTING_EARLY_MS = 2
+  POWER_HALTING_LATE_MS = 40
+  POWER_IMMEDIATE_MAX_MS = 40
+  POWER_HEARTBEAT_STOP_MS = 200
+  # States and, for 8, 10 and 12, the order of the terminated link's or cancelled attempt's
+  # disconnect (:disc_ff = handle 0xffff, :disc_33 = the link of the rig's answering peer).
+  POWER_HALTING_REFERENCE = {
+    8 => [3, :disc_ff, 0],
+    9 => [1, 2],
+    10 => [5, :disc_33, 4],
+    11 => [1, 2],
+    12 => [3, :disc_33, 0],
+  }
+  POWER_HALTING_NAMES = {
+    8 => "power-off with a connect attempt nobody answers",
+    9 => "power-on, link comes up",
+    10 => "sleep with the link up, its disconnect arrives late",
+    11 => "power-on from sleep",
+    12 => "power-off with the link up",
+  }
+  # NimBLE calls that one hci_power_control makes, in order, with the power state at the
+  # call (0 off, 1 on, 2 sleeping). OFF: power written first, then advertising stopped, the
+  # held link terminated, the attempt cancelled, discovery stopped. SLEEP: the same without
+  # the two stops. ON applies the kept scan wish (the program asked for a scan in step 1).
+  POWER_NIMBLE_REFERENCE = {
+    3 => [],
+    4 => [["ble_gap_disc", 1]],
+    5 => [["ble_gap_conn_active", 2]],
+    6 => [["ble_gap_disc", 1]],
+    7 => [],
+    8 => [["ble_gap_adv_stop", 0], ["ble_gap_conn_active", 0], ["ble_gap_conn_cancel", 0], ["ble_gap_disc_cancel", 0]],
+    9 => [["ble_gap_disc", 1]],
+    10 => [["ble_gap_terminate", 2], ["ble_gap_conn_active", 2]],
+    11 => [["ble_gap_disc", 1]],
+    12 => [["ble_gap_adv_stop", 0], ["ble_gap_terminate", 0], ["ble_gap_conn_active", 0], ["ble_gap_disc_cancel", 0]],
+  }
+  POWER_NIMBLE_NAMES = {
+    3 => "power-off while off", 4 => "power-on", 5 => "sleep", 6 => "power-on from sleep", 7 => "nested power-on",
+    8 => "power-off, attempt pending", 9 => "power-on", 10 => "sleep, link up", 11 => "power-on from sleep",
+    12 => "power-off, link up",
+  }
   # First rig line of a run: everything before it is the idf.py build output
   # and the boot log, where a file name could contain "truncat".
   RIG_RUN_START = "write enq A"
@@ -590,6 +646,127 @@ module EvqVerdict
     else
       Result.new(pass: false, message: "#{summary}; FAIL: steps #{failed.join(',')}", rig_ran: true)
     end
+  end
+
+  # Power case against the port with a power state (esp32:evq_power_green). Returns
+  # [checks, rig_ran, why]: checks is [{name:, pass:, detail:}]. The device program
+  # (rigapp_power.rb) writes one "call" line before each hci_power_control, and the
+  # NimBLE stubs (rig_nimble_stubs.c) write one line per call the port makes to the
+  # host, so the lines between a "call" line and the next device-program line are the
+  # calls that hci_power_control made, in order, with the power state at each.
+  def power_green(log)
+    walk = power_walk(log)
+    checks = []
+    steps, steps_ran, steps_why = power_steps(log)
+    failed = steps.reject { |s| s[:pass] }.map { |s| s[:n] }
+    checks << { name: "state events of steps 1-7", pass: failed.empty?,
+                detail: failed.empty? ? "all seven match the reference" : "steps #{failed.join(',')} differ: #{power_step_lines(steps.reject { |s| s[:pass] }).join('; ')}" }
+
+    POWER_HALTING_REFERENCE.each do |n, expected|
+      got = (walk[:events][n] || []).map { |kind, value, _| power_event_name(kind, value) }
+      checks << { name: "state events of step #{n} (#{POWER_HALTING_NAMES[n]})", pass: got == expected,
+                  detail: "expected=[#{expected.join(', ')}] got=[#{got.join(', ')}]" }
+    end
+
+    POWER_NIMBLE_REFERENCE.each do |n, expected|
+      call = walk[:calls][n]
+      got = call ? call[:nimble].map { |c| [c[:name], c[:power]] } : nil
+      ok = got == expected
+      checks << { name: "NimBLE calls of step #{n} (#{POWER_NIMBLE_NAMES[n]})", pass: ok,
+                  detail: "expected=[#{expected.map { |name, pw| "#{name}@#{pw}" }.join(', ')}] got=[#{(got || []).map { |name, pw| "#{name}@#{pw}" }.join(', ')}]#{got.nil? ? ' (no call line)' : ''}" }
+    end
+
+    [10, 12].each do |n|
+      terminate = walk[:calls][n] && walk[:calls][n][:nimble].find { |c| c[:name] == "ble_gap_terminate" }
+      ok = terminate && terminate[:handle] == POWER_LINK_HANDLE && terminate[:reason] == POWER_TERMINATE_REASON
+      checks << { name: "terminate of step #{n} names the link and reason 0x13", pass: !!ok,
+                  detail: terminate ? "handle=#{terminate[:handle]} reason=0x#{terminate[:reason].to_s(16)}" : "no ble_gap_terminate line" }
+    end
+    cancel = walk[:calls][8] && walk[:calls][8][:nimble].find { |c| c[:name] == "ble_gap_conn_active" }
+    checks << { name: "step 8 finds the connect attempt pending", pass: !!(cancel && cancel[:ret] == 1),
+                detail: cancel ? "ble_gap_conn_active -> #{cancel[:ret]}" : "no ble_gap_conn_active line" }
+
+    [8, 10, 12].each do |n|
+      call = walk[:calls][n]
+      events = walk[:events][n] || []
+      first = events.first
+      disc = events.find { |kind, _, _| kind == "disc" }
+      last = events.last
+      if call && first && disc && last
+        immediate = first[2] - call[:t]
+        deadline = disc[2] - call[:t]
+        together = last[2] - disc[2]
+        ok = immediate <= POWER_IMMEDIATE_MAX_MS && deadline >= POWER_HALTING_MS - POWER_HALTING_EARLY_MS &&
+             deadline <= POWER_HALTING_MS + POWER_HALTING_LATE_MS && together <= POWER_HALTING_LATE_MS
+        checks << { name: "halting timer of step #{n}", pass: ok,
+                    detail: "#{first[1]} after #{immediate} ms, the synthesised disconnect after #{deadline} ms (window #{POWER_HALTING_MS - POWER_HALTING_EARLY_MS}..#{POWER_HALTING_MS + POWER_HALTING_LATE_MS}), the final state #{together} ms after it" }
+      else
+        checks << { name: "halting timer of step #{n}", pass: false, detail: "missing call line or events" }
+      end
+    end
+
+    on_beats = (walk[:hbs][4] || []).size
+    checks << { name: "heartbeat runs while on (step 4)", pass: on_beats >= 1, detail: "#{on_beats} beat(s) in the 1500 ms window" }
+    sleep_call = walk[:calls][5]
+    late = sleep_call ? (walk[:hbs][5] || []).count { |t| t > sleep_call[:t] + POWER_HEARTBEAT_STOP_MS } : nil
+    checks << { name: "heartbeat stops at sleep (step 5)", pass: late == 0,
+                detail: late.nil? ? "no call line" : "#{late} beat(s) later than #{POWER_HEARTBEAT_STOP_MS} ms after the call" }
+
+    step10_discs = (walk[:events][10] || []).count { |kind, _, _| kind == "disc" }
+    dropped = firmware_output(log).match?(/dropped: handle=0x0033/)
+    checks << { name: "the late disconnect of step 10 is dropped", pass: step10_discs == 1 && dropped,
+                detail: "#{step10_discs} disconnect event(s) in step 10, port log line #{dropped ? 'present' : 'missing'}" }
+    synthesised = firmware_output(log).match?(/halting deadline, synthesised one: handle=0xffff/)
+    checks << { name: "the deadline logs the first synthesised disconnect", pass: firmware_output(log).match?(/halting deadline, synthesised one/),
+                detail: synthesised ? "line present (handle 0xffff for the attempt)" : "line present for another handle, or missing" }
+
+    problems = []
+    problems << steps_why unless steps_ran
+    problems << "#{walk[:calls].size} of #{POWER_CALL_STEPS.size} call lines in the log" unless walk[:calls].size == POWER_CALL_STEPS.size
+    [checks, problems.empty?, problems.join("; ")]
+  end
+
+  def power_green_lines(checks)
+    checks.map { |c| "#{c[:pass] ? 'PASS' : 'FAIL'}: #{c[:name]}: #{c[:detail]}" }
+  end
+
+  def power_event_name(kind, value)
+    return value if kind == "state"
+    { 255 => :disc_ff, POWER_LINK_HANDLE => :disc_33 }[value] || :"disc_#{value}"
+  end
+
+  def power_walk(log)
+    fw = log[(log.index(POWER_BEGIN) || 0)..]
+    calls = {}
+    events = Hash.new { |h, k| h[k] = [] }
+    hbs = Hash.new { |h, k| h[k] = [] }
+    current = nil
+    fw.each_line do |line|
+      if (m = POWER_CALL.match(line))
+        current = { step: m[1].to_i, kind: m[2], t: m[3].to_i, nimble: [] }
+        calls[current[:step]] = current
+      elsif (m = POWER_TIMED_EVENT.match(line))
+        current = nil
+        events[m[1].to_i] << [m[2], m[3].to_i, m[4].to_i]
+      elsif (m = POWER_HB.match(line))
+        current = nil
+        hbs[m[1].to_i] << m[2].to_i
+      elsif line.include?("[rigapp]")
+        current = nil
+      elsif current && (m = NIMBLE_CALL.match(line))
+        current[:nimble] << { name: m[1], handle: m[2]&.to_i, reason: m[3]&.to_i(16), ret: m[4]&.to_i, power: m[5].to_i }
+      end
+    end
+    { calls: calls, events: events, hbs: hbs }
+  end
+
+  def judge_power_green(log)
+    checks, rig_ran, why = power_green(log)
+    return not_run(why) unless rig_ran
+    failed = checks.reject { |c| c[:pass] }
+    summary = "power: #{checks.size - failed.size} of #{checks.size} checks hold"
+    return Result.new(pass: true, message: summary, rig_ran: true) if failed.empty?
+    Result.new(pass: false, message: "#{summary}; FAIL: #{failed.map { |c| c[:name] }.join('; ')}", rig_ran: true)
   end
 
   # Resync case. The device program starts a peripheral, advertises (control:

@@ -29,6 +29,11 @@
 # in the ring, and each step is compared with the BTSTACK_EVENT_STATE sequence
 # BTstack emits for it.
 #
+# evq_power_green runs the same case against the port with a power state: twelve steps
+# (five more than evq_power_red judges) are compared with the reference state sequence, the
+# order of the NimBLE calls the port makes at power-off and sleep (the host is stubbed, every
+# call logged by name), the halting timer, the heartbeat and the late disconnect.
+#
 # evq_resync_red runs the resync case (EVQ_RESYNC=1): the NimBLE host does not
 # run under QEMU, so the rig plays it for the sync handshake (rig_host_start in
 # rig_injector.c); after one reset and re-sync, a second BLE.new plus advertise
@@ -184,6 +189,22 @@ end
     puts "[esp32:evq_power_red] RED as expected: #{failed.size} of #{steps.size} steps fail (#{failed.map { |step| step[:n] }.join(',')})"
   end
 
+desc "Power rig (twelve hci_power_control steps) against the port with a power state, expecting PASS: the state events of every step, the order of the NimBLE calls at power-off and sleep, the halting timer, the heartbeat, the late disconnect"
+task :evq_power_green do
+  checks, rig_ran, why = evq_power_green_judge
+  puts EvqVerdict.power_green_lines(checks).map { |line| "[esp32:evq_power_green] #{line}" }
+  unless rig_ran
+    puts "[esp32:evq_power_green] RIG DID NOT RUN: #{why}"
+    exit 1
+  end
+  failed = checks.reject { |check| check[:pass] }
+  unless failed.empty?
+    puts "[esp32:evq_power_green] FAIL: #{failed.map { |check| check[:name] }.join("; ")}"
+    exit 1
+  end
+  puts "[esp32:evq_power_green] PASS: #{checks.size} of #{checks.size} checks"
+end
+
   desc "Resync rig (host reset and re-sync, then BLE.new + advertise), expecting FAIL on pre-fix firmware. Succeeds when the verdict is red"
   task :evq_resync_red do
     ENV["EVQ_RESYNC"] = "1"
@@ -281,6 +302,13 @@ def evq_power_judge
   Rake::Task["esp32:evq_run"].invoke
   raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
   EvqVerdict.power_steps(File.read(evq_log_path))
+end
+
+def evq_power_green_judge
+  ENV["EVQ_POWER"] = "1"
+  Rake::Task["esp32:evq_run"].invoke
+  raise "#{evq_log_path} was not produced" unless File.file?(evq_log_path)
+  EvqVerdict.power_green(File.read(evq_log_path))
 end
 
 def evq_limits_report(task, checks)

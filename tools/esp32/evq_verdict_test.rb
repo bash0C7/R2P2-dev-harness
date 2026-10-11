@@ -352,6 +352,156 @@ raise "expect power not-run without 'power done'" unless EvqVerdict.judge_power(
 raise "expect power not-run without 'power begin'" unless EvqVerdict.judge_power(power_log(power_fixed, begin_line: false)).rig_ran == false
 raise "expect power not-run on a log that died at load" unless EvqVerdict.judge_power("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
 
+# Power case against the port with a power state (judge_power_green). The builder writes the
+# log of a correct run from a spec per step; each test below changes one thing in the spec.
+def green_spec
+  nimble = lambda do |name, power, extra = ""|
+    "[rig] nimble #{name}#{extra} power=#{power}"
+  end
+  {
+    calls: {
+      3 => ["off", []],
+      4 => ["on", [nimble.("ble_gap_disc", 1)]],
+      5 => ["sleep", [nimble.("ble_gap_conn_active", 2, " -> 0")]],
+      6 => ["on", [nimble.("ble_gap_disc", 1)]],
+      7 => ["on", []],
+      8 => ["off", [nimble.("ble_gap_adv_stop", 0), nimble.("ble_gap_conn_active", 0, " -> 1"),
+                    nimble.("ble_gap_conn_cancel", 0), nimble.("ble_gap_disc_cancel", 0)]],
+      9 => ["on", [nimble.("ble_gap_disc", 1)]],
+      10 => ["sleep", [nimble.("ble_gap_terminate", 2, " handle=51 reason=0x13"), nimble.("ble_gap_conn_active", 2, " -> 0")]],
+      11 => ["on", [nimble.("ble_gap_disc", 1)]],
+      12 => ["off", [nimble.("ble_gap_adv_stop", 0), nimble.("ble_gap_terminate", 0, " handle=51 reason=0x13"),
+                     nimble.("ble_gap_conn_active", 0, " -> 0"), nimble.("ble_gap_disc_cancel", 0)]],
+    },
+    # [kind, value, ms after the call]
+    events: {
+      3 => [["state", 0, 5]],
+      4 => [["state", 1, 8], ["state", 2, 10]],
+      5 => [["state", 5, 5], ["state", 4, 6]],
+      6 => [["state", 1, 8], ["state", 2, 10]],
+      7 => [["state", 2, 6], ["disc", 51, 4]],
+      8 => [["state", 3, 6], ["disc", 255, 1008], ["state", 0, 1008]],
+      9 => [["state", 1, 8], ["state", 2, 10]],
+      10 => [["state", 5, 6], ["disc", 51, 1008], ["state", 4, 1008]],
+      11 => [["state", 1, 8], ["state", 2, 10]],
+      12 => [["state", 3, 6], ["disc", 51, 1008], ["state", 0, 1008]],
+    },
+    hbs: { 4 => [1000], 5 => [4] },
+    port_lines: ["W (9999) prb_ble_evq: no disconnect arrived within the halting deadline, synthesised one: handle=0xffff",
+                 "W (9999) prb_ble_evq: event for a link already reported gone, or of an earlier power session, dropped: handle=0x0033"],
+  }
+end
+
+def green_log(spec = green_spec, begin_line: true, done_line: true)
+  lines = []
+  lines << "[rigapp] power begin" if begin_line
+  lines << "[rig] power inject disc handle=51 call=4"
+  lines << "[rigapp] step 1 state 1 t=100" << "[rigapp] step 1 state 2 t=101"
+  lines << "[rigapp] step 2 state 3 t=800" << "[rigapp] step 2 state 0 t=801"
+  t = 1000
+  (3..12).each do |n|
+    kind, nimble = spec[:calls][n] || ["off", []]
+    lines << "[rigapp] step #{n} call #{kind} t=#{t}"
+    lines.concat(nimble)
+    spec[:events][n].each { |k, v, dt| lines << "[rigapp] step #{n} #{k} #{v} t=#{t + dt}" }
+    (spec[:hbs][n] || []).each { |dt| lines << "[rigapp] step #{n} hb t=#{t + dt}" }
+    t += 3000
+  end
+  lines.concat(spec[:port_lines])
+  lines << "[rigapp] power done" if done_line
+  lines.join("\n") + "\n"
+end
+
+def green_check(log, name_part)
+  checks, = EvqVerdict.power_green(log)
+  checks.find { |c| c[:name].include?(name_part) } or raise "no check named #{name_part}: #{checks.map { |c| c[:name] }.inspect}"
+end
+
+ok = EvqVerdict.judge_power_green(green_log)
+raise "expect power_green pass on a correct run, got: #{ok.message}" unless ok.pass && ok.rig_ran == true
+checks, = EvqVerdict.power_green(green_log)
+raise "expect every check to pass on a correct run: #{EvqVerdict.power_green_lines(checks.reject { |c| c[:pass] })}" unless checks.all? { |c| c[:pass] }
+raise "expect 26 checks, got #{checks.size}" unless checks.size == 26
+
+# the expected state events: a missing STATE(3) is caught in step 8
+spec = green_spec
+spec[:events][8] = [["disc", 255, 1008], ["state", 0, 1008]]
+raise "expect a missing HALTING to fail step 8" if green_check(green_log(spec), "state events of step 8")[:pass]
+
+# the synthesised disconnect must come before the final state
+spec = green_spec
+spec[:events][12] = [["state", 3, 6], ["state", 0, 1008], ["disc", 51, 1008]]
+raise "expect disconnect-after-OFF to fail step 12" if green_check(green_log(spec), "state events of step 12")[:pass]
+
+# the order of the NimBLE calls at OFF: terminate before the advertising stop
+spec = green_spec
+spec[:calls][12] = ["off", spec[:calls][12][1].values_at(1, 0, 2, 3)]
+raise "expect terminate-before-adv_stop to fail the call order of step 12" if green_check(green_log(spec), "NimBLE calls of step 12")[:pass]
+
+# power must already be OFF at the first stopping call
+spec = green_spec
+spec[:calls][8] = ["off", spec[:calls][8][1].map { |l| l.sub("power=0", "power=1") }]
+raise "expect a call made with power still on to fail step 8" if green_check(green_log(spec), "NimBLE calls of step 8")[:pass]
+
+# SLEEP leaves advertising and discovery running: an adv_stop in it is a failure
+spec = green_spec
+spec[:calls][10] = ["sleep", ["[rig] nimble ble_gap_adv_stop power=2"] + spec[:calls][10][1]]
+raise "expect adv_stop at sleep to fail step 10" if green_check(green_log(spec), "NimBLE calls of step 10")[:pass]
+
+# the terminate must name the link and reason 0x13
+spec = green_spec
+spec[:calls][12] = ["off", spec[:calls][12][1].map { |l| l.sub("reason=0x13", "reason=0x16") }]
+raise "expect reason 0x16 to fail the terminate check" if green_check(green_log(spec), "terminate of step 12")[:pass]
+
+# the halting timer: early, late and on time
+[[900, false], [1000, true], [1038, true], [1100, false]].each do |dt, expect|
+  spec = green_spec
+  spec[:events][8] = [["state", 3, 6], ["disc", 255, dt], ["state", 0, dt]]
+  got = green_check(green_log(spec), "halting timer of step 8")[:pass]
+  raise "expect halting timer at #{dt} ms to be #{expect}" unless got == expect
+end
+spec = green_spec
+spec[:events][10] = [["state", 5, 6], ["disc", 51, 1008], ["state", 4, 1100]]
+raise "expect a final state long after the disconnect to fail" if green_check(green_log(spec), "halting timer of step 10")[:pass]
+spec = green_spec
+spec[:events][12] = [["state", 3, 300], ["disc", 51, 1008], ["state", 0, 1008]]
+raise "expect a HALTING that is not immediate to fail" if green_check(green_log(spec), "halting timer of step 12")[:pass]
+
+# heartbeat: running while on, stopped at sleep
+spec = green_spec
+spec[:hbs] = { 4 => [], 5 => [4] }
+raise "expect no beat while on to fail" if green_check(green_log(spec), "heartbeat runs")[:pass]
+spec = green_spec
+spec[:hbs] = { 4 => [1000], 5 => [4, 900] }
+raise "expect a beat after sleep to fail" if green_check(green_log(spec), "heartbeat stops")[:pass]
+
+# the late disconnect: dropped silently and logged, never a second event
+spec = green_spec
+spec[:events][10] = [["state", 5, 6], ["disc", 51, 1008], ["state", 4, 1008], ["disc", 51, 1300]]
+raise "expect a second disconnect to fail the late-disconnect check" if green_check(green_log(spec), "late disconnect")[:pass]
+spec = green_spec
+spec[:port_lines] = [spec[:port_lines][0]]
+raise "expect a missing drop line to fail" if green_check(green_log(spec), "late disconnect")[:pass]
+spec = green_spec
+spec[:port_lines] = [spec[:port_lines][1]]
+raise "expect a missing deadline line to fail" if green_check(green_log(spec), "deadline logs")[:pass]
+
+# not run: no 'power done', no 'power begin', a call line missing, a log that died at load
+raise "expect not-run without 'power done'" unless EvqVerdict.judge_power_green(green_log(done_line: false)).rig_ran == false
+raise "expect not-run without 'power begin'" unless EvqVerdict.judge_power_green(green_log(begin_line: false)).rig_ran == false
+dropped_call = green_log.lines.reject { |l| l.include?("step 9 call") }.join
+raise "expect not-run with a call line missing" unless EvqVerdict.judge_power_green(dropped_call).rig_ran == false
+raise "expect not-run on a log that died at load" unless EvqVerdict.judge_power_green("FATAL: NoMemoryError (NoMemoryError)\n").rig_ran == false
+
+# the old port: today's shape fails the green judge and runs the rig
+today = green_spec
+today[:events] = today[:events].transform_values { |_| [] }
+today[:events][4] = [["state", 2, 8]]
+today[:events][7] = [["state", 2, 6]]
+today_result = EvqVerdict.judge_power_green(green_log(today))
+raise "expect today's shape to fail the green judge, got: #{today_result.message}" if today_result.pass
+raise "expect today's shape to run the rig" unless today_result.rig_ran == true
+
 def resync_log(second_rc: 0, second_synced: 1, control_rc: 0, host_done: true, order_ok: true, done: true, second_adv: true)
   lines = ["[rig] host sync_cb session=1", "[rigapp] resync control",
            "[rig] ble_gap_adv_start rc=#{control_rc} host_synced=#{control_rc.zero? ? 1 : 0}"]
