@@ -103,7 +103,7 @@ rake fpga:fuzz[1000,2]                 # 差分ファズ: ランダムな ROM �
 rake fpga:rom[fpga/corpus/blink.mrb]   # PicoRuby で書いた変換器で ROM イメージと命令一覧を作るだけ
 rake fpga:sim[mrb_core_tb]             # テストベンチ1本を Verilator で。波形は build/fpga/mrb_core_tb.fst
 rake fpga:build[fpga/corpus/blink.mrb] # PERIDOT-Air 向けに Quartus で合成 (quartus_sh か FPGA_QUARTUS_HOST)。実機では未確認
-rake fpga:flash                        # openFPGALoader + USB-Blaster で書く。実機では未確認
+rake fpga:flash                        # openFPGALoader + USB-Blaster で書く (fpga:rite:build のR3は実機で確認)
 ```
 
 `fpga:rom` / `fpga:run` / `fpga:build` は変換器を PicoRuby の host VM で走らせるので、`rake setup` と `rake test:host` が要る。波形は `surfer build/fpga/<tb>.fst` で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)、

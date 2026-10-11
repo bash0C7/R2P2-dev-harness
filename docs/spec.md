@@ -605,10 +605,10 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` `.hex` `.lst` と `docs/fpga-opcodes.md` を mrbc と PicoRuby の変換器で作り直す / 最新かを見る |
 | `rake fpga:gen` | `fpga/rtl/mrb_pkg.sv` を `tools/fpga/isa.rb` と `io_map.rb` から作り直す |
 | `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
-| `rake fpga:flash` | 最後の `fpga:build` を openFPGALoader で SRAM に書く。**実機では未確認** |
+| `rake fpga:flash` | 最後の `fpga:build` / `fpga:rite:build` を openFPGALoader で SRAM に書く。`fpga:rite:build`の`.svf`で実機に書けることを確認した (2026-10-11、下記) |
 | `rake fpga:rite:check[ms]` | mruby のバイトコードを直接実行する回路 (`fpga/rtl/rite_core.sv`、反復 R3: Lチカ (loop 版) と mruby の kernel.rb、picoruby-gpio の gpio.rb) で `fpga/rite/*.rb` を Verilator で走らせ、host の板のモデル入りの picoruby とピンの変化の列を比べる |
 | `rake fpga:rite:hex` | `fpga/rtl/rite_image_pkg.sv` (起動の像の番号) と `fpga/rite/*.hex` (ROM: 起動の像、mrblib の `kernel.rb` と `gpio.rb`、`.rb` を mrbc した `.mrb` を並べたもの) と `*.pins` (host のピンの列、`rite_core_tb` の期待値) を作り直す |
-| `rake fpga:rite:build[src]` | `rite_core` を PERIDOT-Air 向けに Quartus で合成する (USER_LED[0] = pin 28、USER_LED[1] = error)。書き込みは `rake fpga:flash`。**実機では未確認** |
+| `rake fpga:rite:build[src]` | `rite_core` を PERIDOT-Air 向けに Quartus で合成する (USER_LED[0] = pin 28、USER_LED[1] = error)。書き込みは `rake fpga:flash`。**実機で確認した** (2026-10-11、R3のLチカ、下記) |
 
 **並べて回す (`FPGA_JOBS`)。** `test:fpga` (ファイルごと)、`fpga:corpus` / `corpus:check` (1 本ごとの mrbc と変換器)、`fpga:tb` ((tb, シミュレーター) ごと)、`fpga:check` / `fpga:gap` / `fpga:emu:check` (1 本ごと)、`fpga:fuzz` (1 本ごと。program は親が seed の rng の順に作るので、seed ごとの program の列と要約は1本ずつ回した時と同じ) は CPU の数だけ並べて回す (`tools/fpga/parallel.rb`)。本数は `FPGA_JOBS` (既定は CPU の数、1 ならその場で順に)。出力は1本ずつ回した時と同じ順にまとめて出す。シミュレーションの実行ファイル (mrb_run_tb、board_emu) は並べる前に親が build する。1つの rake の中で並べるので、同じ worktree で rake の check / gap / fuzz を2つ同時に走らせない (build の dir を取り合う) は変わらない
 
@@ -1271,11 +1271,22 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 
 ### PERIDOT-Air (#10 #11)
 
-**実機は届いた (2026-10-01、user)。Quartus と書き込みの環境は次の session (Mac) で作る。以下はまだシミュレーションまでしか確かめていない。**
+**実機で確かめたのは`rite_core`のR3 (`rake fpga:rite:build` → `rake fpga:flash`) だけ (2026-10-11、userが目視)。v1のtop (`peridot_air_top.sv`、`rake fpga:build`) は実機では未確認で、以下のv1の記述はシミュレーションまで。**
+
+- **実機で見たもの (R3、`fpga/rite/blink.rb`):** USER_LED[0]が約0.5秒ごとに点滅し、USER_LED[1] (error) は消えたまま。USER_LEDはactive high (`peridot_air_rite_top.sv`の`LED_ACTIVE_LOW = 0`で合う)。
+  SRAMへの書き込みなので電源を切ると消える。確かめ直す時は下の「Quartus」「JTAGの配線」の通りに焼いて目で見る
+- **Quartus (Apple SiliconのMac):** Apple container (x86-64のUbuntu 22.04 + `--rosetta`) にQuartus Prime Lite 23.1std.1を入れる。
+  `container build --arch amd64 -t r2p2-quartus tools/fpga/container` → Alteraの配布 (ログインが要るので人が落とす) の`QuartusLiteSetup-*-linux.run`と`cyclone-*.qdz`を1つのdirに置き
+  `tools/fpga/container/install.sh <dir>` (volume `quartus`の`/opt/quartus`、9.1 GB)。`tools/fpga/container`をPATHに足すと`quartus_sh` / `quartus_cpf`の包みが効く。
+  macOS向けのRosetta 2は要らない
+- **R3のfit (23.1std.1):** 4,792 LE / 6,272 (76%)、レジスタ1,959、メモリ49,088 bit、ピン5。50 MHzのsetup slack 3.539 ns、hold slack 0.326 ns
+- **JTAGの配線:** micro-Bは給電だけ。JTAGは板の6P (J2): ▷印 (1番) を左上にして、左列が上からTDO / TCK / TMS、右列が上から3.3V / TDI / GND (回路図rev1.1r)。
+  USB-Blasterの10P (1 TCK、2 GND、3 TDO、4 VCC、5 TMS、9 TDI) からジャンパー線で直結すると`openFPGALoader -c usb-blaster --detect`がIDCODE `0x020f10dd`を返し、書ける。
+  VCCとGNDは電源のピンソケットの`3.3V`と`GND`から取ってよい。同梱のJTAG-CONNと10Pのリボンケーブルを通した時はIDCODEが全部0だった (どちらが原因かは未確認)
 
 - **top は `fpga/rtl/boards/peridot_air_top.sv`。** `$LED`→`USER_LED[0]` (PIN_105)、`$LED2`→`USER_LED[1]` (PIN_119)、
   値が true か 0 以外の Integer なら点灯。`$BUTTON`←`D[0]` (PIN_84、内部 pull-up、GND に落とすと 1)。
-  `RESET_N` (PIN_34、基板のリセットスイッチ) がコアのリセット。点灯の極性は未確認 (`LED_ACTIVE_LOW` で反転できる)
+  `RESET_N` (PIN_34、基板のリセットスイッチ) がコアのリセット。USER_LEDはactive high (`LED_ACTIVE_LOW`で反転できる)
 - **待ち時間はクロックイネーブルで作る。** CPU を `CE_DIV` cycle (既定 1000) に1回だけ進める。
   blink は 1回の反転に 7012 命令なので、50MHz なら約 0.28 秒ごとに反転する
   (Quartus と同じ `ROM_FILE` 経由の `$readmemh` で、CE_DIV=1 の時 14024 cycle ごとの反転をシミュレーションで確かめた)。
@@ -1285,7 +1296,7 @@ L <step>                    命令数の上限 (fpga:check は 20000)
   `quartus_sh` が PATH にあればそこで、無ければ `FPGA_QUARTUS_HOST=<ssh 先>` へ rsync して
   `quartus_sh --flow compile` → `quartus_cpf` で `.svf` まで作って戻す (`FPGA_QUARTUS_DIR` で送り先 dir)。
   Quartus の版は決め打ちしない。Apple Silicon では UTM の Debian arm64 + Rosetta 2 で 23.1std / 24.1std の報告がある。
-  終わったら fit summary (LE・メモリ使用量) を表示する。**実測値はまだ無い** (#11 の完了条件)
+  終わったら fit summary (LE・メモリ使用量) を表示する。v1のtopの実測値はまだ無い (#11 の完了条件)
 - **書き込み (`rake fpga:flash`)。** Mac ネイティブの `openFPGALoader -c usb-blaster <svf>` で SRAM へ
   (電源を切ると消える)。`FPGA_CABLE` でケーブルを変えられる。EPCQ16 への永続書き込みはまだ無い
 - **yosys は使えなかった。** Ubuntu 24.04 の yosys 0.33 は `import pkg::*` を読めず、LE の見積もりに使えない
@@ -1325,7 +1336,7 @@ CPU は1命令 2 cycle なので、`CE_DIV=1` なら 125MHz で 6250 万命令/�
 ### 版と波形
 
 確認した組み合わせ: Ubuntu 24.04 の apt (Verilator 5.020 / Icarus 12.0)。
-Homebrew は Verilator 5.052 / Icarus 13.0 / Surfer 0.7.0 (Mac での実行は未確認)。
+Homebrew は Verilator 5.052 / Icarus 13.0 / Surfer 0.7.0 (MacではVerilator 5.052で`rake fpga:rite:check`と`fpga:sim[rite_core_tb]`がgreen。Surferは未確認)。
 `--binary` は Verilator 5.002 以降。
 
 **波形を見る。** `rake fpga:sim[counter8_tb]` の後に `surfer build/fpga/counter8_tb.fst`
