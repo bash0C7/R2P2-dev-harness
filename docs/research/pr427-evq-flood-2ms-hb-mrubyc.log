@@ -1,0 +1,302 @@
+Adding "qemu"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
+Executing "ninja all"...
+[1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
+R2P2-ESP32.bin binary size 0x13c0c0 bytes. Smallest app partition is 0x200000 bytes. 0xc3f40 bytes (38%) free.
+[2/5] Performing build step for 'bootloader'
+[1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
+Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
+[3/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/main && /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/littlefs_py_venv/bin/littlefs-python create /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/storage /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin -v --fs-size=0x100000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    1048576  /  0x100000
+  Block Count:       256
+  Name Max:           64
+  Image:       /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin
+Adding Directory: home
+Adding Directory: etc
+Adding File:      home/app.rb
+Adding File:      home/.keep
+Adding File:      etc/.keep
+[4/5] No install step for 'bootloader'
+[5/5] Completed 'bootloader'
+[0;33mGenerating flash image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin[0m
+esptool.py --chip=esp32s3 merge_bin --output=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader/bootloader.bin 0x10000 R2P2-ESP32.bin 0x8000 partition_table/partition-table.bin 0x210000 storage.bin
+esptool.py v4.12.0
+SHA digest in image updated
+Wrote 0x400000 bytes to file /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin, ready to flash to offset 0x0
+[0;33mUsing existing efuse image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin[0m
+[0;33mRunning qemu (fg): qemu-system-xtensa -M esp32s3 -m 32M -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin,if=mtd,format=raw -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32s3.efuse,property=drive,value=efuse -global driver=timer.esp32s3.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -m 8M[0m
+Adding SPI flash device
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 18:23:25
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (18) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (21) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (22) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7014ch (459084) map
+I (54) esp_image: segment 1: paddr=00080174 vaddr=3fc98700 size=04370h ( 17264) load
+I (56) esp_image: segment 2: paddr=000844ec vaddr=40374000 size=0bb2ch ( 47916) load
+I (59) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b348ch (734348) map
+I (108) esp_image: segment 4: paddr=001434b4 vaddr=4037fb2c size=08b5ch ( 35676) load
+I (111) esp_image: segment 5: paddr=0014c018 vaddr=50000000 size=00020h (    32) load
+I (112) esp_image: segment 6: paddr=0014c040 vaddr=600fe000 size=00058h (    88) load
+I (113) boot: Loaded app from partition at offset 0x10000
+I (113) boot: Disabling RNG early entropy source...
+I (118) cpu_start: Multicore app
+I (128) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (129) cpu_start: Pro cpu start user code
+I (129) cpu_start: cpu freq: 160000000 Hz
+I (129) app_init: Application information:
+I (129) app_init: Project name:     R2P2-ESP32
+I (129) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (130) app_init: Compile time:     Oct 11 2026 18:23:17
+I (130) app_init: ELF file SHA256:  12f5c290a...
+I (130) app_init: ESP-IDF:          v5.5.4
+I (130) efuse_init: Min chip rev:     v0.0
+I (130) efuse_init: Max chip rev:     v0.99 
+I (130) efuse_init: Chip rev:         v0.3
+I (130) heap_init: Initializing. RAM available for dynamic allocation:
+I (130) heap_init: At 3FCC0270 len 000294A0 (165 KiB): RAM
+I (130) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (130) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (130) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (133) spi_flash: detected chip: gd
+I (133) spi_flash: flash io: dio
+I (133) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (133) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (135) main_task: Started on CPU0
+I (140) main_task: Calling app_main()
+I (142) main_task: Returned from app_main()
+warning: already initialized constant STDIN
+warning: already initialized constant STDOUT
+Initializing FLASH disk as the root volume... 
+Creating directory: bin
+Creating directory: etc/init.d
+Creating directory: etc/network
+Creating directory: etc/dfu
+Creating directory: var
+Creating directory: var/log
+Creating directory: lib
+Not found: /bin/cat, Writing 153 bytes
+Not found: /bin/cp, Writing 683 bytes
+Not found: /bin/date, Writing 103 bytes
+Not found: /bin/df, Writing 497 bytes
+Not found: /bin/dfuble, Writing 1361 bytes
+Not found: /bin/dfucat, Writing 466 bytes
+Not found: /bin/dfucli, Writing 590 bytes
+Not found: /bin/dfutcp, Writing 970 bytes
+Not found: /bin/free, Writing 190 bytes
+Not found: /bin/head, Writing 913 bytes
+Not found: /bin/hello, Writing 92 bytes
+Not found: /bin/ifconfig, Writing 739 bytes
+Not found: /bin/install, Writing 694 bytes
+Not found: /bin/irb, Writing 141 bytes
+Not found: /bin/looper, Writing 2163 bytes
+Not found: /bin/ls, Writing 1235 bytes
+Not found: /bin/mkdir, Writing 98 bytes
+Not found: /bin/mv, Writing 464 bytes
+Not found: /bin/nmble, Writing 4872 bytes
+Not found: /bin/nmcli, Writing 1600 bytes
+Not found: /bin/ntpdate, Writing 913 bytes
+Not found: /bin/ping, Writing 675 bytes
+Not found: /etc/init.d/r2p2, Writing 865 bytes
+Not found: /bin/rapicco, Writing 340 bytes
+Not found: /bin/rm, Writing 231 bytes
+Not found: /bin/setup_rtc, Writing 564 bytes
+Not found: /bin/setup_sdcard, Writing 654 bytes
+Not found: /bin/sl, Writing 5334 bytes
+Not found: /bin/tail, Writing 1060 bytes
+Not found: /bin/taskstat, Writing 922 bytes
+Not found: /bin/touch, Writing 195 bytes
+Not found: /bin/uptime, Writing 481 bytes
+Not found: /bin/vim, Writing 131 bytes
+Not found: /bin/wifi_connect, Writing 2679 bytes
+Not found: /bin/wifi_disconnect, Writing 651 bytes
+Not found: /etc/machine-id, Writing 12 bytes
+Available
+File /etc/network/wifi.yml does not exist
+Loading app.rb
+[rigapp] mem init total=102400 used=75996 free=26060 frag=27
+[rig] write enq A
+[rigapp] write h=0x42 v="A"
+[rig] write enq B
+[rigapp] write h=0x42 v="B"
+[rigapp] recv seq=1 tin=6864 t=6871
+[rigapp] recv seq=2 tin=7368 t=7375
+[rigapp] recv seq=3 tin=7875 t=7878
+[rigapp] recv seq=4 tin=8375 t=8379
+[rigapp] recv seq=5 tin=8876 t=8879
+[rigapp] recv seq=6 tin=9375 t=9377
+[rigapp] recv seq=7 tin=9876 t=9879
+[rigapp] recv seq=8 tin=10376 t=10380
+[rigapp] recv seq=9 tin=10875 t=10879
+[rigapp] recv seq=10 tin=11375 t=11378
+[rigapp] recv seq=11 tin=11876 t=11879
+[rigapp] recv seq=12 tin=12375 t=12379
+[rigapp] recv seq=13 tin=12876 t=12878
+[rigapp] recv seq=14 tin=13376 t=13379
+[rigapp] recv seq=15 tin=13876 t=13878
+[rigapp] recv seq=16 tin=14376 t=14379
+[rigapp] recv seq=17 tin=14876 t=14877
+[rigapp] recv seq=18 tin=15376 t=15380
+[rigapp] recv seq=19 tin=15876 t=15879
+[rigapp] recv seq=20 tin=16376 t=16381
+[rigapp] recv seq=21 tin=16877 t=16880
+[rigapp] recv seq=22 tin=16887 t=16890
+[rigapp] recv seq=23 tin=16899 t=16900
+[rigapp] recv seq=24 tin=16909 t=16911
+[rigapp] recv seq=25 tin=16919 t=16922
+[rigapp] recv seq=26 tin=16930 t=16931
+[rigapp] recv seq=27 tin=16941 t=16943
+[rigapp] recv seq=28 tin=16951 t=16952
+[rigapp] recv seq=29 tin=16962 t=16963
+[rigapp] recv seq=30 tin=16972 t=16974
+[rigapp] recv seq=31 tin=16983 t=16984
+[rigapp] recv seq=32 tin=16992 t=16993
+[rigapp] recv seq=33 tin=17003 t=17004
+[rigapp] recv seq=34 tin=17013 t=17016
+[rigapp] recv seq=35 tin=17024 t=17025
+[rigapp] recv seq=36 tin=17033 t=17034
+[rigapp] recv seq=37 tin=17044 t=17045
+[rigapp] recv seq=38 tin=17054 t=17056
+[rigapp] recv seq=39 tin=17065 t=17066
+[rigapp] recv seq=40 tin=17074 t=17075
+[rigapp] recv seq=41 tin=17085 t=17087
+[rigapp] recv seq=42 tin=17095 t=17098
+[rigapp] recv seq=43 tin=17106 t=17109
+[rigapp] recv seq=44 tin=17117 t=17118
+[rigapp] recv seq=45 tin=17127 t=17130
+[rigapp] recv seq=46 tin=17138 t=17139
+[rigapp] recv seq=47 tin=17148 t=17151
+[rigapp] recv seq=48 tin=17159 t=17160
+[rigapp] recv seq=49 tin=17170 t=17172
+[rigapp] recv seq=50 tin=17180 t=17183
+[rigapp] recv seq=51 tin=17191 t=17194
+[rigapp] recv seq=52 tin=17201 t=17203
+[rigapp] recv seq=53 tin=17212 t=17213
+[rigapp] recv seq=54 tin=17222 t=17223
+[rigapp] recv seq=55 tin=17231 t=17233
+[rigapp] recv seq=56 tin=17242 t=17243
+[rigapp] recv seq=57 tin=17253 t=17254
+[rigapp] recv seq=58 tin=17263 t=17264
+[rigapp] recv seq=59 tin=17274 t=17275
+[rigapp] recv seq=60 tin=17284 t=17287
+[rig] inject done n=60
+[rigapp] wlat tin=17295 t=17312
+[rigapp] wlat tin=17395 t=17403
+[rigapp] wlat tin=17495 t=17522
+[rigapp] wlat tin=17595 t=17613
+[rigapp] wlat tin=17695 t=17703
+[rigapp] wlat tin=17797 t=17822
+[rigapp] wlat tin=17896 t=17912
+[rigapp] wlat tin=17996 t=18003
+[rigapp] wlat tin=18097 t=18122
+[rigapp] wlat tin=18197 t=18212
+[rigapp] wlat tin=18297 t=18302
+[rigapp] wlat tin=18396 t=18422
+[rigapp] wlat tin=18498 t=18514
+[rigapp] wlat tin=18598 t=18603
+[rigapp] wlat tin=18698 t=18722
+[rigapp] wlat tin=18798 t=18822
+[rigapp] wlat tin=18898 t=18913
+[rigapp] wlat tin=18999 t=19003
+[rigapp] wlat tin=19101 t=19123
+[rigapp] wlat tin=19201 t=19213
+[rig] wlat done n=20
+Fatal error: Out of memory.
+
+abort() was called at PC 0x4205233c on core 0
+
+
+Backtrace: 0x4037db51:0x3fced670 0x4037db19:0x3fced690 0x40385815:0x3fced6b0 0x4205233c:0x3fced720 0x42012b61:0x3fced740 0x42012e0c:0x3fced760 0x420131de:0x3fced790 0x420134f1:0x3fced7b0 0x42021f2a:0x3fced7d0 0x420559cb:0x3fced820 0x42055dd3:0x3fced850 0x42055eb3:0x3fced870 0x420435dd:0x3fced890 0x4200ec26:0x3fced8b0 0x4200e37e:0x3fced8d0 0x4037e831:0x3fced8f0
+
+
+
+
+ELF file SHA256: 12f5c290a
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (10000) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (10000) boot: compile time Oct 11 2026 18:23:25
+I (10001) boot: Multicore bootloader
+I (10002) boot: chip revision: v0.3
+I (10003) boot: efuse block revision: v1.0
+I (10003) boot.esp32s3: Boot SPI Speed : 80MHz
+I (10003) boot.esp32s3: SPI Mode       : SLOW READ
+I (10004) boot.esp32s3: SPI Flash Size : 4MB
+I (10005) boot: Enabling RNG early entropy source...
+I (10008) boot: Partition Table:
+I (10008) boot: ## Label            Usage          Type ST Offset   Length
+I (10008) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (10008) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (10008) boot:  2 factory          factory app      00 00 00010000 00200000
+I (10009) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (10009) boot: End of partition table
+I (10010) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7014ch (459084) map
+I (10040) esp_image: segment 1: paddr=00080174 vaddr=3fc98700 size=04370h ( 17264) load
+I (10041) esp_image: segment 2: paddr=000844ec vaddr=40374000 size=0bb2ch ( 47916) load
+I (10050) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b348ch (734348) map
+I (10095) esp_image: segment 4: paddr=001434b4 vaddr=4037fb2c size=08b5ch ( 35676) load
+I (10101) esp_image: segment 5: paddr=0014c018 vaddr=50000000 size=00020h (    32) load
+I (10101) esp_image: segment 6: paddr=0014c040 vaddr=600fe000 size=00058h (    88) load
+I (10102) boot: Loaded app from partition at offset 0x10000
+I (10102) boot: Disabling RNG early entropy source...
+I (10105) cpu_start: Multicore app
+I (10114) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (10115) cpu_start: Pro cpu start user code
+I (10115) cpu_start: cpu freq: 160000000 Hz
+I (10115) app_init: Application information:
+I (10115) app_init: Project name:     R2P2-ESP32
+I (10115) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (10115) app_init: Compile time:     Oct 11 2026 18:23:17
+I (10115) app_init: ELF file SHA256:  12f5c290a...
+I (10115) app_init: ESP-IDF:          v5.5.4
+I (10115) efuse_init: Min chip rev:     v0.0
+I (10115) efuse_init: Max chip rev:     v0.99 
+I (10115) efuse_init: Chip rev:         v0.3
+I (10115) heap_init: Initializing. RAM available for dynamic allocation:
+I (10115) heap_init: At 3FCC0270 len 000294A0 (165 KiB): RAM
+I (10115) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (10115) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (10115) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (10117) spi_flash: detected chip: gd
+I (10117) spi_flash: flash io: dio
+I (10117) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (10117) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (10118) main_task: Started on CPU0
+I (10119) main_task: Calling app_main()
+I (10120) main_task: Returned from app_main()
+warning: already initialized constant STDIN
+warning: already initialized constant STDOUT
+Initializing FLASH disk as the root volume... 
+qemu-system-xtensa: terminating on signal 15 from pid 1495 (<unknown process>)

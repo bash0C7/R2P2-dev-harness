@@ -1,0 +1,289 @@
+Adding "qemu"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
+Executing "ninja all"...
+[1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
+R2P2-ESP32.bin binary size 0x13c0c0 bytes. Smallest app partition is 0x200000 bytes. 0xc3f40 bytes (38%) free.
+[2/5] Performing build step for 'bootloader'
+[1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
+Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
+[3/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/main && /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/littlefs_py_venv/bin/littlefs-python create /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/storage /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin -v --fs-size=0x100000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    1048576  /  0x100000
+  Block Count:       256
+  Name Max:           64
+  Image:       /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/storage.bin
+Adding Directory: home
+Adding Directory: etc
+Adding File:      home/app.rb
+Adding File:      home/.keep
+Adding File:      etc/.keep
+[4/5] No install step for 'bootloader'
+[5/5] Completed 'bootloader'
+[0;33mGenerating flash image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin[0m
+esptool.py --chip=esp32s3 merge_bin --output=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader/bootloader.bin 0x10000 R2P2-ESP32.bin 0x8000 partition_table/partition-table.bin 0x210000 storage.bin
+esptool.py v4.12.0
+SHA digest in image updated
+Wrote 0x400000 bytes to file /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin, ready to flash to offset 0x0
+[0;33mUsing existing efuse image: /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin[0m
+[0;33mRunning qemu (fg): qemu-system-xtensa -M esp32s3 -m 32M -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_flash.bin,if=mtd,format=raw -drive file=/Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32s3.efuse,property=drive,value=efuse -global driver=timer.esp32s3.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -m 8M[0m
+Adding SPI flash device
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x4 (SPI_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x14f0
+load:0x403c8700,len:0xd24
+load:0x403cb700,len:0x2ef0
+entry 0x403c8924
+I (12) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 18:49:31
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (17) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (20) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (21) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=7014ch (459084) map
+I (53) esp_image: segment 1: paddr=00080174 vaddr=3fc98700 size=04370h ( 17264) load
+I (55) esp_image: segment 2: paddr=000844ec vaddr=40374000 size=0bb2ch ( 47916) load
+I (59) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=b3490h (734352) map
+I (106) esp_image: segment 4: paddr=001434b8 vaddr=4037fb2c size=08b5ch ( 35676) load
+I (108) esp_image: segment 5: paddr=0014c01c vaddr=50000000 size=00020h (    32) load
+I (109) esp_image: segment 6: paddr=0014c044 vaddr=600fe000 size=00058h (    88) load
+I (110) boot: Loaded app from partition at offset 0x10000
+I (110) boot: Disabling RNG early entropy source...
+I (116) cpu_start: Multicore app
+I (125) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (127) cpu_start: Pro cpu start user code
+I (127) cpu_start: cpu freq: 160000000 Hz
+I (127) app_init: Application information:
+I (127) app_init: Project name:     R2P2-ESP32
+I (127) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (127) app_init: Compile time:     Oct 11 2026 18:49:22
+I (127) app_init: ELF file SHA256:  d94683b7d...
+I (127) app_init: ESP-IDF:          v5.5.4
+I (127) efuse_init: Min chip rev:     v0.0
+I (127) efuse_init: Max chip rev:     v0.99 
+I (127) efuse_init: Chip rev:         v0.3
+I (127) heap_init: Initializing. RAM available for dynamic allocation:
+I (127) heap_init: At 3FCC0270 len 000294A0 (165 KiB): RAM
+I (127) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (127) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (128) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (130) spi_flash: detected chip: gd
+I (130) spi_flash: flash io: dio
+I (130) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (131) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (132) main_task: Started on CPU0
+I (137) main_task: Calling app_main()
+I (138) main_task: Returned from app_main()
+warning: already initialized constant STDIN
+warning: already initialized constant STDOUT
+Initializing FLASH disk as the root volume... 
+Creating directory: bin
+Creating directory: etc/init.d
+Creating directory: etc/network
+Creating directory: etc/dfu
+Creating directory: var
+Creating directory: var/log
+Creating directory: lib
+Not found: /bin/cat, Writing 153 bytes
+Not found: /bin/cp, Writing 683 bytes
+Not found: /bin/date, Writing 103 bytes
+Not found: /bin/df, Writing 497 bytes
+Not found: /bin/dfuble, Writing 1361 bytes
+Not found: /bin/dfucat, Writing 466 bytes
+Not found: /bin/dfucli, Writing 590 bytes
+Not found: /bin/dfutcp, Writing 970 bytes
+Not found: /bin/free, Writing 190 bytes
+Not found: /bin/head, Writing 913 bytes
+Not found: /bin/hello, Writing 92 bytes
+Not found: /bin/ifconfig, Writing 739 bytes
+Not found: /bin/install, Writing 694 bytes
+Not found: /bin/irb, Writing 141 bytes
+Not found: /bin/looper, Writing 2163 bytes
+Not found: /bin/ls, Writing 1235 bytes
+Not found: /bin/mkdir, Writing 98 bytes
+Not found: /bin/mv, Writing 464 bytes
+Not found: /bin/nmble, Writing 4872 bytes
+Not found: /bin/nmcli, Writing 1600 bytes
+Not found: /bin/ntpdate, Writing 913 bytes
+Not found: /bin/ping, Writing 675 bytes
+Not found: /etc/init.d/r2p2, Writing 865 bytes
+Not found: /bin/rapicco, Writing 340 bytes
+Not found: /bin/rm, Writing 231 bytes
+Not found: /bin/setup_rtc, Writing 564 bytes
+Not found: /bin/setup_sdcard, Writing 654 bytes
+Not found: /bin/sl, Writing 5334 bytes
+Not found: /bin/tail, Writing 1060 bytes
+Not found: /bin/taskstat, Writing 922 bytes
+Not found: /bin/touch, Writing 195 bytes
+Not found: /bin/uptime, Writing 481 bytes
+Not found: /bin/vim, Writing 131 bytes
+Not found: /bin/wifi_connect, Writing 2679 bytes
+Not found: /bin/wifi_disconnect, Writing 651 bytes
+Not found: /etc/machine-id, Writing 12 bytes
+Available
+File /etc/network/wifi.yml does not exist
+Loading app.rb
+[rigapp] mem init total=102400 used=75996 free=26060 frag=27
+[rig] write enq A
+[rigapp] write h=0x42 v="A"
+[rig] write enq B
+[rigapp] write h=0x42 v="B"
+[rigapp] recv seq=1 tin=6838 t=6847
+[rigapp] recv seq=2 tin=7343 t=7349
+[rigapp] recv seq=3 tin=7846 t=7848
+[rigapp] recv seq=4 tin=8346 t=8350
+[rigapp] recv seq=5 tin=8846 t=8849
+[rigapp] recv seq=6 tin=9346 t=9349
+[rigapp] recv seq=7 tin=9847 t=9850
+[rigapp] recv seq=8 tin=10347 t=10350
+[rigapp] recv seq=9 tin=10847 t=10849
+[rigapp] recv seq=10 tin=11347 t=11351
+[rigapp] recv seq=11 tin=11848 t=11853
+[rigapp] recv seq=12 tin=12350 t=12353
+[rigapp] recv seq=13 tin=12851 t=12853
+[rigapp] recv seq=14 tin=13351 t=13356
+[rigapp] recv seq=15 tin=13851 t=13852
+[rigapp] recv seq=16 tin=14351 t=14354
+[rigapp] recv seq=17 tin=14853 t=14855
+[rigapp] recv seq=18 tin=15353 t=15357
+[rigapp] recv seq=19 tin=15853 t=15855
+[rigapp] recv seq=20 tin=16352 t=16357
+[rigapp] recv seq=21 tin=16853 t=16856
+[rigapp] recv seq=22 tin=16864 t=16865
+[rigapp] recv seq=23 tin=16875 t=16875
+[rigapp] recv seq=24 tin=16885 t=16888
+[rigapp] recv seq=25 tin=16896 t=16897
+[rigapp] recv seq=26 tin=16906 t=16907
+[rigapp] recv seq=27 tin=16917 t=16919
+[rigapp] recv seq=28 tin=16927 t=16930
+[rigapp] recv seq=29 tin=16938 t=16939
+[rigapp] recv seq=30 tin=16947 t=16948
+[rigapp] recv seq=31 tin=16958 t=16959
+[rigapp] recv seq=32 tin=16968 t=16971
+[rigapp] recv seq=33 tin=16979 t=16980
+[rigapp] recv seq=34 tin=16988 t=16989
+[rigapp] recv seq=35 tin=16999 t=17000
+[rigapp] recv seq=36 tin=17009 t=17011
+[rigapp] recv seq=37 tin=17020 t=17021
+[rigapp] recv seq=38 tin=17029 t=17030
+[rigapp] recv seq=39 tin=17040 t=17041
+[rigapp] recv seq=40 tin=17050 t=17053
+[rigapp] recv seq=41 tin=17061 t=17062
+[rigapp] recv seq=42 tin=17072 t=17075
+[rigapp] recv seq=43 tin=17083 t=17084
+[rigapp] recv seq=44 tin=17094 t=17095
+[rigapp] recv seq=45 tin=17104 t=17105
+[rigapp] recv seq=46 tin=17113 t=17114
+[rigapp] recv seq=47 tin=17124 t=17126
+[rigapp] recv seq=48 tin=17134 t=17136
+[rigapp] recv seq=49 tin=17145 t=17146
+[rigapp] recv seq=50 tin=17155 t=17156
+[rigapp] recv seq=51 tin=17166 t=17167
+[rigapp] recv seq=52 tin=17177 t=17178
+[rigapp] recv seq=53 tin=17187 t=17190
+[rigapp] recv seq=54 tin=17198 t=17199
+[rigapp] recv seq=55 tin=17208 t=17209
+[rigapp] recv seq=56 tin=17218 t=17219
+[rigapp] recv seq=57 tin=17229 t=17231
+[rigapp] recv seq=58 tin=17239 t=17241
+[rigapp] recv seq=59 tin=17249 t=17251
+[rigapp] recv seq=60 tin=17260 t=17261
+[rig] inject done n=60
+[rigapp] wlat tin=17270 t=17286
+[rigapp] wlat tin=17370 t=17377
+[rigapp] wlat tin=17472 t=17497
+[rigapp] wlat tin=17572 t=17587
+[rigapp] wlat tin=17672 t=17677
+[rigapp] wlat tin=17772 t=17796
+[rigapp] wlat tin=17872 t=17886
+[rigapp] wlat tin=17973 t=17976
+[rigapp] wlat tin=18072 t=18097
+[rigapp] wlat tin=18173 t=18187
+[rigapp] wlat tin=18273 t=18277
+[rigapp] wlat tin=18373 t=18397
+[rigapp] wlat tin=18474 t=18486
+[rigapp] wlat tin=18574 t=18576
+[rigapp] wlat tin=18675 t=18696
+[rigapp] wlat tin=18775 t=18796
+[rigapp] wlat tin=18875 t=18887
+[rigapp] wlat tin=18975 t=18977
+[rigapp] wlat tin=19076 t=19097
+[rigapp] wlat tin=19176 t=19187
+[rig] wlat done n=20
+[rigapp] flood received=1 bytes=128
+[rigapp] flood received=11 bytes=1408
+[rigapp] flood received=23 bytes=2944
+[rigapp] flood received=34 bytes=4352
+[rigapp] flood received=45 bytes=5760
+[rigapp] flood received=57 bytes=7296
+[rigapp] flood received=67 bytes=8576
+[rigapp] flood received=78 bytes=9984
+[rigapp] flood received=89 bytes=11392
+[rigapp] flood received=100 bytes=12800
+[rigapp] flood received=111 bytes=14208
+[rigapp] flood received=122 bytes=15616
+[rigapp] flood received=134 bytes=17152
+[rigapp] flood received=146 bytes=18688
+[rigapp] flood received=157 bytes=20096
+[rigapp] flood received=167 bytes=21376
+[rigapp] mem hb total_received=167 total=102400 used=77664 free=24392 frag=25
+[rigapp] flood received=172 bytes=22016
+[rigapp] flood received=181 bytes=23168
+[rigapp] flood received=191 bytes=24448
+[rigapp] flood received=203 bytes=25984
+[rigapp] flood received=214 bytes=27392
+[rigapp] flood received=224 bytes=28672
+[rigapp] flood received=235 bytes=30080
+[rigapp] flood received=245 bytes=31360
+[rigapp] flood received=256 bytes=32768
+[rigapp] flood received=266 bytes=34048
+[rigapp] flood received=276 bytes=35328
+[rigapp] flood received=286 bytes=36608
+[rigapp] flood received=296 bytes=37888
+[rigapp] flood received=308 bytes=39424
+[rigapp] flood received=320 bytes=40960
+[rigapp] flood received=331 bytes=42368
+[rigapp] flood received=341 bytes=43648
+[rigapp] flood received=353 bytes=45184
+[rigapp] flood received=364 bytes=46592
+[rigapp] flood received=374 bytes=47872
+[rigapp] flood received=385 bytes=49280
+[rigapp] flood received=395 bytes=50560
+[rigapp] flood received=407 bytes=52096
+[rigapp] flood received=419 bytes=53632
+[rigapp] flood received=430 bytes=55040
+[rigapp] flood received=441 bytes=56448
+[rigapp] flood received=451 bytes=57728
+[rigapp] flood received=462 bytes=59136
+[rigapp] flood received=472 bytes=60416
+[rigapp] flood received=482 bytes=61696
+[rigapp] flood received=492 bytes=62976
+[rigapp] flood received=500 bytes=64000
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rig] flood done n=500 rejected=0
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76904 free=25152 frag=29
+[rigapp] mem hb total_received=500 total=102400 used=76900 free=25156 frag=29
+qemu-system-xtensa: terminating on signal 15 from pid 4575 (<unknown process>)

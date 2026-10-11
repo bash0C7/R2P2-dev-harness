@@ -3,7 +3,7 @@ Executing action: all (aliases: build)
 Running ninja in directory /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq
 Executing "ninja all"...
 [1/5] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/partition_table/partition-table.bin /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/R2P2-ESP32.bin
-R2P2-ESP32.bin binary size 0x180080 bytes. Smallest app partition is 0x200000 bytes. 0x7ff80 bytes (25%) free.
+R2P2-ESP32.bin binary size 0x1801d0 bytes. Smallest app partition is 0x200000 bytes. 0x7fe30 bytes (25%) free.
 [2/5] Performing build step for 'bootloader'
 [1/1] cd /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/esp-idf/esptool_py && /Users/bash/.espressif/python_env/idf5.5_py3.12_env/bin/python /Users/bash/esp/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/bash/dev/src/github.com/bash0C7/R2P2-ESP32/build-qemu-evq/bootloader/bootloader.bin
 Bootloader binary size 0x5160 bytes. 0x2ea0 bytes (36%) free.
@@ -38,56 +38,56 @@ load:0x3fce2820,len:0x14f0
 load:0x403c8700,len:0xd24
 load:0x403cb700,len:0x2ef0
 entry 0x403c8924
-I (22) boot: ESP-IDF v5.5.4 2nd stage bootloader
-I (24) boot: compile time Oct 11 2026 11:46:17
-I (24) boot: Multicore bootloader
-I (29) boot: chip revision: v0.3
-I (30) boot: efuse block revision: v1.0
-I (31) boot.esp32s3: Boot SPI Speed : 80MHz
-I (31) boot.esp32s3: SPI Mode       : SLOW READ
-I (32) boot.esp32s3: SPI Flash Size : 4MB
-I (34) boot: Enabling RNG early entropy source...
-I (40) boot: Partition Table:
-I (41) boot: ## Label            Usage          Type ST Offset   Length
-I (41) boot:  0 nvs              WiFi data        01 02 00009000 00006000
-I (42) boot:  1 phy_init         RF data          01 01 0000f000 00001000
-I (42) boot:  2 factory          factory app      00 00 00010000 00200000
-I (43) boot:  3 storage          Unknown data     01 83 00210000 00100000
-I (44) boot: End of partition table
-I (45) esp_image: segment 0: paddr=00010020 vaddr=3c0f0020 size=798ach (497836) map
-I (122) esp_image: segment 1: paddr=000898d4 vaddr=3fc98700 size=05b70h ( 23408) load
-I (127) esp_image: segment 2: paddr=0008f44c vaddr=40374000 size=00bcch (  3020) load
-I (129) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=ec4e8h (967912) map
-I (282) esp_image: segment 4: paddr=0017c510 vaddr=40374bcc size=13abch ( 80572) load
-I (296) esp_image: segment 5: paddr=0018ffd4 vaddr=50000000 size=00020h (    32) load
-I (297) esp_image: segment 6: paddr=0018fffc vaddr=600fe000 size=00058h (    88) load
-I (300) boot: Loaded app from partition at offset 0x10000
-I (300) boot: Disabling RNG early entropy source...
-I (314) cpu_start: Multicore app
-I (325) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
-I (328) cpu_start: Pro cpu start user code
-I (328) cpu_start: cpu freq: 160000000 Hz
-I (328) app_init: Application information:
-I (328) app_init: Project name:     R2P2-ESP32
-I (329) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
-I (329) app_init: Compile time:     Oct 11 2026 11:45:56
-I (329) app_init: ELF file SHA256:  d9e3b06d3...
-I (329) app_init: ESP-IDF:          v5.5.4
-I (329) efuse_init: Min chip rev:     v0.0
-I (329) efuse_init: Max chip rev:     v0.99 
-I (329) efuse_init: Chip rev:         v0.3
-I (330) heap_init: Initializing. RAM available for dynamic allocation:
-I (330) heap_init: At 3FCDA7D8 len 0000EF38 (59 KiB): RAM
-I (330) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
-I (330) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
-I (330) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
-I (336) spi_flash: detected chip: gd
-I (336) spi_flash: flash io: dio
-I (337) sleep_gpio: Configure to isolate all GPIO pins in sleep state
-I (338) sleep_gpio: Enable automatic switching of GPIO sleep configuration
-I (343) main_task: Started on CPU0
-I (350) main_task: Calling app_main()
-I (353) main_task: Returned from app_main()
+I (13) boot: ESP-IDF v5.5.4 2nd stage bootloader
+I (13) boot: compile time Oct 11 2026 18:52:15
+I (13) boot: Multicore bootloader
+I (15) boot: chip revision: v0.3
+I (15) boot: efuse block revision: v1.0
+I (16) boot.esp32s3: Boot SPI Speed : 80MHz
+I (16) boot.esp32s3: SPI Mode       : SLOW READ
+I (16) boot.esp32s3: SPI Flash Size : 4MB
+I (18) boot: Enabling RNG early entropy source...
+I (20) boot: Partition Table:
+I (20) boot: ## Label            Usage          Type ST Offset   Length
+I (21) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (21) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (21) boot:  2 factory          factory app      00 00 00010000 00200000
+I (21) boot:  3 storage          Unknown data     01 83 00210000 00100000
+I (22) boot: End of partition table
+I (22) esp_image: segment 0: paddr=00010020 vaddr=3c0f0020 size=798ech (497900) map
+I (55) esp_image: segment 1: paddr=00089914 vaddr=3fc98700 size=05b70h ( 23408) load
+I (57) esp_image: segment 2: paddr=0008f48c vaddr=40374000 size=00b8ch (  2956) load
+I (58) esp_image: segment 3: paddr=00090020 vaddr=42000020 size=ec5f8h (968184) map
+I (124) esp_image: segment 4: paddr=0017c620 vaddr=40374b8c size=13afch ( 80636) load
+I (130) esp_image: segment 5: paddr=00190124 vaddr=50000000 size=00020h (    32) load
+I (130) esp_image: segment 6: paddr=0019014c vaddr=600fe000 size=00058h (    88) load
+I (131) boot: Loaded app from partition at offset 0x10000
+I (131) boot: Disabling RNG early entropy source...
+I (137) cpu_start: Multicore app
+I (147) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (148) cpu_start: Pro cpu start user code
+I (148) cpu_start: cpu freq: 160000000 Hz
+I (148) app_init: Application information:
+I (148) app_init: Project name:     R2P2-ESP32
+I (148) app_init: App version:      0.3.0-32-gf3bb18d0-dirty
+I (149) app_init: Compile time:     Oct 11 2026 18:52:06
+I (149) app_init: ELF file SHA256:  b3e335a9c...
+I (149) app_init: ESP-IDF:          v5.5.4
+I (149) efuse_init: Min chip rev:     v0.0
+I (149) efuse_init: Max chip rev:     v0.99 
+I (149) efuse_init: Chip rev:         v0.3
+I (149) heap_init: Initializing. RAM available for dynamic allocation:
+I (149) heap_init: At 3FCDA7D8 len 0000EF38 (59 KiB): RAM
+I (149) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (149) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (149) heap_init: At 600FE058 len 00001F90 (7 KiB): RTCRAM
+I (152) spi_flash: detected chip: gd
+I (152) spi_flash: flash io: dio
+I (152) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (152) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (154) main_task: Started on CPU0
+I (159) main_task: Calling app_main()
+I (161) main_task: Returned from app_main()
 Initializing FLASH disk as the root volume... 
 Creating directory: bin
 Creating directory: etc/init.d
@@ -140,145 +140,138 @@ Loading app.rb
 [rig] write enq A
 [rigapp] state 2
 [rig] write enq B
-[rigapp] recv seq=1 tin=10884 t=10890
-[rigapp] recv seq=2 tin=11386 t=11388
-[rigapp] recv seq=3 tin=11887 t=11889
-[rigapp] recv seq=4 tin=12386 t=12389
-[rigapp] recv seq=5 tin=12887 t=12889
-[rigapp] recv seq=6 tin=13387 t=13390
-[rigapp] recv seq=7 tin=13887 t=13888
-[rigapp] recv seq=8 tin=14388 t=14389
-[rigapp] recv seq=9 tin=14888 t=14889
-[rigapp] recv seq=10 tin=15389 t=15389
-[rigapp] recv seq=11 tin=15890 t=15891
-[rigapp] recv seq=12 tin=16389 t=16392
-[rigapp] recv seq=13 tin=16891 t=16895
-[rigapp] recv seq=14 tin=17391 t=17394
-[rigapp] recv seq=15 tin=17892 t=17896
-[rigapp] recv seq=16 tin=18392 t=18393
-[rigapp] recv seq=17 tin=18893 t=18894
-[rigapp] recv seq=18 tin=19393 t=19394
-[rigapp] recv seq=19 tin=19894 t=19895
-[rigapp] recv seq=20 tin=20394 t=20396
-[rigapp] recv seq=21 tin=20893 t=20894
-[rigapp] recv seq=22 tin=20904 t=20907
-[rigapp] recv seq=23 tin=20914 t=20915
-[rigapp] recv seq=24 tin=20925 t=20926
-[rigapp] recv seq=25 tin=20936 t=20936
-[rigapp] recv seq=26 tin=20946 t=20949
-[rigapp] recv seq=27 tin=20955 t=20957
-[rigapp] recv seq=28 tin=20966 t=20968
-[rigapp] recv seq=29 tin=20976 t=20977
-[rigapp] recv seq=30 tin=20987 t=20988
-[rigapp] recv seq=31 tin=20998 t=21000
-[rigapp] recv seq=32 tin=21008 t=21010
-[rigapp] recv seq=33 tin=21019 t=21022
-[rigapp] recv seq=34 tin=21030 t=21030
-[rigapp] recv seq=35 tin=21040 t=21041
-[rigapp] recv seq=36 tin=21051 t=21053
-[rigapp] recv seq=37 tin=21061 t=21065
-[rigapp] recv seq=38 tin=21072 t=21073
-[rigapp] recv seq=39 tin=21081 t=21082
-[rigapp] recv seq=40 tin=21092 t=21095
-[rigapp] recv seq=41 tin=21103 t=21104
-[rigapp] recv seq=42 tin=21113 t=21114
-[rigapp] recv seq=43 tin=21124 t=21124
-[rigapp] recv seq=44 tin=21134 t=21139
-[rigapp] recv seq=45 tin=21145 t=21145
-[rigapp] recv seq=46 tin=21155 t=21157
-[rigapp] recv seq=47 tin=21166 t=21169
-[rigapp] recv seq=48 tin=21176 t=21176
-[rigapp] recv seq=49 tin=21186 t=21187
-[rigapp] recv seq=50 tin=21195 t=21196
-[rigapp] recv seq=51 tin=21206 t=21209
-[rigapp] recv seq=52 tin=21216 t=21218
-[rigapp] recv seq=53 tin=21226 t=21227
-[rigapp] recv seq=54 tin=21237 t=21238
-[rigapp] recv seq=55 tin=21248 t=21250
-[rigapp] recv seq=56 tin=21258 t=21259
-[rigapp] recv seq=57 tin=21269 t=21271
-[rigapp] recv seq=58 tin=21279 t=21282
-[rigapp] recv seq=59 tin=21290 t=21292
-[rigapp] recv seq=60 tin=21300 t=21303
+[rigapp] recv seq=1 tin=6469 t=6479
+[rigapp] recv seq=2 tin=6970 t=6974
+[rigapp] recv seq=3 tin=7472 t=7479
+[rigapp] recv seq=4 tin=7976 t=7983
+[rigapp] recv seq=5 tin=8477 t=8482
+[rigapp] recv seq=6 tin=8979 t=8987
+[rigapp] recv seq=7 tin=9478 t=9481
+[rigapp] recv seq=8 tin=9979 t=9984
+[rigapp] recv seq=9 tin=10480 t=10483
+[rigapp] recv seq=10 tin=10981 t=10984
+[rigapp] recv seq=11 tin=11482 t=11485
+[rigapp] recv seq=12 tin=11984 t=11988
+[rigapp] recv seq=13 tin=12484 t=12491
+[rigapp] recv seq=14 tin=12984 t=12988
+[rigapp] recv seq=15 tin=13485 t=13492
+[rigapp] recv seq=16 tin=13985 t=13989
+[rigapp] recv seq=17 tin=14486 t=14489
+[rigapp] recv seq=18 tin=14986 t=14989
+[rigapp] recv seq=19 tin=15486 t=15488
+[rigapp] recv seq=20 tin=15988 t=15991
+[rigapp] recv seq=21 tin=16488 t=16493
+[rigapp] recv seq=22 tin=16499 t=16504
+[rigapp] recv seq=23 tin=16509 t=16512
+[rigapp] recv seq=24 tin=16520 t=16522
+[rigapp] recv seq=25 tin=16529 t=16530
+[rigapp] recv seq=26 tin=16540 t=16543
+[rigapp] recv seq=27 tin=16550 t=16553
+[rigapp] recv seq=28 tin=16561 t=16564
+[rigapp] recv seq=29 tin=16570 t=16571
+[rigapp] recv seq=30 tin=16581 t=16582
+[rigapp] recv seq=31 tin=16591 t=16594
+[rigapp] recv seq=32 tin=16602 t=16603
+[rigapp] recv seq=33 tin=16611 t=16615
+[rigapp] recv seq=34 tin=16622 t=16624
+[rigapp] recv seq=35 tin=16632 t=16633
+[rigapp] recv seq=36 tin=16643 t=16644
+[rigapp] recv seq=37 tin=16652 t=16656
+[rigapp] recv seq=38 tin=16663 t=16664
+[rigapp] recv seq=39 tin=16673 t=16674
+[rigapp] recv seq=40 tin=16684 t=16688
+[rigapp] recv seq=41 tin=16693 t=16696
+[rigapp] recv seq=42 tin=16704 t=16705
+[rigapp] recv seq=43 tin=16714 t=16715
+[rigapp] recv seq=44 tin=16725 t=16728
+[rigapp] recv seq=45 tin=16734 t=16735
+[rigapp] recv seq=46 tin=16745 t=16746
+[rigapp] recv seq=47 tin=16755 t=16759
+[rigapp] recv seq=48 tin=16766 t=16767
+[rigapp] recv seq=49 tin=16775 t=16776
+[rigapp] recv seq=50 tin=16786 t=16787
+[rigapp] recv seq=51 tin=16797 t=16801
+[rigapp] recv seq=52 tin=16807 t=16808
+[rigapp] recv seq=53 tin=16818 t=16819
+[rigapp] recv seq=54 tin=16829 t=16830
+[rigapp] recv seq=55 tin=16839 t=16843
+[rigapp] recv seq=56 tin=16850 t=16851
+[rigapp] recv seq=57 tin=16860 t=16861
+[rigapp] recv seq=58 tin=16871 t=16874
+[rigapp] recv seq=59 tin=16881 t=16882
+[rigapp] recv seq=60 tin=16892 t=16893
 [rig] inject done n=60
 [rig] wlat done n=20
+[rigapp] recv seq=149 tin=18913 t=18917
+[rigapp] recv seq=150 tin=18913 t=18925
+[rigapp] recv seq=151 tin=18913 t=18928
+[rigapp] recv seq=152 tin=18913 t=18931
+[rigapp] recv seq=153 tin=18913 t=18936
+[rigapp] recv seq=154 tin=18913 t=18937
+[rigapp] recv seq=155 tin=18913 t=18940
+[rigapp] recv seq=156 tin=18913 t=18943
+[rigapp] recv seq=157 tin=18913 t=18945
+[rigapp] recv seq=158 tin=18913 t=18947
+[rigapp] recv seq=159 tin=18913 t=18950
+[rigapp] recv seq=160 tin=18913 t=18951
+[rigapp] recv seq=161 tin=18913 t=18953
+[rigapp] recv seq=162 tin=18913 t=18955
+[rigapp] recv seq=163 tin=18913 t=18957
+[rigapp] recv seq=164 tin=18913 t=18958
+[rigapp] recv seq=165 tin=18913 t=18961
+[rigapp] recv seq=166 tin=18913 t=18963
+[rigapp] recv seq=167 tin=18913 t=18965
+[rigapp] recv seq=168 tin=18913 t=18966
+[rigapp] recv seq=169 tin=18913 t=18967
+[rigapp] recv seq=170 tin=18913 t=18970
+[rigapp] recv seq=171 tin=18913 t=18971
+[rigapp] recv seq=172 tin=18913 t=18972
+[rigapp] recv seq=173 tin=18913 t=18975
+[rigapp] recv seq=174 tin=18914 t=18976
+[rigapp] recv seq=175 tin=18914 t=18977
+[rigapp] recv seq=176 tin=18914 t=18979
+[rigapp] recv seq=177 tin=18914 t=18980
+[rigapp] recv seq=178 tin=18914 t=18981
+[rigapp] recv seq=179 tin=18914 t=18982
+[rigapp] recv seq=180 tin=18914 t=18984
 [rig] burst done first=101 last=180
-[rigapp] recv seq=130 tin=23322 t=23325
-[rigapp] recv seq=137 tin=23323 t=23328
-[rigapp] recv seq=138 tin=23323 t=23330
-[rigapp] recv seq=141 tin=23323 t=23331
-[rigapp] recv seq=143 tin=23323 t=23335
-[rigapp] recv seq=146 tin=23323 t=23337
-[rigapp] recv seq=147 tin=23323 t=23339
-[rigapp] recv seq=149 tin=23323 t=23343
-[rigapp] recv seq=150 tin=23323 t=23345
-[rigapp] recv seq=151 tin=23323 t=23347
-[rigapp] recv seq=152 tin=23323 t=23351
-[rigapp] recv seq=153 tin=23323 t=23353
-[rigapp] recv seq=154 tin=23323 t=23355
-[rigapp] recv seq=155 tin=23323 t=23359
-[rigapp] recv seq=156 tin=23323 t=23361
-[rigapp] recv seq=157 tin=23323 t=23363
-[rigapp] recv seq=158 tin=23323 t=23367
-[rigapp] recv seq=159 tin=23323 t=23369
-[rigapp] recv seq=160 tin=23323 t=23373
-[rigapp] recv seq=161 tin=23323 t=23375
-[rigapp] recv seq=162 tin=23323 t=23377
-[rigapp] recv seq=163 tin=23323 t=23381
-[rigapp] recv seq=164 tin=23323 t=23384
-[rigapp] recv seq=165 tin=23323 t=23386
-[rigapp] recv seq=166 tin=23323 t=23390
-[rigapp] recv seq=167 tin=23323 t=23392
-[rigapp] recv seq=168 tin=23323 t=23394
-[rigapp] recv seq=169 tin=23323 t=23398
-[rigapp] recv seq=170 tin=23323 t=23400
-[rigapp] recv seq=171 tin=23323 t=23402
-[rigapp] recv seq=172 tin=23323 t=23407
-[rigapp] recv seq=173 tin=23323 t=23408
-[rigapp] recv seq=174 tin=23323 t=23411
-[rigapp] recv seq=175 tin=23323 t=23415
-[rigapp] recv seq=176 tin=23323 t=23417
-[rigapp] recv seq=177 tin=23323 t=23419
-[rigapp] recv seq=178 tin=23323 t=23423
-[rigapp] recv seq=179 tin=23323 t=23425
-[rigapp] recv seq=180 tin=23323 t=23427
 [rig] notify injected len=93
 [rigapp] notif len=92 raw=104
 [rig] notify injected len=200
 [rigapp] notif len=92 raw=104
-[rig] control done first=201 last=260 h1=17 h2=34
-[rigapp] recv seq=230 tin=29628 t=29630
-[rigapp] recv seq=231 tin=29628 t=29631
-[rigapp] recv seq=232 tin=29628 t=29635
-[rigapp] recv seq=233 tin=29628 t=29637
-[rigapp] recv seq=234 tin=29628 t=29638
-[rigapp] recv seq=235 tin=29628 t=29642
-[rigapp] recv seq=236 tin=29628 t=29643
-[rigapp] recv seq=237 tin=29628 t=29645
-[rigapp] recv seq=238 tin=29628 t=29648
-[rigapp] recv seq=239 tin=29628 t=29650
-[rigapp] recv seq=240 tin=29628 t=29651
-[rigapp] recv seq=241 tin=29628 t=29655
-[rigapp] recv seq=242 tin=29628 t=29657
-[rigapp] recv seq=243 tin=29628 t=29659
-[rigapp] recv seq=244 tin=29628 t=29663
-[rigapp] recv seq=245 tin=29628 t=29665
-[rigapp] recv seq=246 tin=29628 t=29669
-[rigapp] recv seq=247 tin=29628 t=29671
-[rigapp] recv seq=248 tin=29628 t=29673
-[rigapp] recv seq=249 tin=29628 t=29677
-[rigapp] recv seq=250 tin=29628 t=29679
-[rigapp] recv seq=251 tin=29628 t=29681
-[rigapp] recv seq=252 tin=29628 t=29685
-[rigapp] recv seq=253 tin=29628 t=29686
-[rigapp] recv seq=254 tin=29628 t=29689
-[rigapp] recv seq=255 tin=29628 t=29692
-[rigapp] recv seq=256 tin=29628 t=29694
-[rigapp] recv seq=257 tin=29628 t=29696
-[rigapp] recv seq=258 tin=29628 t=29700
-[rigapp] recv seq=259 tin=29628 t=29702
-[rigapp] recv seq=260 tin=29628 t=29704
+[rigapp] recv seq=230 tin=25227 t=25234
+[rigapp] recv seq=231 tin=25227 t=25238
+[rigapp] recv seq=232 tin=25227 t=25241
+[rigapp] recv seq=233 tin=25227 t=25247
+[rigapp] recv seq=234 tin=25227 t=25249
+[rigapp] recv seq=235 tin=25227 t=25251
+[rigapp] recv seq=236 tin=25227 t=25256
+[rigapp] recv seq=237 tin=25227 t=25257
+[rigapp] recv seq=238 tin=25227 t=25261
+[rigapp] recv seq=239 tin=25227 t=25262
+[rigapp] recv seq=240 tin=25227 t=25264
+[rigapp] recv seq=241 tin=25227 t=25267
+[rigapp] recv seq=242 tin=25227 t=25268
+[rigapp] recv seq=243 tin=25227 t=25270
+[rigapp] recv seq=244 tin=25227 t=25272
+[rigapp] recv seq=245 tin=25227 t=25274
+[rigapp] recv seq=246 tin=25227 t=25275
+[rigapp] recv seq=247 tin=25227 t=25278
+[rigapp] recv seq=248 tin=25227 t=25279
+[rigapp] recv seq=249 tin=25227 t=25280
+[rigapp] recv seq=250 tin=25227 t=25283
+[rigapp] recv seq=251 tin=25227 t=25284
+[rigapp] recv seq=252 tin=25227 t=25285
+[rigapp] recv seq=253 tin=25227 t=25287
+[rigapp] recv seq=254 tin=25227 t=25289
+[rigapp] recv seq=255 tin=25227 t=25290
+[rigapp] recv seq=256 tin=25227 t=25292
+[rigapp] recv seq=257 tin=25227 t=25293
+[rigapp] recv seq=258 tin=25227 t=25294
+[rigapp] recv seq=259 tin=25227 t=25296
+[rigapp] recv seq=260 tin=25227 t=25297
 [rigapp] disc 34
+[rig] control done first=201 last=260 h1=17 h2=34
 [rigapp] mark 1
 [rig] cansend injected n=5 con_handle=65535
 [rigapp] cansend
@@ -287,5 +280,49 @@ Loading app.rb
 [rigapp] cansend
 [rigapp] cansend
 [rigapp] mark 2
+[rigapp] dsc 1
+[rigapp] dsc 2
+[rigapp] dsc 3
+[rigapp] complete 0
+[rig] proc A injected results=3 handle_first=1
+[rig] proc A done
+[rigapp] dsc 148
+[rigapp] dsc 161
+[rigapp] dsc 166
+[rigapp] dsc 170
+[rigapp] dsc 171
+[rigapp] dsc 172
+[rigapp] dsc 173
+[rigapp] dsc 174
+[rigapp] dsc 175
+[rigapp] dsc 176
+[rigapp] dsc 177
+[rigapp] dsc 178
+[rigapp] dsc 179
+[rigapp] dsc 180
+[rigapp] dsc 181
+[rigapp] dsc 182
+[rigapp] dsc 183
+[rigapp] dsc 184
+[rigapp] dsc 185
+[rigapp] dsc 186
+[rigapp] dsc 187
+[rigapp] dsc 188
+[rigapp] dsc 189
+[rigapp] dsc 190
+[rigapp] dsc 191
+[rigapp] dsc 192
+[rigapp] dsc 193
+[rigapp] dsc 194
+[rigapp] dsc 195
+[rigapp] dsc 196
+[rigapp] dsc 197
+[rigapp] dsc 198
+[rigapp] dsc 199
+[rigapp] dsc 200
+[rigapp] complete 0
+[rig] proc B injected results=100 handle_first=101
+[rig] proc B done
+[rigapp] mark 3
 [rig] limits done
-qemu-system-xtensa: terminating on signal 15 from pid 59430 (<unknown process>)
+qemu-system-xtensa: terminating on signal 15 from pid 18383 (<unknown process>)
