@@ -80,34 +80,27 @@ class RigPower < BLE
     puts "[rigapp] step #{step} gap_connect #{gap_connect(peer, 0)}"
   end
 
-  # [step, call, drain ms (LINK: link up after the call), a peer to connect to before the call]
-  LINK = -1
-  MODES = { "on" => 1, "off" => 0, "sleep" => 2 }
-  PLAN = [
-    [3, "off", 400, nil], [4, "on", 1500, nil], [5, "sleep", 1500, nil], [6, "on", 400, nil], [7, "on", 400, nil],
-    [8, "off", 1600, SILENT_PEER], [9, "on", LINK, nil], [10, "sleep", 1800, nil], [11, "on", LINK, nil], [12, "off", 1600, nil],
-    [13, "on", LINK, nil], [14, "off", 100, nil], [15, "on", 100, nil], [16, "off", 1600, nil],
-    [17, "on", LINK, nil], [18, "off", 200, nil], [19, "off", 1600, nil],
-    [20, "on", LINK, nil], [21, "off", 200, nil], [22, "sleep", 1600, nil],
-    [23, "on", LINK, nil], [24, "sleep", 200, nil], [25, "off", 1600, nil],
-    [26, "on", LINK, nil], [27, "sleep", 200, nil], [28, "sleep", 1600, nil],
-    [29, "on", 1500, nil], [30, "on", 100, nil], [31, "off", 1600, nil]
-  ]
+  # step, call, drain ms (L: link up after the call), a peer to connect to before the call (S: silent)
+  PLAN = "3 off 400 -|4 on 1500 -|5 sleep 1500 -|6 on 400 -|7 on 400 -|8 off 1600 S|9 on L -|10 sleep 1800 -|" \
+         "11 on L -|12 off 1600 -|13 on L -|14 off 100 -|15 on 100 -|16 off 1600 -|17 on L -|18 off 200 -|" \
+         "19 off 1600 -|20 on L -|21 off 200 -|22 sleep 1600 -|23 on L -|24 sleep 200 -|25 off 1600 -|" \
+         "26 on L -|27 sleep 200 -|28 sleep 1600 -|29 on 1500 -|30 on 100 -|31 off 1600 -"
 
   def run
     @step = 1
     start(600)
     drain(2)
+    rows = PLAN.split("|")
     i = 0
-    while i < PLAN.size
-      row = PLAN[i]
-      step = row[0]
-      call_connect(step, row[3]) if row[3]
-      call_power(step, row[1], MODES[row[1]])
-      if row[2] == LINK
+    while i < rows.size
+      f = rows[i].split(" ")
+      step = f[0].to_i
+      call_connect(step, SILENT_PEER) if f[3] == "S"
+      call_power(step, f[1], f[1] == "on" ? HCI_POWER_ON : (f[1] == "off" ? HCI_POWER_OFF : HCI_POWER_SLEEP))
+      if f[2] == "L"
         link_up(step)
       else
-        drain(step, row[2])
+        drain(step, f[2].to_i)
       end
       i += 1
     end
