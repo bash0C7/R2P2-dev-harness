@@ -437,8 +437,10 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 
 対象: M5Stack Chain DualKey（ESP32-S3、PSRAM無し）。`bash0C7/R2P2-ESP32` branch
 `r2p2-esp32-btstack-integration`、VM は `mruby`。build/flash はそちらの rake
-タスクへ委ねる（`rake esp32:build` / `flash`、ENV `R2P2_ESP32_REPO` で checkout
-先を上書き可能）。
+タスクへ委ねる（`rake esp32:build` / `flash`）。checkout は `rake esp32:setup` が
+harness 配下の `vendor/R2P2-ESP32` に作る（ENV `R2P2_ESP32_REPO` で上書き可能）。
+以前は harness と同列の `../R2P2-ESP32` を既定にしていたが、相対パスが harness の
+clone 先に依存してややこしいので配下に移した（2026-10-17）。
 
 - **shellのCtrl-B/コマンド入力が一切届かなかった根本原因は、ESP-IDFのconsole
   routing設定だった。** Chain DualKeyにはUART0の物理配線が無く、唯一の露出
@@ -514,9 +516,81 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   contextで枯渇し`NoMemoryError` → abort → reboot loop。`R2P2-ESP32`側は
   `MRC_PRISM_ARENA_BLOCK=2048`を`components/picoruby-esp32/build_config/xtensa-esp-picoruby.rb`
   に追加済み（local commit `e5f5c090`、issue #1・#12参照）
-- **書き込みはesptoolのみ。** ESP-IDFのフルインストールはこのrepoの責務にしない。
-  `rake esp32:build`が内部で`idf.py`を呼ぶのは`R2P2-ESP32`側の環境の話であり、
-  このharness自体はESP-IDFを直接扱わない
+- **ESP-IDFはMacに入れない。build と QEMU は harness が持つ Apple Container の中で回す。
+  焼くときだけホストから焼く。**（2026-10-17 に書き換え）
+  以前の文言は「ESP-IDFのフルインストールはこのrepoの責務にしない。`idf.py`は
+  `R2P2-ESP32`側の環境の話」だった（issue #12、2026-09-15）。issue の問いは「ESP-IDF を
+  Mac に入れるか、esptool で焼くだけにするか」で、動機は Mac に入れないことだったが、
+  `esp32:build` / `qemu_check` / `evq_*` はホストの`idf.py`を前提にしており、実際には
+  Mac に IDF v5.4.2 が入っていた（下の QEMU の項）。責務の名目を`R2P2-ESP32`へ移した
+  だけで、動機は満たしていなかった。今は `espressif/idf:v5.5.4` から作る常駐コンテナ
+  （`rake container:up`、追加パッケージは`container/provision.sh`）が IDF を持ち、
+  `rake "container:rake[esp32:evq_green]"`のように container の中で回す。焼き込みは`R2P2-ESP32`の`rake flash`が esptool を
+  PATH に見つけなければ espflash を repo 内`.tools/`に落として使うので、ホスト全体は
+  汚れない。container からは serial が見えないので、実機を触るタスクはホストのまま
+- **派生 image は作らず、base image から常駐コンテナを 1 つ作って provision する。**
+  Apple Container は image を圧縮 blob と展開済み snapshot の両方で持つ。`espressif/idf:v5.5.4`
+  の arm64 は blob 4.4 GB、snapshot 9 GB（実測）。派生 image を build すると snapshot が
+  もう 1 つ増え、builder（buildkit）の中にも同じだけ展開されるので、空き 29 GB の Mac には
+  入らなかった。常駐コンテナ`r2p2-dev-harness`の書き込みは base の snapshot からの差分で済み、
+  足りないパッケージは`container/provision.sh`で一度だけ入れる。中身は全部 mount 側にあるので、
+  作り直しで失うのは provision だけ
+- **`container image pull`は使わない。** この Mac では`container build`の base 解決も
+  `container image pull`も、3 GB の layer の途中で速度 0 のまま 10 分以上止まり、再試行は
+  最初からやり直しだった（2 回）。`rake container:image`は blob ごとに curl で途中から再開
+  できる取得（`tools/container/fetch_oci.sh`）をして digest を確かめ、OCI の tar にまとめて load する
+- **disk の空きは入れる前に見る。** image は入れると約 14 GB、load の間は OCI の tar がさらに
+  4.4 GB 要る。`container:image`は空きが`CONTAINER_MIN_FREE_GB`（既定 20）未満なら止まる。
+  `container system df`の reclaimable は当てにならない。停止済みのコンテナ 67 個を消しても
+  空いたのは約 1 GB だった（APFS の clone でブロックを共有しているため）
+- **mount はホストと同じ絶対パスに張る。** worktree の`.git`は ghq clone の
+  `.git/worktrees/<name>`を絶対パスで指すので、clone も同じパスで mount する。PR の picoruby
+  は、R2P2-ESP32 の submodule の位置（`components/picoruby-esp32/picoruby`）に`ESP32_PICORUBY`
+  の tree を重ねる（R2P2-ESP32 の submodule は init しない）。重ねた tree の中の submodule は
+  gitdir が相対パスなので、container の中のその位置からは git で見えない（`git status`が
+  `not a git repository`で落ちる）。build は git を見ないので通る。tree の状態はホストで見る
+- **container から見えるのは mount したものだけ。** harness root、ghq の picoruby clone、
+  R2P2-ESP32 の 3 つ。scratchpad など他の場所に置いた script は見えないので、harness の`tmp/`
+  に置く。ホストの環境変数は`tools/container/run_args.rb`の許可リスト（`EVQ_*`、`QEMU_*`など）
+  に載ったものだけが渡る
+- **base image には`LANG`が無い。** Ruby が QEMU の log（化けた byte を含む）を US-ASCII で
+  読み、`evq_verdict.rb`が`invalid byte sequence in US-ASCII`で落ちた。container には
+  `LANG=C.UTF-8`を渡す
+- **base image の Ruby は 3.2。** upstream picoruby の`test:gems:steep`は`bundle install`で
+  落ちる（typeprof 0.32.0 が Ruby 3.3 以上を要る）。`rake "container:ruby[4.0.1]"`（upstream の
+  CI と同じ版）で`tmp/container/ruby/`に build し、`CONTAINER_RUBY=4.0.1`を付けて exec する。
+  `BUNDLE_FROZEN=true`なら`Gemfile.lock`は書き換わらない
+- **container で作る mrbc は Linux 版（未解決）。** `esp32:upload` / `run`はホストで
+  `R2P2-ESP32/components/picoruby-esp32/picoruby/build/host/bin/mrbc`を使うが、PR の tree を
+  重ねて container で build すると、そこはホストからは空で、tree 側の mrbc は Linux の ELF。
+  実機が戻ったら、ホスト用の mrbc の出どころを決める
+- **R2P2-ESP32 #135 は picoruby PR #427 の今の NimBLE port に追いついていない。evq rig は
+  足りない分を`firmware-patches/qemu-ble-evq/r2p2-esp32-catchup.patch`で一緒に当てる。**
+  rig の`r2p2-esp32.patch`が前提にしていた R2P2-ESP32 の file（femtoruby の build_config は
+  blob`dcaadc15`）は、fork にも upstream にも無かった。rig を作った Mac の R2P2-ESP32 に push
+  されていない変更があった。GitHub の #135（`41bad40`）のままだと次の 4 つで壊れる
+  （2026-10-17、container の中で確認）:
+  - NimBLE の build がリンクで落ちる（`picoruby_nimble_attach_vm`が未定義）。`BLE_SRCS`に
+    PR #427 の`ports/esp32/pump_${PICORB_VM}.c`が無い
+  - mruby/c の firmware に BLE の gem が入らず、rig の app が`require 'ble'`で落ちて Guru
+    Meditation。femtoruby の build_config に`USE_BLE`のときの`picoruby-ble` / `picoruby-ble-uart`が無い
+  - mruby/c で pump の scheduler service が呼ばれない。`MRBC_TASK_SCHEDULER_HOOK`が
+    femtoruby の build_config と CMake の mrubyc の定義の両方に要る
+  - mruby/c の symbol 表が BLE の gem で溢れる。`MAX_SYMBOLS_COUNT=2000`（`USE_BLE`のとき。
+    Pico 2 W と同じ値）
+
+  `apply.sh`は branch にこの 4 つが無ければ rig と一緒に当て（marker`.qemu-ble-evq-catchup`）、
+  `revert.sh`が外す。branch に同じ変更が入れば当てずに進むので、#135 が追いついても rig 側の
+  片付けは要らない。rig の外で NimBLE を build するとき（`sdkconfigs/bt_nimble`）は、同じ patch を
+  `vendor/R2P2-ESP32`に手で当てる。DualKey 既定の`esp32:build`は NimBLE を使わないので要らない
+- **R2P2-ESP32 の新しい clone は target が決まっていない。** R2P2-ESP32 は`rake setup_esp32s3`
+  （`idf.py set-target esp32s3`）を済ませた checkout を前提にしている。`esp32:setup`の clone の
+  まま build すると idf.py は無印 ESP32 で build し、DualKey 既定の構成で
+  `region 'dram0_0_seg' overflowed by 73736 bytes`のリンクエラーになる（2026-10-18、container の
+  中で）。console の overlay も、無印 ESP32 には USB Serial/JTAG が無いので黙って UART に戻る。
+  `esp32:build`は overlay（`sdkconfig`を消すことがある）の後で、`sdkconfig`が esp32s3 を向いて
+  いるか（`tools/esp32/idf_target.rb`）を見て、向いていなければ`idf.py set-target esp32s3`して
+  から build する。`qemu_check`と evq rig は自前の build dir で set-target するので影響を受けない
 - **QEMU起動確認が`build`に含まれる。** `R2P2-ESP32`の`scripts/qemu_boot_check.sh`
   （デフォルト300秒、`$> `を見つけたら成功、失敗パターンでも即終了）を実機の前段
   として通す。実機無しでbuildの健全性がある程度わかる
@@ -526,7 +600,8 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
   `.github/workflows/qemu.yml`は`esp_idf_version: v5.5.4`を指定しており、
   バージョン差が原因と推定（未確定）。実機検証だけを優先する場合はQEMU確認を
   一旦保留してよいが、CIのQEMU jobを信頼するにはローカルのESP-IDFをCI指定
-  バージョンへ合わせる必要がある
+  バージョンへ合わせる必要がある。container の IDF v5.5.4 では`qemu_boot_check.sh`が
+  mruby・mruby/c の両方で`$> `に届いた（2026-10-17）。版の差という推定と合う
 - **gem構成によっては起動直後にCore 1のpanicでboot loopすることがある。原因は未特定
   （stack不足とは確認できていない）。** sendairk03のDualKey検証（upstream
   `picoruby/R2P2-ESP32` master + IDF v5.4.2 + `sdkconfigs/usb_console`）で、
@@ -542,7 +617,7 @@ pin は firmware の stamp に入り、stamp が変わると `build/host` (`bin/
 - **QEMU確認はboot loopの検出器として使える。** `scripts/qemu_boot_check.sh mruby`
   はローカルIDF v5.4.2では`$> `に届かずtimeoutするが（上記）、panicの有無は
   見分けられる。実機を焼く前に、`QEMU_BOOT_TIMEOUT=60`でgem構成を1変数ずつ変えて
-  切り分けられる。`rake esp32:qemu_check`（IDFのexport済みが前提、
+  切り分けられる。`rake esp32:qemu_check`（container の中で回す、
   `QEMU_BOOT_TIMEOUT`既定60）がログで判定する: `Guru Meditation`/`Rebooting...`
   があればFAIL、なくて`main_task: Returned from app_main()`が出ていればPASS
   （`$> `未到達は既知としてその旨を表示）、それも無ければFAIL。QEMUで実測済み: 通常構成はPASS、

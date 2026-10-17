@@ -69,16 +69,18 @@ rake rp2040:reboot
   upstream の pin では Pico 2 W が起動時に固まる ([docs/spec.md](docs/spec.md) §6)
 
 ESP32 (M5Stack Chain DualKey、Mac に USB で接続)。firmware の build と flash は
-`bash0C7/R2P2-ESP32` を `../R2P2-ESP32` に checkout しておくと、そちらの rake に委ねる
-(別の場所なら `R2P2_ESP32_REPO=/path/to/R2P2-ESP32`):
+`rake esp32:setup` が `vendor/R2P2-ESP32` に clone する `bash0C7/R2P2-ESP32` の rake に委ねる
+(別の場所なら `R2P2_ESP32_REPO=/path/to/R2P2-ESP32`)。ESP-IDF は Mac に入れず、
+build と QEMU は下の「Apple Container で回す」のとおり container の中で回す:
 
 ```sh
-rake esp32:build                          # firmware を build し、QEMU で起動確認まで通す
-rake esp32:flash                          # esptool で焼く
-rake esp32:qemu_check                     # QEMU で boot loop (Core panic) の有無を判定。焼く前に。IDF の export が前提
-rake esp32:run[app.rb,20]                 # .mrb にして転送し、走らせてログを取る
-rake esp32:upload[app.rb,/home/app.rb]    # .mrb にして転送だけ。/home/app.mrb は起動時に自動実行される
-rake esp32:reboot                         # RTS パルスで reset して shell を待つ
+rake esp32:setup                              # vendor/R2P2-ESP32 を clone する (picoruby submodule は取らない)
+rake "container:rake[esp32:build]"            # firmware を build し、QEMU で起動確認まで通す (container の中で)
+rake "container:rake[esp32:qemu_check]"       # QEMU で boot loop (Core panic) の有無を判定。焼く前に
+rake esp32:flash                              # esptool で焼く (ここから下はホストで)
+rake esp32:run[app.rb,20]                     # .mrb にして転送し、走らせてログを取る
+rake esp32:upload[app.rb,/home/app.rb]        # .mrb にして転送だけ。/home/app.mrb は起動時に自動実行される
+rake esp32:reboot                             # RTS パルスで reset して shell を待つ
 ```
 
 - `tools/esp32/` はポートを `ioreg` の製品名で選ぶ。`/dev/cu.usbmodem*` の glob だと
@@ -90,7 +92,60 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、
-`rake test:esp32` (`tools/common` と `tools/esp32`)。`rake test` には含まれない。
+`rake test:esp32` (`tools/common` と `tools/esp32`)、`rake test:container` (`tools/container`)。
+`rake test` には含まれない。
+
+### Apple Container で回す
+
+Mac に ESP-IDF も arm-none-eabi も入れない。build と QEMU は Apple Container (`container` CLI) の中で回す
+([docs/spec.md](docs/spec.md) §9)。base image `espressif/idf:v5.5.4` から常駐コンテナ `r2p2-dev-harness` を 1 つ作り、
+足りないパッケージ (Ruby の開発ヘッダ、arm-none-eabi など) は `container/provision.sh` で一度だけ入れる。
+各タスクは `container exec` で走る。派生 image は作らない (展開済み snapshot が image ごとにもう 1 つ、9 GB 増えるため)。
+Claude Code からは skill `r2p2-container` ([.claude/skills/r2p2-container/SKILL.md](.claude/skills/r2p2-container/SKILL.md)) がこの手順で回す。
+
+初回だけ:
+
+```sh
+container system start
+rake container:image        # base image を curl で取得して load (入れると約 14 GB)。空きが CONTAINER_MIN_FREE_GB (既定 20) 未満なら止まる
+rake esp32:setup            # vendor/R2P2-ESP32 を clone する
+```
+
+PR の picoruby を ESP32 の QEMU で試す (例は picoruby PR #427 の branch):
+
+```sh
+rake "picoruby:worktree[picoruby-ble-esp32-port]"   # ghq の picoruby clone から vendor/worktrees/picoruby/<branch> に worktree
+export ESP32_PICORUBY=vendor/worktrees/picoruby/picoruby-ble-esp32-port   # R2P2-ESP32 の picoruby submodule の位置に重ねる
+EVQ_VM=mruby  rake "container:rake[esp32:evq_green]" # harness の rake を container の中で (初回は container:up が走る)
+EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]"
+CMD='rake test:gems:picoruby' DIR=$ESP32_PICORUBY rake container:exec        # upstream のテストなど、任意のコマンド
+CMD='rake r2p2:picoruby:pico2_w:prod' DIR=$ESP32_PICORUBY rake container:exec # Pico 2 W 向けの .uf2 も同じ tree から
+```
+
+その他:
+
+```sh
+rake container:shell
+rake "container:ruby[4.0.1]"    # base の Ruby は 3.2。upstream の CI と同じ Ruby を tmp/container/ruby/ に build
+CONTAINER_RUBY=4.0.1 CMD='BUNDLE_FROZEN=true bundle install && rake test:gems:steep' DIR=$ESP32_PICORUBY rake container:exec
+rake container:provision        # container/provision.sh を書き換えたら、今のコンテナにかけ直す
+rake container:stop             # 使い終わったら止めて memory を返す。次の container:* が起こす
+rake container:down             # コンテナを消す (image と tmp/container は残る)
+rake "picoruby:worktree_remove[picoruby-ble-esp32-port]"   # worktree を外す (変更が残っていれば止まる)
+```
+
+- mount はコンテナを作るときにしか決められない。`ESP32_PICORUBY` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を
+  今と違う値で明示すると、次の `container:*` がコンテナを作り直す (中身は全部 mount 側にあるので、失うのは provision だけ)。
+  何も明示しなければ今あるコンテナをそのまま使う
+- mount はホストと同じ絶対パス。worktree の `.git` が ghq clone (`PICORUBY_CLONE`、既定 `~/ghq/github.com/bash0C7/picoruby`) を指すので、clone も mount する。
+  container から見えるのは harness root、その clone、R2P2-ESP32 だけ。container で走らせる script は harness の `tmp/` に置く
+- container の HOME と cache は `tmp/container/` 配下。ホストの環境変数は `SDKCONFIG_DEFAULTS` や `EVQ_*` など決めたものだけ渡る (`tools/container/run_args.rb`)
+- 長い build や QEMU は数分かかる。log を `tmp/` に書いて background で回す
+- R2P2-ESP32 #135 (`r2p2-esp32-btstack-integration`) は picoruby PR #427 の今の NimBLE port に追いついていない。
+  evq rig は足りない 4 つ (`firmware-patches/qemu-ble-evq/r2p2-esp32-catchup.patch`) を rig と一緒に当てて外す。
+  branch に入れば当てずに進む ([docs/spec.md](docs/spec.md) §9)
+- 実機を触るタスク (`flash` / `upload` / `run` / `reboot`) はホストのまま。container から serial は見えない
+- `container image pull` を使わない理由など、container の罠は [docs/spec.md](docs/spec.md) §9
 
 ## 状態
 

@@ -1,20 +1,42 @@
 # ESP32 (M5Stack Chain DualKey) 向けのタスク。
 #
-# build/flash は bash0C7/R2P2-ESP32 の sibling checkout (branch
-# r2p2-esp32-btstack-integration, VM=mruby) にそのまま委ねる。ESP-IDF の
-# インストール・保守はこの harness の責務にしない (docs/spec.md 参照)。
+# build/flash は vendor/R2P2-ESP32 (`rake esp32:setup` が clone する bash0C7/R2P2-ESP32、
+# branch r2p2-esp32-btstack-integration, VM=mruby) の rake にそのまま委ねる。
+# ESP-IDF は Mac に入れない。build / qemu_check / evq_* は Apple Container の中で回す
+# (`rake "container:rake[esp32:build]"`、rakelib/container.rake と docs/spec.md §9)。
 # upload/run/reboot はこの harness 自前の tools/esp32/ で picomodem
 # プロトコルを直接話す。
 require_relative "../tools/esp32/qemu_verdict"
+require_relative "../tools/esp32/idf_target"
+
+R2P2_ESP32_GIT = ENV["R2P2_ESP32_GIT"] || "https://github.com/bash0C7/R2P2-ESP32.git"
+R2P2_ESP32_REF = ENV["R2P2_ESP32_REF"] || "r2p2-esp32-btstack-integration"
 
 namespace :esp32 do
   VM = "mruby".freeze # PICORB_VMS[:picoruby] => :mruby in R2P2-ESP32's Rakefile
+
+  desc "Clone R2P2-ESP32 into vendor/R2P2-ESP32 (env: R2P2_ESP32_GIT / R2P2_ESP32_REF); its picoruby submodule stays uninitialized"
+  task :setup do
+    dir = esp32_repo_dir
+    if File.directory?(File.join(dir, ".git"))
+      puts "#{dir} is already there."
+    else
+      # submodule は取らない。picoruby は container が ESP32_PICORUBY の tree を重ねる
+      # (rakelib/container.rake)。取ると PR の worktree と別物の picoruby が並び、どちらで
+      # build したかが分からなくなる。
+      sh "git", "clone", "--branch", R2P2_ESP32_REF, R2P2_ESP32_GIT, dir
+    end
+  end
 
   desc "Build the R2P2-ESP32 firmware (mruby VM) and boot-check it under QEMU"
   task :build do
     require_esp32_repo!
     ensure_console_overlay!
     FileUtils.cd(esp32_repo_dir) do
+      # After the overlay, which may delete sdkconfig: set-target regenerates
+      # it from sdkconfig.defaults, overlay included.
+      sdkconfig = File.exist?("sdkconfig") ? File.read("sdkconfig") : ""
+      sh "idf.py set-target #{IdfTarget::TARGET}" unless IdfTarget.set?(sdkconfig)
       sh "rake picoruby:build"
       sh "bash scripts/qemu_boot_check.sh #{VM}"
     end
@@ -85,9 +107,11 @@ namespace :test do
 end
 
 # ENV override for a non-standard checkout location, same convention as
-# PICORUBY_REPO/PICORUBY_REF in the top-level Rakefile.
+# PICORUBY_REPO/PICORUBY_REF in the top-level Rakefile. The default lives under
+# vendor/ rather than next to the harness: a sibling path made every relative
+# reference depend on where the harness happened to be cloned.
 def esp32_repo_dir
-  ENV["R2P2_ESP32_REPO"] || File.expand_path("../R2P2-ESP32", HARNESS_ROOT)
+  ENV["R2P2_ESP32_REPO"] || File.join(VENDOR_DIR, "R2P2-ESP32")
 end
 
 # firmware を build した picoruby の host mrbc。VM の版が実機と合う必要がある。
@@ -98,8 +122,8 @@ end
 def require_esp32_repo!
   dir = esp32_repo_dir
   unless File.directory?(dir)
-    raise "R2P2-ESP32 not found at #{dir}. Clone bash0C7/R2P2-ESP32 as a sibling " \
-          "of this repo, or set R2P2_ESP32_REPO=/path/to/R2P2-ESP32."
+    raise "R2P2-ESP32 not found at #{dir}. Run `rake esp32:setup`, " \
+          "or set R2P2_ESP32_REPO=/path/to/R2P2-ESP32."
   end
 end
 
