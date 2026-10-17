@@ -549,7 +549,12 @@ clone 先に依存してややこしいので配下に移した（2026-10-17）�
   R2P2-ESP32 の submodule の位置（`components/picoruby-esp32/picoruby`）に重ねること
   （R2P2-ESP32 の submodule は init しない）、worktree なら git の共通 dir（元の clone の`.git`）も
   要ること、submodule が init 済みでないと build が分かりにくく落ちること。`container:up`は
-  `ESP32_PICORUBY`が checkout の最上位で、submodule が init 済みであることを確かめてから作る
+  `ESP32_PICORUBY`が picoruby の checkout の最上位で、submodule が init 済み（`--recursive`で見る。
+  Pico 2 W 向けの pico-sdk 配下も含むので、新しい worktree では init にネットワークと時間がかかる）で
+  あることを確かめてから作る。パスは git の返す最上位（realpath、実際の大文字小文字）にそろえる。
+  symlink の名前のまま張ると、付け替えても argv が変わらず古い tree を使い回すため。tree は消える
+  ものなので、使い回すコンテナは mount 元が host に残っているかを毎回見て、消えていれば止まる。
+  空の`ESP32_PICORUBY`は付けていないのと同じに扱う（harness root を tree と取り違えないため）
 - **mount はホストと同じ絶対パスに張る。** worktree の`.git`は元の clone の
   `.git/worktrees/<name>`を絶対パスで指すので、`git rev-parse --git-common-dir`が返す dir を
   同じパスで張る。tree は slot に重ねるほか、`DIR=<tree>`で upstream のテストを回せるよう自身の

@@ -69,6 +69,18 @@ module ContainerRun
     list
   end
 
+  # create_argv が組んだ (rake が保存した) argv の mount を [source, target] の組で読み戻す。
+  def mounts_in(argv)
+    argv.each_cons(2).select { |flag, _| flag == "-v" }.map { |_, spec| spec.split(":", 2) }
+  end
+
+  # esp32_repo の submodule の位置に重ねた tree。重ねていなければ nil。
+  def slot_source(argv, esp32_repo)
+    slot = File.join(esp32_repo, SUBMODULE_SLOT)
+    pair = mounts_in(argv).find { |_, target| target == slot }
+    pair && pair.first
+  end
+
   def cache_env(harness_root)
     cache = File.join(harness_root, "tmp", "container")
     {

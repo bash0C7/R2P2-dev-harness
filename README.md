@@ -133,9 +133,10 @@ rake container:stop             # 使い終わったら止めて memory を返�
 rake container:down             # コンテナを消す (image と tmp/container は残る)
 ```
 
-- mount はコンテナを作るときにしか決められない。`ESP32_PICORUBY` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を
+- mount はコンテナを作るときにしか決められない。`ESP32_PICORUBY` / `R2P2_ESP32_REPO` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を
   今と違う値で明示すると、次の `container:*` がコンテナを作り直す (中身は全部 mount 側にあるので、失うのは provision だけ)。
-  何も明示しなければ今あるコンテナをそのまま使う。tree を `git pull` で進めるだけなら、パスが同じなので作り直さない
+  何も明示しなければ今あるコンテナをそのまま使う (slot に重ねた tree を表示する。その tree が host から消えていれば止まる)。
+  tree を `git pull` で進めるだけなら、パスが同じなので作り直さない
 - mount はホストと同じ絶対パス。tree は slot に重ねるほか自身のパスにも張り、worktree ならその `.git` が指す元の clone の `.git` も張る
   (`git rev-parse --git-common-dir`)。container から見えるのは harness root、R2P2-ESP32、tree とその git dir だけ。
   container で走らせる script は harness の `tmp/` に置く

@@ -120,6 +120,20 @@ class RunArgsTest < Minitest::Test
     refute_equal create, create(esp32_repo: "/elsewhere/R2P2-ESP32")
   end
 
+  def test_the_mounts_of_a_saved_argv_can_be_read_back
+    # rake は保存した argv から、今も host に mount 元があるか、slot に何を重ねたかを読む
+    argv = create(esp32_repo: "vendor/R2P2-ESP32", esp32_picoruby: "/elsewhere/picoruby",
+                  picoruby_git_dir: "/elsewhere/clone/.git")
+    assert_equal mounts_of(argv), ContainerRun.mounts_in(argv)
+  end
+
+  def test_the_tree_on_the_slot_can_be_read_back_from_a_saved_argv
+    repo = "#{HARNESS}/vendor/R2P2-ESP32"
+    argv = create(esp32_repo: repo, esp32_picoruby: "/elsewhere/picoruby")
+    assert_equal "/elsewhere/picoruby", ContainerRun.slot_source(argv, repo)
+    assert_nil ContainerRun.slot_source(create(esp32_repo: repo), repo)
+  end
+
   # --- exec: 常駐コンテナでコマンドを走らせる `container exec` の argv ---
 
   def test_exec_targets_the_container_and_sources_the_idf_environment_first

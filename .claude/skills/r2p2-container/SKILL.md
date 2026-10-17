@@ -54,9 +54,10 @@ EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]" > <scratchpad>/evq-mrubyc.l
 
 ## 3. 罠
 
-- **`ESP32_PICORUBY` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を今と違う値で明示すると、コンテナを作り直す** (provision に数分)。
-  付けずに呼べば今のコンテナをそのまま使う。別の branch に替えるときだけ付け替える
-- **container から見えるのは harness root、ghq の picoruby clone、R2P2-ESP32 だけ。** scratchpad の script は見えない。harness の `tmp/` に置く
+- **`ESP32_PICORUBY` / `R2P2_ESP32_REPO` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を今と違う値で明示すると、コンテナを作り直す** (provision に数分)。
+  付けずに呼べば今のコンテナをそのまま使い、slot に重ねた tree を `[container] picoruby tree on the slot: ...` と表示する。
+  別の tree に替えるときだけ付け替える。重ねていた tree を消すと次の `container:*` が止まるので、付け直すか `rake container:down`
+- **container から見えるのは harness root、R2P2-ESP32、picoruby の tree とその git dir だけ。** scratchpad の script は見えない。harness の `tmp/` に置く
 - **ホストの環境変数は許可リストだけが渡る** (`tools/container/run_args.rb` の `PASS_ENV_NAMES` / `PASS_ENV_PREFIXES`)。
   新しい変数を渡すなら、そこと `run_args_test.rb` に足す
 - **重ねた tree の中で `git status` しない。** 入れ子の submodule の gitdir が相対パスなので、container の中のその位置からは
