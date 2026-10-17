@@ -23,7 +23,7 @@ ESP-IDF も arm-none-eabi も gem も Mac に入れない。build・QEMU・upstr
 ```sh
 container system status                              # 止まっていれば container system start
 container image list | grep espressif/idf            # 無ければ rake container:image (初回だけ。入れると約 14 GB)
-ls vendor/R2P2-ESP32 vendor/worktrees/picoruby       # R2P2-ESP32 が無ければ rake esp32:setup
+ls vendor/R2P2-ESP32                                 # 無ければ rake esp32:setup
 ```
 
 `rake container:image` は disk の空きが 20 GB (`CONTAINER_MIN_FREE_GB`) 未満なら止まる。
@@ -31,9 +31,11 @@ ls vendor/R2P2-ESP32 vendor/worktrees/picoruby       # R2P2-ESP32 が無けれ�
 
 ## 2. PR の picoruby を試す
 
+picoruby の tree (clone でも worktree でも) は harness の外にあるものを使う。作る・最新にする (`git pull`)・消すのは
+その tree の側の仕事で、harness の task は無い。submodule は init 済みであること (`container:up` が確かめて止まる)。
+
 ```sh
-rake "picoruby:worktree[<branch>]"                   # ghq の picoruby clone から vendor/worktrees/picoruby/<branch>
-export ESP32_PICORUBY=vendor/worktrees/picoruby/<branch>
+export ESP32_PICORUBY=<picoruby の tree の絶対パス>
 EVQ_VM=mruby  rake "container:rake[esp32:evq_green]" > <scratchpad>/evq-mruby.log  2>&1
 EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]" > <scratchpad>/evq-mrubyc.log 2>&1
 ```
@@ -52,13 +54,14 @@ EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]" > <scratchpad>/evq-mrubyc.l
 
 ## 3. 罠
 
-- **`ESP32_PICORUBY` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を今と違う値で明示すると、コンテナを作り直す** (provision に数分)。
-  付けずに呼べば今のコンテナをそのまま使う。別の branch に替えるときだけ付け替える
-- **container から見えるのは harness root、ghq の picoruby clone、R2P2-ESP32 だけ。** scratchpad の script は見えない。harness の `tmp/` に置く
+- **`ESP32_PICORUBY` / `R2P2_ESP32_REPO` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を今と違う値で明示すると、コンテナを作り直す** (provision に数分)。
+  付けずに呼べば今のコンテナをそのまま使い、slot に重ねた tree を `[container] picoruby tree on the slot: ...` と表示する。
+  別の tree に替えるときだけ付け替える。重ねていた tree を消すと次の `container:*` が止まるので、付け直すか `rake container:down`
+- **container から見えるのは harness root、R2P2-ESP32、picoruby の tree とその git dir だけ。** scratchpad の script は見えない。harness の `tmp/` に置く
 - **ホストの環境変数は許可リストだけが渡る** (`tools/container/run_args.rb` の `PASS_ENV_NAMES` / `PASS_ENV_PREFIXES`)。
   新しい変数を渡すなら、そこと `run_args_test.rb` に足す
 - **重ねた tree の中で `git status` しない。** 入れ子の submodule の gitdir が相対パスなので、container の中のその位置からは
-  `not a git repository` になる。tree の状態はホストで `git -C vendor/worktrees/picoruby/<branch> status` を見る
+  `not a git repository` になる。tree の状態は tree 自身のパス (`DIR=$ESP32_PICORUBY`) かホストで見る
 - **evq rig を途中で殺したら、container の中で外す:** `CMD='bash firmware-patches/qemu-ble-evq/revert.sh' rake container:exec`。
   submodule の位置に重ねた tree は container の中にしか無いので、ホストからは外せない
 - **`esp32:build` は `vendor/R2P2-ESP32/sdkconfig.defaults` に DualKey の console 設定を書き足し、target が esp32s3 でなければ `set-target` する。**
@@ -68,9 +71,8 @@ EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]" > <scratchpad>/evq-mrubyc.l
 
 ```sh
 rake container:stop                                  # 使い終わったら memory を返す。次の container:* が起こす
-rake "picoruby:worktree_remove[<branch>]"            # 変更が残っていれば止まる
 rake container:down                                  # コンテナごと消す (image と tmp/container は残る)
 ```
 
-報告の前に、ホストで worktree と `vendor/R2P2-ESP32` が clean に戻っていることを `git status` で見る。
+報告の前に、ホストで picoruby の tree と `vendor/R2P2-ESP32` が clean に戻っていることを `git status` で見る。
 QEMU が green でも実機の完了ではない (CLAUDE.md の「完了の線引きは実機」)。QEMU で何を確かめたかを書く。

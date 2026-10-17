@@ -25,7 +25,8 @@ PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`ex
 - **shell の生存は `tools/pico2w/shell_ok.rb` (ESP32 は `tools/esp32/shell_ok.rb`) で見る。** `$>` プロンプトが返るかで判定し、bytes が返っただけでは生きていない
 - **Mac はクリーンに保つ。ESP-IDF・arm-none-eabi・gem をホストに入れない。** build / QEMU / upstream のテストは Apple Container の中で回す (`rake "container:rake[<task>]"`、`CMD=... rake container:exec`)。
   回し方は skill `r2p2-container` (`.claude/skills/r2p2-container/SKILL.md`)、仕組みは README の「Apple Container で回す」。brew / mise / gem install をホストで提案しない
-- **checkout は harness 配下に置く。** R2P2-ESP32 は `vendor/R2P2-ESP32` (`rake esp32:setup`)、PR の picoruby は `vendor/worktrees/picoruby/<branch>` (`rake "picoruby:worktree[<branch>]"`)。同列の相対パスは使わない
+- **R2P2-ESP32 は harness 配下の `vendor/R2P2-ESP32` に置く (`rake esp32:setup`)。** 同列の相対パスは使わない。
+  picoruby の tree は harness の外で用意する (clone でも worktree でも、Claude Code・cmux・`git worktree` のどれで作ってもよい)。container には `ESP32_PICORUBY=<path>` で渡す
 - **ESP32 (M5Stack Chain DualKey) も `rake esp32:*` を Bash から回す。** build / flash は `vendor/R2P2-ESP32` の checkout (`R2P2_ESP32_REPO` で上書き) の rake に委ねる。
   ESP32 の罠は [docs/spec.md](docs/spec.md) §9 にあり、次の3つは特に踏みやすい:
   - **ポートを開くだけではリセットされない (reset は RTS パルス)。** ポートは `/dev/cu.usbmodem*` の glob でなく `ioreg` の製品名で選ぶ (`tools/esp32/` の各 script がそうしている)

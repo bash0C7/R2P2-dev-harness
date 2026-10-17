@@ -111,11 +111,11 @@ rake container:image        # base image を curl で取得して load (入れ�
 rake esp32:setup            # vendor/R2P2-ESP32 を clone する
 ```
 
-PR の picoruby を ESP32 の QEMU で試す (例は picoruby PR #427 の branch):
+PR の picoruby を ESP32 の QEMU で試す。picoruby の tree は harness の外で用意する。clone でも worktree でもよく、
+作った道具 (Claude Code、cmux、`git worktree`) は問わない。submodule は init 済みにしておく。最新にするのも tree の側 (`git pull`):
 
 ```sh
-rake "picoruby:worktree[picoruby-ble-esp32-port]"   # ghq の picoruby clone から vendor/worktrees/picoruby/<branch> に worktree
-export ESP32_PICORUBY=vendor/worktrees/picoruby/picoruby-ble-esp32-port   # R2P2-ESP32 の picoruby submodule の位置に重ねる
+export ESP32_PICORUBY=/path/to/picoruby-tree        # R2P2-ESP32 の picoruby submodule の位置に重ねる
 EVQ_VM=mruby  rake "container:rake[esp32:evq_green]" # harness の rake を container の中で (初回は container:up が走る)
 EVQ_VM=mrubyc rake "container:rake[esp32:evq_green]"
 CMD='rake test:gems:picoruby' DIR=$ESP32_PICORUBY rake container:exec        # upstream のテストなど、任意のコマンド
@@ -131,14 +131,16 @@ CONTAINER_RUBY=4.0.1 CMD='BUNDLE_FROZEN=true bundle install && rake test:gems:st
 rake container:provision        # container/provision.sh を書き換えたら、今のコンテナにかけ直す
 rake container:stop             # 使い終わったら止めて memory を返す。次の container:* が起こす
 rake container:down             # コンテナを消す (image と tmp/container は残る)
-rake "picoruby:worktree_remove[picoruby-ble-esp32-port]"   # worktree を外す (変更が残っていれば止まる)
 ```
 
-- mount はコンテナを作るときにしか決められない。`ESP32_PICORUBY` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を
+- mount はコンテナを作るときにしか決められない。`ESP32_PICORUBY` / `R2P2_ESP32_REPO` / `CONTAINER_CPUS` / `CONTAINER_MEMORY` を
   今と違う値で明示すると、次の `container:*` がコンテナを作り直す (中身は全部 mount 側にあるので、失うのは provision だけ)。
-  何も明示しなければ今あるコンテナをそのまま使う
-- mount はホストと同じ絶対パス。worktree の `.git` が ghq clone (`PICORUBY_CLONE`、既定 `~/ghq/github.com/bash0C7/picoruby`) を指すので、clone も mount する。
-  container から見えるのは harness root、その clone、R2P2-ESP32 だけ。container で走らせる script は harness の `tmp/` に置く
+  何も明示しなければ今あるコンテナをそのまま使う (slot に重ねた tree を表示する。その tree が host から消えていれば止まる)。
+  tree を `git pull` で進めるだけなら、パスが同じなので作り直さない
+- mount はホストと同じ絶対パス。tree は slot に重ねるほか自身のパスにも張り、worktree ならその `.git` が指す元の clone の `.git` も張る
+  (`git rev-parse --git-common-dir`)。container から見えるのは harness root、R2P2-ESP32、tree とその git dir だけ。
+  container で走らせる script は harness の `tmp/` に置く
+- `ESP32_PICORUBY` が checkout の最上位でないとき、submodule が init されていないときは、コンテナを作る前に止まる
 - container の HOME と cache は `tmp/container/` 配下。ホストの環境変数は `SDKCONFIG_DEFAULTS` や `EVQ_*` など決めたものだけ渡る (`tools/container/run_args.rb`)
 - 長い build や QEMU は数分かかる。log を `tmp/` に書いて background で回す
 - R2P2-ESP32 #135 (`r2p2-esp32-btstack-integration`) は picoruby PR #427 の今の NimBLE port に追いついていない。

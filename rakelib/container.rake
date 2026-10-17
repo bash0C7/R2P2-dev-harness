@@ -6,7 +6,9 @@
 # argv の組み立ては tools/container/run_args.rb にあり、`rake test:container` で確かめる。
 # 実機を触るタスク (flash / upload / run / reboot) はホストのまま。container から serial は見えない。
 require "json"
+require "open3"
 require_relative "../tools/container/run_args"
+require_relative "../tools/container/picoruby_tree"
 
 CONTAINER_DIR = File.join(HARNESS_ROOT, "container")
 CONTAINER_CACHE = File.join(HARNESS_ROOT, "tmp", "container")
@@ -16,7 +18,7 @@ CONTAINER_CREATED = File.join(CONTAINER_CACHE, "create.argv.json")
 # CONTAINER_RUBY=<version> を付けて exec する (container/ruby.sh)。
 CONTAINER_DEFAULT_RUBY = "4.0.1".freeze
 # コンテナの形 (mount と資源) を決める環境変数。どれかを明示したときだけ作り直しを考える。
-CONTAINER_SHAPE_ENV = %w[ESP32_PICORUBY CONTAINER_CPUS CONTAINER_MEMORY].freeze
+CONTAINER_SHAPE_ENV = %w[ESP32_PICORUBY R2P2_ESP32_REPO CONTAINER_CPUS CONTAINER_MEMORY].freeze
 
 # image は圧縮 blob (4.4 GB) と展開済み snapshot (実測 9 GB) の両方で持たれる。取得中は OCI の
 # tar も一時的に置く。足りない disk に入れると Mac 全体が詰まるので、入れる前に止める。
@@ -106,23 +108,26 @@ end
 # から組んだ argv と違えば作り直す。中身は全部 mount 側にあるので、作り直しで失うのは provision だけ。
 def container_up
   Rake::Task["container:image"].invoke
-  esp32_picoruby = ENV["ESP32_PICORUBY"]
-  if esp32_picoruby && !File.directory?(esp32_repo_dir)
-    raise "ESP32_PICORUBY is set but #{esp32_repo_dir} is missing. Run `rake esp32:setup` first."
+  tree = container_env("ESP32_PICORUBY")
+  if tree
+    unless File.directory?(esp32_repo_dir)
+      raise "ESP32_PICORUBY is set but #{esp32_repo_dir} is missing. Run `rake esp32:setup` first."
+    end
+    tree, git_dir = require_picoruby_tree!(File.expand_path(tree, HARNESS_ROOT))
   end
 
   argv = ContainerRun.create_argv(
     harness_root: HARNESS_ROOT, uid: Process.uid, gid: Process.gid,
-    picoruby_clone: (PICORUBY_CLONE if File.directory?(PICORUBY_CLONE)),
-    esp32_repo: esp32_repo_dir, esp32_picoruby: esp32_picoruby,
-    cpus: ENV["CONTAINER_CPUS"] || "8", memory: ENV["CONTAINER_MEMORY"] || "8G"
+    esp32_repo: esp32_repo_dir, esp32_picoruby: tree, picoruby_git_dir: git_dir,
+    cpus: container_env("CONTAINER_CPUS") || "8", memory: container_env("CONTAINER_MEMORY") || "8G"
   )
   state = container_state
+  saved = File.exist?(CONTAINER_CREATED) && JSON.parse(File.read(CONTAINER_CREATED))
   # 何も指定しなければ、今あるコンテナをそのまま使う。ESP32_PICORUBY を付け忘れただけで
   # 作り直すと、provision (数分と数百 MB の取得) をやり直すうえに、重ねていた tree が外れる。
-  explicit = CONTAINER_SHAPE_ENV.any? { |key| ENV.key?(key) }
-  if state && File.exist?(CONTAINER_CREATED) &&
-     (!explicit || JSON.parse(File.read(CONTAINER_CREATED)) == argv)
+  explicit = CONTAINER_SHAPE_ENV.any? { |key| container_env(key) }
+  if state && saved && (!explicit || saved == argv)
+    require_saved_mounts!(saved)
     sh "container", "start", ContainerRun::NAME unless state == "running"
     return
   end
@@ -134,6 +139,25 @@ def container_up
   sh "container", "run", *argv
   container_provision
   File.write(CONTAINER_CREATED, JSON.generate(argv))
+end
+
+# 空の値は付けていないのと同じに扱う。`ESP32_PICORUBY=$TREE` で TREE が未設定だと "" になり、
+# harness root を tree と取り違えてコンテナを作り直してしまう。
+def container_env(key)
+  value = ENV[key]
+  value unless value.nil? || value.empty?
+end
+
+# 使い回すコンテナの mount 元が host に残っているか。picoruby の tree は Claude Code や cmux が
+# 作って消すので、消えた tree を張ったまま回すと、空の slot の build が原因から遠い所で落ちる。
+def require_saved_mounts!(argv)
+  gone = ContainerRun.mounts_in(argv).map(&:first).uniq.reject { |source| File.directory?(source) }
+  unless gone.empty?
+    raise "#{ContainerRun::NAME} mounts #{gone.join(', ')}, which no longer exist.\n" \
+          "Pass ESP32_PICORUBY=<tree> to recreate it, or run `rake container:down`."
+  end
+  tree = ContainerRun.slot_source(argv, File.expand_path(esp32_repo_dir, HARNESS_ROOT))
+  puts "[container] picoruby tree on the slot: #{tree}" if tree
 end
 
 def container_provision
@@ -151,6 +175,11 @@ def container_exec(command, tty: false, workdir: nil)
     unless File.executable?(File.join(ruby_bin, "ruby"))
       raise "Ruby #{version} is not built yet. Run `rake \"container:ruby[#{version}]\"` first."
     end
+  end
+  # tree は realpath で張るので、host にある DIR も realpath にそろえる (symlink の名前は container に無い)
+  if workdir
+    path = File.expand_path(workdir, HARNESS_ROOT)
+    workdir = File.realpath(path) if File.directory?(path)
   end
   sh "container", "exec", *ContainerRun.exec_argv(
     harness_root: HARNESS_ROOT, command: command, uid: Process.uid, gid: Process.gid,
@@ -188,17 +217,46 @@ end
 # R2P2-ESP32 の picoruby submodule は init しない。container の中で picoruby の tree を重ねる。
 # 何も重ねずに esp32:* を回すと、空の dir を picoruby だと思って分かりにくく落ちる。
 def require_esp32_slot_filled!
-  return if ENV["ESP32_PICORUBY"]
+  return if container_env("ESP32_PICORUBY")
 
   slot = File.join(esp32_repo_dir, ContainerRun::SUBMODULE_SLOT)
   return if File.directory?(slot) && !Dir.empty?(slot)
-  # 重ねた tree はコンテナの中にしか見えない。今あるコンテナが重ねて作られていれば足りる。
-  return if container_state && File.exist?(CONTAINER_CREATED) &&
-            JSON.parse(File.read(CONTAINER_CREATED)).any? { |arg| arg.end_with?(":#{slot}") }
+  # 重ねた tree はコンテナの中にしか見えない。今あるコンテナが、host に残っている tree を重ねて
+  # 作られていれば足りる。
+  saved = container_state && File.exist?(CONTAINER_CREATED) && JSON.parse(File.read(CONTAINER_CREATED))
+  source = saved && ContainerRun.slot_source(saved, File.expand_path(esp32_repo_dir, HARNESS_ROOT))
+  return if source && File.directory?(source) && !Dir.empty?(source)
 
   raise <<~MSG
-    #{slot} is empty. Point ESP32_PICORUBY at a picoruby tree, e.g.
-      ESP32_PICORUBY=vendor/worktrees/picoruby/picoruby-ble-esp32-port rake "container:rake[esp32:evq_green]"
-    (`rake "picoruby:worktree[<branch>]"` makes one.)
+    #{slot} is empty. Point ESP32_PICORUBY at a picoruby tree (a clone or a worktree, made by any tool), e.g.
+      ESP32_PICORUBY=~/ghq/github.com/bash0C7/picoruby rake "container:rake[esp32:evq_green]"
   MSG
+end
+
+# ESP32_PICORUBY の tree を確かめ、mount に使う tree の realpath と git の共通 dir を返す。
+# tree は git の checkout に限る。submodule が init 済みかを git でしか確かめられないため。
+def require_picoruby_tree!(tree)
+  raise "ESP32_PICORUBY=#{tree} is not a directory." unless File.directory?(tree)
+
+  out, err, status = Open3.capture3("git", "-C", tree, "rev-parse", "--show-toplevel", "--git-common-dir")
+  top, common = out.lines.map(&:strip)
+  raise "ESP32_PICORUBY=#{tree} is not a git checkout (a clone or a worktree):\n#{err}" unless status.success? && common
+  # APFS は大文字小文字を区別しないので、パスの文字列ではなく同じ dir かで比べる
+  raise "ESP32_PICORUBY=#{tree} is inside #{top}; point it at the top of the checkout." unless File.identical?(top, tree)
+  unless File.directory?(File.join(tree, "mrbgems", "picoruby-mruby"))
+    raise "ESP32_PICORUBY=#{tree} does not look like a picoruby tree (no mrbgems/picoruby-mruby)."
+  end
+
+  submodules, err, status = Open3.capture3("git", "-C", tree, "submodule", "status", "--recursive")
+  raise "git submodule status failed in #{tree}:\n#{err}" unless status.success?
+
+  missing = PicorubyTree.uninitialized_submodules(submodules)
+  unless missing.empty?
+    raise "#{tree} has uninitialized submodules (#{missing.join(', ')}).\n" \
+          "Run `git -C #{tree.shellescape} submodule update --init --recursive` first."
+  end
+  # git の返す top (realpath、実際の大文字小文字) で張る。symlink の名前で張ると、付け替えても argv が
+  # 変わらず古い tree を使い回すうえ、git が realpath 基準の相対パスで書く submodule の gitdir が
+  # container の中で解けない。File.realpath は入力の大文字小文字を残すので使わない。
+  [top, PicorubyTree.git_common_dir(common, top)]
 end

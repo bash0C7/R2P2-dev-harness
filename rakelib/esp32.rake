@@ -22,7 +22,7 @@ namespace :esp32 do
       puts "#{dir} is already there."
     else
       # submodule は取らない。picoruby は container が ESP32_PICORUBY の tree を重ねる
-      # (rakelib/container.rake)。取ると PR の worktree と別物の picoruby が並び、どちらで
+      # (rakelib/container.rake)。取ると ESP32_PICORUBY の tree と別物の picoruby が並び、どちらで
       # build したかが分からなくなる。
       sh "git", "clone", "--branch", R2P2_ESP32_REF, R2P2_ESP32_GIT, dir
     end
