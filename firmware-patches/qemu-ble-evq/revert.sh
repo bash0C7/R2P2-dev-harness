@@ -15,7 +15,9 @@ if [ ! -f "$MARKER" ]; then
 fi
 
 if [ -s "$MARKER" ]; then
-  tail -r "$MARKER" | while read -r p; do
+  # Reverse line order without `tail -r`: that flag is BSD-only, and under
+  # pipefail its failure inside the Linux container aborted the revert halfway.
+  sed '1!G;h;$!d' "$MARKER" | while read -r p; do
     if [ -n "$p" ]; then
       git -C "$SUBMODULE" apply -R "$RIG_DIR/$p"
     fi
