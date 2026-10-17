@@ -583,6 +583,14 @@ clone 先に依存してややこしいので配下に移した（2026-10-17）�
   `revert.sh`が外す。branch に同じ変更が入れば当てずに進むので、#135 が追いついても rig 側の
   片付けは要らない。rig の外で NimBLE を build するとき（`sdkconfigs/bt_nimble`）は、同じ patch を
   `vendor/R2P2-ESP32`に手で当てる。DualKey 既定の`esp32:build`は NimBLE を使わないので要らない
+- **R2P2-ESP32 の新しい clone は target が決まっていない。** R2P2-ESP32 は`rake setup_esp32s3`
+  （`idf.py set-target esp32s3`）を済ませた checkout を前提にしている。`esp32:setup`の clone の
+  まま build すると idf.py は無印 ESP32 で build し、DualKey 既定の構成で
+  `region 'dram0_0_seg' overflowed by 73736 bytes`のリンクエラーになる（2026-10-18、container の
+  中で）。console の overlay も、無印 ESP32 には USB Serial/JTAG が無いので黙って UART に戻る。
+  `esp32:build`は overlay（`sdkconfig`を消すことがある）の後で、`sdkconfig`が esp32s3 を向いて
+  いるか（`tools/esp32/idf_target.rb`）を見て、向いていなければ`idf.py set-target esp32s3`して
+  から build する。`qemu_check`と evq rig は自前の build dir で set-target するので影響を受けない
 - **QEMU起動確認が`build`に含まれる。** `R2P2-ESP32`の`scripts/qemu_boot_check.sh`
   （デフォルト300秒、`$> `を見つけたら成功、失敗パターンでも即終了）を実機の前段
   として通す。実機無しでbuildの健全性がある程度わかる

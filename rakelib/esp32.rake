@@ -7,6 +7,7 @@
 # upload/run/reboot はこの harness 自前の tools/esp32/ で picomodem
 # プロトコルを直接話す。
 require_relative "../tools/esp32/qemu_verdict"
+require_relative "../tools/esp32/idf_target"
 
 R2P2_ESP32_GIT = ENV["R2P2_ESP32_GIT"] || "https://github.com/bash0C7/R2P2-ESP32.git"
 R2P2_ESP32_REF = ENV["R2P2_ESP32_REF"] || "r2p2-esp32-btstack-integration"
@@ -32,6 +33,10 @@ namespace :esp32 do
     require_esp32_repo!
     ensure_console_overlay!
     FileUtils.cd(esp32_repo_dir) do
+      # After the overlay, which may delete sdkconfig: set-target regenerates
+      # it from sdkconfig.defaults, overlay included.
+      sdkconfig = File.exist?("sdkconfig") ? File.read("sdkconfig") : ""
+      sh "idf.py set-target #{IdfTarget::TARGET}" unless IdfTarget.set?(sdkconfig)
       sh "rake picoruby:build"
       sh "bash scripts/qemu_boot_check.sh #{VM}"
     end
