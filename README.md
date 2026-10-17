@@ -140,6 +140,9 @@ rake "picoruby:worktree_remove[picoruby-ble-esp32-port]"   # worktree を外す 
   container から見えるのは harness root、その clone、R2P2-ESP32 だけ。container で走らせる script は harness の `tmp/` に置く
 - container の HOME と cache は `tmp/container/` 配下。ホストの環境変数は `SDKCONFIG_DEFAULTS` や `EVQ_*` など決めたものだけ渡る (`tools/container/run_args.rb`)
 - 長い build や QEMU は数分かかる。log を `tmp/` に書いて background で回す
+- R2P2-ESP32 #135 (`r2p2-esp32-btstack-integration`) は picoruby PR #427 の今の NimBLE port に追いついていない。
+  evq rig は足りない 4 つ (`firmware-patches/qemu-ble-evq/r2p2-esp32-catchup.patch`) を rig と一緒に当てて外す。
+  branch に入れば当てずに進む ([docs/spec.md](docs/spec.md) §9)
 - 実機を触るタスク (`flash` / `upload` / `run` / `reboot`) はホストのまま。container から serial は見えない
 - `container image pull` を使わない理由など、container の罠は [docs/spec.md](docs/spec.md) §9
 

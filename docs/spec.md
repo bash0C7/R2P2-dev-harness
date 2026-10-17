@@ -564,6 +564,25 @@ clone 先に依存してややこしいので配下に移した（2026-10-17）�
   `R2P2-ESP32/components/picoruby-esp32/picoruby/build/host/bin/mrbc`を使うが、PR の tree を
   重ねて container で build すると、そこはホストからは空で、tree 側の mrbc は Linux の ELF。
   実機が戻ったら、ホスト用の mrbc の出どころを決める
+- **R2P2-ESP32 #135 は picoruby PR #427 の今の NimBLE port に追いついていない。evq rig は
+  足りない分を`firmware-patches/qemu-ble-evq/r2p2-esp32-catchup.patch`で一緒に当てる。**
+  rig の`r2p2-esp32.patch`が前提にしていた R2P2-ESP32 の file（femtoruby の build_config は
+  blob`dcaadc15`）は、fork にも upstream にも無かった。rig を作った Mac の R2P2-ESP32 に push
+  されていない変更があった。GitHub の #135（`41bad40`）のままだと次の 4 つで壊れる
+  （2026-10-17、container の中で確認）:
+  - NimBLE の build がリンクで落ちる（`picoruby_nimble_attach_vm`が未定義）。`BLE_SRCS`に
+    PR #427 の`ports/esp32/pump_${PICORB_VM}.c`が無い
+  - mruby/c の firmware に BLE の gem が入らず、rig の app が`require 'ble'`で落ちて Guru
+    Meditation。femtoruby の build_config に`USE_BLE`のときの`picoruby-ble` / `picoruby-ble-uart`が無い
+  - mruby/c で pump の scheduler service が呼ばれない。`MRBC_TASK_SCHEDULER_HOOK`が
+    femtoruby の build_config と CMake の mrubyc の定義の両方に要る
+  - mruby/c の symbol 表が BLE の gem で溢れる。`MAX_SYMBOLS_COUNT=2000`（`USE_BLE`のとき。
+    Pico 2 W と同じ値）
+
+  `apply.sh`は branch にこの 4 つが無ければ rig と一緒に当て（marker`.qemu-ble-evq-catchup`）、
+  `revert.sh`が外す。branch に同じ変更が入れば当てずに進むので、#135 が追いついても rig 側の
+  片付けは要らない。rig の外で NimBLE を build するとき（`sdkconfigs/bt_nimble`）は、同じ patch を
+  `vendor/R2P2-ESP32`に手で当てる。DualKey 既定の`esp32:build`は NimBLE を使わないので要らない
 - **QEMU起動確認が`build`に含まれる。** `R2P2-ESP32`の`scripts/qemu_boot_check.sh`
   （デフォルト300秒、`$> `を見つけたら成功、失敗パターンでも即終了）を実機の前段
   として通す。実機無しでbuildの健全性がある程度わかる
