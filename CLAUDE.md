@@ -23,7 +23,9 @@ PicoRuby を USB 周辺機器にするライブラリ (`gems/`) と example (`ex
   `flash` / `reboot` の直後は `tools/pico2w/boot_state.rb` が起動状態 (shell / app / hung) を判定し、app が上がっていれば止めない。
   Ctrl-C で止めた app の `teardown` は走らないので、押しっぱなしのボタンや鳴りっぱなしの note が host に残り得る
 - **shell の生存は `tools/pico2w/shell_ok.rb` (ESP32 は `tools/esp32/shell_ok.rb`) で見る。** `$>` プロンプトが返るかで判定し、bytes が返っただけでは生きていない
-- **ESP32 (M5Stack Chain DualKey) も `rake esp32:*` を Bash から回す。** build / flash は `../R2P2-ESP32` の checkout (`R2P2_ESP32_REPO` で上書き) の rake に委ねる。
+- **Mac はクリーンに保つ。ESP-IDF・arm-none-eabi・gem をホストに入れない。** build / QEMU / upstream のテストは Apple Container の中で回す (`rake "container:rake[<task>]"`、`CMD=... rake container:exec`。README の「Apple Container で回す」)。brew / mise / gem install をホストで提案しない
+- **checkout は harness 配下に置く。** R2P2-ESP32 は `vendor/R2P2-ESP32` (`rake esp32:setup`)、PR の picoruby は `vendor/worktrees/picoruby/<branch>` (`rake "picoruby:worktree[<branch>]"`)。同列の相対パスは使わない
+- **ESP32 (M5Stack Chain DualKey) も `rake esp32:*` を Bash から回す。** build / flash は `vendor/R2P2-ESP32` の checkout (`R2P2_ESP32_REPO` で上書き) の rake に委ねる。
   ESP32 の罠は [docs/spec.md](docs/spec.md) §9 にあり、次の3つは特に踏みやすい:
   - **ポートを開くだけではリセットされない (reset は RTS パルス)。** ポートは `/dev/cu.usbmodem*` の glob でなく `ioreg` の製品名で選ぶ (`tools/esp32/` の各 script がそうしている)
   - **`$>` の2文字は起動時の ESP-IDF boot log に偶然出る。** プロンプト判定は banner の後に受信した bytes だけを見る

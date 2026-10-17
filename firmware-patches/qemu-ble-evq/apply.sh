@@ -6,7 +6,7 @@ set -euo pipefail
 
 RIG_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ROOT="$(cd "$RIG_DIR/../.." && pwd)"
-ESP32_REPO="${R2P2_ESP32_REPO:-$(cd "$HARNESS_ROOT/.." && pwd)/R2P2-ESP32}"
+ESP32_REPO="${R2P2_ESP32_REPO:-$HARNESS_ROOT/vendor/R2P2-ESP32}"
 SUBMODULE="$ESP32_REPO/components/picoruby-esp32/picoruby"
 MARKER="$ESP32_REPO/.qemu-ble-evq-applied"
 
