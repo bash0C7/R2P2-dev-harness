@@ -39,9 +39,29 @@ class RunArgsTest < Minitest::Test
     assert_equal [[HARNESS, HARNESS]], mounts_of(create)
   end
 
-  def test_picoruby_clone_outside_the_harness_is_mounted_at_the_same_path
-    # worktree の .git は clone の .git/worktrees/<name> を絶対パスで指す
-    assert_includes mounts_of(create(picoruby_clone: CLONE)), [CLONE, CLONE]
+  def test_the_git_dir_a_worktree_points_at_is_mounted_at_the_same_path
+    # worktree の .git は元の clone の .git/worktrees/<name> を絶対パスで指す
+    mounts = mounts_of(create(esp32_repo: "vendor/R2P2-ESP32", esp32_picoruby: "vendor/worktrees/picoruby/topic",
+                              picoruby_git_dir: "#{CLONE}/.git"))
+    assert_includes mounts, ["#{CLONE}/.git", "#{CLONE}/.git"]
+    refute_includes mounts, [CLONE, CLONE]
+  end
+
+  def test_a_tree_outside_the_harness_is_also_mounted_at_its_own_path
+    # DIR=<tree> で upstream のテストを回すときは、slot ではなく tree 自身のパスで走る
+    tree = "/elsewhere/picoruby-topic"
+    mounts = mounts_of(create(esp32_repo: "vendor/R2P2-ESP32", esp32_picoruby: tree))
+    assert_includes mounts, [tree, tree]
+    assert_includes mounts, [tree, "#{HARNESS}/vendor/R2P2-ESP32/components/picoruby-esp32/picoruby"]
+  end
+
+  def test_a_git_dir_already_visible_through_another_mount_is_not_mounted_again
+    tree = "/elsewhere/picoruby"
+    mounts = mounts_of(create(esp32_repo: "vendor/R2P2-ESP32", esp32_picoruby: tree, picoruby_git_dir: "#{tree}/.git"))
+    refute_includes mounts, ["#{tree}/.git", "#{tree}/.git"]
+    mounts = mounts_of(create(esp32_repo: "vendor/R2P2-ESP32", esp32_picoruby: "vendor/worktrees/picoruby/topic",
+                              picoruby_git_dir: "#{HARNESS}/vendor/picoruby/.git"))
+    assert_equal 2, mounts.size
   end
 
   def test_a_path_inside_the_harness_is_not_mounted_twice

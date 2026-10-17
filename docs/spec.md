@@ -543,14 +543,21 @@ clone 先に依存してややこしいので配下に移した（2026-10-17）�
   4.4 GB 要る。`container:image`は空きが`CONTAINER_MIN_FREE_GB`（既定 20）未満なら止まる。
   `container system df`の reclaimable は当てにならない。停止済みのコンテナ 67 個を消しても
   空いたのは約 1 GB だった（APFS の clone でブロックを共有しているため）
-- **mount はホストと同じ絶対パスに張る。** worktree の`.git`は ghq clone の
-  `.git/worktrees/<name>`を絶対パスで指すので、clone も同じパスで mount する。PR の picoruby
-  は、R2P2-ESP32 の submodule の位置（`components/picoruby-esp32/picoruby`）に`ESP32_PICORUBY`
-  の tree を重ねる（R2P2-ESP32 の submodule は init しない）。重ねた tree の中の submodule は
-  gitdir が相対パスなので、container の中のその位置からは git で見えない（`git status`が
-  `not a git repository`で落ちる）。build は git を見ないので通る。tree の状態はホストで見る
-- **container から見えるのは mount したものだけ。** harness root、ghq の picoruby clone、
-  R2P2-ESP32 の 3 つ。scratchpad など他の場所に置いた script は見えないので、harness の`tmp/`
+- **picoruby の tree は harness の外で用意し、`ESP32_PICORUBY`で渡す。**（2026-10-18）worktree の
+  作成・最新化・削除は Claude Code や cmux、`git worktree`で足りるので harness は持たない
+  （一度`picoruby:worktree`を足したが外した）。harness が tree について知ることは 3 つだけ。
+  R2P2-ESP32 の submodule の位置（`components/picoruby-esp32/picoruby`）に重ねること
+  （R2P2-ESP32 の submodule は init しない）、worktree なら git の共通 dir（元の clone の`.git`）も
+  要ること、submodule が init 済みでないと build が分かりにくく落ちること。`container:up`は
+  `ESP32_PICORUBY`が checkout の最上位で、submodule が init 済みであることを確かめてから作る
+- **mount はホストと同じ絶対パスに張る。** worktree の`.git`は元の clone の
+  `.git/worktrees/<name>`を絶対パスで指すので、`git rev-parse --git-common-dir`が返す dir を
+  同じパスで張る。tree は slot に重ねるほか、`DIR=<tree>`で upstream のテストを回せるよう自身の
+  パスにも張る。slot に重ねた tree の中の submodule は gitdir が相対パスなので、container の中の
+  その位置からは git で見えない（`git status`が`not a git repository`で落ちる）。build は git を
+  見ないので通る。tree の状態は tree 自身のパスかホストで見る
+- **container から見えるのは mount したものだけ。** harness root、R2P2-ESP32、picoruby の tree と
+  その git dir。scratchpad など他の場所に置いた script は見えないので、harness の`tmp/`
   に置く。ホストの環境変数は`tools/container/run_args.rb`の許可リスト（`EVQ_*`、`QEMU_*`など）
   に載ったものだけが渡る
 - **base image には`LANG`が無い。** Ruby が QEMU の log（化けた byte を含む）を US-ASCII で

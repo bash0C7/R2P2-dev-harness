@@ -6,7 +6,9 @@
 # argv の組み立ては tools/container/run_args.rb にあり、`rake test:container` で確かめる。
 # 実機を触るタスク (flash / upload / run / reboot) はホストのまま。container から serial は見えない。
 require "json"
+require "open3"
 require_relative "../tools/container/run_args"
+require_relative "../tools/container/picoruby_tree"
 
 CONTAINER_DIR = File.join(HARNESS_ROOT, "container")
 CONTAINER_CACHE = File.join(HARNESS_ROOT, "tmp", "container")
@@ -106,15 +108,14 @@ end
 # から組んだ argv と違えば作り直す。中身は全部 mount 側にあるので、作り直しで失うのは provision だけ。
 def container_up
   Rake::Task["container:image"].invoke
-  esp32_picoruby = ENV["ESP32_PICORUBY"]
-  if esp32_picoruby && !File.directory?(esp32_repo_dir)
+  tree = ENV["ESP32_PICORUBY"] && File.expand_path(ENV["ESP32_PICORUBY"], HARNESS_ROOT)
+  if tree && !File.directory?(esp32_repo_dir)
     raise "ESP32_PICORUBY is set but #{esp32_repo_dir} is missing. Run `rake esp32:setup` first."
   end
 
   argv = ContainerRun.create_argv(
     harness_root: HARNESS_ROOT, uid: Process.uid, gid: Process.gid,
-    picoruby_clone: (PICORUBY_CLONE if File.directory?(PICORUBY_CLONE)),
-    esp32_repo: esp32_repo_dir, esp32_picoruby: esp32_picoruby,
+    esp32_repo: esp32_repo_dir, esp32_picoruby: tree, picoruby_git_dir: (require_picoruby_tree!(tree) if tree),
     cpus: ENV["CONTAINER_CPUS"] || "8", memory: ENV["CONTAINER_MEMORY"] || "8G"
   )
   state = container_state
@@ -197,8 +198,29 @@ def require_esp32_slot_filled!
             JSON.parse(File.read(CONTAINER_CREATED)).any? { |arg| arg.end_with?(":#{slot}") }
 
   raise <<~MSG
-    #{slot} is empty. Point ESP32_PICORUBY at a picoruby tree, e.g.
-      ESP32_PICORUBY=vendor/worktrees/picoruby/picoruby-ble-esp32-port rake "container:rake[esp32:evq_green]"
-    (`rake "picoruby:worktree[<branch>]"` makes one.)
+    #{slot} is empty. Point ESP32_PICORUBY at a picoruby tree (a clone or a worktree, made by any tool), e.g.
+      ESP32_PICORUBY=~/ghq/github.com/bash0C7/picoruby rake "container:rake[esp32:evq_green]"
   MSG
+end
+
+# ESP32_PICORUBY の tree を確かめ、container に一緒に張る git の共通 dir を返す。
+# tree は git の checkout に限る。submodule が init 済みかを git でしか確かめられないため。
+def require_picoruby_tree!(tree)
+  raise "ESP32_PICORUBY=#{tree} is not a directory." unless File.directory?(tree)
+
+  out, _, status = Open3.capture3("git", "-C", tree, "rev-parse", "--show-toplevel", "--git-common-dir")
+  top, common = out.lines.map(&:strip)
+  unless status.success? && File.realpath(top) == File.realpath(tree)
+    raise "ESP32_PICORUBY=#{tree} is not the top of a git checkout (a clone or a worktree)."
+  end
+
+  submodules, err, status = Open3.capture3("git", "-C", tree, "submodule", "status", "--recursive")
+  raise "git submodule status failed in #{tree}:\n#{err}" unless status.success?
+
+  missing = PicorubyTree.uninitialized_submodules(submodules)
+  unless missing.empty?
+    raise "#{tree} has uninitialized submodules (#{missing.join(', ')}).\n" \
+          "Run `git -C #{tree.shellescape} submodule update --init --recursive` first."
+  end
+  PicorubyTree.git_common_dir(common, tree)
 end
