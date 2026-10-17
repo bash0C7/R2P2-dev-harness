@@ -101,6 +101,7 @@ Mac に ESP-IDF も arm-none-eabi も入れない。build と QEMU は Apple Con
 ([docs/spec.md](docs/spec.md) §9)。base image `espressif/idf:v5.5.4` から常駐コンテナ `r2p2-dev-harness` を 1 つ作り、
 足りないパッケージ (Ruby の開発ヘッダ、arm-none-eabi など) は `container/provision.sh` で一度だけ入れる。
 各タスクは `container exec` で走る。派生 image は作らない (展開済み snapshot が image ごとにもう 1 つ、9 GB 増えるため)。
+Claude Code からは skill `r2p2-container` ([.claude/skills/r2p2-container/SKILL.md](.claude/skills/r2p2-container/SKILL.md)) がこの手順で回す。
 
 初回だけ:
 
