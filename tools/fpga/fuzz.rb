@@ -1,0 +1,823 @@
+# 参照インタプリタ (ref_vm.rb) と CPU コアのシミュレーションの差分ファズ。
+#
+# 対応命令からランダムに ROM を組み (エラーになる operand もわざと混ぜる)、両方で走らせて
+# トレースを1行残らず比べる (I/O だけでなく X/W 行も)。コーパスの Ruby プログラムでは通らない
+# 組み合わせ (0 で割る、範囲外のレジスタ、深い再帰、未定義の定数、引数の数違い、壊れたメソッド表) を突くため。
+# rake fpga:fuzz[count,seed] と rake fpga:test (少数) が使う。
+require_relative "converter"
+
+module FpgaFuzz
+  module_function
+
+  # 1本の ROM (48bit 語の配列) を作る。pc 0 は TABLE、前置きで R0..R11 に値 (たいてい Integer) を入れ、
+  # 定数を2つ決めてから、ランダムな命令を並べる。後ろにランダムなメソッド表を置く。
+  # 前置きが無いと、ほとんどの program が nil への算術ですぐエラーになり浅い
+  PROLOGUE = 18
+  STOPPERS = %w[STOP RETURN RETNIL ENTER BREAK RETURN_BLK].freeze
+  TABLE_LOG = 5
+  NSYMS = 16 # 呼び出しに使うシンボルの番号は 0..15 (0..10 は演算の落ち先)
+  # メソッド表に出すクラス (Class の即値はメタクラス、32 と 33 は「ユーザーのクラス」)
+  CLASS_POOL = [FpgaIsa::CLS_NIL, FpgaIsa::CLS_FALSE, FpgaIsa::CLS_TRUE, FpgaIsa::CLS_INT, FpgaIsa::CLS_SYM,
+                FpgaIsa::CLS_ARRAY, FpgaIsa::CLS_PROC, FpgaIsa::CLS_OBJECT, FpgaIsa::CLS_CLASS,
+                32, 33, FpgaIsa::META | 32, FpgaIsa::META | 33].freeze
+  # sleep_ms / sleep は引数が大きいとシミュレーションが終わらないので表に出さない (コーパスと mrb_core_tb で見る)
+  FUZZ_PRIMS = (0...FpgaIsa::PRIMS.size).reject { |i| %w[SLEEPMS SLEEP].include?(FpgaIsa::PRIMS[i][3]) }.freeze
+
+  def program(rng, len: 40)
+    words = []
+    words << encode(FpgaIsa.op("TABLE"), TABLE_LOG, 0, 0) # 表の位置は with_table が入れる
+    nh = rng.rand(5) # 例外の表の数 (表はプログラムの後ろ、pc len から)。0 なら例外の表なし
+    words << encode(FpgaIsa.op("HTABLE"), 0, len, nh)
+    12.times { |r| words << prologue_load(rng, r) }
+    words << encode(FpgaIsa.op("SETCONST"), 1, 0, 0)
+    words << encode(FpgaIsa.op("SETCONST"), 2, 1, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 10, 0, 3)                                 # R10 = [R0, R1, R2]
+    words << encode(FpgaIsa.op("BLOCK"), 11, PROLOGUE + rng.rand(len - PROLOGUE), block_c(rng)) # R11 = Proc
+    ops = FpgaIsa::SUPPORTED.map { |n| FpgaIsa.op(n) }
+    # 配列・Proc・呼び出しの命令は多めに (GC とメソッド探索まで届くように)
+    ops += %w[ARRAY ARRAY2 GETIDX SETIDX BLOCK BLKCALL SEND SSEND SEND0 AREF CLASS].map { |n| FpgaIsa.op(n) }
+    (len - PROLOGUE).times do |k|
+      op = ops[rng.rand(ops.size)]
+      # 止まる・戻る命令ばかりだと浅いので、3回に2回は引き直す
+      op = ops[rng.rand(ops.size)] while STOPPERS.include?(op.name) && rng.rand(3) > 0
+      words << word(rng, op, PROLOGUE + k, len)
+    end
+    # 例外の表: 種類、覆う範囲 (プログラムのどこか)、飛び先
+    nh.times do
+      beg = PROLOGUE + rng.rand(len - PROLOGUE)
+      words << catch_word(rng.rand(2), beg, beg + 1 + rng.rand(8), PROLOGUE + rng.rand(len - PROLOGUE))
+    end
+    with_table(words, random_table(rng, len))
+  end
+
+  # words[0] (TABLE) に表の先頭を入れ、表 (2**TABLE_LOG 語、変換器と同じハッシュと開番地法) を後ろに付ける
+  def with_table(words, entries, log = TABLE_LOG)
+    base = words.size
+    size = 1 << log
+    slots = Array.new(size, FpgaRom::PAD)
+    entries.each do |cls, sym, tgt|
+      h = FpgaIsa.table_hash(cls, sym, size - 1)
+      tries = 0
+      while slots[h] != FpgaRom::PAD && tries < size
+        h = (h + 1) & (size - 1)
+        tries += 1
+      end
+      slots[h] = (cls << 32) | (sym << 16) | tgt if slots[h] == FpgaRom::PAD # 満杯なら捨てる
+    end
+    words[0] |= base << 16
+    words + slots
+  end
+
+  # ランダムなメソッド表: 親クラスへの輪 (たいてい Object へ) と、メソッド (pc) と primitive
+  def random_table(rng, len)
+    entries = []
+    CLASS_POOL.each do |cls|
+      next if cls == FpgaIsa::CLS_OBJECT || rng.rand(5).zero?
+      sup = rng.rand(6).zero? ? CLASS_POOL.sample(random: rng) : FpgaIsa::CLS_OBJECT # たまに輪になる
+      entries << [cls, FpgaIsa::SUPER_SYM, sup]
+    end
+    (6 + rng.rand(10)).times do
+      cls = CLASS_POOL.sample(random: rng)
+      sym = rng.rand(NSYMS)
+      tgt = case rng.rand(20)
+            when 0 then FpgaIsa.tgt(FpgaIsa::TGT_IVAR, rng.rand(4))  # インスタンス変数 (attr_reader)。範囲外もある
+            when 1 then FpgaIsa.tgt(FpgaIsa::TGT_IVSET, rng.rand(4)) # attr_writer
+            when 2..8 then PROLOGUE + rng.rand(len - PROLOGUE)    # メソッド
+            else FpgaIsa.tgt(FpgaIsa::TGT_PRIM, FUZZ_PRIMS.sample(random: rng))
+            end
+      entries << [cls, sym, tgt]
+    end
+    # インスタンス変数の数と is_a? の行 (ユーザーのクラス)
+    [32, 33].each do |cls|
+      entries << [cls, FpgaIsa::NIVARS_SYM, rng.rand(4)] unless rng.rand(4).zero?
+      entries << [FpgaIsa::ISA_BIT | cls, CLASS_POOL.sample(random: rng), 1] if rng.rand(2).zero?
+    end
+    entries
+  end
+
+  def prologue_load(rng, r)
+    case rng.rand(20)
+    when 0 then encode(FpgaIsa.op("LOADNIL"), r, 0, 0)
+    when 1 then encode(FpgaIsa.op(rng.rand(2).zero? ? "LOADTRUE" : "LOADFALSE"), r, 0, 0)
+    when 2 then encode(FpgaIsa.op("LOADSYM"), r, rng.rand(NSYMS), 0)
+    when 3 then encode(FpgaIsa.op("CLASS"), r, [32, 33, FpgaIsa::CLS_INT].sample(random: rng), 0)
+    else
+      v = rng.rand(3).zero? ? rng.rand(1 << 32) : rng.rand(64) - 32 # 大きい値と小さい値
+      v &= 0xFFFF_FFFF
+      encode(FpgaIsa.op("LOADI32"), r, v >> 16, v & 0xFFFF)
+    end
+  end
+
+  # BLOCK の c は lambda の印 (0x80) だけが意味を持つ。ほかの bit は捨てられることを確かめるために混ぜる
+  def block_c(rng)
+    lam = rng.rand(4).zero? ? 0x80 : 0
+    rng.rand(3) | lam | ((1 + rng.rand(6)) << 8)
+  end
+
+  # 呼び出しの引数の数。たまに 15 (splat: R[a+1] が引数の配列)
+  def argc(rng)
+    rng.rand(8).zero? ? 15 : rng.rand(3)
+  end
+
+  # 例外の表の1語 (isa.rb の CATCH_*): {種類 << 15 | 飛び先, begin, end}
+  def catch_word(type, beg, en, tgt)
+    ((((type << 15) | tgt) & 0xFFFF) << 32) | ((beg & 0xFFFF) << 16) | (en & 0xFFFF)
+  end
+
+  def encode(op, a, b, c)
+    (op.num << 40) | ((a & 0xFF) << 32) | ((b & 0xFFFF) << 16) | (c & 0xFFFF)
+  end
+
+  def word(rng, op, pc, len)
+    small = -> { rng.rand(100) < 97 ? rng.rand(12) : rng.rand(256) }  # たまに範囲外のレジスタ
+    code_pc = -> { PROLOGUE + rng.rand(len - PROLOGUE) }
+    a = small.call
+    b = 0
+    c = 0
+    case op.name
+    when "MOVE" then b = small.call
+    when "LOADI8", "LOADINEG", "ADDI", "SUBI" then b = rng.rand(256)
+    when "LOADI16" then b = rng.rand(0x10000)
+    when "LOADI32" then b = rng.rand(0x10000); c = rng.rand(0x10000)
+    when "LOADF", "LOADI64" then b = rng.rand(len + 4) # ROM のどこかの2語 (命令の語の下の 32bit)
+    when "ADDILV", "SUBILV" then b = small.call; c = rng.rand(256)
+    when "GETGV", "SETGV" then b = rng.rand(FpgaIoMap::NPORTS + 1)
+    when "GETCONST", "SETCONST" then b = rng.rand(4) # 未定義の定数も出るように少ない番号で
+    when "JMP", "JMPIF", "JMPNOT", "JMPNIL", "JMPUW" then b = PROLOGUE + rng.rand(len - PROLOGUE + 1) # たまに ROM の外
+    when "HTABLE" then b = len - rng.rand(3); c = rng.rand(6) # 表を差し替える (ずれた位置、多すぎる数もある)
+    when "RESCUE" then b = small.call
+    when "SEND", "SEND0", "SSEND", "SSEND0"
+      b = rng.rand(NSYMS)
+      n = op.name.end_with?("0") ? 0 : argc(rng)
+      c = n | (rng.rand(4).zero? ? 0x80 : 0) | (rng.rand(6).zero? ? 0x100 : 0) # たまにキーワード引数の Hash の印
+    when "ENTER" # 必須 a、nregs b、ときどき省略可能・残り・後ろの必須
+      a = rng.rand(3)
+      b = 1 + rng.rand(10)
+      c = rng.rand(3).zero? ? rng.rand(3) | (rng.rand(2) << 5) | (rng.rand(3) << 6) : 0
+      c |= 0x800 if rng.rand(4).zero? # kd (キーワード引数の Hash を受ける)
+    when "EXEC" then b = code_pc.call
+    when "CLASS" then b = CLASS_POOL.sample(random: rng) & 0x7FFF
+    when "TDEF", "SDEF" then b = rng.rand(NSYMS)
+    when "TABLE" then a = rng.rand(16); b = rng.rand(0x10000) # 表を壊す (a > 13 はエラー)
+    when "GETUPVAR", "SETUPVAR", "BLKPUSH" then b = rng.rand(12); c = rng.rand(4)
+    when "BREAK" then b = code_pc.call; c = rng.rand(2)
+    when "RETURN_BLK" then c = rng.rand(3)
+    when "ARRAY" then b = rng.rand(5)
+    when "ARRAY2" then b = rng.rand(12); c = rng.rand(5)
+    when "GETIDX0" then b = small.call
+    when "BLOCK" then b = code_pc.call; c = block_c(rng)
+    when "BLKCALL" then b = argc(rng)
+    when "AREF" then b = small.call; c = rng.rand(4)
+    when "LOADSYM" then b = rng.rand(NSYMS)
+    when "STRING" then b = rng.rand(len + 4); c = rng.rand(12) # ROM のどこかの語をバイトとして読む
+    when "GETIV", "SETIV" then b = rng.rand(NSYMS)
+    when "SUPER" then b = rng.rand(NSYMS); c = argc(rng) | 0x80 | (rng.rand(6).zero? ? 0x100 : 0)
+    when "ARYPUSH" then b = rng.rand(4)
+    when "APOST" then b = rng.rand(3); c = rng.rand(3)
+    when "ARGARY" then b = (rng.rand(3) << 11) | (rng.rand(2) << 10) | (rng.rand(2) << 5)
+    end
+    encode(op, a, b, c)
+  end
+
+  # ヒープを突く program。R0..R7 は小さい整数、R8..R11 は配列や Proc。安全な形の断片 (配列を作る、push、
+  # 代入、添字で読む、pop、Proc を呼ぶ、演算の落ち先) を並べて先頭へ戻るループにし、GC を何度も起こす。
+  # R12..R15 は断片の作業用。ブロックの本体とメソッドは ROM の後ろ。呼び出しはメソッド表を引く
+  HEAP_STEPS = 3000
+  HEAP_WORDS = 2048 # heap_program を走らせるヒープの語数 (小さくして GC を何度も起こす)
+  # heap_program が使うシンボルの番号
+  S = { push: 11, shl: 12, size: 13, pop: 14, first: 15, last: 16, empty: 17, aget: 18, aset: 19,
+        maker: 20, call: 21, new: 22, ia: 23, ib: 24, ic: 25, get: 26, geta: 27, setb: 28, getb: 29,
+        isa: 30, respond: 31, vargs: 32, sbytes: 33, sgetb: 34, spush: 35, sslice: 36, symstr: 37, kwm: 38, raiser: 39, raise: 40, odd: 41, nosuch: 42, divz: 43, ior: 44, iow: 45 }.freeze
+  # heap_program の ROM のデータ (文字列とシンボルの名前) と、シンボル表の中身 ([データの何バイト目から, 長さ])
+  HEAP_TEXT = "hello, fpga!"
+  # Float の断片 (pick 21) が送る primitive。シンボルは FLOAT_SYM から順に (受け手は Float)
+  FLOAT_SEND = %w[FADD FSUB FMUL FDIV FMOD FPOW FLT FLE FGT FGE FEQ FCMP FNEG FTOI FFLOOR FCEIL FROUND FNAN FINF FTOS
+                  FFMT FMATH FATAN2 FHYPOT FFMOD].freeze
+  FLOAT_SYM = 46
+  I2F_SYM = FLOAT_SYM + FLOAT_SEND.size # Integer#to_f
+  STOD_SYM = I2F_SYM + 1                # String#__strtod
+  IFLT_SYMS = { "IADD" => STOD_SYM + 1, "IMUL" => STOD_SYM + 2, "ILT" => STOD_SYM + 3, "IEQ" => STOD_SYM + 4 }.freeze
+  # タスクの断片 (pick 23) の primitive (受け手は Integer) とシンボル
+  TASK_PRIM = { tinit: "TINIT", tswitch: "TSWITCH", tslot: "TSLOT", ton: "TON", tlock: "TLOCK", hwsleep: "HWSLEEPUS" }.freeze
+  TASK_SYMS = TASK_PRIM.keys.each_with_index.to_h { |k, i| [k, STOD_SYM + 5 + i] }.freeze
+  # 動的な呼び出しの断片 (pick 24) の primitive のシンボル
+  DSEND_SYMS = { dsend: TASK_SYMS.values.max + 1, symat: TASK_SYMS.values.max + 2 }.freeze
+  # 64bit の整数の断片 (pick 25) が送る Integer の primitive (桁あふれを見るもの) のシンボル
+  INT64_SYMS = %w[IADD ISUB IMUL IDIV MOD NEG ABS SHL SHR].each_with_index.to_h { |n, i| [n, DSEND_SYMS.values.max + 1 + i] }.freeze
+  # caller の断片 (pick 26) の primitive のシンボル (__frame_pc と __rom_word は Integer、__truncate は String に置く)
+  CALLER_SYMS = { framepc: INT64_SYMS.values.max + 1, romw: INT64_SYMS.values.max + 2, strunc: INT64_SYMS.values.max + 3 }.freeze
+  # LOADF の値 (ほかにランダムな bit を足す) と、String#__strtod に渡す文字列 (読めない形や範囲の外も)
+  FLOAT_VALUES = [0.1, -2.5, 0.0, -0.0, 1e300, 5e-324, 1.0 / 0, -1.0 / 0, 0.0 / 0, 3348.05, 2**31 - 0.5, -2**31 - 1.0,
+                  2.0**63, -2.0**63, 9223372036854774784.0, -9223372036854777856.0, 2.0**62].freeze
+  # LOADI64 の値 (64bit の境目と、2乗や足し算で境目を越えるもの。ほかにランダムな値を足す)
+  INT64_VALUES = [2**63 - 1, -2**63, 2**62, -2**62, 2**32, -1, 3_037_000_499, 3_037_000_500, 2**31, -2**31 - 1].freeze
+  FLOAT_LITS = %w[1.5e3 -0.001 123456789012345678901234567890 1e400 1e-400 2.4703282292062328e-324 0.1 12 1. abc -].freeze
+  HEAP_TABLE_LOG = 7 # heap_program の表は項目が多い (満杯だと項目を捨てるので、足りる大きさに)
+  HEAP_SYMS = [[0, 5], [7, 4], [0, 0], [4, 8]].freeze
+  # heap_program のクラス: P (32、@a @b) と Q (33 < P、@c を足す)。オブジェクトは定数 2 に置く
+  P_CLS = 32
+  Q_CLS = 33
+
+  def heap_program(rng, body: 30)
+    ints = (0..7).to_a
+    arrs = (8..10).to_a
+    words = []
+    words << encode(FpgaIsa.op("TABLE"), HEAP_TABLE_LOG, 0, 0)
+    words << :htable
+    words << encode(FpgaIsa.op("ENTER"), 0, 16, 0) # fn = 16 (コアのエラーの __core_error はその上で呼ぶ)
+    catches = [] # [種類, begin, end, 飛び先]
+    floats = FLOAT_VALUES + Array.new(4) { [rng.rand(1 << 64)].pack("Q").unpack1("D") }
+    nfloat = floats.size
+    int64s = INT64_VALUES + Array.new(4) { rng.rand(1 << 64) - (1 << 63) }
+    nint64 = int64s.size
+    8.times { |r| words << encode(FpgaIsa.op("LOADI8"), r, rng.rand(20), 0) }
+    words << encode(FpgaIsa.op("ARRAY2"), 8, 0, 3)
+    words << encode(FpgaIsa.op("ARRAY2"), 9, 0, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 10, 8, 1)
+    words << encode(FpgaIsa.op("SETCONST"), 8, 0, 0)
+    words << encode(FpgaIsa.op("CLASS"), 12, P_CLS, 0)
+    words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(20), 0)
+    words << encode(FpgaIsa.op("SEND"), 12, S[:new], 1)
+    words << encode(FpgaIsa.op("SETCONST"), 12, 2, 0)
+    words << :"string#{HEAP_TEXT.bytesize}"
+    words << encode(FpgaIsa.op("SETCONST"), 12, 3, 0)
+    words << :block
+    top = words.size
+    wrong_argc = rng.rand(20).zero? # lambda なら数違いはエラー
+    inited = [] # タスクの断片 (pick 23) が __task_init した区画 (切り替えはたいていここへ)
+    body.times do
+      pick = rng.rand(29)
+      pick = 25 if pick > 26 # 64bit の整数の断片は重くして、桁あふれに多く届くように
+      case pick
+      when 0 # 配列を作って R8..R10 のどれかに (前のはゴミになる)
+        words << encode(FpgaIsa.op("ARRAY2"), arrs.sample(random: rng), ints.sample(random: rng), rng.rand(5))
+      when 1 # push / <<
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SEND"), 12, rng.rand(2).zero? ? S[:push] : S[:shl], 1)
+      when 2 # a[i] = v (伸ばすこともある)。SETIDX か Array#[]=
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        # ときどき大きい添字で伸ばす (半分を越えればヒープが尽きてエラー)
+        words << (rng.rand(6).zero? ? encode(FpgaIsa.op("LOADI16"), 13, rng.rand(100..1100), 0) :
+                                      encode(FpgaIsa.op("LOADI8"), 13, rng.rand(24), 0))
+        words << encode(FpgaIsa.op("MOVE"), 14, (ints + arrs).sample(random: rng), 0)
+        words << (rng.rand(2).zero? ? encode(FpgaIsa.op("SETIDX"), 12, 0, 0) : encode(FpgaIsa.op("SEND"), 12, S[:aset], 2))
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 3 # v = a[i]
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("LOADI16"), 13, (rng.rand(20) - 6) & 0xFFFF, 0)
+        words << (rng.rand(2).zero? ? encode(FpgaIsa.op("GETIDX"), 12, 0, 0) : encode(FpgaIsa.op("SEND"), 12, S[:aget], 1))
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0) # 要素は nil や配列のこともあるので作業用へ
+      when 4 # pop / size / first / last / empty?
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        name = %i[pop size first last empty].sample(random: rng)
+        words << encode(FpgaIsa.op("SEND0"), 12, S[name], 0)
+        words << encode(FpgaIsa.op("MOVE"), name == :size ? ints.sample(random: rng) : 15, 12, 0)
+      when 5 # 配列の == (Array#== が無いので Object#== = 同じものか)
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("EQ"), 12, 0, 0)
+      when 6 # Proc を呼ぶ (BLKCALL か Proc#call)
+        words << encode(FpgaIsa.op("MOVE"), 12, 11, 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << (rng.rand(2).zero? ? encode(FpgaIsa.op("BLKCALL"), 12, 1, 0) : encode(FpgaIsa.op("SEND"), 12, S[:call], 1))
+      when 7 # 定数に配列を置く / 読む
+        words << encode(FpgaIsa.op(rng.rand(2).zero? ? "SETCONST" : "GETCONST"), arrs.sample(random: rng), 0, 0)
+      when 9 # メソッドが作った Proc を、メソッドから戻った後で呼ぶ (退避済みの env)。定数 1 にも置いて GC を越えさせる
+        words << encode(FpgaIsa.op("SSEND0"), 12, S[:maker], 0)
+        words << encode(FpgaIsa.op("SETCONST"), 12, 1, 0) if rng.rand(2).zero?
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("BLKCALL"), 12, wrong_argc ? 2 : 1, 0)
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 8 # オブジェクト: attr で読む、super を通して読む、attr で書く、is_a?、respond_to?
+        words << encode(FpgaIsa.op("GETCONST"), 12, 2, 0)
+        case rng.rand(5)
+        when 0, 1
+          words << encode(FpgaIsa.op("SEND0"), 12, %i[geta getb get].sample(random: rng).then { |k| S[k] }, 0)
+        when 2
+          words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:setb], 1)
+        when 3
+          words << encode(FpgaIsa.op("CLASS"), 13, [P_CLS, Q_CLS, FpgaIsa::CLS_INT, FpgaIsa::CLS_OBJECT].sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:isa], 1)
+        else
+          words << encode(FpgaIsa.op("LOADSYM"), 13, rng.rand(32), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:respond], 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 12 # オブジェクトを作る (P か Q)。前のはゴミになる
+        words << encode(FpgaIsa.op("CLASS"), 12, rng.rand(2).zero? ? P_CLS : Q_CLS, 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << encode(FpgaIsa.op("SEND"), 12, S[:new], 1)
+        words << encode(FpgaIsa.op("SETCONST"), 12, 2, 0)
+      when 14 # 引数の形のあるメソッド vargs(a, b = 7, *r, c) を、いろいろな数で (たまに splat、数が足りなければエラー)
+        n = rng.rand(24).zero? ? 1 : (rng.rand(10).zero? ? 15 : [2, 3, 4].sample(random: rng))
+        if n == 15
+          words << encode(FpgaIsa.op("MOVE"), 13, arrs.sample(random: rng), 0)
+        else
+          n.times { |k| words << encode(FpgaIsa.op("MOVE"), 13 + k, (ints + arrs).sample(random: rng), 0) if 13 + k < 16 }
+          n = [n, 3].min
+        end
+        words << encode(FpgaIsa.op("SSEND"), 12, S[:vargs], n)
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 15 # 配列の展開: [*a, *x] / [*a, x] / _, *b, c = a。1つ伸びるか縮む結果は R8..R10 に戻して GC を越えさせる
+        # (配列同士をつないだ結果を戻すと倍々に伸びてヒープが尽きるので、作業用へ)
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        back = arrs.sample(random: rng)
+        case rng.rand(3)
+        when 0
+          y = (ints + arrs).sample(random: rng)
+          words << encode(FpgaIsa.op("MOVE"), 13, y, 0)
+          words << encode(FpgaIsa.op("ARYCAT"), 12, 0, 0)
+          back = 15 if arrs.include?(y)
+        when 1
+          words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("ARYPUSH"), 12, 1, 0)
+        else
+          words << encode(FpgaIsa.op("APOST"), 12, rng.rand(3), rng.rand(3))
+        end
+        words << encode(FpgaIsa.op("MOVE"), back, 12, 0)
+      when 17 # 文字列: ROM から作るか定数 3 から取り、伸ばす・切り出す・読む (結果の文字列は定数 3 に置いて GC を越えさせる)
+        if rng.rand(3).zero?
+          words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
+        else
+          words << :"string#{rng.rand(HEAP_TEXT.bytesize + 1)}"
+        end
+        case rng.rand(4)
+        when 0
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(256), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:spush], 1)
+        when 1
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(2), 0)
+          words << encode(FpgaIsa.op("LOADI8"), 14, rng.rand(4), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:sslice], 2)
+        when 2 # 読んだ値は R15 へ、文字列は定数 3 から戻す
+          words << encode(FpgaIsa.op("LOADI16"), 13, (rng.rand(16) - 4) & 0xFFFF, 0)
+          words << encode(FpgaIsa.op("SEND"), 12, S[:sgetb], 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+          words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
+        else
+          words << encode(FpgaIsa.op("SEND0"), 12, S[:sbytes], 0)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+          words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
+        end
+        words << encode(FpgaIsa.op("SETCONST"), 12, 3, 0)
+      when 19 # キーワード引数: kwm(**k) を Hash の印付きで (k は何でもよい) か、無しで (回路が空の Hash を作る) 呼ぶ
+        if rng.rand(2).zero?
+          words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:kwm], 0x100)
+        else
+          words << encode(FpgaIsa.op("SSEND0"), 12, S[:kwm], 0)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 13 # 例外: 投げるか ensure を通って戻る raiser を呼ぶか、コアのエラー (0 で割る、無いメソッド、引数の数) を起こし、
+        # rescue で受けて投げたもの (配列) を R15 に
+        site = words.size
+        words << encode(FpgaIsa.op("MOVE"), 13, (ints + arrs).sample(random: rng), 0)
+        words << case rng.rand(4)
+                 when 0 then encode(FpgaIsa.op("SSEND"), 12, S[:raiser], 1)
+                 when 1 then encode(FpgaIsa.op("SSEND"), 12, S[:vargs], 1) # 数が足りない
+                 when 2 then encode(FpgaIsa.op("SEND"), 12, S[:nosuch], 1)
+                 else encode(FpgaIsa.op("SSEND"), 12, S[:divz], 1)
+                 end
+        words << encode(FpgaIsa.op("JMP"), 0, words.size + 2, 0)
+        catches << [FpgaIsa::CATCH_RESCUE, site + 1, site + 2, words.size]
+        words << encode(FpgaIsa.op("EXCEPT"), 15, 0, 0)
+      when 20 # デバイス (devices.rb): レジスタを読むか書く (GPIO、時計、UART、RNG、PWM、ADC、IRQ、watchdog、ポート、知らない番地)。
+        # 書く値はたまに配列や nil。watchdog は小さい ms で有効にすると再起動する
+        addr = [0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x110, 0x111, 0x112, 0x120, 0x121, 0x122, 0x130,
+                0x140, 0x141, 0x142, 0x143, 0x150, 0x152, 0x154, 0x160, 0x161, 0x162, 0x163, 0x163, 0x164, 0x165, 0x166, 0x166,
+                0x170, 0x171, 0x172, 0x173, 0x174, 0x175, 0, 1, 2, 3, 0x1234, 0x20000].sample(random: rng)
+        words << encode(FpgaIsa.op("LOADI32"), 13, addr >> 16, addr & 0xFFFF)
+        if rng.rand(2).zero?
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:ior], 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        else
+          # IRQ のピン・mask・id と PWM のピンは小さい値が多くないと当たらない。watchdog は数 ms
+          v = [0x160, 0x161, 0x164, 0x140, 0x170, 0x175, 0x162].include?(addr) && rng.rand(4) > 0 ? rng.rand(18) : rng.rand(1 << 32)
+          words << (rng.rand(8).zero? ? encode(FpgaIsa.op("MOVE"), 14, (ints + arrs + [15]).sample(random: rng), 0) :
+                                        encode(FpgaIsa.op("LOADI32"), 14, v >> 16, v & 0xFFFF))
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
+        end
+      when 22 # IRQ と watchdog: 小さいピンを登録し、出力で上げ下げして事象を取る。ときどき解除、watchdog を数 ms で有効 / feed。
+        # PSG の列: 選ぶ、小さい遅延で積む、空き・空かを読む、flush、列を通さない書き込み
+        io_w = lambda do |addr, v|
+          words << encode(FpgaIsa.op("LOADI16"), 13, addr, 0)
+          words << encode(FpgaIsa.op("LOADI16"), 14, v, 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:iow], 2)
+        end
+        io_r = lambda do |addr|
+          words << encode(FpgaIsa.op("LOADI16"), 13, addr, 0)
+          words << encode(FpgaIsa.op("SSEND"), 12, S[:ior], 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        end
+        pin = rng.rand(4)
+        case rng.rand(8)
+        when 0
+          io_w.(0x160, pin)
+          io_w.(0x161, rng.rand(16))
+          io_w.(0x162, rng.rand(3))
+          io_r.(0x163)
+        when 1
+          io_w.(0x100, rng.rand(16))
+          io_w.(0x101, rng.rand(16))
+          io_r.(0x166)
+        when 2
+          io_r.(0x166)
+          io_r.(0x166)
+        when 3
+          io_w.(0x164, rng.rand(18))
+          io_r.(0x165)
+        when 6
+          io_w.(0x1A5, rng.rand(4).zero? ? 0 : 1) if rng.rand(3).zero?
+          rng.rand(1..3).times do
+            io_w.(0x1A0, rng.rand(3))
+            io_w.(0x1A1, rng.rand(0x1000))
+            io_w.(0x1A2, rng.rand(0x10000))
+          end
+          io_r.([0x1A3, 0x1A4, 0x1A5].sample(random: rng))
+        when 7
+          io_w.([0x1A4, 0x1A6, 0x1A7].sample(random: rng), rng.rand(0x10000))
+          io_r.([0x1A3, 0x1A4].sample(random: rng))
+        else
+          io_w.([0x170, 0x172, 0x172, 0x171, 0x175].sample(random: rng), rng.rand(4))
+          io_r.([0x173, 0x174].sample(random: rng))
+        end
+      when 21 # Float: LOADF か Integer#to_f か String#__strtod で作り、primitive を1つ送る (引数は Float・整数・配列)
+        words << case rng.rand(4)
+                 when 0, 1 then [:float, rng.rand(nfloat)]
+                 when 2 then encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+                 else [:lit, rng.rand(FLOAT_LITS.size)]
+                 end
+        words << encode(FpgaIsa.op("SEND0"), 12, I2F_SYM, 0) if words[-1].is_a?(Integer)
+        words << encode(FpgaIsa.op("SEND0"), 12, STOD_SYM, 0) if words[-1].is_a?(Array) && words[-1][0] == :lit
+        name = (FLOAT_SEND + IFLT_SYMS.keys).sample(random: rng)
+        arg = lambda do |r|
+          case rng.rand(5)
+          when 0, 1 then words << [:float, rng.rand(nfloat), r]
+          when 2, 3 then words << encode(FpgaIsa.op("MOVE"), r, ints.sample(random: rng), 0)
+          else words << encode(FpgaIsa.op("MOVE"), r, arrs.sample(random: rng), 0)
+          end
+        end
+        if IFLT_SYMS.key?(name) # Integer の primitive に Float の引数
+          words << encode(FpgaIsa.op("MOVE"), 13, 12, 0)
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, IFLT_SYMS[name], 1)
+        elsif name == "FFMT"
+          words << encode(FpgaIsa.op("LOADI8"), 13, "feEgGx".bytes.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("LOADI8"), 14, rng.rand(23), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 2)
+        elsif name == "FMATH"
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(15), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 1)
+        elsif FLOAT_SEND.index(name) < FLOAT_SEND.index("FNEG") || %w[FATAN2 FHYPOT FFMOD].include?(name)
+          arg.(13)
+          words << encode(FpgaIsa.op("SEND"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 1)
+        else
+          words << encode(FpgaIsa.op("SEND0"), 12, FLOAT_SYM + FLOAT_SEND.index(name), 0)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 25 # 64bit の整数 (P8): LOADI64 か小さい整数を2つ置き、命令 (ADD SUB MUL DIV / ADDI SUBI) か primitive で計算する。
+        # 桁あふれはコアのエラー (__core_error)
+        name = INT64_SYMS.keys.sample(random: rng)
+        [12, 13].each do |r|
+          if r == 13 && %w[SHL SHR].include?(name) && rng.rand(2).zero?
+            words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(70), 0) # ずらす数は境目 (63、64) のまわりも
+          elsif rng.rand(3).zero?
+            words << encode(FpgaIsa.op("MOVE"), r, ints.sample(random: rng), 0)
+          else
+            words << [:int64, rng.rand(nint64), r]
+          end
+        end
+        case rng.rand(3)
+        when 0 then words << encode(FpgaIsa.op(%w[ADD SUB MUL DIV].sample(random: rng)), 12, 0, 0)
+        when 1 then words << encode(FpgaIsa.op(%w[ADDI SUBI].sample(random: rng)), 12, rng.rand(256), 0)
+        else
+          unary = %w[NEG ABS].include?(name)
+          words << encode(FpgaIsa.op(unary ? "SEND0" : "SEND"), 12, INT64_SYMS[name], unary ? 0 : 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 18 # Symbol#to_s (ROM のシンボル表)
+        words << encode(FpgaIsa.op("LOADSYM"), 12, rng.rand(HEAP_SYMS.size), 0)
+        words << encode(FpgaIsa.op("SEND0"), 12, S[:symstr], 0)
+        words << encode(FpgaIsa.op("SETCONST"), 12, 3, 0)
+      when 16 # proc |a, b| に配列1つ (展開する)
+        words << encode(FpgaIsa.op("BLOCK"), 12, 0, 0) # 先頭 pc は後で入れる
+        words[-1] = :pair
+        words << encode(FpgaIsa.op("MOVE"), 13, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("BLKCALL"), 12, 1, 0)
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 23 # タスク (P6): 区画にタスクの本体を置く / 切り替える (本体は少し働いて区画 0 へ戻る) / 今の区画 / 割り込みの ms /
+        # 割り込みを止める / 時計を進める (割り込みは Integer#__task_tick が受ける)。たまに作っていない区画へ切り替えてエラー
+        tsend = ->(sym, n) { words << encode(FpgaIsa.op("SEND"), 12, TASK_SYMS[sym], n) }
+        words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+        case rng.rand(7)
+        when 0, 1
+          slot = 1 + rng.rand(3)
+          inited << slot
+          words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+          words << :task
+          tsend.(:tinit, 2)
+          if rng.rand(2).zero? # すぐ切り替える
+            words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+            words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+            tsend.(:tswitch, 1)
+          end
+        when 2
+          slot = inited.empty? || rng.rand(20).zero? ? rng.rand(5) : inited.sample(random: rng)
+          words << encode(FpgaIsa.op("LOADI8"), 13, slot, 0)
+          tsend.(:tswitch, 1)
+        when 3
+          tsend.(:tslot, 0)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        when 4
+          words << (rng.rand(3).zero? ? encode(FpgaIsa.op("LOADNIL"), 13, 0, 0) : encode(FpgaIsa.op("LOADI8"), 13, rng.rand(4), 0))
+          tsend.(:ton, 1)
+        when 5
+          words << encode(FpgaIsa.op(rng.rand(2).zero? ? "LOADTRUE" : "LOADFALSE"), 13, 0, 0)
+          tsend.(:tlock, 1)
+          words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+        else
+          words << encode(FpgaIsa.op("LOADI16"), 13, rng.rand(3000), 0)
+          tsend.(:hwsleep, 1)
+        end
+      when 24 # 動的な呼び出し (P7): __send(名前, 引数...) で vargs / odd / maker、たまに無い名前・数の違う呼び出し・名前でない値。
+        # __sym_at でシンボル表の i 番目 (表の外は nil)
+        if rng.rand(3).zero?
+          words << encode(FpgaIsa.op("LOADI8"), 12, rng.rand(80), 0)
+          words << encode(FpgaIsa.op("SEND0"), 12, DSEND_SYMS[:symat], 0)
+        else
+          # 名前と引数の数 (名前の分を含む) を合わせる: odd と maker は 0 個、vargs は 2 個。たまに無い名前か数の違う呼び出し
+          name, n = case rng.rand(10)
+                    when 0 then [S[:nosuch], 1 + rng.rand(3)]
+                    when 1, 2, 3 then [S[:odd], 1]
+                    when 4, 5 then [S[:maker], 1]
+                    else [S[:vargs], 3]
+                    end
+          n = 1 + rng.rand(3) if rng.rand(12).zero?
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << (rng.rand(30).zero? ? encode(FpgaIsa.op("LOADI8"), 13, rng.rand(9), 0) : encode(FpgaIsa.op("LOADSYM"), 13, name, 0))
+          (n - 1).times { |k| words << encode(FpgaIsa.op("MOVE"), 14 + k, (ints + arrs).sample(random: rng), 0) if 14 + k < 16 }
+          words << encode(FpgaIsa.op("SEND"), 12, DSEND_SYMS[:dsend], [n, 3].min)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 26 # caller (P9): __frame_pc(k) (段の呼び出しの pc か nil)、__rom_word (ROM の語。ときどき外でエラー)、
+        # String#__truncate (定数 3 の文字列の長さを切る。長さより大きい n はエラー)
+        case rng.rand(3)
+        when 0
+          words << encode(FpgaIsa.op("MOVE"), 12, ints.sample(random: rng), 0)
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(5), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, CALLER_SYMS[:framepc], 1)
+        when 1
+          words << if rng.rand(20).zero?
+                     encode(FpgaIsa.op("LOADI32"), 12, 0x7FFF, 0xFFFF)
+                   else
+                     encode(FpgaIsa.op("LOADI16"), 12, rng.rand(words.size + 40), 0)
+                   end
+          words << encode(FpgaIsa.op("SEND0"), 12, CALLER_SYMS[:romw], 0)
+        else
+          words << encode(FpgaIsa.op("GETCONST"), 12, 3, 0)
+          words << encode(FpgaIsa.op("LOADI8"), 13, rng.rand(HEAP_TEXT.bytesize + 3), 0)
+          words << encode(FpgaIsa.op("SEND"), 12, CALLER_SYMS[:strunc], 1)
+        end
+        words << encode(FpgaIsa.op("MOVE"), 15, 12, 0)
+      when 10 # 多重代入 (AREF)
+        words << encode(FpgaIsa.op("AREF"), 15, arrs.sample(random: rng), rng.rand(4))
+      when 11 # 演算の落ち先: 配列 + 整数 は Array#+ (この表ではメソッド) を送る
+        words << encode(FpgaIsa.op("MOVE"), 12, arrs.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("MOVE"), 13, ints.sample(random: rng), 0)
+        words << encode(FpgaIsa.op("ADD"), 12, 0, 0)
+        words << encode(FpgaIsa.op("MOVE"), ints.sample(random: rng), 12, 0)
+      else # 整数の計算
+        words << encode(FpgaIsa.op("ADDI"), ints.sample(random: rng), rng.rand(4), 0)
+      end
+    end
+    words << encode(FpgaIsa.op("JMP"), 0, top, 0)
+    # ブロック: 外側の R0..R7 を読み書きし、配列を作って返す
+    block_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 4, 0) # |x|
+    frame_pc = lambda do |r| # caller (P9): 段の中から __frame_pc(k) (R[r] と R[r+1] を使い、値は後で上書きされる)
+      words << encode(FpgaIsa.op("LOADI8"), r, 0, 0)
+      words << encode(FpgaIsa.op("LOADI8"), r + 1, rng.rand(4), 0)
+      words << encode(FpgaIsa.op("SEND"), r, CALLER_SYMS[:framepc], 1)
+    end
+    frame_pc.call(2) if rng.rand(2).zero?
+    words << encode(FpgaIsa.op("GETUPVAR"), 2, rng.rand(8), 1)
+    words << encode(FpgaIsa.op("ADD"), 1, 0, 0)
+    words << encode(FpgaIsa.op("SETUPVAR"), 1, rng.rand(8), 1)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 2)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    # Proc を作って返すメソッド (nregs 4)。その Proc は env が退避された後に外側の R0..R3 を読み書きし、
+    # ときどき外 (R4 以降、エラー) に触り、return / break で戻る (メソッドはもう無いので lambda でなければエラー)
+    maker_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 4, 0)
+    frame_pc.call(1) if rng.rand(2).zero?
+    words << encode(FpgaIsa.op("LOADI8"), 1, rng.rand(50), 0)
+    words << encode(FpgaIsa.op("LOADI8"), 2, rng.rand(50), 0)
+    words << :inner
+    words << encode(FpgaIsa.op("RETURN"), 3, 0, 0)
+    inner_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 4, 0) # |x| (lambda なら数を調べる)
+    outer = -> { rng.rand(40).zero? ? 4 + rng.rand(3) : rng.rand(3) } # R3 は Proc 自身
+    words << encode(FpgaIsa.op("GETUPVAR"), 2, outer.call, 1)
+    words << encode(FpgaIsa.op("ADD"), 1, 0, 0)
+    words << encode(FpgaIsa.op("SETUPVAR"), 1, outer.call, 1)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    last = rng.rand(24)
+    words << encode(FpgaIsa.op(last.zero? ? "RETURN_BLK" : last == 1 ? "BREAK" : "RETURN"), 1, 0, last < 2 ? 1 : 0)
+    # Array#+: 引数をそのまま返す
+    plus_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 4, 0)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    # P#initialize(x): @a = x、@b = [x]。Q#initialize は P のもの。@c は nil のまま
+    init_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 4, 0)
+    words << encode(FpgaIsa.op("SETIV"), 1, S[:ia], 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 3, 1, 1)
+    words << encode(FpgaIsa.op("SETIV"), 3, S[:ib], 0)
+    words << encode(FpgaIsa.op("RETNIL"), 0, 0, 0)
+    # P#get は @a、Q#get は super (P#get) と @c を配列にして返す
+    pget_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 3, 0)
+    words << encode(FpgaIsa.op("GETIV"), 1, S[:ia], 0)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    qget_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 4, 0)
+    words << encode(FpgaIsa.op("SUPER"), 1, S[:get], 0x80)
+    words << encode(FpgaIsa.op("GETIV"), 2, S[:ic], 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 1, 1, 2)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    # vargs(a, b = 7, *r, c): [a, b, r, c] を返す
+    vargs_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 8, 1 | (1 << 5) | (1 << 6))
+    words << encode(FpgaIsa.op("JMP"), 0, vargs_at + 3, 0)
+    words << encode(FpgaIsa.op("JMP"), 0, vargs_at + 4, 0)
+    words << encode(FpgaIsa.op("LOADI_7"), 2, 0, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 6, 1, 4)
+    words << encode(FpgaIsa.op("RETURN"), 6, 0, 0)
+    # kwm(**k): [k] を返す (kd の ENTER、R1 = キーワードの Hash、R2 = ブロック)
+    kwm_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 4, 0x800)
+    words << encode(FpgaIsa.op("ARRAY"), 1, 1, 0)
+    words << encode(FpgaIsa.op("RETURN"), 1, 0, 0)
+    # raiser(x): [x] を投げるか、ensure を通って [x] を返す (ensure は配列を作ってから RAISEIF で続ける)。
+    # 投げるかは R0 (self の整数) の偶奇で。たまに rescue の無い所で投げて止まる
+    raiser_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 6, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("SEND0"), 3, S[:odd], 0)
+    words << encode(FpgaIsa.op("JMPNOT"), 3, raiser_at + 8, 0)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("MOVE"), 4, 2, 0)
+    words << encode(FpgaIsa.op("SEND"), 3, S[:raise], 1)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    catches << [FpgaIsa::CATCH_ENSURE, raiser_at + 7, raiser_at + 9, words.size]
+    words << encode(FpgaIsa.op("EXCEPT"), 3, 0, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 4, 3, rng.rand(3))
+    words << encode(FpgaIsa.op("RAISEIF"), 3, 0, 0)
+    words << encode(FpgaIsa.op("RETNIL"), 0, 0, 0)
+    # Integer#__core_error(d1, d2): [種類, d1, d2] を投げる
+    cerr_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 2, 7, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 4, 0, 3)
+    words << encode(FpgaIsa.op("MOVE"), 3, 0, 0)
+    words << encode(FpgaIsa.op("SEND"), 3, S[:raise], 1)
+    # divz(x): self / (x - x) (x が Integer なら 0 で割る。配列なら Array#+ の結果で割って TypeError か 0 で割る)
+    divz_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 1, 5, 0)
+    words << encode(FpgaIsa.op("MOVE"), 2, 0, 0)
+    words << encode(FpgaIsa.op("LOADI_0"), 3, 0, 0)
+    words << encode(FpgaIsa.op("DIV"), 2, 0, 0)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    # タスクの本体 (区画の中): 配列を作り、今の区画を読んで区画 0 へ戻る。また切り替えられたら繰り返す
+    task_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 6, 0)
+    words << encode(FpgaIsa.op("LOADI8"), 1, rng.rand(50), 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 1, 1)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tslot], 0)
+    words << encode(FpgaIsa.op("LOADI_0"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tswitch], 1)
+    words << encode(FpgaIsa.op("JMP"), 0, task_at + 1, 0)
+    # Integer#__task_tick (割り込み): 受け手 (今の ms) を配列にし、割り込みを止めて (nil) 許して戻る
+    tick_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 0, 6, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 2, 0, 1)
+    words << encode(FpgaIsa.op("LOADNIL"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:ton], 1)
+    words << encode(FpgaIsa.op("LOADFALSE"), 4, 0, 0)
+    words << encode(FpgaIsa.op("SSEND"), 3, TASK_SYMS[:tlock], 1)
+    words << encode(FpgaIsa.op("RETURN"), 2, 0, 0)
+    # proc { |a, b| [b, a] }
+    pair_at = words.size
+    words << encode(FpgaIsa.op("ENTER"), 2, 5, 0)
+    words << encode(FpgaIsa.op("MOVE"), 4, 1, 0)
+    words << encode(FpgaIsa.op("MOVE"), 3, 2, 0)
+    words << encode(FpgaIsa.op("ARRAY2"), 3, 3, 2)
+    words << encode(FpgaIsa.op("RETURN"), 3, 0, 0)
+    lam = rng.rand(3).zero? ? 0x80 : 0
+    words = words.map do |w|
+      case w
+      when :block then encode(FpgaIsa.op("BLOCK"), 11, block_at, 0)
+      when :inner then encode(FpgaIsa.op("BLOCK"), 3, inner_at, lam)
+      when :pair then encode(FpgaIsa.op("BLOCK"), 12, pair_at, 0)
+      when :task then encode(FpgaIsa.op("BLOCK"), 14, task_at, 0)
+      when :htable then encode(FpgaIsa.op("HTABLE"), 0, 0, 0) # 表の位置は後で入れる
+      else w
+      end
+    end
+    prim = ->(name) { FpgaIsa.tgt(FpgaIsa::TGT_PRIM, FpgaIsa.prim(name)) }
+    ary = FpgaIsa::CLS_ARRAY
+    entries = [
+      [ary, S[:push], prim.("PUSH")], [ary, S[:shl], prim.("APUSH")], [ary, S[:size], prim.("SIZE")],
+      [ary, S[:pop], prim.("POP")], [ary, S[:first], prim.("FIRST")], [ary, S[:last], prim.("LAST")],
+      [ary, S[:empty], prim.("EMPTY")], [ary, S[:aget], prim.("AGET")], [ary, S[:aset], prim.("ASET")],
+      [ary, FpgaIsa::OP_SYMS.index("+"), plus_at], [ary, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT],
+      [FpgaIsa::CLS_OBJECT, FpgaIsa::OP_SYMS.index("=="), prim.("OEQ")],
+      [FpgaIsa::CLS_INT, S[:maker], maker_at], [FpgaIsa::CLS_PROC, S[:call], prim.("CALL")],
+      [FpgaIsa::CLS_INT, S[:vargs], vargs_at], [FpgaIsa::CLS_INT, S[:kwm], kwm_at],
+      [FpgaIsa::CLS_INT, S[:raiser], raiser_at], [FpgaIsa::CLS_INT, S[:raise], prim.("RAISE")],
+      [FpgaIsa::CLS_INT, S[:odd], prim.("ODD")], [FpgaIsa::CLS_INT, S[:divz], divz_at],
+      [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__core_error"), cerr_at],
+      [FpgaIsa::CLS_INT, S[:ior], prim.("IOREAD")], [FpgaIsa::CLS_INT, S[:iow], prim.("IOWRITE")],
+      *TASK_SYMS.map { |k, sym| [FpgaIsa::CLS_INT, sym, prim.(TASK_PRIM[k])] },
+      [FpgaIsa::CLS_INT, DSEND_SYMS[:dsend], prim.("DSEND")], [FpgaIsa::CLS_INT, DSEND_SYMS[:symat], prim.("SYMAT")],
+      [FpgaIsa::CLS_INT, FpgaIsa::OP_SYMS.index("__task_tick"), tick_at],
+      [FpgaIsa::CLS_STRING, S[:sbytes], prim.("SBYTES")], [FpgaIsa::CLS_STRING, S[:sgetb], prim.("SGETB")],
+      [FpgaIsa::CLS_STRING, S[:spush], prim.("SPUSH")], [FpgaIsa::CLS_STRING, S[:sslice], prim.("SSLICE")],
+      [FpgaIsa::CLS_SYM, S[:symstr], prim.("SYMSTR")],
+      *FLOAT_SEND.each_with_index.map { |n, i| [FpgaIsa::CLS_FLOAT, FLOAT_SYM + i, prim.(n)] },
+      [FpgaIsa::CLS_INT, I2F_SYM, prim.("I2F")], [FpgaIsa::CLS_STRING, STOD_SYM, prim.("STOD")],
+      *IFLT_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
+      *INT64_SYMS.map { |n, sym| [FpgaIsa::CLS_INT, sym, prim.(n)] },
+      [FpgaIsa::CLS_INT, CALLER_SYMS[:framepc], prim.("FRAMEPC")], [FpgaIsa::CLS_INT, CALLER_SYMS[:romw], prim.("ROMW")],
+      [FpgaIsa::CLS_STRING, CALLER_SYMS[:strunc], prim.("STRUNC")],
+      [FpgaIsa::META | P_CLS, S[:new], prim.("NEW")], [FpgaIsa::META | Q_CLS, S[:new], prim.("NEW")],
+      [P_CLS, FpgaIsa::SUPER_SYM, FpgaIsa::CLS_OBJECT], [Q_CLS, FpgaIsa::SUPER_SYM, P_CLS],
+      [P_CLS, FpgaIsa::NIVARS_SYM, 2], [Q_CLS, FpgaIsa::NIVARS_SYM, 3],
+      [P_CLS, S[:ia], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0)], [P_CLS, S[:ib], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 1)],
+      [Q_CLS, S[:ic], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 2)],
+      [P_CLS, FpgaIsa::OP_SYMS.index("initialize"), init_at], [P_CLS, S[:get], pget_at], [Q_CLS, S[:get], qget_at],
+      [P_CLS, S[:geta], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 0)], [P_CLS, S[:getb], FpgaIsa.tgt(FpgaIsa::TGT_IVAR, 1)],
+      [P_CLS, S[:setb], FpgaIsa.tgt(FpgaIsa::TGT_IVSET, 1)],
+      [FpgaIsa::CLS_OBJECT, S[:isa], prim.("ISA")], [FpgaIsa::CLS_OBJECT, S[:respond], prim.("RESPOND")],
+      [FpgaIsa::ISA_BIT | P_CLS, P_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, Q_CLS, 1], [FpgaIsa::ISA_BIT | Q_CLS, P_CLS, 1]
+    ]
+    # 例外の表 (探す順 = 並べた順)。HTABLE (pc 1) に位置と数を入れる
+    hbase = words.size
+    catches.each { |t, b, e, tgt| words << catch_word(t, b, e, tgt) }
+    words[1] = encode(FpgaIsa.op("HTABLE"), 0, hbase, catches.size)
+    # データ (1語 4バイト) とシンボル表。TABLE の c がシンボル表の先頭
+    data_at = words.size
+    text = HEAP_TEXT
+    i = 0
+    while i < text.bytesize
+      v = 0
+      4.times { |j| v |= (text.getbyte(i + j) || 0) << (8 * j) }
+      words << v
+      i += 4
+    end
+    # Float の値 (1つ 2語: 上位 32bit、下位 32bit) と String#__strtod の文字列
+    float_at = words.size
+    floats.each { |v| words.concat([v].pack("G").unpack("NN")) }
+    # 64bit の整数 (1つ 2語: 上位 32bit、下位 32bit)
+    int64_at = words.size
+    int64s.each { |v| words.concat([(v >> 32) & 0xFFFF_FFFF, v & 0xFFFF_FFFF]) }
+    lit_at = []
+    FLOAT_LITS.each do |t|
+      lit_at << words.size
+      (0...t.bytesize).step(4) { |i| words << t.byteslice(i, 4).bytes.each_with_index.sum { |b, j| b << (8 * j) } }
+    end
+    symtab = words.size
+    HEAP_SYMS.each { |off, n| words << (((data_at + off / 4) << 16) | n) } # 語の先頭からだけ (off は 4 の倍数か 0)
+    words[0] |= symtab
+    words = words.map do |w|
+      if w.is_a?(Symbol) && w.to_s.start_with?("string")
+        encode(FpgaIsa.op("STRING"), 12, data_at, w.to_s.sub("string", "").to_i)
+      elsif w.is_a?(Array) && w[0] == :float
+        encode(FpgaIsa.op("LOADF"), w[2] || 12, float_at + 2 * w[1], 0)
+      elsif w.is_a?(Array) && w[0] == :int64
+        encode(FpgaIsa.op("LOADI64"), w[2], int64_at + 2 * w[1], 0)
+      elsif w.is_a?(Array) && w[0] == :lit
+        encode(FpgaIsa.op("STRING"), 12, lit_at[w[1]], FLOAT_LITS[w[1]].bytesize)
+      else
+        w
+      end
+    end
+    with_table(words, entries, HEAP_TABLE_LOG)
+  end
+
+  def hex(words)
+    words.map { |w| format("%012x\n", w) }.join
+  end
+
+  # 入力の刺激もランダムに (button 用)
+  # デバイスの入力も (GPIO の外からの L / H、UART の受信バイト)
+  def stim(rng)
+    rows = Array.new(rng.rand(4)) { [rng.rand(40), 2, rng.rand(3) - 1] }
+    rng.rand(3).times { rows << [rng.rand(400), [0x106, 0x107].sample(random: rng), rng.rand(1 << 32) - (1 << 31)] }
+    rng.rand(6).times { rows << [rng.rand(2000), 0x121, rng.rand(256)] }
+    rng.rand(3).times { rows << [rng.rand(1000), 0x150 + rng.rand(5), rng.rand(1 << 13)] } # ADC (12bit を越える値も)
+    rows
+  end
+end

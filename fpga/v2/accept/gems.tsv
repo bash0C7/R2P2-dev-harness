@@ -1,0 +1,780 @@
+# test/t の assert ごとに、core に無く gem にだけある名前の gem (計画 S5 は - の assert で数える。rake fpga:v2:inventory が作る)
+# file<TAB>assert<TAB>gems
+argumenterror	ArgumentError	-
+argumenterror	'wrong number of arguments' from mrb_get_args	-
+argumenterror	Call to MRB_ARGS_NONE method	-
+array	Array	-
+array	Array included modules	-
+array	Array.[]	-
+array	SubArray.[]	-
+array	Array#+	-
+array	Array#*	-
+array	Array#<<	-
+array	Array#[]	-
+array	Array#[] redefined on Array itself reaches the redefinition	mruby-metaprog
+array	Array#[]= redefined on Array itself reaches the redefinition	mruby-metaprog
+array	Array#[]=	-
+array	Array#clear	-
+array	Array#collect!	-
+array	Array#concat	-
+array	Array#delete_at	-
+array	Array#each	-
+array	Array#each_index	-
+array	Array#empty?	-
+array	Array#first	-
+array	Array#index	-
+array	Array#index (block)	-
+array	Array#initialize	-
+array	Array#initialize_copy	-
+array	Array#join	-
+array	Array#join nested arrays	-
+array	Array#join detects recursion	-
+array	Array#join deeply nested array does not overflow the C stack	-
+array	Array#last	-
+array	Array#length	-
+array	Array#map!	-
+array	Array#pop	-
+array	Array#push	-
+array	Array#replace	-
+array	Array#reverse	-
+array	Array#reverse!	-
+array	Array#rindex	-
+array	Array#rindex (block)	-
+array	Array#shift	-
+array	Array#size	-
+array	Array#slice	-
+array	Array#unshift	-
+array	Array#unshift with shared arrays	-
+array	Array#unshift taking shared self	-
+array	Array#to_s	-
+array	Array#==	-
+array	Array#== takes an element for equal to itself	-
+array	Array#eql?	-
+array	Array#hash	-
+array	Array#<=>	-
+array	Array (Longish inline array)	-
+array	Array#rindex	-
+array	Array#sort!	-
+array	Array#sort with a NaN in it	-
+array	Array#sort with a block that answers with something other than an Integer	-
+array	Array#sort with a block that answers with a Float	-
+array	Array#sort with a block that answers with a big integer	-
+array	Array#sort of Integers too wide to store inline	-
+array	Array#freeze	-
+array	Array - a frozen receiver of a call that writes nothing	-
+array	Array#delete	-
+array	Array#hash with self-referencing arrays	-
+array	Array shared from an emptied heap array keeps a buffer	-
+array	Array#== and #eql? with recursive elements	-
+basicobject	BasicObject	-
+basicobject	BasicObject superclass	-
+basicobject	BasicObject reopened at the top level is the class Object inherits from	-
+basicobject	BasicObject#== defined by a class is asked about the receiver itself	-
+basicobject	BasicObject#== defined on NilClass, TrueClass or FalseClass	-
+bs_block	BS Block 1	-
+bs_block	BS Block 2	-
+bs_block	BS Block 3	-
+bs_block	BS Block 3	-
+bs_block	BS Block 4	-
+bs_block	BS Block 5	-
+bs_block	BS Block 6	-
+bs_block	BS Block 7	-
+bs_block	BS Block 8	-
+bs_block	BS Block 9	-
+bs_block	BS Block 10	-
+bs_block	BS Block 11	-
+bs_block	BS Block 12	-
+bs_block	BS Block 13	-
+bs_block	BS Block 14	-
+bs_block	BS Block 15	-
+bs_block	BS Block 16	-
+bs_block	BS Block 17	-
+bs_block	BS Block 18	-
+bs_block	BS Block 19	-
+bs_block	BS Block 20	-
+bs_block	BS Block 21	-
+bs_block	BS Block 22	-
+bs_block	BS Block 23	-
+bs_block	BS Block 24	-
+bs_block	BS Block 25	-
+bs_block	BS Block 26	-
+bs_block	BS Block 27	-
+bs_block	BS Block 28	-
+bs_block	BS Block 29	-
+bs_block	BS Block 30	-
+bs_block	BS Block [ruby-dev:31147]	-
+bs_block	BS Block [ruby-dev:31160]	-
+bs_block	BS Block [issue #750]	-
+bs_block	BS Block 31	-
+bs_block	BS Block [ruby-dev:31440]	-
+bs_block	BS Block 32	-
+bs_block	BS Block [ruby-core:14395]	-
+bs_block	BS Block 33	-
+bs_block	BS Block 34	-
+bs_block	BS Block 35	-
+bs_block	BS Block 36	-
+bs_block	BS Block 37	-
+bs_block	BS Block 38	-
+bs_block	BS Block 39	-
+bs_block	BS Block 40 (https://github.com/mruby/mruby/issues/6411)	-
+bs_literal	BS Literal 1	-
+bs_literal	BS Literal 2	-
+bs_literal	BS Literal 3	-
+bs_literal	BS Literal 4	-
+bs_literal	BS Literal 5	-
+bs_literal	BS Literal 6	-
+bs_literal	BS Literal 7	-
+bs_literal	BS Literal 8	-
+bs_literal	BS Literal 9	-
+class	Class	-
+class	Class#initialize	-
+class	Class#initialize_copy	-
+class	Class#new	-
+class	Class#superclass	-
+class	Class 1	-
+class	Class 2	-
+class	Class 3	-
+class	Class 4	-
+class	Class 5	-
+class	Class 6	-
+class	Class 7	-
+class	Class 8	-
+class	Class 9	-
+class	Class Module 1	-
+class	Class Module 2	-
+class	Class Nested 1	-
+class	Class Nested 2	-
+class	Class Nested 3	-
+class	Class Nested 4	-
+class	Class Nested 5	-
+class	Class Nested 6	-
+class	Class Nested 7	-
+class	Class Nested 8	-
+class	Class Colon 1	-
+class	Class Colon 2	-
+class	Class Colon 3	-
+class	Class Dup 1	-
+class	Class Dup 2	-
+class	Class.new	-
+class	class to return the last value	-
+class	class to return nil if body is empty	-
+class	raise when superclass is not a class	-
+class	Class#inherited	-
+class	singleton tests	-
+class	clone Class	-
+class	class definition in singleton class	-
+class	class variable and class << self style class method	-
+class	class variable definition in singleton_class	-
+class	class variable in module and class << self style class method	-
+class	child class/module defined in singleton class get parent constant	-
+class	overriding class variable with a module (#3235)	-
+class	class variable for frozen class/module	-
+class	class with non-class/module outer raises TypeError	-
+class	module with extended callback	-
+class	inherited hook runs before block body	-
+class	inherited hook runs before class body	-
+class	a visibility change makes the method table it needs	-
+class	a `def` in a method written in a block given a class adds to that class	-
+codegen	peephole optimization does not eliminate move whose result is reused	mruby-method
+codegen	empty condition in ternary expression parses correctly	-
+codegen	method call with exactly 127 arguments	-
+codegen	nested empty heredoc	-
+codegen	splat in case splat	-
+codegen	undef with 127 or more arguments	-
+codegen	break in normal loop with 127 arguments	-
+codegen	negate literal register alignment	-
+codegen	register window of calls (#3783)	-
+codegen	bare `nil?` in if/unless uses self as receiver (#6874)	-
+codegen	op-assign on empty index does not crash the compiler	-
+codegen	block inside a for body sees its own locals	-
+codegen	assignment to a captured local is worth its value	-
+codegen	multiple assignment to an attribute counts its registers	-
+codegen	a multiple assignment target assigning through a send keeps its value	-
+codegen	a discarded interpolation leaves the register pointer where it was	mruby-task picoruby-midibase picoruby-midibase-mml picoruby-picotest picoruby-psg
+codegen	adding or subtracting a literal zero still sends the operator	-
+codegen	a rescue modifier in a loop body leaves the registers balanced	-
+codegen	super and yield at fifteen nested blocks	-
+comparable	Comparable#<	-
+comparable	Comparable#<=	-
+comparable	Comparable#==	-
+comparable	Comparable#>	-
+comparable	Comparable#>=	-
+comparable	Comparable#between?	-
+comparable	Comparable#between? - a comparison with no answer	-
+ensure	ensure - context - yield	-
+ensure	ensure - context - yield and break	-
+ensure	ensure - context - yield and return	-
+ensure	ensure with local ||= preserves return value	-
+ensure	ensure with an op-assign of every kind preserves the return value	picoruby-time
+enumerable	Enumerable	-
+enumerable	Enumerable#all?	-
+enumerable	Enumerable#any?	-
+enumerable	Enumerable#collect	-
+enumerable	Enumerable#detect	-
+enumerable	Array#each_with_index	-
+enumerable	Enumerable#entries	-
+enumerable	Enumerable#find	-
+enumerable	Enumerable#find_all	-
+enumerable	Enumerable#grep	-
+enumerable	Enumerable#include?	-
+enumerable	Enumerable#include? takes an element for equal to itself	-
+enumerable	Enumerable#inject	-
+enumerable	Enumerable#map	-
+enumerable	Enumerable#max	-
+enumerable	Enumerable#min	-
+enumerable	Enumerable#member?	-
+enumerable	Enumerable#partition	-
+enumerable	Enumerable#reject	-
+enumerable	Enumerable#select	-
+enumerable	Enumerable#sort	-
+enumerable	Enumerable#to_a	-
+enumerable	Enumerable#max, #min - a comparison with no answer	-
+env	REnv, closed env carries no slot until a scope needs one	-
+env	REnv, a live write closes with the slot already made	-
+env	REnv, C closure env carries no slot	-
+env	REnv, reading special variables leaves a slotless env alone	-
+env	REnv, the first write grows a slotless env into the slot	-
+env	REnv, a grown env is the one scope both its procs see	-
+env	REnv, the shutdown detach keeps the top-level container	-
+env	REnv, MRB_ENV_SET_BIDX() evaluates its index exactly once	-
+exception	Exception	-
+exception	Exception.exception	-
+exception	Exception#exception	-
+exception	Exception#message	-
+exception	Exception#to_s	-
+exception	Exception.exception	-
+exception	NameError	-
+exception	ScriptError	-
+exception	SyntaxError	-
+exception	Exception 1	-
+exception	Exception 2	-
+exception	Exception 3	-
+exception	Exception 4	-
+exception	Exception 5	-
+exception	Exception 6	-
+exception	Exception 7	-
+exception	Exception 8	-
+exception	Exception 9	-
+exception	Exception 10	-
+exception	Exception 11	-
+exception	Exception 12	-
+exception	Exception 13	-
+exception	Exception 14	-
+exception	Exception 15	-
+exception	Exception 16	-
+exception	Exception 17	-
+exception	Exception 18	-
+exception	Exception 19	mruby-string-ext
+exception	Exception#inspect	-
+exception	Exception#backtrace	-
+exception	Raise in ensure	-
+exception	GC in rescue	-
+exception	Method call in rescue	-
+exception	break value from begin/rescue/ensure in while loop	-
+exception	next inside rescue continues the loop	-
+exception	$! names the exception a rescue clause is running	-
+exception	$! names the exception a rescue modifier is running	-
+exception	$! names the exception an ensure is unwinding	mruby-task picoruby-midibase picoruby-midibase-mml picoruby-picotest picoruby-psg
+exception	raise without arguments re-raises the exception being rescued	-
+false	FalseClass	-
+false	FalseClass false	-
+false	FalseClass#&	-
+false	FalseClass#^	-
+false	FalseClass#to_s	-
+false	FalseClass#|	-
+gc	GC.enable	-
+gc	GC.disable	-
+gc	GC.interval_ratio=	-
+gc	GC.step_ratio=	-
+gc	GC.step_limit=	-
+gc	GC.step_limit - GC completes with small limit	-
+gc	GC.malloc_threshold=	-
+gc	GC.malloc_threshold - triggers GC on large allocations	-
+gc	GC.malloc_threshold - byte pressure advances an incremental cycle	-
+gc	GC.malloc_threshold - does not mark through stale realloc buffers	-
+gc	GC.generational_mode=	-
+gc	OP_GETIDX does not retain its result in the GC arena	-
+gc	OP_GETIDX does not retain a Hash default in the GC arena	-
+gc	OP_GETIDX0 does not retain a String result in the GC arena	-
+gc	OP_GETIDX0 does not retain a Hash default in the GC arena	-
+gc	OP_SETIDX does not retain a duplicated Hash key in the GC arena	-
+gc	OP_ENTER keeps the block alive while it lays out a short argument list	-
+gc	OP_ADD does not retain an overflowed Integer in the GC arena	-
+gc	OP_ADD does not retain a boxed Integer in the GC arena	-
+gc	OP_DIV does not retain a boxed Integer in the GC arena	-
+gc	OP_LOADI32 does not retain a boxed Integer in the GC arena	-
+gc	OP_MATH does not retain a boxed Float in the GC arena	-
+gc	OP_DIV does not retain a boxed Float in the GC arena	-
+gc	OP_ADDI does not retain a boxed Float in the GC arena	-
+gc	OP_LOADL does not retain a boxed Float in the GC arena	-
+hash	Hash	-
+hash	Hash#[]	-
+hash	Hash#clear	mruby-hash-ext picoruby-picooptparse
+hash	Hash#dup	-
+hash	Hash#default	-
+hash	Hash#default=	mruby-hash-ext mruby-task picoruby-picooptparse
+hash	Hash#default_proc	-
+hash	Hash#delete	mruby-hash-ext picoruby-picooptparse
+hash	Hash#empty?	mruby-hash-ext picoruby-picooptparse
+hash	Hash#initialize	-
+hash	Hash#merge	-
+hash	Hash#replace	-
+hash	Hash#shift	-
+hash	Hash#rehash	-
+hash	Hash iteration with entries deleted ahead of the cursor	-
+hash	Hash#assoc, Hash#rassoc	-
+hash	#== receiver should be specified value	-
+hash	test value omission	-
+hash	Hash#[] and Hash#[]= redefined on Hash itself reach the redefinition	mruby-metaprog
+hash	Hash#[] with a default proc that grows the VM stack	-
+hash	Hash#== and #eql? with recursive values	-
+indexerror	IndexError	-
+integer	Integer	-
+integer	Integer#+	-
+integer	Integer#-	-
+integer	Integer#*	-
+integer	Integer#/	-
+integer	Integer#%	-
+integer	Integer#<=>	-
+integer	Integer#==	-
+integer	Integer comparison with a Float that stands for another number	-
+integer	Integer comparison with a NaN	-
+integer	Integer wider than an mrb_int compared with a NaN	-
+integer	Integer comparison with a Float at the ends of the mrb_int range	-
+integer	Integer comparison of two values too wide to store inline	-
+integer	Integer#~	-
+integer	Integer#&	-
+integer	Integer#|	-
+integer	Integer#^	-
+integer	Integer bitwise ops reject non-Integer operands	-
+integer	Integer#<<	-
+integer	Integer#>>	-
+integer	Integer#ceil	-
+integer	Integer#ceil keeps a value that is already a multiple	-
+integer	Integer#downto	-
+integer	Integer#eql?	-
+integer	Integer#floor	-
+integer	Integer#floor keeps a value that is already a multiple	-
+integer	Integer#next	-
+integer	Integer#round	-
+integer	Integer#round keeps a value that is already a multiple	-
+integer	Integer#round breaks a tie away from zero	-
+integer	Integer#succ	-
+integer	Integer#times	-
+integer	Integer#to_f	-
+integer	Integer#to_i	-
+integer	Integer#to_s	-
+integer	Integer#truncate	-
+integer	Integer rounding to a power of ten wider than an mrb_int	-
+integer	Integer#upto	-
+integer	Integer#divmod	-
+integer	Integer.__ensure converts its argument without dispatching	-
+integer	Integer arithmetic redefined on Integer itself reaches the redefinition	mruby-metaprog
+integer	Integer comparison redefined on Integer itself reaches the redefinition	mruby-metaprog
+integer	Integer operators on two literals reach a redefinition	mruby-metaprog
+iterations	while expression	-
+iterations	until expression	-
+iterations	break expression	-
+iterations	next expression	-
+kernel	Kernel	-
+kernel	Kernel.raise	-
+kernel	Kernel#__id__	-
+kernel	Kernel#__send__	-
+kernel	Kernel#block_given?	-
+kernel	Kernel#class	-
+kernel	Kernel#clone	mruby-task
+kernel	Kernel#dup	mruby-task
+kernel	Kernel#dup class	-
+kernel	Kernel#extend	-
+kernel	Kernel#extend works on toplevel	-
+kernel	Kernel#freeze	-
+kernel	Kernel#frozen?	-
+kernel	Kernel#hash	-
+kernel	Kernel#inspect	-
+kernel	Kernel#is_a?	-
+kernel	Kernel#iterator?	-
+kernel	Kernel#kind_of?	-
+kernel	Kernel#lambda	-
+kernel	Kernel#loop	-
+kernel	Kernel#method_missing	-
+kernel	Kernel#nil?	-
+kernel	Kernel#object_id	-
+kernel	Kernel#raise	-
+kernel	Kernel#remove_instance_variable	-
+kernel	Kernel#respond_to?	-
+kernel	Kernel#respond_to? with an unimplemented method	-
+kernel	Kernel#respond_to? skips respond_to_missing? for an unimplemented method	-
+kernel	Kernel#respond_to? weighs how the method may be called	-
+kernel	Kernel#respond_to? leaves a method out of reach to respond_to_missing?	-
+kernel	Kernel#respond_to? answers false where respond_to_missing? is undefined	-
+kernel	an unimplemented method can be overridden, aliased and undefined	-
+kernel	an unimplemented method reports itself by name	-
+kernel	mrb_notimplement() raises where there is no method name to report	-
+kernel	Kernel#to_s	-
+kernel	Kernel#!=	-
+kernel	Kernel#!~	-
+kernel	Kernel#respond_to_missing?	-
+kernel	stack extend	-
+kernel	Kernel module functions	-
+lang	and	-
+lang	or	-
+literals	Literals Numerical	-
+literals	Literals Numerical without Float	-
+literals	Literals Numerical wider than mrb_int	-
+literals	Literals Strings Single Quoted	-
+literals	Literals Strings Double Quoted	-
+literals	Literals Strings Quoted Non-Expanded	-
+literals	Literals Strings Quoted Expanded	-
+literals	Literals Strings Here documents	-
+literals	Literals Array	-
+literals	Literals Array of symbols	-
+literals	Literals Symbol	-
+literals	operator override with negative integer literal	-
+localjumperror	LocalJumpError	-
+methods	The alias statement	-
+methods	The alias statement (overwrite original)	-
+methods	The alias statement	-
+methods	The undef statement	-
+methods	The undef statement (method undefined)	-
+methods	method_added hook	-
+methods	singleton_method_added hook	-
+methods	The def statement in a method with a receiver	-
+methods	The def statement in a class body written as a block	-
+methods	The alias statement in a method with a receiver	-
+methods	The undef statement in a method with a receiver	-
+methods	super in a method with a receiver	-
+module	Module	-
+module	Module#alias_method	picoruby-midibase
+module	Module#ancestors	-
+module	Module#attr NameError	-
+module	Module#attr	-
+module	Module#attr_accessor	-
+module	Module#attr_reader	-
+module	Module#attr_writer	-
+module	Module#attr_* answer the names they define	mruby-task
+module	Module#attr_* take the visibility of the scope they are called in	mruby-task
+module	Module#class_eval	-
+module	Module#const_defined?	-
+module	Module#const_get	-
+module	Module#const_set	-
+module	Module#remove_const	-
+module	Module#const_missing	-
+module	Module#include	-
+module	Module#include?	-
+module	Module#included	-
+module	Module#initialize	-
+module	Module#method_defined?	-
+module	Module#method_defined? reports the methods a listing reports	-
+module	Module#method_defined? with inherit false reports only the module's own methods	-
+module	Module#module_eval	-
+module	Module#undef_method	-
+module	Module#dup	-
+module	Module#define_method	-
+module	Module#define_method takes the visibility of the scope it is called in	-
+module	a `private` in the body of a `class << self` reaches the defs below it	-
+module	Module#prepend	-
+module	Module#prepend result	-
+module	Module#prepend public	-
+module	Module#prepend inheritance	-
+module	Module#prepend + Class#ancestors	-
+module	Module#prepend + Module#ancestors	-
+module	cyclic Module#prepend	-
+module	Module#prepend each class	-
+module	Module#prepend no duplication	-
+module	Module#prepend in superclass	-
+module	Module#prepend to frozen class	-
+module	Module#prepend leaves a frozen class frozen	-
+module	Module#private on a method a prepended module also defines	mruby-metaprog
+module	Module#to_s	-
+module	Module#inspect	-
+module	Issue 1467	-
+module	clone Module	-
+module	method visibility	-
+module	protected method with an explicit receiver	-
+module	method_missing is dispatched regardless of its visibility	picoruby-midibase
+module	method visibility with meta programming	-
+module	Module#module_function	picoruby-midibase
+module	Module#module_function with no arguments (toggle mode)	picoruby-midibase
+module	module with non-class/module outer raises TypeError	-
+module	module to return the last value	-
+module	module to return nil if body is empty	-
+module	get constant of parent module in singleton class; issue #3568	-
+module	shared empty iv_tbl (include)	-
+module	shared empty iv_tbl (prepend)	-
+module	constant lookup #6506	-
+module	constant lookup: ancestors before the top level	-
+module	constant lookup: def self.name looks up from the class body	-
+module	Module#module_function - where a def in the body lands	-
+module	constant lookup: a block given a class to run under keeps its own	-
+module	constant definition: a block given a class to run under keeps its own	-
+module	constant and class variable lookup: a method written in a block given a class keeps the block's scope	-
+nameerror	NameError	-
+nameerror	NameError#name	-
+nameerror	NameError#initialize	-
+nil	NilClass	-
+nil	NilClass	-
+nil	NilClass#&	-
+nil	NilClass#^	-
+nil	NilClass#|	-
+nil	NilClass#nil?	-
+nil	NilClass#to_s	-
+nil	NilClass#=~	-
+nil	safe navigation	-
+nomethoderror	NoMethodError	-
+nomethoderror	NoMethodError#args	-
+numeric	Numeric	-
+numeric	Numeric#+@	-
+numeric	Numeric#-@	-
+numeric	Numeric#abs	-
+numeric	Numeric#/	-
+numeric	Numeric#**	-
+numeric	Numeric#step	-
+object	Object	-
+object	Object superclass	-
+platform	MRUBY_PLATFORM	-
+platform	MRUBY_PLATFORM is a cpu-os pair	-
+proc	Proc	-
+proc	Proc.new	-
+proc	Proc#[]	-
+proc	Proc#arity	-
+proc	Proc#call	-
+proc	Proc#call proc args pos block	-
+proc	Proc#call proc args pos rest post	-
+proc	Proc#return_does_not_break_self	-
+proc	call Proc#initialize if defined	-
+proc	&obj call to_proc if defined	picoruby-picotest
+proc	Creation of a proc through the block of a method	-
+proc	#6345: dup of a block from method is treated as orphan	-
+proc	identity check for proc object	-
+proc	block parameter with trailing comma (implicit rest)	-
+proc	return leaves captured local variables alone	-
+range	Range	-
+range	Range#==	-
+range	Range#===	-
+range	Range#=== with a NaN	-
+range	Range#begin	-
+range	Range#each	-
+range	Range#end	-
+range	Range#exclude_end?	-
+range	Range#first	-
+range	Range#include?	-
+range	Range#initialize	-
+range	Range with a NaN for an end	-
+range	Range#last	-
+range	Range#member?	-
+range	Range#to_s	-
+range	Range#inspect	-
+range	Range#eql?	-
+range	Range#initialize_copy	-
+range	Range#hash	-
+range	Range#dup	-
+range	Range#to_a	-
+range	symbol GC keeps the symbols a Range holds	-
+rangeerror	RangeError	-
+runtimeerror	RuntimeError	-
+standarderror	StandardError	-
+string	String	-
+string	RSTRING_CSTR with a non-terminated static string	-
+string	String#<=>	-
+string	String#==	-
+string	String#+	-
+string	String#*	-
+string	String#[]	-
+string	String#[] with Range	-
+string	String#[] redefined on String itself reaches the redefinition	mruby-metaprog
+string	String#+ redefined on String itself reaches the redefinition	mruby-metaprog
+string	String#[]= redefined on String itself reaches the redefinition	mruby-metaprog
+string	String#[]= answers the same through the opcode and through a send	-
+string	String#[]=	-
+string	String#[]= on a shared buffer	-
+string	String#capitalize	-
+string	String#capitalize!	-
+string	String#chomp	-
+string	String#chomp!	-
+string	String#chop	-
+string	String#chop!	-
+string	String#downcase	-
+string	String#downcase!	-
+string	String#each_line	-
+string	String#empty?	-
+string	String#eql?	-
+string	String#gsub	-
+string	String#gsub with backslash	-
+string	String#gsub!	-
+string	String#hash	-
+string	String#include?	-
+string	String#index	-
+string	String#index over a subject longer than one search word	-
+string	String#initialize	-
+string	String#initialize_copy	-
+string	String#intern	-
+string	String#length	-
+string	String#replace	-
+string	String#reverse	-
+string	String#reverse!	-
+string	String#reverse! - a frozen receiver	-
+string	String - a frozen receiver of an empty splice at the end	-
+string	String#rindex	-
+string	String#byterindex searches bytes	-
+string	String#size	-
+string	String#slice	-
+string	String#split	-
+string	String#sub	-
+string	String#sub with backslash	-
+string	String#sub!	-
+string	String#to_i	-
+string	String#to_s	-
+string	String#to_sym	-
+string	String#upcase	-
+string	String#upcase!	-
+string	String#inspect	-
+string	String interpolation (mrb_str_concat for shared strings)	-
+string	String#bytes	-
+string	String#each_byte	-
+string	String#freeze	-
+string	String literal concatenation	-
+string	String#getbyte	-
+string	String#setbyte	-
+string	String#byteslice	-
+string	String#bytesplice	-
+string	String#bytesplice on a shared buffer	-
+symbol	Symbol	-
+symbol	Symbol	-
+symbol	Symbol#===	-
+symbol	Symbol#== redefined on Symbol itself reaches the redefinition	mruby-metaprog
+symbol	Symbol#to_s	-
+symbol	Symbol#to_sym	-
+symbol	Symbol#to_proc	-
+symbol	Symbol name round-trips across the inline-packing boundary (issue #6940)	picoruby-regexp_light
+symbol	Symbol, empty name	-
+symbol	Symbol#to_s and Symbol#name outlive symbol GC	-
+syntax	__FILE__	-
+syntax	__LINE__	-
+syntax	super	picoruby-midibase
+syntax	super forwards the caller's block from inside a block	-
+syntax	super forwards the keyword arguments at their current values	-
+syntax	super forwards from a scope that has closed	-
+syntax	yield	-
+syntax	yield with keyword arguments	-
+syntax	break	-
+syntax	next with value from a block	-
+syntax	safe navigation operator-assignment short-circuits on nil	-
+syntax	a safe navigation call on a written self is made	mruby-task
+syntax	local variable or/and-assignment yields its value	-
+syntax	attribute or/and-assignment persists the write in a value context	-
+syntax	redo	-
+syntax	Abbreviated variable assignment	-
+syntax	case expression	-
+syntax	Nested const reference	-
+syntax	Abbreviated variable assignment as returns	mruby-string-ext
+syntax	Abbreviated variable assignment of object attribute	mruby-string-ext
+syntax	Splat and multiple assignment	-
+syntax	Splat and multiple assignment from variable	-
+syntax	Splat and multiple assignment from variables	-
+syntax	Splat and multiple assignment in for	-
+syntax	Splat without assignment	-
+syntax	multiple assignment (rest)	-
+syntax	multiple assignment (index targets)	-
+syntax	multiple assignment (rest+post)	-
+syntax	multiple assignment (nosplat array rhs)	-
+syntax	multiple assignment (empty array rhs #3236, #3239)	-
+syntax	Return values of case statements	-
+syntax	Return values of if and case statements	-
+syntax	Return values of no expression case statement	-
+syntax	splat object in assignment	-
+syntax	one-line pattern match	-
+syntax	splat object in case statement	-
+syntax	splat in case statement with a pattern that replaces the array	-
+syntax	splat in case statement	-
+syntax	External command execution.	-
+syntax	parenthesed do-block in cmdarg	-
+syntax	method definition in cmdarg	picoruby-midibase
+syntax	optional argument in the rhs default expressions	-
+syntax	optional block argument in the rhs default expressions	-
+syntax	local variable definition in default value and subsequent arguments	-
+syntax	destructured parameter read from a later default expression	-
+syntax	multiline comments work correctly	-
+syntax	keyword arguments	-
+syntax	keyword arguments with fifteen or more positional parameters	-
+syntax	numbered parameters	-
+syntax	numbered parameter after ordinary local (#6921)	-
+syntax	_0 is not numbered parameter	-
+syntax	numbered parameters in symbol name (https://github.com/mruby/mruby/issues/5295)	-
+syntax	numbered parameters as hash key	-
+syntax	numbered parameters as singleton	-
+syntax	argument forwarding	mruby-string-ext
+syntax	endless def	-
+syntax	at-least-once loop	-
+syntax	pattern matching - basic case/in	-
+syntax	pattern matching - string literal patterns	-
+syntax	pattern matching - array patterns	-
+syntax	pattern matching - find patterns	-
+syntax	pattern matching - a key that moves the subject	-
+syntax	pattern matching - hash patterns	-
+syntax	pattern matching - a clause that names `**rest` keeps its own value	-
+syntax	pattern matching - a capture in a block binds the local of the enclosing scope	-
+syntax	pattern matching - value patterns as a hash value	-
+syntax	pattern matching - guard clauses	-
+syntax	pattern matching - alternative patterns	-
+syntax	pattern matching - pin operator	-
+syntax	pattern matching - as pattern	-
+syntax	pattern matching - one-line in	-
+syntax	pattern matching - one-line =>	-
+syntax	pattern matching - NoMatchingPatternError	-
+syntax	pattern matching - complex patterns	-
+syntax	pattern matching - array pattern as the last expression of a frame	-
+syntax	pattern matching - find pattern as the last expression of a frame	-
+syntax	defined? on statically-decidable operands	-
+syntax	defined? on operands resolved at run time	-
+syntax	defined? on global/class variables and super	-
+syntax	defined? on constant paths (A::B)	-
+syntax	defined? on a constant path of any depth	-
+syntax	defined? on a constant path at the length limit	-
+syntax	defined? on a constant path rooted at Object	-
+syntax	defined? on a constant path resolves each name as reading it does	-
+syntax	defined? resolves a constant path from an evaluated root	mruby-string-ext
+syntax	defined? on a method reached through a receiver	-
+syntax	defined? weighs how a method on a receiver may be called	-
+syntax	defined? asks respond_to? about a call on self	-
+syntax	defined? on self answers nil where respond_to_missing? or respond_to? is undefined	-
+syntax	defined? answers nil where evaluating a receiver raises	mruby-string-ext
+syntax	defined? evaluates each link of a receiver chain once	mruby-string-ext
+syntax	defined? weighs the arguments of a call	mruby-string-ext
+syntax	defined? weighs the arguments of a call however they are passed	-
+syntax	defined? leaves alone the parts of a call it does not weigh	-
+syntax	defined? weighs the elements of an array literal	-
+syntax	defined? weighs the keys and values of a hash literal	-
+syntax	defined? on control flow, jumps and definitions	-
+syntax	defined? answers with a frozen string	-
+syntax	defined? on a back reference reads it	-
+syntax	defined? names it a local variable	-
+syntax	defined? sees through parentheses around one expression	-
+syntax	defined? sees through a bare begin around one expression	mruby-io picoruby-machine picoruby-uart
+syntax	defined? on a call carrying a block	-
+syntax	brace-less variable interpolation	-
+syntax	local variable operator-assignment with a non-numeric receiver	-
+syntax	pattern matching - the case value survives a failed clause	-
+syntax	pattern matching - the constant of a constant pattern is a test of its own	-
+syntax	pattern matching - what a pin may name	-
+syntax	pattern matching - the clauses of a case share one deconstruct	-
+syntax	pattern matching - a subject with no deconstruction hook does not match	-
+syntax	pattern matching - a deconstruction hook has to answer a Hash	-
+syntax	a private setter is callable on a written self	mruby-task
+syntax	pattern matching - a guard the compiler can answer for itself	-
+syntax	pattern matching - a guard the compiler can answer for itself, on a hook	-
+syntax	a private index accessor is callable in an op-assign on a written self	mruby-task
+syntax	an operator instruction checks visibility on the send it falls back to	-
+syntax	super reaches a private or protected operator	-
+sysfail	mrb_sys_fail without SystemCallError	mruby-kernel-ext
+true	TrueClass	-
+true	TrueClass true	-
+true	TrueClass#&	-
+true	TrueClass#^	-
+true	TrueClass#to_s	-
+true	TrueClass#|	-
+typeerror	TypeError	-
+unicode	bare \u notation test	-
+unicode	braced \u notation test	-
+unicode	braced multiple \u notation test	-
+version	MRUBY_REVISION	-
+vformat	mrb_vformat	-

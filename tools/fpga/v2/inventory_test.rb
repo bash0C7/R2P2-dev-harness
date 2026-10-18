@@ -1,0 +1,155 @@
+require "minitest/autorun"
+require "tmpdir"
+require_relative "inventory"
+require_relative "vm_table"
+
+# 棚卸し (計画 S2-1) の test: 走査の読み方と、commit した表が今の vendor と host から作り直したものと同じこと
+class FpgaV2InventoryTest < Minitest::Test
+  I = FpgaV2::Inventory
+
+  def test_presym_names
+    skip "presym が無い (rake fpga:picoruby)" unless File.exist?(File.join(I::PRESYM_DIR, "id.h"))
+    assert_equal "==", I.sym_name("MRB_OPSYM(eq)")
+    assert_equal "include?", I.sym_name("MRB_SYM_Q(include)")
+    assert_equal "pos=", I.sym_name("MRB_SYM_E(pos)")
+    assert_equal "=~", I.sym_name('mrb_intern_lit(mrb, "=~")')
+  end
+
+  def scan_c_text(text)
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "x.c")
+      File.write(path, text)
+      I.scan_c(path)
+    end
+  end
+
+  def test_c_rom_table_and_defines
+    skip "presym が無い (rake fpga:picoruby)" unless File.exist?(File.join(I::PRESYM_DIR, "id.h"))
+    entries, problems = scan_c_text(<<~C)
+      static const mrb_mt_entry foo_rom_entries[] = {
+        MRB_MT_ENTRY(foo_size,  MRB_SYM(size),       MRB_ARGS_NONE()),
+        MRB_MT_ENTRY(foo_init,  MRB_SYM(initialize), MRB_ARGS_ANY() | MRB_MT_PRIVATE),
+      };
+      static void helper(mrb_state *mrb, struct RClass *k) { mrb_define_method_id(mrb, k, MRB_SYM(late), f_late, MRB_ARGS_NONE()); }
+      void init(mrb_state *mrb) {
+        struct RClass *k = mrb_define_class_id(mrb, MRB_SYM(Foo), mrb->object_class);
+        MRB_MT_INIT_ROM(mrb, k, foo_rom_entries);
+        struct RClass *e = mrb->eException_class = mrb_define_class_id(mrb, MRB_SYM(Exception), mrb->object_class);
+        mrb_define_class_method_id(mrb, e, MRB_SYM(make), f_make, MRB_ARGS_NONE());
+        mrb_define_private_method_id(mrb, mrb_singleton_class_ptr(mrb, mrb_obj_value(k)), MRB_SYM(hidden), f_h, MRB_ARGS_NONE());
+        mrb_undef_class_method_id(mrb, k, MRB_SYM(new));
+      }
+    C
+    got = entries.map { |e| [e.kind, e.owner, e.name, e.src.to_s.split(":").last] }
+    assert_includes got, ["pub", "Foo", "size", "foo_size"]
+    assert_includes got, ["priv", "Foo", "initialize", "foo_init"]
+    assert_includes got, ["pub", "Foo", "late", "f_late"] # helper は定義より前の行で k を使う
+    assert_includes got, ["sing", "Exception", "make", "f_make"] # e = mrb->eException_class = mrb_define_class_id(...)
+    assert_includes got, ["spriv", "Foo", "hidden", "f_h"]
+    assert_includes got, ["sing", "Foo", "new", "undef"]
+    assert_includes got.map { |g| g[0, 3] }, ["const", "Object", "Foo"]
+    assert_equal [], problems
+  end
+
+  def scan_rb_text(text)
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "x.rb")
+      File.write(path, text)
+      I.scan_rb(path).map { |e| [e.kind, e.owner, e.name] }
+    end
+  end
+
+  def test_mrblib_visibility_and_owners
+    got = scan_rb_text(<<~RUBY)
+      class << self
+        def top_helper; end
+      end
+      def self.top_single; end
+      module M
+        class << self
+          def open; end
+          private
+          def hidden; end
+          def shown; end
+          public :shown
+        end
+        module_function
+        def mf; end
+      end
+      class A::B < C
+        attr_accessor :v
+        private def p1; end
+        protected
+        def p2; end
+        alias p3 p2
+        K = 1
+      end
+    RUBY
+    %w[top_helper top_single].each { |n| assert_includes got, ["sing", "main", n] }
+    assert_includes got, ["sing", "M", "open"]
+    assert_includes got, ["spriv", "M", "hidden"]
+    assert_includes got, ["sing", "M", "shown"]
+    assert_includes got, ["sing", "M", "mf"]
+    assert_includes got, ["priv", "M", "mf"]
+    assert_includes got, ["const", "A", "B"]
+    assert_includes got, ["pub", "A::B", "v"]
+    assert_includes got, ["pub", "A::B", "v="]
+    assert_includes got, ["priv", "A::B", "p1"]
+    assert_includes got, ["prot", "A::B", "p2"]
+    assert_includes got, ["prot", "A::B", "p3"]
+    assert_includes got, ["const", "A::B", "K"]
+  end
+
+  # 板の gem の集合は R2P2 の build_config から出す (gembox の条件は板: vm_mruby、posix でない)
+  def test_board_gems_follow_r2p2_config
+    board = I.board_gems
+    %w[picoruby-gpio picoruby-machine picoruby-shell picoruby-littlefs picoruby-vfs mruby-task].each { |g| assert_includes board, g }
+    %w[picoruby-bin-picoruby picoruby-posix-io].each { |g| refute_includes board, g } # posix の build だけの gem
+  end
+
+  # commit した表は、今の vendor と host から作り直したものと同じ (手で書き換えない、古くならない)
+  def test_committed_tables_are_current
+    pico = FpgaConverter.default_picoruby
+    skip "host の picoruby が無い (rake fpga:picoruby)" unless File.executable?(pico)
+    r = I.build(picoruby: pico)
+    ops, uncovered = FpgaV2::VmTable.build
+    assert_equal File.read(I::OUT), I.tsv(r), "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(FpgaV2::VmTable::OUT), FpgaV2::VmTable.tsv(ops), "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(I::UNMATCHED), I.unmatched_tsv(r, arena_outside_ops: uncovered), "rake fpga:v2:inventory で作り直す"
+    require_relative "needs"
+    assert_equal File.read(FpgaV2::Needs::ASSERT_NEEDS), FpgaV2::Needs.assert_needs, "rake fpga:v2:inventory で作り直す"
+    assert_equal File.read(FpgaV2::Needs::GEMS), FpgaV2::Needs.assert_gems, "rake fpga:v2:inventory で作り直す"
+  end
+
+  # C の動的な呼び出し (計画 S2-3): 局所変数に入れたシンボルも、辿った先の mrb_funcall も拾う。例外の道と VM の中は辿らない
+  def test_dynamic_calls_of_c_methods
+    rows = File.readlines(I::OUT, chomp: true).reject { |l| l.start_with?("#") }.map { |l| l.split("\t", -1) }
+    dyn = ->(owner, name) { rows.find { |r| r[1] == owner && r[2] == name && r[0] == "pub" }&.at(6).to_s.split }
+    assert_includes dyn.("Module", "include"), "included" # mrb_mod_include: mrb_sym included = MRB_SYM(included)
+    assert_equal ["?"], dyn.("Class", "new") # Class#new は class.c の中の irep (C の関数でない)
+    assert_includes dyn.("String", "+"), "to_s"
+    refute_includes dyn.("String", "+"), "const_added" # mrb_funcall の先 (VM) は辿らない
+    assert_includes dyn.("Array", "=="), "=="
+  end
+
+  # 命令の表 (計画 S2-2): ops.h の全命令に vm.c の CASE があり、arena の restore と goto の先を辿れている
+  def test_ops_table_follows_vm_c
+    ops, uncovered = FpgaV2::VmTable.build
+    assert_equal 119, ops.size
+    assert_equal [], ops.select { |o| o[:line] == "-" }.map { |o| o[:op] }
+    by = ops.to_h { |o| [o[:op], o] }
+    refute_equal "none", by["ARRAY"][:arena] # mrb_vm_exec の ARRAY は ary を作った後に restore する
+    refute_equal "none", by["STRING"][:arena]
+    assert_equal "none", by["MOVE"][:arena]
+    assert_includes by["SEND"][:via].split, "L_SENDB" # SEND は L_SENDB へ goto する
+    assert_includes by["ARRAY"][:calls].split, "mrb_ary_new_from_values"
+    # restore の時点 (計画 S6 §5.4): CASE の本文、C の関数の後の shrink、helper が自分の ai を save した所
+    assert_equal "case", by["ARRAY"][:when]
+    assert_equal "case", by["RETURN"][:when]
+    assert_equal "cfunc", by["SEND"][:when]
+    assert_equal "funcall", by["ADDILV"][:when]
+    assert_equal %w[cfunc funcall], by["GETIDX"][:when].split
+    assert_equal "none", by["MOVE"][:when]
+    assert uncovered.all? { |fn, _| fn.is_a?(String) }
+  end
+end

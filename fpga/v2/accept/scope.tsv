@@ -1,0 +1,21 @@
+# accept (計画 S1) の範囲外の assert。file<TAB>assert の名前 (file 全部は *)<TAB>理由 (docs/fpga-v2-deviations.md の D 番号)
+# 理由は tools/fpga/v2/accept.rb の REASONS の印が assert の本文に無ければならない (accept_test が確かめる)
+env	REnv, closed env carries no slot until a scope needs one	D31
+env	REnv, a live write closes with the slot already made	D31
+env	REnv, C closure env carries no slot	D31
+env	REnv, reading special variables leaves a slotless env alone	D31
+env	REnv, the first write grows a slotless env into the slot	D31
+env	REnv, a grown env is the one scope both its procs see	D31
+env	REnv, the shutdown detach keeps the top-level container	D31
+env	REnv, MRB_ENV_SET_BIDX() evaluates its index exactly once	D31
+kernel	Kernel#respond_to? with an unimplemented method	D31
+kernel	Kernel#respond_to? skips respond_to_missing? for an unimplemented method	D31
+kernel	an unimplemented method can be overridden, aliased and undefined	D31
+kernel	an unimplemented method reports itself by name	D31
+kernel	mrb_notimplement() raises where there is no method name to report	D31
+module	Module#method_defined? with inherit false reports only the module's own methods	D31
+string	RSTRING_CSTR with a non-terminated static string	D31
+sysfail	mrb_sys_fail without SystemCallError	D31
+vformat	mrb_vformat	D31
+syntax	*	D32
+codegen	register window of calls (#3783)	D32
