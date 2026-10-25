@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--u:min(1vw,1.7778vh);--bg:#0b0e14;--panel:#121722;--line:#2a3345;--fg:#e6eaf2;--dim:#8d97ab;--acc:#ffb347;--cyan:#6fd3e8}
-html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
 body{display:flex;align-items:center;justify-content:center;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;color:var(--fg)}
 #stage{position:relative;width:calc(var(--u)*100);height:calc(var(--u)*56.25);background:radial-gradient(ellipse at 50% 40%,#131a29 0%,var(--bg) 70%);overflow:hidden;line-height:1.4}
 .abs{position:absolute}
@@ -21,6 +21,9 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Hiragin
 .hx b{font-weight:400;background:var(--acc);color:#000;border-radius:calc(var(--u)*.3);padding:0 calc(var(--u)*.2)}
 .rom{display:grid;grid-template-columns:auto 1fr auto;gap:calc(var(--u)*.1) calc(var(--u)*1);font-size:calc(var(--u)*1.45);align-items:baseline;padding:calc(var(--u)*.7) calc(var(--u)*1.2)}
 .rom .mono{font-size:calc(var(--u)*1.45)}
+.rom .rd{font-size:calc(var(--u)*1.25);line-height:1.3}
+.rom .rd .mono{font-size:calc(var(--u)*1.25)}
+#nx{position:absolute;right:calc(var(--u)*1.2);bottom:calc(var(--u)*1);font:inherit;font-size:calc(var(--u)*1.6);padding:calc(var(--u)*.5) calc(var(--u)*1.6);background:var(--acc);color:#000;border:0;border-radius:calc(var(--u)*.5);cursor:pointer}
 .t{font-size:calc(var(--u)*1.4);color:var(--dim);padding:calc(var(--u)*.3) calc(var(--u)*1)}
 .ins{font-family:"SF Mono",Menlo,monospace;font-size:calc(var(--u)*1.4);height:calc(var(--u)*1.9);line-height:calc(var(--u)*1.9);white-space:pre;padding:0 calc(var(--u)*1);border-left:calc(var(--u)*.4) solid transparent;color:#6f7a90}
 .ins.done{color:#aab3c5}
@@ -55,11 +58,11 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Hiragin
     <div class="pn" style="margin-top:calc(var(--u)*.9)">
       <div class="t" style="padding-bottom:0">FPGA内のROMに入れたもの</div>
       <div class="rom">
-        <span class="mono acc">blink.rb</span><span>自分で書いたもの</span><span class="mono">217バイト</span>
-        <span class="mono acc">kernel.rb</span><span>mrubyのmrblib</span><span class="mono">599バイト</span>
-        <span class="mono acc">gpio.rb</span><span>picoruby-gpioのmrblib</span><span class="mono">2,663バイト</span>
+        <span class="mono acc">blink.rb</span><span class="rd">上のLチカ</span><span class="mono">217バイト</span>
+        <span class="mono acc">kernel.rb</span><span class="rd">mrubyの標準ライブラリ<br><span class="mono">loop</span>を定義します</span><span class="mono">599バイト</span>
+        <span class="mono acc">gpio.rb</span><span class="rd">PicoRubyのGPIOクラス<br>ピンの向きなどを設定します</span><span class="mono">2,663バイト</span>
       </div>
-      <div style="padding:0 calc(var(--u)*1.2) calc(var(--u)*.7);font-size:calc(var(--u)*1.45)"><span class="mono">kernel.rb</span>と<span class="mono">gpio.rb</span>は元のままです</div>
+      <div style="padding:0 calc(var(--u)*1.2) calc(var(--u)*.7);font-size:calc(var(--u)*1.25)" class="dim"><span class="mono">kernel.rb</span>と<span class="mono">gpio.rb</span>は配布ファイルそのままです</div>
     </div>
   </div>
 
@@ -70,10 +73,11 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Hiragin
       <div class="pn" style="flex:1"><div class="t">irep 1(loopのブロック。繰り返します)</div><div id="b"></div></div>
     </div>
     <div class="pn" style="margin-top:calc(var(--u)*1);height:calc(var(--u)*9);padding:calc(var(--u)*.4) calc(var(--u)*1.5);position:relative;border-left:calc(var(--u)*.5) solid var(--acc)">
-      <div id="cap" style="font-size:calc(var(--u)*1.65);line-height:1.35"></div>
-      <div class="bar abs" id="bw" style="left:calc(var(--u)*1.5);right:calc(var(--u)*1.5);bottom:calc(var(--u)*.7);visibility:hidden"><i id="tb"></i></div>
+      <div id="cap" style="font-size:calc(var(--u)*1.65);line-height:1.35;margin-right:calc(var(--u)*13)"></div>
+      <div class="bar abs" id="bw" style="left:calc(var(--u)*1.5);right:calc(var(--u)*14);bottom:calc(var(--u)*1.6);visibility:hidden"><i id="tb"></i></div>
+      <button id="nx">次の命令 ▶</button>
     </div>
-    <div class="sm" style="margin-top:calc(var(--u)*.6)">命令の進行は説明用に遅くしています。実機のLEDは0.5秒ごとに点滅します</div>
+    <div class="sm" style="margin-top:calc(var(--u)*.6)">ボタンで1命令ごとに進みます。実機のLEDは0.5秒ごとに点滅します</div>
   </div>
 
   <div class="abs" style="left:calc(var(--u)*3);right:calc(var(--u)*3);bottom:calc(var(--u)*.4);border-top:1px solid var(--line);padding-top:calc(var(--u)*.6)">
@@ -119,55 +123,56 @@ function mark(el){
 }
 
 var P0=[
- {w:700,c:''},{w:700,c:''},{w:700,c:''},{w:700,c:''},
- {w:3600,c:'<span class="cy">GPIO.new</span>は<span class="cy">gpio.rb</span>の<span class="cy">initialize</span>を<br>バイトコードのまま実行します<div class="sm">initializeは_initとsetmode(set_dir、set_pull、open_drain、set_function)を呼びます</div>'},
- {w:700,c:''},{w:700,c:''},
- {w:2800,c:'<span class="cy">loop</span>は<span class="cy">kernel.rb</span>の<span class="cy">Kernel#loop</span>です<br>ブロック(irep 1)を繰り返し呼びます'}
+ {c:'定数<span class="cy">GPIO</span>を読みます'},
+ {c:'ピン番号<span class="cy">28</span>を置きます'},
+ {c:'定数<span class="cy">GPIO</span>を読みます'},
+ {c:'<span class="cy">GPIO::OUT</span>を読みます'},
+ {c:'<span class="cy">GPIO.new</span>は<span class="cy">gpio.rb</span>の<span class="cy">initialize</span>を<br>バイトコードのまま実行します<div class="sm">initializeは_initとsetmode(set_dir、set_pull、open_drain、set_function)を呼びます</div>'},
+ {c:'作ったGPIOを変数<span class="cy">led</span>に入れます'},
+ {c:'<span class="cy">loop</span>に渡すブロック(irep 1)を作ります'},
+ {c:'<span class="cy">loop</span>は<span class="cy">kernel.rb</span>の<span class="cy">Kernel#loop</span>です<br>ブロック(irep 1)を繰り返し呼びます'}
 ];
 var P1=[
- {w:400,c:'ブロックの先頭です'},{w:420,c:'外側の変数<span class="cy">led</span>を取得します'},{w:420,c:''},
- {w:1500,c:'<span class="cy">led.write(1)</span>:隣の基板のUSER_LED0が点灯します'+CIRC},
- {w:420,c:''},
+ {c:'ブロックの先頭です'},
+ {c:'外側の変数<span class="cy">led</span>を取得します'},
+ {c:'値の<span class="cy">1</span>を置きます'},
+ {c:'<span class="cy">led.write(1)</span>:隣の基板のUSER_LED0が点灯します'+CIRC},
+ {c:'待ち時間の<span class="cy">500</span>を置きます'},
  {s:1,c:'<span class="cy">sleep_ms 500</span>:実時間で500ミリ秒待ちます'+CIRC},
- {w:420,c:''},{w:420,c:''},
- {w:1500,c:'<span class="cy">led.write(0)</span>:隣の基板のUSER_LED0が消灯します'+CIRC},
- {w:420,c:''},
+ {c:'外側の変数<span class="cy">led</span>を取得します'},
+ {c:'値の<span class="cy">0</span>を置きます'},
+ {c:'<span class="cy">led.write(0)</span>:隣の基板のUSER_LED0が消灯します'+CIRC},
+ {c:'待ち時間の<span class="cy">500</span>を置きます'},
  {s:1,c:'<span class="cy">sleep_ms 500</span>:実時間で500ミリ秒待ちます'+CIRC},
- {w:500,c:'ブロックが終わり、<span class="cy">loop</span>が再び呼びます'}
+ {c:'ブロックが終わり、<span class="cy">loop</span>が再び呼びます'}
 ];
 
-async function main(){
-  setCap('実行を始めます');
-  await sleep(1000);
-  for(var i=0;i<P0.length;i++){
-    mark(A[i]);
-    setCap(P0[i].c);
-    await sleep(P0[i].w);
-  }
-  if(cur){cur.classList.remove('cur');cur.classList.add('done');cur=null}
-  setCap('<span class="cy">Kernel#loop</span>がブロックを呼びます');
-  await sleep(1000);
-  for(;;){
-    clear(B);cur=null;
-    for(var k=0;k<P1.length;k++){
-      var st=P1[k];
-      mark(B[k]);
-      setCap(st.c);
-      if(st.s){
-        bw.style.visibility='visible';
-        tb.style.transition='none';tb.style.width='0%';
-        void tb.offsetWidth;
-        tb.style.transition='width 500ms linear';tb.style.width='100%';
-        await sleep(500);
-        bw.style.visibility='hidden';
-      } else await sleep(st.w);
-    }
-  }
+var pos=0,run=0;
+function bar(){
+  var me=++run;
+  bw.style.visibility='visible';
+  tb.style.transition='none';tb.style.width='0%';
+  void tb.offsetWidth;
+  tb.style.transition='width 500ms linear';tb.style.width='100%';
+  sleep(500).then(function(){if(me===run)bw.style.visibility='hidden'});
 }
-main();
+function step(){
+  run++;bw.style.visibility='hidden';
+  if(pos<P0.length){
+    mark(A[pos]);setCap(P0[pos].c);
+  }else{
+    var k=(pos-P0.length)%P1.length;
+    if(pos===P0.length){cur.classList.remove('cur');cur.classList.add('done');cur=null}
+    if(k===0){clear(B);cur=null}
+    mark(B[k]);setCap(P1[k].c);
+    if(P1[k].s)bar();
+  }
+  pos++;
+}
+setCap('ボタンを押すとirep 0の先頭から実行します');
 
 function fs(){var d=document.documentElement;if(!document.fullscreenElement&&d.requestFullscreen)d.requestFullscreen().catch(function(){});}
-document.addEventListener('click',fs);
+$('#nx').addEventListener('click',function(){fs();step();});
 document.addEventListener('keydown',function(e){if(e.key==='f'||e.key==='F')fs();});
 })();
 </script>
