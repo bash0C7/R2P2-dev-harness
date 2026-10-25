@@ -1,0 +1,10 @@
+#!/bin/sh
+# Mac (Apple Silicon) から Quartus を呼ぶ薄い包み。Apple container の x86-64 Linux (Rosetta 2) の中で走らせる。
+# この dir を PATH に入れると rake fpga:build / fpga:rite:build が quartus_sh と quartus_cpf をここから見つける。
+# 呼ばれた名前 (quartus_sh、quartus_cpf …) の道具を、今の dir を /work に載せて実行する。
+# 用意の仕方は docs/spec.md の PERIDOT-Air の節 (image r2p2-quartus と volume quartus)。
+exec container run --rm --arch amd64 --rosetta \
+  -m "${FPGA_QUARTUS_MEM:-8G}" -c "${FPGA_QUARTUS_CPUS:-4}" \
+  -v quartus:/opt/quartus -v "$PWD":/work -w /work \
+  "${FPGA_QUARTUS_IMAGE:-r2p2-quartus}" \
+  "/opt/quartus/quartus/bin/$(basename "$0")" "$@"

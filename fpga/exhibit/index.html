@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>mrubyのバイトコードをそのまま実行するCPU</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--u:min(1vw,1.7778vh);--bg:#0b0e14;--panel:#121722;--line:#2a3345;--fg:#e6eaf2;--dim:#8d97ab;--acc:#ffb347;--cyan:#6fd3e8}
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;color:var(--fg)}
+#stage{position:relative;width:calc(var(--u)*100);height:calc(var(--u)*56.25);background:radial-gradient(ellipse at 50% 40%,#131a29 0%,var(--bg) 70%);overflow:hidden;line-height:1.4}
+.abs{position:absolute}
+.mono{font-family:"SF Mono",Menlo,monospace}
+.acc{color:var(--acc)}
+.cy{color:var(--cyan)}
+.dim{color:var(--dim)}
+.pn{background:var(--panel);border:1px solid var(--line);border-radius:calc(var(--u)*.6);box-sizing:border-box}
+.src{font-family:"SF Mono",Menlo,monospace;font-size:calc(var(--u)*1.55);line-height:1.3;white-space:pre;padding:calc(var(--u)*.7) calc(var(--u)*1.2)}
+.src span{color:var(--dim);display:inline-block;width:calc(var(--u)*2.2)}
+.hx{font-family:"SF Mono",Menlo,monospace;font-size:calc(var(--u)*1.55);line-height:1.35;white-space:pre;padding:calc(var(--u)*.6) calc(var(--u)*1.2)}
+.hx b{font-weight:400;background:var(--acc);color:#000;border-radius:calc(var(--u)*.3);padding:0 calc(var(--u)*.2)}
+.rom{display:grid;grid-template-columns:auto 1fr auto;gap:calc(var(--u)*.1) calc(var(--u)*1);font-size:calc(var(--u)*1.45);align-items:baseline;padding:calc(var(--u)*.7) calc(var(--u)*1.2)}
+.rom .mono{font-size:calc(var(--u)*1.45)}
+.rom .rd{font-size:calc(var(--u)*1.25);line-height:1.3}
+.rom .rd .mono{font-size:calc(var(--u)*1.25)}
+#nx{position:absolute;right:calc(var(--u)*1.2);bottom:calc(var(--u)*1);font:inherit;font-size:calc(var(--u)*1.6);padding:calc(var(--u)*.5) calc(var(--u)*1.6);background:var(--acc);color:#000;border:0;border-radius:calc(var(--u)*.5);cursor:pointer}
+.t{font-size:calc(var(--u)*1.4);color:var(--dim);padding:calc(var(--u)*.3) calc(var(--u)*1)}
+.ins{font-family:"SF Mono",Menlo,monospace;font-size:calc(var(--u)*1.4);height:calc(var(--u)*1.9);line-height:calc(var(--u)*1.9);white-space:pre;padding:0 calc(var(--u)*1);border-left:calc(var(--u)*.4) solid transparent;color:#6f7a90}
+.ins.done{color:#aab3c5}
+.ins.cur{background:#2e2517;color:#fff;border-left-color:var(--acc)}
+.sm{font-size:calc(var(--u)*1.35);color:var(--dim)}
+.bar{height:calc(var(--u)*.6);background:#1b2233;border-radius:calc(var(--u)*.3);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:#4b7f8c}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="abs" style="left:calc(var(--u)*3);top:calc(var(--u)*1);font-size:calc(var(--u)*3.4);font-weight:700;line-height:1.3">mrubyのバイトコードをそのまま実行するCPU</div>
+  <div class="abs dim" style="left:calc(var(--u)*3);top:calc(var(--u)*5.3);font-size:calc(var(--u)*1.7)">FPGA上に作った回路が、隣の基板のLEDを点滅させています</div>
+  <div class="abs mono acc" style="right:calc(var(--u)*3);top:calc(var(--u)*5.5);font-size:calc(var(--u)*1.5)">github.com/bash0C7/R2P2-dev-harness</div>
+
+  <div class="abs" style="left:calc(var(--u)*3);top:calc(var(--u)*8.2);width:calc(var(--u)*38)">
+    <div class="pn">
+      <div class="src"><span>1</span>led = GPIO.new(28, GPIO::OUT)
+<span>2</span>loop do
+<span>3</span>  led.write(1)
+<span>4</span>  sleep_ms 500
+<span>5</span>  led.write(0)
+<span>6</span>  sleep_ms 500
+<span>7</span>end</div>
+    </div>
+    <div style="margin:calc(var(--u)*.9) 0 calc(var(--u)*.5);font-size:calc(var(--u)*1.5)"><span class="mono acc">mrbc</span>で変換:<span class="mono acc">blink.mrb</span> 217バイト(RITE0400形式)</div>
+    <div class="pn" style="display:flex;align-items:center;justify-content:space-between;padding-right:calc(var(--u)*1.2)">
+      <div class="hx"><b>52 49 54 45 30 34 30 30</b>
+00 00 00 d9 48 53 4d 4b</div>
+      <div class="mono acc" style="font-size:calc(var(--u)*1.6)">RITE0400</div>
+    </div>
+    <div class="pn" style="margin-top:calc(var(--u)*.9)">
+      <div class="t" style="padding-bottom:0">FPGA内のROMに入れたもの</div>
+      <div class="rom">
+        <span class="mono acc">blink.rb</span><span class="rd">上のLチカ</span><span class="mono">217バイト</span>
+        <span class="mono acc">kernel.rb</span><span class="rd">mrubyの標準ライブラリ<br><span class="mono">loop</span>を定義します</span><span class="mono">599バイト</span>
+        <span class="mono acc">gpio.rb</span><span class="rd">PicoRubyのGPIOクラス<br>ピンの向きなどを設定します</span><span class="mono">2,663バイト</span>
+      </div>
+      <div style="padding:0 calc(var(--u)*1.2) calc(var(--u)*.7);font-size:calc(var(--u)*1.25)" class="dim"><span class="mono">kernel.rb</span>と<span class="mono">gpio.rb</span>は配布ファイルそのままです</div>
+    </div>
+  </div>
+
+  <div class="abs" style="left:calc(var(--u)*43.5);top:calc(var(--u)*8.2);width:calc(var(--u)*53.5)">
+    <div class="acc" style="font-size:calc(var(--u)*1.8);margin-bottom:calc(var(--u)*.3)">CPUはmrubyのバイトコードをそのまま読んで実行します</div>
+    <div style="display:flex;gap:calc(var(--u)*1.2)">
+      <div class="pn" style="flex:none;width:calc(var(--u)*24.8)"><div class="t">irep 0(1回だけ通ります)</div><div id="a"></div></div>
+      <div class="pn" style="flex:1"><div class="t">irep 1(loopのブロック。繰り返します)</div><div id="b"></div></div>
+    </div>
+    <div class="pn" style="margin-top:calc(var(--u)*1);height:calc(var(--u)*9);padding:calc(var(--u)*.4) calc(var(--u)*1.5);position:relative;border-left:calc(var(--u)*.5) solid var(--acc)">
+      <div id="cap" style="font-size:calc(var(--u)*1.65);line-height:1.35;margin-right:calc(var(--u)*13)"></div>
+      <div class="bar abs" id="bw" style="left:calc(var(--u)*1.5);right:calc(var(--u)*14);bottom:calc(var(--u)*1.6);visibility:hidden"><i id="tb"></i></div>
+      <button id="nx">次の命令 ▶</button>
+    </div>
+    <div class="sm" style="margin-top:calc(var(--u)*.6)">ボタンで1命令ごとに進みます。実機のLEDは0.5秒ごとに点滅します</div>
+  </div>
+
+  <div class="abs" style="left:calc(var(--u)*3);right:calc(var(--u)*3);bottom:calc(var(--u)*.4);border-top:1px solid var(--line);padding-top:calc(var(--u)*.6)">
+    <div style="font-size:calc(var(--u)*1.6)"><b>PERIDOT-Air (Cyclone IV E EP4CE6)</b><span class="dim">　</span><span class="mono acc">EP4CE6E22C8N</span><span class="dim">　</span>4,792 / 6,272 LE(76%)<span class="dim">　</span>50MHz<span class="dim">　</span>SystemVerilog</div>
+    <div style="margin-top:calc(var(--u)*.1);font-size:calc(var(--u)*1.33)">電源を入れると、FPGAは基板のフラッシュから回路を読み込みます。バイトコードのROMも回路内にあり、この基板はUSB電源だけで動いています</div>
+  </div>
+</div>
+<script>
+(function(){
+var $=function(s){return document.querySelector(s)};
+var sleep=function(ms){return new Promise(function(r){setTimeout(r,ms)})};
+
+var IREP0=[
+ ['000','GETCONST','R2 GPIO'],['003','LOADI8','R3 28'],['006','GETCONST','R4 GPIO'],['009','GETMCNST','R4 (R4)::OUT'],
+ ['012','SEND','R2 :new n=2'],['016','MOVE','R1 R2 ; R1:led'],['019','BLOCK','R3 I[0]'],['022','SSENDB','R2 :loop n=0'],
+ ['026','RETURN','R2'],['028','STOP','']
+];
+var IREP1=[
+ ['000','ENTER','0:0:0:0:0:0:0:0'],['004','GETUPVAR','R2 1 0'],['008','LOADI_1','R3 (1)'],['010','SEND','R2 :write n=1'],
+ ['014','LOADI16','R3 500'],['018','SSEND','R2 :sleep_ms n=1'],['022','GETUPVAR','R2 1 0'],['026','LOADI_0','R3 (0)'],
+ ['028','SEND','R2 :write n=1'],['032','LOADI16','R3 500'],['036','SSEND','R2 :sleep_ms n=1'],['040','RETURN','R2']
+];
+function pad(s,n){while(s.length<n)s+=' ';return s}
+function build(id,arr){
+  var box=$('#'+id),els=[];
+  for(var i=0;i<arr.length;i++){
+    var d=document.createElement('div');
+    d.className='ins';
+    d.textContent=arr[i][0]+' '+pad(arr[i][1],8)+' '+arr[i][2];
+    box.appendChild(d);els.push(d);
+  }
+  return els;
+}
+var A=build('a',IREP0),B=build('b',IREP1);
+var cap=$('#cap'),bw=$('#bw'),tb=$('#tb');
+var CIRC='<div class="sm">回路が直接担う部分(PicoRubyではCで書かれている部分)</div>';
+function setCap(h){cap.innerHTML=h}
+function clear(els){for(var i=0;i<els.length;i++)els[i].className='ins'}
+var cur=null;
+function mark(el){
+  if(cur){cur.classList.remove('cur');cur.classList.add('done')}
+  el.classList.add('cur');cur=el;
+}
+
+var P0=[
+ {c:'定数<span class="cy">GPIO</span>を読みます'},
+ {c:'ピン番号<span class="cy">28</span>を置きます'},
+ {c:'定数<span class="cy">GPIO</span>を読みます'},
+ {c:'<span class="cy">GPIO::OUT</span>を読みます'},
+ {c:'<span class="cy">GPIO.new</span>は<span class="cy">gpio.rb</span>の<span class="cy">initialize</span>を<br>バイトコードのまま実行します<div class="sm">initializeは_initとsetmode(set_dir、set_pull、open_drain、set_function)を呼びます</div>'},
+ {c:'作ったGPIOを変数<span class="cy">led</span>に入れます'},
+ {c:'<span class="cy">loop</span>に渡すブロック(irep 1)を作ります'},
+ {c:'<span class="cy">loop</span>は<span class="cy">kernel.rb</span>の<span class="cy">Kernel#loop</span>です<br>ブロック(irep 1)を繰り返し呼びます'}
+];
+var P1=[
+ {c:'ブロックの先頭です'},
+ {c:'外側の変数<span class="cy">led</span>を取得します'},
+ {c:'値の<span class="cy">1</span>を置きます'},
+ {c:'<span class="cy">led.write(1)</span>:隣の基板のUSER_LED0が点灯します'+CIRC},
+ {c:'待ち時間の<span class="cy">500</span>を置きます'},
+ {s:1,c:'<span class="cy">sleep_ms 500</span>:実時間で500ミリ秒待ちます'+CIRC},
+ {c:'外側の変数<span class="cy">led</span>を取得します'},
+ {c:'値の<span class="cy">0</span>を置きます'},
+ {c:'<span class="cy">led.write(0)</span>:隣の基板のUSER_LED0が消灯します'+CIRC},
+ {c:'待ち時間の<span class="cy">500</span>を置きます'},
+ {s:1,c:'<span class="cy">sleep_ms 500</span>:実時間で500ミリ秒待ちます'+CIRC},
+ {c:'ブロックが終わり、<span class="cy">loop</span>が再び呼びます'}
+];
+
+var pos=0,run=0;
+function bar(){
+  var me=++run;
+  bw.style.visibility='visible';
+  tb.style.transition='none';tb.style.width='0%';
+  void tb.offsetWidth;
+  tb.style.transition='width 500ms linear';tb.style.width='100%';
+  sleep(500).then(function(){if(me===run)bw.style.visibility='hidden'});
+}
+function step(){
+  run++;bw.style.visibility='hidden';
+  if(pos<P0.length){
+    mark(A[pos]);setCap(P0[pos].c);
+  }else{
+    var k=(pos-P0.length)%P1.length;
+    if(pos===P0.length){cur.classList.remove('cur');cur.classList.add('done');cur=null}
+    if(k===0){clear(B);cur=null}
+    mark(B[k]);setCap(P1[k].c);
+    if(P1[k].s)bar();
+  }
+  pos++;
+}
+setCap('ボタンを押すとirep 0の先頭から実行します');
+
+function fs(){var d=document.documentElement;if(!document.fullscreenElement&&d.requestFullscreen)d.requestFullscreen().catch(function(){});}
+$('#nx').addEventListener('click',function(){fs();step();});
+document.addEventListener('keydown',function(e){if(e.key==='f'||e.key==='F')fs();});
+})();
+</script>
+</body>
+</html>

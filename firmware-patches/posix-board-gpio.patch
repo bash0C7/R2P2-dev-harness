@@ -1,0 +1,131 @@
+diff --git a/mrbgems/picoruby-gpio/ports/posix/gpio.c b/mrbgems/picoruby-gpio/ports/posix/gpio.c
+--- a/mrbgems/picoruby-gpio/ports/posix/gpio.c
++++ b/mrbgems/picoruby-gpio/ports/posix/gpio.c
+@@ -1,5 +1,47 @@
+ #include "../../include/gpio.h"
+ 
++/*
++ * Board model GPIO (R2P2-dev-harness firmware-patches/posix-board-gpio.patch,
++ * the same model as the FPGA reference's tools/fpga/v2/board.rb).
++ *
++ * 32 pins with the registers OUT, DIR, PULL_UP and PULL_DOWN (bit n = pin n).
++ * A pin reads its latch when it is an output, 0 when it is an input pulled
++ * down and 1 otherwise. There is no pin 32 or above (writes do nothing,
++ * reads give 1). When the board clock logs (FPGA_BOARD_UNTIL_MS,
++ * posix-board-clock.patch in mruby-task), every change of a pin's level
++ * goes to stderr as `pin <ms> <pin> <level>`.
++ */
++#include <stdio.h>
++
++#define BOARD_PINS 32
++
++uint32_t fpga_board_ms(void);
++int fpga_board_logging(void);
++
++static uint32_t board_out = 0;
++static uint32_t board_dir = 0;
++static uint32_t board_pull_up = 0;
++static uint32_t board_pull_down = 0;
++
++static uint32_t
++board_levels(void)
++{
++  return (board_dir & board_out) | (~board_dir & ~board_pull_down);
++}
++
++static void
++board_log(uint32_t before)
++{
++  uint32_t after = board_levels();
++  int pin;
++  if (!fpga_board_logging()) return;
++  for (pin = 0; pin < BOARD_PINS; pin++) {
++    if (((before ^ after) >> pin) & 1) {
++      fprintf(stderr, "pin %u %d %u\n", (unsigned)fpga_board_ms(), pin, (unsigned)((after >> pin) & 1));
++    }
++  }
++}
++
+ int
+ GPIO_pin_num_from_char(const uint8_t *str)
+ {
+@@ -10,11 +52,31 @@
+ void
+ GPIO_init(uint8_t pin)
+ {
++  uint32_t before = board_levels();
++  if (pin >= BOARD_PINS) return;
++  /* gpio_init: input, latch 0 */
++  board_dir &= ~(1u << pin);
++  board_out &= ~(1u << pin);
++  board_log(before);
+ }
+ 
+ void
+ GPIO_set_dir(uint8_t pin, uint8_t dir)
+ {
++  uint32_t before = board_levels();
++  if (pin >= BOARD_PINS) return;
++  switch (dir) {
++    case (IN):
++      board_dir &= ~(1u << pin);
++      break;
++    case (OUT):
++      board_dir |= 1u << pin;
++      break;
++    case (HIGH_Z):
++      /* HIGH_Z is not supported */
++      break;
++  }
++  board_log(before);
+ }
+ 
+ void
+@@ -26,25 +88,46 @@
+ void
+ GPIO_pull_up(uint8_t pin)
+ {
++  uint32_t before = board_levels();
++  if (pin >= BOARD_PINS) return;
++  board_pull_up |= 1u << pin;
++  board_pull_down &= ~(1u << pin);
++  board_log(before);
+ }
+ 
+ void
+ GPIO_pull_down(uint8_t pin)
+ {
++  uint32_t before = board_levels();
++  if (pin >= BOARD_PINS) return;
++  board_pull_down |= 1u << pin;
++  board_pull_up &= ~(1u << pin);
++  board_log(before);
+ }
+ 
+ int
+ GPIO_read(uint8_t pin)
+ {
+-  return 1;
++  if (pin >= BOARD_PINS) return 1;
++  return (board_levels() >> pin) & 1;
+ }
+ 
+ void
+ GPIO_write(uint8_t pin, uint8_t val)
+ {
++  uint32_t before = board_levels();
++  if (pin >= BOARD_PINS) return;
++  if (val == 1) {
++    board_out |= 1u << pin;
++  }
++  else {
++    board_out &= ~(1u << pin);
++  }
++  board_log(before);
+ }
+ 
+ void
+ GPIO_set_function(uint8_t pin, uint8_t function)
+ {
++  /* The board model has no other functions */
+ }
