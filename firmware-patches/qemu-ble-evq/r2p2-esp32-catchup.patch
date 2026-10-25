@@ -1,0 +1,49 @@
+diff --git a/components/picoruby-esp32/CMakeLists.txt b/components/picoruby-esp32/CMakeLists.txt
+index 5e98a24..ec07eab 100644
+--- a/components/picoruby-esp32/CMakeLists.txt
++++ b/components/picoruby-esp32/CMakeLists.txt
+@@ -40,6 +40,9 @@ else()
+     -DMRBC_USE_FLOAT=2
+     -DMRC_CUSTOM_ALLOC
+     -DPICORB_VM_MRUBYC
++    # Must match xtensa-esp-femtoruby.rb: hal.h picks the mruby/c scheduler-service
++    # API by it, and the BLE pump registers through that API.
++    -DMRBC_TASK_SCHEDULER_HOOK
+   )
+   set(ADDITIONAL_SRCS "")
+ endif()
+@@ -58,6 +61,7 @@ if(CONFIG_BT_NIMBLE_ENABLED)
+     ${COMPONENT_DIR}/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_peripheral.c
+     ${COMPONENT_DIR}/picoruby/mrbgems/picoruby-ble/ports/esp32/ble_central.c
+     ${COMPONENT_DIR}/picoruby/mrbgems/picoruby-ble/ports/esp32/nimble_owner.c
++    ${COMPONENT_DIR}/picoruby/mrbgems/picoruby-ble/ports/esp32/pump_${PICORB_VM}.c
+   )
+   set(BLE_INCLUDE_DIRS
+     ${COMPONENT_DIR}/picoruby/mrbgems/picoruby-ble/ports/esp32
+diff --git a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
+index bd5b994..dcaadc1 100644
+--- a/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
++++ b/components/picoruby-esp32/build_config/xtensa-esp-femtoruby.rb
+@@ -20,7 +20,9 @@ MRuby::CrossBuild.new("esp32-femtoruby") do |conf|
+   conf.cc.defines << "PICORB_PLATFORM_ESP32"
+   conf.cc.defines << "PICORB_INT64"
+   conf.cc.defines << "NDEBUG"
++  conf.cc.defines << "MRBC_TASK_SCHEDULER_HOOK"
+   conf.cc.defines << "USE_WIFI" if ENV['USE_WIFI']
++  conf.cc.defines << "MAX_SYMBOLS_COUNT=2000" if ENV['USE_BLE']
+ 
+   conf.femtoruby(alloc_libc: false)
+   conf.gembox 'minimum'
+@@ -41,6 +43,12 @@ MRuby::CrossBuild.new("esp32-femtoruby") do |conf|
+   conf.gem core: 'picoruby-pwm'
+   conf.gem core: 'picoruby-irq'
+ 
++  # BLE (CMake sets USE_BLE when CONFIG_BT_NIMBLE_ENABLED is on)
++  if ENV['USE_BLE']
++    conf.gem core: 'picoruby-ble'
++    conf.gem core: 'picoruby-ble-uart'
++  end
++
+   # others
+   conf.gem core: 'picoruby-esp32'
+   conf.gem core: 'picoruby-rmt'
