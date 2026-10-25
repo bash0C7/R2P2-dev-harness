@@ -90,23 +90,56 @@ rake esp32:reboot                         # RTS パルスで reset して shell 
 - ESP32 の罠は [docs/spec.md](docs/spec.md) §9。転送後によく出る問題 (`/home/app.mrb` が残って転送が失敗する等) は [docs/faq.md](docs/faq.md)
 
 FPGA (mruby のバイトコードを直接実行する CPU、issue #4)。`.mrb` を ROM にし、SystemVerilog のコアで走らせ、
-Ruby の参照インタプリタと突き合わせる。クラスとメソッド (実行時にメソッド表を引く)、ブロック (`yield` / `proc` / `each` / `map` ...)、配列 (GC 付き)、
-`sleep_ms` まで動く (シミュレーション上)。`vendor/picoruby` は要らない。
-macOS は brew、Linux は apt-get で Verilator と Icarus Verilog を入れる:
+Rubyの参照インタプリタと突き合わせる。`fpga:test`は`vendor/picoruby`無しで回る。
+macOSはbrew、Linuxはapt-getでVerilatorとIcarus Verilogを入れる。
 
 ```sh
-rake fpga:setup                        # 足りないシミュレータを入れる (brew / apt-get)。最後に doctor を回す
-rake fpga:test                         # Ruby の道具のテスト + 全テストベンチ (Verilator と Icarus) + 参照との突き合わせ
-rake fpga:emu[fpga/corpus/blink_sleep.mrb] # ボードエミュレーター (既定 125MHz、[src,ms,CE_DIV,MHz] で変更)。LED とボタンの変化を実時間で表示
-rake fpga:run[fpga/corpus/counter.mrb] # 1本をシミュレーション上のコアで走らせ、$LED などへの書き込みを表示
-rake fpga:fuzz[1000,2]                 # 差分ファズ: ランダムな ROM を参照インタプリタとコアで走らせ、トレースを全行比べる
-rake fpga:rom[fpga/corpus/blink.mrb]   # PicoRuby で書いた変換器で ROM イメージと命令一覧を作るだけ
-rake fpga:sim[mrb_core_tb]             # テストベンチ1本を Verilator で。波形は build/fpga/mrb_core_tb.fst
-rake fpga:build[fpga/corpus/blink.mrb] # PERIDOT-Air 向けに Quartus で合成 (quartus_sh か FPGA_QUARTUS_HOST)。実機では未確認
-rake fpga:flash                        # openFPGALoader + USB-Blaster で書く (fpga:rite:build のR3は実機で確認)
+rake fpga:setup                          # 足りないシミュレータを入れる (brew / apt-get)。最後にdoctorを回す
+rake fpga:doctor                         # シミュレータの有無と版
+rake fpga:test                           # Rubyの道具のテスト + 全テストベンチ (VerilatorとIcarus) + 参照との突き合わせ
+rake fpga:emu[fpga/corpus/blink_sleep.mrb]  # ボードエミュレーター (既定125MHz、[src,ms,CE_DIV,MHz] で変更)。LEDとボタンの変化を実時間で表示
+rake fpga:run[fpga/corpus/counter.mrb]   # 1本をシミュレーション上のコアで走らせ、$LEDなどへの書き込みを表示
+rake fpga:fuzz[1000,2]                   # 差分ファズ: ランダムなROMを参照インタプリタとコアで走らせ、トレースを全行比べる
+rake fpga:rom[fpga/corpus/blink.mrb]     # PicoRubyで書いた変換器でROMイメージと命令一覧を作る
+rake fpga:sim[mrb_core_tb]               # テストベンチ1本をVerilatorで。波形はbuild/fpga/mrb_core_tb.fst
+rake fpga:rite:hex                       # fpga/rite/*.hex (ROM) と *.pins (ピンの列の期待値) を作り直す
+rake fpga:rite:check                     # fpga/rite/*.rbをrite_core (Verilator) とhostのpicorubyで走らせ、ピンの変化の列を比べる
+rake fpga:rite:build                     # rite_coreをPERIDOT-Air向けにQuartusで合成し、.svfと.rbfを作る
+rake fpga:build[fpga/corpus/blink.mrb]   # v1のtopをPERIDOT-Air向けにQuartusで合成する
+rake fpga:flash                          # 最後の合成の.svfをopenFPGALoaderでSRAMに書く (電源を切ると消える)
+rake fpga:detect                         # JTAGの鎖と設定用フラッシュを見る
+rake fpga:flash:backup[tmp/x.bin]        # 設定用フラッシュ2 MiBを2回吸い出し、一致を確かめて保存する (既定はtmp/epcq-backup/)
+rake fpga:flash:epcq                     # 最後の合成の.rbfを設定用フラッシュに書き、吸い出して全バイトを照合する
+rake fpga:synth[counter8]                # yosysで資源を見積もる
 ```
 
-`fpga:rom` / `fpga:run` / `fpga:build` は変換器を PicoRuby の host VM で走らせるので、`rake setup` と `rake test:host` が要る。波形は `surfer build/fpga/<tb>.fst` で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)、
+`fpga:rom` / `fpga:run` / `fpga:build`は変換器をPicoRubyのhost VMで走らせるので、`rake setup`と`rake test:host`が要る。
+波形は`surfer build/fpga/<tb>.fst`で開く。対応命令は [docs/fpga-opcodes.md](docs/fpga-opcodes.md)。
+
+Quartus (Apple SiliconのMac) はApple containerのx86-64 Linuxで走らせる。
+
+```sh
+container build --arch amd64 -t r2p2-quartus tools/fpga/container
+tools/fpga/container/install.sh <dir>    # <dir> にQuartusLiteSetup-*-linux.runとcyclone-*.qdzの2つを置く (Alteraの配布から人が落とす)
+PATH="$PWD/tools/fpga/container:$PATH" rake fpga:rite:build
+```
+
+`tools/fpga/container`をPATHに足すと、`quartus_sh`と`quartus_cpf`の包みがcontainerを呼ぶ。
+
+JTAGはmicro-Bとは別に、USB-Blasterと板のJ2 (6P) を7本のジャンパー線でつなぐ。J2は ▷ 印の1番を左上にして、左列が上から1 TDO / 3 TCK / 5 TMS、右列が上から2 3.3V / 4 TDI / 6 GND。
+
+| USB-Blaster 10P | 板 |
+|---|---|
+| 1 TCK | J2-3 |
+| 3 TDO | J2-1 |
+| 5 TMS | J2-5 |
+| 9 TDI | J2-4 |
+| 4 VCC | 電源ピンソケットの3.3V |
+| 2 GND | 電源ピンソケットのGND |
+| 10 GND | J2-6 (GND) |
+
+展示用の画面は`fpga/exhibit/index.html`。Chromeで開き、`f`で全画面にする。1画面にソースコード、バイトコード、ROM、板の数字を並べ、「次の命令」ボタンで1命令ずつ実行位置と説明を進める。
+
 約束事と罠は [docs/spec.md](docs/spec.md) §10。
 
 board 無しで回せるツールのテスト: `rake test:rp2040` (`tools/common` と `tools/pico2w`)、

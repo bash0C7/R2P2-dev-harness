@@ -604,11 +604,14 @@ fpga/corpus/*.rb --mrbc--> .mrb --mrb2rom.rb (PicoRuby)--> ROM (48bit/命令, $r
 | `rake fpga:run[src,max]` | 1本をシミュレーションで走らせ、I/O を表示する。トレースと波形を `build/fpga/rom/` に残す |
 | `rake fpga:corpus` / `fpga:corpus:check` | コーパスの `.mrb` `.dump` `.hex` `.lst` と `docs/fpga-opcodes.md` を mrbc と PicoRuby の変換器で作り直す / 最新かを見る |
 | `rake fpga:gen` | `fpga/rtl/mrb_pkg.sv` を `tools/fpga/isa.rb` と `io_map.rb` から作り直す |
-| `rake fpga:build[src,ce_div]` | PERIDOT-Air 向けに Quartus で合成し、書き込み用 `.svf` を作る (下記)。**実機では未確認** |
-| `rake fpga:flash` | 最後の `fpga:build` / `fpga:rite:build` を openFPGALoader で SRAM に書く。`fpga:rite:build`の`.svf`で実機に書けることを確認した (2026-10-11、下記) |
+| `rake fpga:build[src,ce_div]` | v1のtopをPERIDOT-Air向けにQuartusで合成し、書き込み用`.svf`と`.rbf`を作る (下記)。実機では未確認 |
+| `rake fpga:flash` | 最後の`fpga:build` / `fpga:rite:build`の`.svf`をopenFPGALoaderでSRAMに書く (電源を切ると消える)。`fpga:rite:build`の`.svf`で実機に書けた (2026-10-11、2026-10-25、下記) |
+| `rake fpga:detect` | JTAGの鎖 (IDCODE) と設定用フラッシュ (JEDEC ID) をopenFPGALoaderで見る。`--detect -f --skip-reset`でbridgeを載せて残す |
+| `rake fpga:flash:backup[path]` | 設定用フラッシュの2 MiBを2回吸い出して一致を確かめ、`path` (既定`tmp/epcq-backup/peridot_air-epcq-<日時>.bin`) に残す |
+| `rake fpga:flash:epcq` | 最後の`fpga:build` / `fpga:rite:build`の`.rbf`を設定用フラッシュに書き、吸い出して全バイトを照合する。micro-Bを挿し直すとそこから起動する |
 | `rake fpga:rite:check[ms]` | mruby のバイトコードを直接実行する回路 (`fpga/rtl/rite_core.sv`、反復 R3: Lチカ (loop 版) と mruby の kernel.rb、picoruby-gpio の gpio.rb) で `fpga/rite/*.rb` を Verilator で走らせ、host の板のモデル入りの picoruby とピンの変化の列を比べる |
 | `rake fpga:rite:hex` | `fpga/rtl/rite_image_pkg.sv` (起動の像の番号) と `fpga/rite/*.hex` (ROM: 起動の像、mrblib の `kernel.rb` と `gpio.rb`、`.rb` を mrbc した `.mrb` を並べたもの) と `*.pins` (host のピンの列、`rite_core_tb` の期待値) を作り直す |
-| `rake fpga:rite:build[src]` | `rite_core` を PERIDOT-Air 向けに Quartus で合成する (USER_LED[0] = pin 28、USER_LED[1] = error)。書き込みは `rake fpga:flash`。**実機で確認した** (2026-10-11、R3のLチカ、下記) |
+| `rake fpga:rite:build[src]` | `rite_core`をPERIDOT-Air向けにQuartusで合成する (USER_LED[0] = pin 28、USER_LED[1] = error)。`.svf`と`.rbf`を作る。SRAMへの書き込みは`rake fpga:flash`、設定用フラッシュへは`rake fpga:flash:epcq`。R3のLチカを実機で確認した (SRAMは2026-10-11、設定用フラッシュからの起動は2026-10-25、下記)。Quartusは`PATH="$PWD/tools/fpga/container:$PATH"`を付けて呼ぶ |
 
 **並べて回す (`FPGA_JOBS`)。** `test:fpga` (ファイルごと)、`fpga:corpus` / `corpus:check` (1 本ごとの mrbc と変換器)、`fpga:tb` ((tb, シミュレーター) ごと)、`fpga:check` / `fpga:gap` / `fpga:emu:check` (1 本ごと)、`fpga:fuzz` (1 本ごと。program は親が seed の rng の順に作るので、seed ごとの program の列と要約は1本ずつ回した時と同じ) は CPU の数だけ並べて回す (`tools/fpga/parallel.rb`)。本数は `FPGA_JOBS` (既定は CPU の数、1 ならその場で順に)。出力は1本ずつ回した時と同じ順にまとめて出す。シミュレーションの実行ファイル (mrb_run_tb、board_emu) は並べる前に親が build する。1つの rake の中で並べるので、同じ worktree で rake の check / gap / fuzz を2つ同時に走らせない (build の dir を取り合う) は変わらない
 
@@ -1271,10 +1274,12 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 
 ### PERIDOT-Air (#10 #11)
 
-**実機で確かめたのは`rite_core`のR3 (`rake fpga:rite:build` → `rake fpga:flash`) だけ (2026-10-11、userが目視)。v1のtop (`peridot_air_top.sv`、`rake fpga:build`) は実機では未確認で、以下のv1の記述はシミュレーションまで。**
+**実機で確かめたのは`rite_core`のR3 (`rake fpga:rite:build`) だけ。SRAMへ`rake fpga:flash`で書いたもの (2026-10-11) と、設定用フラッシュへ書いたもの (2026-10-25) を、どちらもuserが目視した。v1のtop (`peridot_air_top.sv`、`rake fpga:build`) は実機では未確認で、以下のv1の記述はシミュレーションまで。**
 
 - **実機で見たもの (R3、`fpga/rite/blink.rb`):** USER_LED[0]が約0.5秒ごとに点滅し、USER_LED[1] (error) は消えたまま。USER_LEDはactive high (`peridot_air_rite_top.sv`の`LED_ACTIVE_LOW = 0`で合う)。
-  SRAMへの書き込みなので電源を切ると消える。確かめ直す時は下の「Quartus」「JTAGの配線」の通りに焼いて目で見る
+  SRAMへの書き込みは電源を切ると消える。確かめ直す時は下の「Quartus」「JTAGの配線」の通りに焼いて目で見る
+- **LEDが全部点く状態 (2026-10-25):** 電源投入直後と、openFPGALoaderのbridgeを載せた状態では、USER_LEDが全部点く。回路がLEDを駆動していない状態で、`rite_core`が動いている印ではない。
+  `.rbf`をSRAMに載せる (`openFPGALoader -m x.rbf`) と構成されずLEDが全点灯だった。ただしこれは7本目のGNDを足す前の1回だけで、足した後は試していない (未確定)
 - **Quartus (Apple SiliconのMac):** Apple container (x86-64のUbuntu 22.04 + `--rosetta`) にQuartus Prime Lite 23.1std.1を入れる。
   `container build --arch amd64 -t r2p2-quartus tools/fpga/container` → Alteraの配布 (ログインが要るので人が落とす) の`QuartusLiteSetup-*-linux.run`と`cyclone-*.qdz`を1つのdirに置き
   `tools/fpga/container/install.sh <dir>` (volume `quartus`の`/opt/quartus`、9.1 GB)。`tools/fpga/container`をPATHに足すと`quartus_sh` / `quartus_cpf`の包みが効く。
@@ -1282,7 +1287,9 @@ L <step>                    命令数の上限 (fpga:check は 20000)
 - **R3のfit (23.1std.1):** 4,792 LE / 6,272 (76%)、レジスタ1,959、メモリ49,088 bit、ピン5。50 MHzのsetup slack 3.539 ns、hold slack 0.326 ns
 - **JTAGの配線:** micro-Bは給電だけ。JTAGは板の6P (J2): ▷印 (1番) を左上にして、左列が上からTDO / TCK / TMS、右列が上から3.3V / TDI / GND (回路図rev1.1r)。
   USB-Blasterの10P (1 TCK、2 GND、3 TDO、4 VCC、5 TMS、9 TDI) からジャンパー線で直結すると`openFPGALoader -c usb-blaster --detect`がIDCODE `0x020f10dd`を返し、書ける。
-  VCCとGNDは電源のピンソケットの`3.3V`と`GND`から取ってよい。同梱のJTAG-CONNと10Pのリボンケーブルを通した時はIDCODEが全部0だった (どちらが原因かは未確認)
+  VCCとGNDは電源のピンソケットの`3.3V`と`GND`から取ってよい。同梱のJTAG-CONNと10Pのリボンケーブルを通した時はIDCODEが全部0だった (2026-10-11、未切り分けのまま)
+- **7本目のGND (2026-10-25):** 上の6本 (blasterの1 TCK→J2-3、3 TDO→J2-1、5 TMS→J2-5、9 TDI→J2-4、4 VCC→3.3V、2 GND→GND) だけだと、`--detect`は通るが、約294万bitを送る`.svf`の書き込みでCONF_DONEが立たなかった (2回再現)。
+  7本目としてblasterの10 GND→J2-6 (GND) を足したら通った。挿し直した直後にIDCODEが`0x01000100`のようなでたらめな値になったこともあり、挿し直すと戻った
 
 - **top は `fpga/rtl/boards/peridot_air_top.sv`。** `$LED`→`USER_LED[0]` (PIN_105)、`$LED2`→`USER_LED[1]` (PIN_119)、
   値が true か 0 以外の Integer なら点灯。`$BUTTON`←`D[0]` (PIN_84、内部 pull-up、GND に落とすと 1)。
@@ -1298,7 +1305,16 @@ L <step>                    命令数の上限 (fpga:check は 20000)
   Quartus の版は決め打ちしない。Apple Silicon では UTM の Debian arm64 + Rosetta 2 で 23.1std / 24.1std の報告がある。
   終わったら fit summary (LE・メモリ使用量) を表示する。v1のtopの実測値はまだ無い (#11 の完了条件)
 - **書き込み (`rake fpga:flash`)。** Mac ネイティブの `openFPGALoader -c usb-blaster <svf>` で SRAM へ
-  (電源を切ると消える)。`FPGA_CABLE` でケーブルを変えられる。EPCQ16 への永続書き込みはまだ無い
+  (電源を切ると消える)。`FPGA_CABLE`でケーブルを変えられる。設定用フラッシュへの書き込みは次の項
+- **設定用フラッシュ (2026-10-25):** 実物はWinbond W25Q16 (JEDEC ID `0xef4015`、16 Mbit = 2 MiB。PERIDOT-Airの資料では「EPCQ16互換」)。この板では出荷時に全2 MiBが`0xff` (空) だった。
+  `rake fpga:flash:backup`で書く前に吸い出して残す (2回読んで一致を確かめる)。`rake fpga:flash:epcq`で最後の合成の`.rbf`を書く
+  - **openFPGALoader 1.1.1の手順。** bridgeは`--fpga-part ep4ce622` (`spiOverJtag_ep4ce622.rbf.gz`)。
+    `-f`で書く経路ではbridgeを載せた後の待ちが短く、JEDEC IDが`00`で読めて「Read ID failed」になる (source: altera.cppの`program()`が`_clk_period`を24MHzから計算し直し、programMemの待ちが縮む)。
+    検出の経路で載せたbridgeは動く。そこで`--detect -f --skip-reset`でbridgeを載せて残し、`-f --skip-load-bridge --skip-reset`で書く。
+    `--verify`は照合の途中でbridgeが消えて食い違いを出した (原因は未確定)。そのため書いた後にもう一度bridgeを載せて全体を吸い出し、自前で照合する
+  - **照合。** 吸い出した中身は、R3の`.rbf`のビット反転と全368,011バイトが一致した
+  - **PCにつながない起動。** R3 (`fpga/rite/blink.rb`) を設定用フラッシュに書いた板が、PCにつながず外部USB電源だけで起動し、USER_LED0が約0.5秒ごとに点滅した (userが目視、2026-10-25)。micro-Bを挿し直すと設定用フラッシュから構成される
+  - `compile_script`は`.svf`に加えて`.rbf`も作る (`quartus_cpf`)
 - **yosys は使えなかった。** Ubuntu 24.04 の yosys 0.33 は `import pkg::*` を読めず、LE の見積もりに使えない
 
 ### ボードエミュレーター
