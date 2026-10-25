@@ -28,6 +28,32 @@ class FpgaQuartusTest < Minitest::Test
     refute_includes names, "counter8.sv"
   end
 
+  def test_flash_image_reverses_the_bit_order_of_each_byte
+    assert_equal [0x80, 0x9B, 0x00, 0xFF, 0x01].pack("C*"), FpgaQuartus.flash_image([0x01, 0xD9, 0x00, 0xFF, 0x80].pack("C*"))
+  end
+
+  def test_flash_image_is_its_own_inverse
+    bytes = (0..255).to_a.pack("C*")
+    assert_equal bytes, FpgaQuartus.flash_image(FpgaQuartus.flash_image(bytes))
+  end
+
+  def test_mismatches_lists_the_differing_positions
+    expected = [1, 2, 3, 4].pack("C*")
+    assert_empty FpgaQuartus.mismatches(expected, [1, 2, 3, 4, 9].pack("C*"))
+    assert_equal [1, 3], FpgaQuartus.mismatches(expected, [1, 0, 3, 5].pack("C*"))
+  end
+
+  def test_mismatches_counts_missing_bytes
+    assert_equal [2, 3], FpgaQuartus.mismatches([1, 2, 3, 4].pack("C*"), [1, 2].pack("C*"))
+  end
+
+  def test_compile_script_converts_the_sof_to_svf_and_rbf
+    steps = FpgaQuartus.compile_script.split(" && ")
+    assert_equal "quartus_sh --flow compile #{FpgaQuartus::PROJECT}", steps.first
+    assert_equal "quartus_cpf -c output_files/#{FpgaQuartus::PROJECT}.sof output_files/#{FpgaQuartus::PROJECT}.rbf", steps.last
+    assert_equal "/x/output_files/#{FpgaQuartus::PROJECT}.rbf", FpgaQuartus.rbf_path("/x")
+  end
+
   def test_project_is_self_contained
     Dir.mktmpdir do |dir|
       FpgaQuartus.write_project(dir, hex, ce_div: 250)

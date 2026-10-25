@@ -16,6 +16,10 @@ module FpgaQuartus
   PROJECT   = "mrb_peridot_air".freeze
   ROM_DEPTH = 1 << FpgaIsa::PC_BITS # mrb_soc の既定 PC_BITS
 
+  BRIDGE_PART = "ep4ce622".freeze
+  FLASH_SIZE  = 2_097_152
+  BIT_REVERSED = Array.new(256) { |b| format("%08b", b).reverse.to_i(2) }.freeze
+
   module_function
 
   # 合成に使う RTL。package を先に、テスト用の counter8 は入れない
@@ -92,12 +96,27 @@ module FpgaQuartus
   def compile_script
     [
       "quartus_sh --flow compile #{PROJECT}",
-      "quartus_cpf -c -q 10MHz -g 3.3 -n p output_files/#{PROJECT}.sof output_files/#{PROJECT}.svf"
+      "quartus_cpf -c -q 10MHz -g 3.3 -n p output_files/#{PROJECT}.sof output_files/#{PROJECT}.svf",
+      "quartus_cpf -c output_files/#{PROJECT}.sof output_files/#{PROJECT}.rbf"
     ].join(" && ")
   end
 
   def svf_path(dir)
     File.join(dir, "output_files", "#{PROJECT}.svf")
+  end
+
+  def rbf_path(dir)
+    File.join(dir, "output_files", "#{PROJECT}.rbf")
+  end
+
+  def flash_image(rbf_bytes)
+    rbf_bytes.b.each_byte.map { |b| BIT_REVERSED[b] }.pack("C*")
+  end
+
+  def mismatches(expected, actual)
+    expected = expected.b
+    actual = actual.b
+    (0...expected.bytesize).reject { |i| expected.getbyte(i) == actual.getbyte(i) }
   end
 
   # fit.summary から LE とメモリの使用量を拾う

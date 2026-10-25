@@ -447,6 +447,30 @@ def fpga_show_outputs(trace)
   puts "  (#{trace.last})"
 end
 
+def fpga_cable
+  ENV["FPGA_CABLE"] || "usb-blaster"
+end
+
+def fpga_require_loader!
+  unless fpga_tool?("openFPGALoader")
+    raise "openFPGALoader not found. `brew install openfpgaloader` (macOS) / `apt-get install openfpgaloader` (Linux)"
+  end
+end
+
+def fpga_load_bridge(skip_reset: true)
+  cmd = ["openFPGALoader", "-c", fpga_cable, "--fpga-part", FpgaQuartus::BRIDGE_PART, "--detect", "-f"]
+  cmd << "--skip-reset" if skip_reset
+  sh(*cmd)
+end
+
+def fpga_dump_flash(path, size)
+  FileUtils.mkdir_p File.dirname(path)
+  FileUtils.rm_f path
+  sh "openFPGALoader", "-c", fpga_cable, "--fpga-part", FpgaQuartus::BRIDGE_PART,
+     "--skip-load-bridge", "--skip-reset", "--dump-flash", "--file-size", size.to_s, path
+  raise "dump #{fpga_rel(path)} has #{File.size(path)} bytes, expected #{size}" unless File.size(path) == size
+end
+
 namespace :fpga do
   desc "Make a ROM image ($readmemh) from a .rb or .mrb with the PicoRuby converter (e.g. rake fpga:rom[fpga/corpus/blink.mrb])"
   task :rom, [:src] do |_t, args|
@@ -695,6 +719,49 @@ namespace :fpga do
       raise "openFPGALoader not found. `brew install openfpgaloader` (macOS) / `apt-get install openfpgaloader` (Linux)"
     end
     sh "openFPGALoader", "-c", ENV["FPGA_CABLE"] || "usb-blaster", svf
+  end
+
+  desc "Show the JTAG chain and the configuration flash (EPCQ16 compatible) over USB-Blaster with openFPGALoader"
+  task :detect do
+    fpga_require_loader!
+    fpga_load_bridge(skip_reset: false)
+  end
+
+  namespace :flash do
+    desc "Back up PERIDOT-Air's configuration flash (2 MiB) read twice and checked equal (default tmp/epcq-backup/peridot_air-epcq-<YYYYMMDD-HHMMSS>.bin)"
+    task :backup, [:path] do |_t, args|
+      fpga_require_loader!
+      path = args[:path] || File.join(HARNESS_ROOT, "tmp", "epcq-backup", "peridot_air-epcq-#{Time.now.strftime('%Y%m%d-%H%M%S')}.bin")
+      second = "#{path}.second"
+      fpga_load_bridge
+      fpga_dump_flash(path, FpgaQuartus::FLASH_SIZE)
+      fpga_dump_flash(second, FpgaQuartus::FLASH_SIZE)
+      same = FileUtils.compare_file(path, second)
+      FileUtils.rm_f second
+      raise "two reads of the flash differ; #{fpga_rel(path)} is not trustworthy" unless same
+      puts "backup: #{fpga_rel(path)} (#{FpgaQuartus::FLASH_SIZE} bytes, two reads identical)"
+    end
+
+    desc "Write the last fpga:build / fpga:rite:build .rbf into the configuration flash (EPCQ) and verify it; boots from it after a micro-B replug"
+    task :epcq do
+      rbf = FpgaQuartus.rbf_path(FPGA_BOARD_BUILD)
+      raise "no #{fpga_rel(rbf)}. Run `rake fpga:rite:build` first" unless File.file?(rbf)
+      fpga_require_loader!
+      bytes = File.binread(rbf)
+      raise "#{fpga_rel(rbf)} has #{bytes.bytesize} bytes, the flash holds #{FpgaQuartus::FLASH_SIZE}" if bytes.bytesize > FpgaQuartus::FLASH_SIZE
+      fpga_load_bridge
+      sh "openFPGALoader", "-c", fpga_cable, "--fpga-part", FpgaQuartus::BRIDGE_PART,
+         "-f", "--skip-load-bridge", "--skip-reset", rbf
+      fpga_load_bridge
+      dump = File.join(FPGA_BUILD_DIR, "epcq-verify.bin")
+      fpga_dump_flash(dump, bytes.bytesize)
+      bad = FpgaQuartus.mismatches(FpgaQuartus.flash_image(bytes), File.binread(dump))
+      unless bad.empty?
+        raise "flash differs from #{fpga_rel(rbf)} at #{bad.size} byte(s), first offsets: #{bad.first(10).map { |i| format('0x%X', i) }.join(' ')}"
+      end
+      puts "verified: #{bytes.bytesize} bytes of #{fpga_rel(rbf)} are in the flash"
+      puts "Unplug and replug micro-B to boot from the EPCQ."
+    end
   end
 
   desc "Resource gate: synthesize RTL parts with yosys for Cyclone IV and compare LE / M9K / logic depth with the budget (e.g. rake fpga:synth[counter8])"
